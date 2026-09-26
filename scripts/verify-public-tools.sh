@@ -2172,63 +2172,24 @@ else
 fi
 
 echo "[public-tools] backend diagnostics"
-BACKEND_DIAG_DIR="$ROOT/tests/diagnostics/backend"
-BACKEND_DIAG_WORK="$WORKDIR/backend-diagnostics"
-BACKEND_DIAG_MANIFEST="$BACKEND_DIAG_DIR/manifest.txt"
-mkdir -p "$BACKEND_DIAG_WORK"
-
-while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ]; do
-    diag_name=$(printf '%s' "$diag_name" | tr -d '\r')
-    diag_command=$(printf '%s' "$diag_command" | tr -d '\r')
-    diag_expect=$(printf '%s' "$diag_expect" | tr -d '\r')
-    case "$diag_name" in
-        "" | \#*) continue ;;
-    esac
-    case "$diag_name" in
-        *[!A-Za-z0-9_]*)
-            fail "backend diagnostic manifest has invalid case name: $diag_name"
-            ;;
-    esac
-    source="$BACKEND_DIAG_DIR/$diag_name.tl"
-    contains="$BACKEND_DIAG_DIR/$diag_name.stderr.contains"
-    work_source="$BACKEND_DIAG_WORK/$diag_name.tl"
-
-    [ -f "$source" ] || fail "backend diagnostic source missing: $source"
-    [ -f "$contains" ] || fail "backend diagnostic expectations missing: $contains"
-    cp "$source" "$work_source"
-
-    case "$diag_command" in
-        compile)
-            # cli-gate-expand backend-{diag} wrapper run_cmd diag=quote-runtime-value
-            run_cmd "backend-$diag_name" "$COMPILER" compile "$work_source"
-            ;;
-        *)
-            fail "unknown backend diagnostic command for $diag_name: $diag_command"
-            ;;
-    esac
-
-    case "$diag_expect" in
-        failure) assert_failure ;;
-        *)
-            fail "unknown backend diagnostic expectation for $diag_name: $diag_expect"
-            ;;
-    esac
-    assert_stdout_empty
-
-    while IFS= read -r expected || [ -n "$expected" ]; do
-        expected=$(printf '%s' "$expected" | tr -d '\r')
-        [ -n "$expected" ] || continue
-        assert_contains "$err" "$expected"
-    done < "$contains"
-    rich_contains="$BACKEND_DIAG_DIR/$diag_name.stderr.rich.contains"
-    if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ] && [ -f "$rich_contains" ]; then
-        while IFS= read -r expected || [ -n "$expected" ]; do
-            expected=$(printf '%s' "$expected" | tr -d '\r')
-            [ -n "$expected" ] || continue
-            assert_contains "$err" "$expected"
-        done < "$rich_contains"
-    fi
-done < "$BACKEND_DIAG_MANIFEST"
+# Lowering rejects a quoted Expr that reaches runtime.
+cat > "$WORKDIR/quote_runtime_value.tl" <<'EOF'
+(define (main) : i64
+  (begin
+    '(+ 1 2)
+    0))
+EOF
+# cli-gate-case backend-quote-runtime-value wrapper run_cmd
+run_cmd backend-quote-runtime-value "$COMPILER" compile "$WORKDIR/quote_runtime_value.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Expr value is compile-time only"
+if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
+    assert_contains "$err" "error: Expr value is compile-time only"
+    assert_contains "$err" "  -->"
+    assert_contains "$err" "3 |     '(+ 1 2)"
+    assert_contains "$err" "  |     ^^^^^^^"
+fi
 
 if [ "$HAS_LINT_COMMAND" = 1 ]; then
     echo "[public-tools] lint command"
@@ -2541,17 +2502,23 @@ if ! cmp -s "$WORKDIR/format-expected.txt" "$WORKDIR/format-actual-expected.txt"
     fail "format golden expected-output manifest is out of date"
 fi
 
+# One multi-file rewrite, then per-file --check and a single-file rewrite.
+set -- "$COMPILER" fmt
+while IFS= read -r fmt_name; do
+    [ -n "$fmt_name" ] || continue
+    cp "tests/format_golden/$fmt_name.tl" "$WORKDIR/$fmt_name.tl"
+    strip_expected_trailing_lf "tests/format_golden/$fmt_name.expected" "$WORKDIR/$fmt_name.expected"
+    set -- "$@" "$WORKDIR/$fmt_name.tl"
+done < "$WORKDIR/format-expected.txt"
+# cli-gate-expand fmt-{format} wrapper run_cmd format=call-wrap,char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
+run_cmd fmt-golden "$@"
+assert_success
+assert_stdout_empty
+assert_stderr_empty
+
 while IFS= read -r fmt_name; do
     [ -n "$fmt_name" ] || continue
     case_name="fmt-$fmt_name"
-    cp "tests/format_golden/$fmt_name.tl" "$WORKDIR/$fmt_name.tl"
-    strip_expected_trailing_lf "tests/format_golden/$fmt_name.expected" "$WORKDIR/$fmt_name.expected"
-
-    # cli-gate-expand fmt-{format} wrapper run_cmd format=call-wrap,char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
-    run_cmd "$case_name" "$COMPILER" fmt "$WORKDIR/$fmt_name.tl"
-    assert_success
-    assert_stdout_empty
-    assert_stderr_empty
     check_file_exact "$WORKDIR/$fmt_name.tl" "$WORKDIR/$fmt_name.expected"
 
     # cli-gate-expand fmt-{format}-check wrapper run_cmd format=call-wrap,char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment

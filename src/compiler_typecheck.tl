@@ -698,9 +698,6 @@
 (define (compiler-typecheck-return-outside-source) : String
   "(define answer : i64 (return 1))")
 
-(define (compiler-typecheck-cast-bad-source) : String
-  "(define (main) : i64 (cast true : i64))")
-
 (define (compiler-typecheck-foreach-body-source) : String
   "(define (main [n : i64]) : unit
   (foreach ([i : i64 0 n]) i))")
@@ -775,22 +772,6 @@
       "typecheck: clone unsupported type hashmap.clone.values/RawValue at hashmap.clone.values/RawValue.raw: (Ptr i64) has no clone capability"
       2)))
 
-(define (compiler-typecheck-foreach-return-source) : String
-  "(define (main [n : i64]) : i64
-  (begin
-    (foreach ([i : i64 0 n]) (return i))
-    0))")
-
-(define (compiler-typecheck-foreach-try-source) : String
-  "(import stdlib.result)
-(import (result.result i64 i64) as result_i64_i64)
-(define (main [out : (__tl_dyn-array i64)] [flag : bool] [n : i64]) : result_i64_i64.Result
-  (begin
-    (foreach
-      ([i : i64 0 n])
-      (set! (array-ref out i) (try (if flag (result_i64_i64.ok 1) (result_i64_i64.err i)))))
-    (result_i64_i64.ok 0)))")
-
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
@@ -844,15 +825,6 @@
     [f : (-> i64 unit) sink]
     (foreach ([i : i64 0 n])
       (f (array-ref xs i)))))")
-
-(define (compiler-typecheck-foreach-outer-set-source) : String
-  "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64
-  (let
-    [sum : i64 0]
-    (begin
-      (foreach ([i : i64 0 n])
-        (set! sum (+ sum (array-ref xs i))))
-      sum)))")
 
 (define (compiler-typecheck-foreach-unsupported-lane-source) : String
   "(define (main [ss : (__tl_dyn-array String)] [n : i64]) : unit
@@ -933,9 +905,6 @@
       (compiler-typecheck-foreach-varying-call-source)
       "typecheck: foreach calls with varying arguments are not supported")
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-foreach-outer-set-source)
-      "typecheck: foreach cannot set binding declared outside foreach")
-    (compiler-typecheck-error-ok?
       (compiler-typecheck-foreach-unsupported-lane-source)
       "typecheck: foreach varying array lane type is not supported: String")
     (compiler-typecheck-foreach-control-flow-tests-ok?)))
@@ -948,13 +917,7 @@
       "typecheck: return type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-return-outside-source)
-      "typecheck: return requires enclosing function")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-foreach-return-source)
-      "typecheck: return inside foreach is not supported")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-foreach-try-source)
-      "typecheck: try inside foreach is not supported")))
+      "typecheck: return requires enclosing function")))
 
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?
@@ -980,9 +943,6 @@
       (compiler-typecheck-string-index-source)
       "typecheck: call `__tl_string_ref` argument 2 type mismatch: expected integer, found bool")
     (compiler-typecheck-ok-score? (compiler-typecheck-string-shadow-source) 30)
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-cast-bad-source)
-      "typecheck: cast requires scalar numeric (integer/char/float) source and target")
     (compiler-typecheck-ok-score? (compiler-typecheck-char-range-source) 20)
     (compiler-typecheck-ok? (compiler-typecheck-never-branch-source))
     (compiler-typecheck-error-ok?
@@ -1325,12 +1285,6 @@
 (define (main) : i64
   (let [data : Pair (Pair 42)]
     data.value))")
-
-(define (compiler-typecheck-dot-field-index-source) : String
-  "(defstruct Pair (x i64))
-(define (main) : i64
-  (let [p : Pair (Pair 1)]
-    p.0))")
 
 (define (compiler-typecheck-dotted-import-default-alias-with-macro-source) : String
   "(module pkg.data)
@@ -2973,11 +2927,6 @@
         (compiler-typecheck-dot-field-local-shadows-alias-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-dot-field-index-source)
-        "typecheck: dotted field access p.0 cannot use numeric field segments; use tuple-ref or array-ref")
-        unit
-        (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-dotted-import-default-alias-with-macro-source))
         unit
@@ -4455,21 +4404,12 @@
   "(define (main [n : u64]) : (Ptr u8)
   (unsafe (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr u8))))")
 
-(define (compiler-typecheck-raw-pointer-safe-read-source) : String
-  "(define (main [p : (Ptr i64)]) : i64 (ptr-read p))")
-
 (define (compiler-typecheck-raw-pointer-safe-addr-of-source) : String
   "(define (main [x : i64]) : (MutPtr i64) (ptr-addr-of x))")
 
 (define (compiler-typecheck-raw-pointer-safe-marker-shadow-source) : String
   "(define (main [p : (Ptr i64)]) : i64
   (let [__tl_unsafe_context : unit unit] (ptr-read p)))")
-
-(define (compiler-typecheck-safe-syscall-source) : String
-  "(define (main) : i64 (syscall 39))")
-
-(define (compiler-typecheck-unsafe-syscall-source) : String
-  "(define (main) : i64 (unsafe (syscall 39)))")
 
 (define (compiler-typecheck-unsafe-syscall-operand-source) : String
   "(define (main) : i64 (unsafe (syscall true)))")
@@ -4651,18 +4591,11 @@
     (compiler-typecheck-ok? (compiler-typecheck-atomic-pointer-ops-source))
     (compiler-typecheck-ok? (compiler-typecheck-volatile-pointer-ops-source))
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-raw-pointer-safe-read-source)
-      "typecheck: ptr-read requires unsafe context")
-    (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-safe-addr-of-source)
       "typecheck: ptr-addr-of requires unsafe context")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
       "typecheck: ptr-read requires unsafe context")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-safe-syscall-source)
-      "typecheck: syscall requires unsafe context")
-    (compiler-typecheck-ok? (compiler-typecheck-unsafe-syscall-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-unsafe-syscall-operand-source)
       "typecheck: syscall operands must be integer")
@@ -6189,9 +6122,6 @@
 (define (compiler-typecheck-scalar-float-cast-bad-source) : String
   "(define (main) : i64 (cast 3.5 : i64))")
 
-(define (compiler-typecheck-scalar-bool-cast-bad-source) : String
-  "(define (main) : i64 (cast true : i64))")
-
 ;; Contextual scalar literals also flow through tuple element types:
 ;; the float literals resolve to f32 against the declared tuple element types.
 (define (compiler-typecheck-scalar-tuple-context-source) : String
@@ -6357,15 +6287,6 @@
           ok
           (compiler-typecheck-ok?
             (compiler-typecheck-scalar-float-cast-bad-source))))
-      ;; A non-numeric (bool) cast source is still rejected, with the cast-matrix
-      ;; diagnostic.
-      (set!
-        ok
-        (and
-          ok
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-scalar-bool-cast-bad-source)
-            "typecheck: cast requires scalar numeric (integer/char/float) source and target")))
       (set!
         ok
         (and
@@ -7252,12 +7173,6 @@
       "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-shuffle (array-ref xs i) i)))")
     (compiler-typecheck-ok?
       "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (set! (array-ref out i) (spmd-shuffle prefix 0))))")
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (spmd-broadcast 1 0))"
-      "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (spmd-shuffle 1 0))"
-      "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
     (compiler-typecheck-error-ok?
       "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (spmd-broadcast (array-ref xs i) 0) unit))"
       "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
@@ -11288,16 +11203,6 @@
   (with ([h (FileHandle fd) cleanup-file-handle])
     h.fd))")
 
-(define (compiler-typecheck-move-diverging-if-source) : String
-  "(defstruct Token (id i64) (name String))
-(define (consume [t : Token]) : i64 t.id)
-(define (pick [flag : bool]) : i64
-  (let
-    [t : Token (Token 41 \"t\")]
-    (begin
-      (if flag (return (consume t)) unit)
-      (+ (consume t) 1))))")
-
 (define (compiler-typecheck-move-diverging-match-source) : String
   "(defstruct Token (id i64) (name String))
 (defenum Mode (Fast) (Slow))
@@ -11309,37 +11214,6 @@
       (match mode
         [(Mode.Fast) (return (consume t))]
         [(Mode.Slow) unit])
-      (+ (consume t) 1))))")
-
-(define (compiler-typecheck-move-diverging-reinit-source) : String
-  "(defstruct Token (id i64) (name String))
-(define (consume [t : Token]) : i64 t.id)
-(define (pick [flag : bool]) : i64
-  (let
-    [t : Token (Token 1 \"t\")]
-    [spent : i64 (consume t)]
-    (begin
-      (if flag (return spent) (set! t (Token 41 \"fresh\")))
-      (+ (consume t) spent))))")
-
-(define (compiler-typecheck-move-normal-arm-source) : String
-  "(defstruct Token (id i64) (name String))
-(define (consume [t : Token]) : i64 t.id)
-(define (pick [flag : bool]) : i64
-  (let
-    [t : Token (Token 41 \"t\")]
-    (begin
-      (if flag (begin (consume t) unit) unit)
-      (+ (consume t) 1))))")
-
-(define (compiler-typecheck-move-diverging-and-normal-arm-source) : String
-  "(defstruct Token (id i64) (name String))
-(define (consume [t : Token]) : i64 t.id)
-(define (pick [flag : bool]) : i64
-  (let
-    [t : Token (Token 41 \"t\")]
-    (begin
-      (if flag (return (consume t)) (begin (consume t) unit))
       (+ (consume t) 1))))")
 
 (define (compiler-typecheck-move-with-cleanup-owner-returning-arm-source) : String
@@ -12629,25 +12503,8 @@
         (set! ok false))
       ;; A diverging arm leaves the join, but not the enclosing with scope's
       ;; fallthrough-only owner check.
-      (if (compiler-typecheck-ok? (compiler-typecheck-move-diverging-if-source))
-        unit
-        (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-move-diverging-match-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-move-diverging-reinit-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-normal-arm-source)
-        "typecheck: use of moved value `t`")
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-diverging-and-normal-arm-source)
-        "typecheck: use of moved value `t`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

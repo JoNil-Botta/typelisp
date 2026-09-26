@@ -98,22 +98,6 @@ assert_nonempty() {
     [ -s "$file" ] || fail "expected non-empty file: $file"
 }
 
-strip_expected_trailing_lf() {
-    src=$1
-    dst=$2
-    normalized="$WORKDIR/expected-normalized.tmp"
-    tr -d '\r' < "$src" > "$normalized"
-    size=$(wc -c < "$normalized" | tr -d ' ')
-    if [ "$size" -gt 0 ]; then
-        last=$(tail -c 1 "$normalized" | od -An -tx1 | tr -d ' \n')
-        if [ "$last" = "0a" ]; then
-            dd if="$normalized" of="$dst" bs=1 count=$((size - 1)) 2> /dev/null
-            return
-        fi
-    fi
-    cp "$normalized" "$dst"
-}
-
 check_file_exact() {
     actual=$1
     expected=$2
@@ -124,21 +108,6 @@ check_file_exact() {
         sed 's/^/  /' "$actual" >&2 || true
         fail "unexpected file content: $actual"
     fi
-}
-
-format_manifest() {
-    cat <<'EOF'
-call_wrap
-char_literal
-comments
-decls
-flow
-let_bindings
-negative_int
-quote
-signature_colon
-tail_comment
-EOF
 }
 
 lsp_frame_append() {
@@ -1214,46 +1183,6 @@ assert_empty "$WORKDIR/test-bad-target.stdout"
 assert_contains "$WORKDIR/test-bad-target.stderr" "test: unknown target nope"
 
 echo "[host-action-cli] fmt"
-format_manifest | sort > "$WORKDIR/format-expected.txt"
-find tests/format_golden -maxdepth 1 -type f -name '*.tl' |
-    sed 's#^tests/format_golden/##; s#\.tl$##' | sort > "$WORKDIR/format-actual.txt"
-if ! cmp -s "$WORKDIR/format-expected.txt" "$WORKDIR/format-actual.txt"; then
-    diff -u "$WORKDIR/format-expected.txt" "$WORKDIR/format-actual.txt" >&2 || true
-    fail "format golden source manifest is out of date"
-fi
-find tests/format_golden -maxdepth 1 -type f -name '*.expected' |
-    sed 's#^tests/format_golden/##; s#\.expected$##' | sort > "$WORKDIR/format-actual-expected.txt"
-if ! cmp -s "$WORKDIR/format-expected.txt" "$WORKDIR/format-actual-expected.txt"; then
-    diff -u "$WORKDIR/format-expected.txt" "$WORKDIR/format-actual-expected.txt" >&2 || true
-    fail "format golden expected-output manifest is out of date"
-fi
-
-set -- "$COMPILER" fmt
-while IFS= read -r fmt_name; do
-    [ -n "$fmt_name" ] || continue
-    cp "tests/format_golden/$fmt_name.tl" "$WORKDIR/$fmt_name.tl"
-    strip_expected_trailing_lf "tests/format_golden/$fmt_name.expected" "$WORKDIR/$fmt_name.expected"
-    set -- "$@" "$WORKDIR/$fmt_name.tl"
-done < "$WORKDIR/format-expected.txt"
-# cli-gate-expand stage1-wrapper-fmt-golden-{fixture} wrapper run_capture fixture=call_wrap,char_literal,comments,decls,flow,let_bindings,negative_int,quote,signature_colon,tail_comment
-run_capture fmt-golden "$@"
-assert_empty "$WORKDIR/fmt-golden.stdout"
-assert_empty "$WORKDIR/fmt-golden.stderr"
-while IFS= read -r fmt_name; do
-    [ -n "$fmt_name" ] || continue
-    check_file_exact "$WORKDIR/$fmt_name.tl" "$WORKDIR/$fmt_name.expected"
-done < "$WORKDIR/format-expected.txt"
-
-set -- "$COMPILER" fmt --check
-while IFS= read -r fmt_name; do
-    [ -n "$fmt_name" ] || continue
-    set -- "$@" "$WORKDIR/$fmt_name.tl"
-done < "$WORKDIR/format-expected.txt"
-# cli-gate-expand stage1-wrapper-fmt-golden-check-{fixture} wrapper run_capture fixture=call_wrap,char_literal,comments,decls,flow,let_bindings,negative_int,quote,signature_colon,tail_comment
-run_capture fmt-golden-check "$@"
-assert_empty "$WORKDIR/fmt-golden-check.stdout"
-assert_empty "$WORKDIR/fmt-golden-check.stderr"
-
 cat > "$WORKDIR/fmt-changed.tl" <<'EOF'
 (define (main) : i64
   (let ([x : i64 42])
@@ -1477,8 +1406,8 @@ printf '\n' >> "$OPT2_HANDOFF_TEST_LOG"
 
 command=${1:-}
 case "$command" in
-    run)
-        exit 42
+    test)
+        exit 0
         ;;
     build)
         if [ "${OPT2_HANDOFF_TEST_SKIP_GENERATED:-0}" -eq 0 ]; then

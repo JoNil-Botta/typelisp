@@ -30072,158 +30072,6 @@
                       (OptLabelSet.Nil))
                     (opt-licm-unswitch-chain-fuel))))])))]))
 
-(define (opt-licm-unswitch-switch-cases
-  [cases : ir.CompilerIrSwitchCaseSeq]
-  [body-labels : OptLabelSet]) : ir.CompilerIrSwitchCaseSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (__tl_make-array ir.CompilerIrSwitchCase cases.len)]
-    [index : i64 0]
-    (begin
-      (while (< index cases.len)
-        (begin
-          (match (ir.compiler-ir-switch-case-seq-ref cases index)
-            [(ir.CompilerIrSwitchCase.Case tag label)
-              (set!
-                (array-ref slots index)
-                (ir.CompilerIrSwitchCase.Case
-                  tag
-                  (opt-licm-unswitch-clone-label body-labels label)))])
-          (set! index (+ index 1))))
-      (ir.CompilerIrSwitchCaseSeq slots cases.len))))
-
-(define (opt-licm-unswitch-clone-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [body-labels : OptLabelSet]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-27587-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-27587-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-27587-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-27587-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-27587-3.value]
-        [label : i64 phi-input-at-27587-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-27587-3.slots
-            (+ phi-inputs-at-27587-3.start 1)
-            (- phi-inputs-at-27587-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) value)
-          (opt-licm-unswitch-clone-label body-labels label)
-          (opt-licm-unswitch-clone-phi-inputs rest remap body-labels))))))
-
-(define (opt-licm-unswitch-clone-instr
-  [instr : ir.CompilerIrInstr]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [body-labels : OptLabelSet]
-  [all-labels : OptLabelSet]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
-      (ir.CompilerIrInstr.Mov
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Cast
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Bitcast
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (ir.CompilerIrInstr.BinOp
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        op
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-        (opt-unroll-subst-value remap rhs)
-        ty)]
-    [(ir.CompilerIrInstr.UnOp dst op src ty)
-      (ir.CompilerIrInstr.UnOp
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        op
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (ir.CompilerIrInstr.Gep
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) base)
-        (opt-unroll-subst-value remap offset)
-        ty)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (ir.CompilerIrInstr.Load
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (ir.CompilerIrInstr.StorePtr
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) ptr)
-        (opt-unroll-subst-value remap value)
-        ty)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (ir.CompilerIrInstr.StoreOwned
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) ptr)
-        (opt-unroll-subst-value remap value)
-        ty)]
-    [(ir.CompilerIrInstr.BoundsCheck index length ok-label)
-      (ir.CompilerIrInstr.BoundsCheck
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) index)
-        (opt-unroll-subst-value remap length)
-        (if (opt-label-contains body-labels ok-label)
-          (opt-licm-unswitch-clone-label body-labels ok-label)
-          (if (opt-label-contains all-labels ok-label)
-            ok-label
-            (ir.compiler-ir-label
-              (str_cat.str-cat
-                (ir.compiler-ir-label-text ok-label)
-                (opt-licm-unswitch-suffix))))))]
-    [(ir.CompilerIrInstr.Phi dst inputs ty)
-      (ir.CompilerIrInstr.Phi
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-licm-unswitch-clone-phi-inputs inputs remap body-labels)
-        ty)]
-    [(ir.CompilerIrInstr.Jump target)
-      (ir.CompilerIrInstr.Jump
-        (opt-licm-unswitch-clone-label body-labels target))]
-    [(ir.CompilerIrInstr.Branch cond true-label false-label)
-      (ir.CompilerIrInstr.Branch
-        (opt-unroll-subst-value remap cond)
-        (opt-licm-unswitch-clone-label body-labels true-label)
-        (opt-licm-unswitch-clone-label body-labels false-label))]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond true-label false-label)
-      (ir.CompilerIrInstr.TotalEnumBranch
-        (opt-unroll-subst-value remap cond)
-        (opt-licm-unswitch-clone-label body-labels true-label)
-        (opt-licm-unswitch-clone-label body-labels false-label))]
-    [(ir.CompilerIrInstr.Switch index base cases default-label)
-      (ir.CompilerIrInstr.Switch
-        (opt-unroll-subst-value remap index)
-        base
-        (opt-licm-unswitch-switch-cases cases body-labels)
-        (opt-licm-unswitch-clone-label body-labels default-label))]
-    [(ir.CompilerIrInstr.TotalEnumSwitch
-        index
-        base
-        cases
-        default-label
-        trap-label)
-      (ir.CompilerIrInstr.TotalEnumSwitch
-        (opt-unroll-subst-value remap index)
-        base
-        (opt-licm-unswitch-switch-cases cases body-labels)
-        (opt-licm-unswitch-clone-label body-labels default-label)
-        (opt-licm-unswitch-clone-label body-labels trap-label))]
-    [_ instr]))
-
 (define (opt-licm-unswitch-clone-instrs
   [shape : OptLicmUnswitchShape]
   [label : i64]
@@ -30261,11 +30109,15 @@
                     (opt-licm-unswitch-clone-label
                       shape.body-labels
                       shape.false-label))])
-              (opt-licm-unswitch-clone-instr
-                (ir.compiler-ir-instr-seq-ref instrs cursor)
+              (opt-region-clone-instr-remapped
                 (compiler-opt-global-shared-view remap)
-                shape.body-labels
-                all-labels)))
+                (OptCloneLabels.Region
+                  shape.body-labels
+                  all-labels
+                  (opt-licm-unswitch-suffix)
+                  (ir.compiler-ir-label-none)
+                  (ir.compiler-ir-label-none))
+                (ir.compiler-ir-instr-seq-ref instrs cursor))))
           (set! cursor (+ cursor 1))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
@@ -70706,183 +70558,114 @@
 (define (opt-unroll-copy-suffix [copy : i64]) : String
   (str_cat.str-cat "__u" (string.int->string copy)))
 
+;; --- Loop-region cloning -----------------------------------------------------
+;;
+;; Every loop transform that copies a region (the unrollers, the bounds-check
+;; versioners, unswitching) rebuilds an instruction the same way: each use reads
+;; through the clone's dense id REMAP (opt-unroll-subst-value) and each label is
+;; renamed by the clone's label policy. The transforms differ only in that
+;; policy and in what a def becomes: kept, the fresh id a pre-pass put in the
+;; remap, or one allocated as the instruction is cloned.
+(defenum OptCloneLabels
+  ;; Every label is kept.
+  (Keep)
+  ;; A block of the cloned region (BODY) gets SUFFIX; every other label is kept.
+  (Body OptLabelSet String)
+  ;; As Body, and so does a label that names no block of the function (not in
+  ;; ALL): a BoundsCheck continuation label, which the backend re-emits at the
+  ;; check and the clone must not define twice. FROM becomes TO: a header phi's
+  ;; preheader input, which now comes from the guard.
+  (Region OptLabelSet OptLabelSet String i64 i64))
+
+(define (opt-clone-suffixed [label : i64] [suffix : String]) : i64
+  (ir.compiler-ir-label
+    (str_cat.str-cat (ir.compiler-ir-label-text label) suffix)))
+
+(define (opt-region-clone-use
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [_labels : OptCloneLabels]
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-unroll-subst-value remap value))
+
+(define (opt-region-clone-label
+  [_remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [labels : OptCloneLabels]
+  [label : i64]) : i64
+  (match labels
+    [(OptCloneLabels.Keep) label]
+    [(OptCloneLabels.Body body suffix)
+      (if (opt-label-contains body label)
+        (opt-clone-suffixed label suffix)
+        label)]
+    [(OptCloneLabels.Region body all suffix from to)
+      (cond
+        [(= label from) to]
+        [(or
+            (opt-label-contains body label)
+            (not (opt-label-contains all label)))
+          (opt-clone-suffixed label suffix)]
+        [else label])]))
+
+;; One region instruction with its uses substituted and its labels renamed. Its
+;; defs are kept.
+(define (opt-region-clone-instr
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [labels : OptCloneLabels]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (ir.compiler-ir-instr-map
+    instr
+    opt-region-clone-use
+    _
+    _
+    opt-region-clone-label
+    (compiler-opt-global-shared-view remap)
+    (compiler-opt-global-shared-view labels)))
+
+;; The same clone with its def renamed to the fresh id a pre-pass put in REMAP.
+(define (opt-region-clone-instr-remapped
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [labels : OptCloneLabels]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (let
+    [cloned : ir.CompilerIrInstr
+      (opt-region-clone-instr
+        (compiler-opt-global-shared-view remap)
+        labels
+        instr)]
+    [dst : i64
+      (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view cloned))]
+    (if (< dst 0)
+      cloned
+      (ir.compiler-ir-instr-with-dst cloned (opt-bce-mb-remap-dst remap dst)))))
+
 ;; Clone one whitelisted body instruction: substitute uses through the remap
-;; first, then allocate a fresh dst and record it. Only the kinds accepted by
-;; `opt-unroll-body-instr-ok?` reach this.
+;; first (a pre-SSA body may redefine a var it reads), then allocate a fresh dst
+;; and record it. A BoundsCheck continuation label gets the copy's suffix. Only
+;; the kinds accepted by `opt-unroll-body-instr-ok?` reach this.
 (define (opt-unroll-clone-instr
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [cell : (&mut cell (__tl_dyn-array i64))]
   [copy : i64]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
-      (let
-        [new-src : ir.CompilerIrValue
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)]
-        (ir.CompilerIrInstr.Mov
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          new-src
-          ty))]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (let
-        [new-src : ir.CompilerIrValue
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)]
-        (ir.CompilerIrInstr.Cast
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          new-src
-          from-ty
-          to-ty))]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (let
-        [new-src : ir.CompilerIrValue
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)]
-        (ir.CompilerIrInstr.Bitcast
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          new-src
-          from-ty
-          to-ty))]
-    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (let
-        [new-lhs : ir.CompilerIrValue
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)]
-        [new-rhs : ir.CompilerIrValue
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) rhs)]
-        (ir.CompilerIrInstr.BinOp
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          op
-          new-lhs
-          new-rhs
-          ty))]
-    [(ir.CompilerIrInstr.UnOp dst op src ty)
-      (let
-        [new-src : ir.CompilerIrValue
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)]
-        (ir.CompilerIrInstr.UnOp
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          op
-          new-src
-          ty))]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (let
-        [new-base : ir.CompilerIrValue
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) base)]
-        [new-offset : ir.CompilerIrValue
-          (opt-unroll-subst-value
-            (compiler-opt-global-shared-view remap)
-            offset)]
-        (ir.CompilerIrInstr.Gep
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          new-base
-          new-offset
-          ty))]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (let
-        [new-src : ir.CompilerIrValue
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) src)]
-        (ir.CompilerIrInstr.Load
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          new-src
-          ty))]
-    [(ir.CompilerIrInstr.LaneId dst lanes ty)
-      (ir.CompilerIrInstr.LaneId
-        (opt-unroll-clone-dst (&mut remap) cell dst)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (ir.CompilerIrInstr.Splat
-        (opt-unroll-clone-dst (&mut remap) cell dst)
-        (opt-unroll-subst-value remap value)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-bin-op
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          op
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-          (opt-unroll-subst-value remap rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (ir.CompilerIrInstr.VectorReduce
-        (opt-unroll-clone-dst (&mut remap) cell dst)
-        op
-        (opt-unroll-subst-value remap src)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-compare
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          op
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-          (opt-unroll-subst-value remap rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (ir.CompilerIrInstr.MaskBinOp
-        (opt-unroll-clone-dst (&mut remap) cell dst)
-        op
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-        (opt-unroll-subst-value remap rhs)
-        lanes)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-select
-          (opt-unroll-clone-dst (&mut remap) cell dst)
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) mask)
-          (opt-unroll-subst-value
-            (compiler-opt-global-shared-view remap)
-            on-true)
-          (opt-unroll-subst-value remap on-false)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorLoad dst base index lanes ty)
-      (ir.CompilerIrInstr.VectorLoad
-        (opt-unroll-clone-dst (&mut remap) cell dst)
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) base)
-        (opt-unroll-subst-value remap index)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (ir.CompilerIrInstr.StorePtr
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) ptr)
-        (opt-unroll-subst-value remap value)
-        ty)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (ir.CompilerIrInstr.StoreOwned
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) ptr)
-        (opt-unroll-subst-value remap value)
-        ty)]
-    [(ir.CompilerIrInstr.BoundsCheck index length ok-label)
-      ;; BoundsCheck ok-labels are function-unique local labels; suffix each
-      ;; copy so the clones stay unique.
-      (ir.CompilerIrInstr.BoundsCheck
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) index)
-        (opt-unroll-subst-value remap length)
-        (ir.compiler-ir-label
-          (str_cat.str-cat
-            (ir.compiler-ir-label-text ok-label)
-            (opt-unroll-copy-suffix copy))))]
-    [_ instr]))
+  (let
+    [cloned : ir.CompilerIrInstr
+      (opt-region-clone-instr
+        (compiler-opt-global-shared-view remap)
+        (OptCloneLabels.Region
+          (OptLabelSet.Nil)
+          (OptLabelSet.Nil)
+          (opt-unroll-copy-suffix copy)
+          (ir.compiler-ir-label-none)
+          (ir.compiler-ir-label-none))
+        instr)]
+    [dst : i64
+      (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view cloned))]
+    (if (< dst 0)
+      cloned
+      (ir.compiler-ir-instr-with-dst
+        cloned
+        (opt-unroll-clone-dst (&mut remap) cell dst)))))
 
 (define (opt-unroll-alloc-ku-ids
   [ku-ids : (&mut ku-ids (__tl_dyn-array i64))]
@@ -74554,127 +74337,6 @@
                 [_ (OptUnrollConstMaybeShape.No)])]
             [_ (OptUnrollConstMaybeShape.No)])))]))
 
-;; Final-copy clone: substitute uses through the remap but keep the original
-;; destinations and BoundsCheck continuation labels, so the loop's outside
-;; uses (the rotated exit reads the last trip's defs) resolve unchanged.
-(define (opt-unroll-const-keep-clone-instr
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
-      (ir.CompilerIrInstr.Mov dst (opt-unroll-subst-value remap src) ty)]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Cast
-        dst
-        (opt-unroll-subst-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Bitcast
-        dst
-        (opt-unroll-subst-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (ir.CompilerIrInstr.BinOp
-        dst
-        op
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-        (opt-unroll-subst-value remap rhs)
-        ty)]
-    [(ir.CompilerIrInstr.UnOp dst op src ty)
-      (ir.CompilerIrInstr.UnOp dst op (opt-unroll-subst-value remap src) ty)]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (ir.CompilerIrInstr.Gep
-        dst
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) base)
-        (opt-unroll-subst-value remap offset)
-        ty)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (ir.CompilerIrInstr.Load dst (opt-unroll-subst-value remap src) ty)]
-    [(ir.CompilerIrInstr.LaneId dst lanes ty)
-      (ir.CompilerIrInstr.LaneId dst lanes ty)]
-    [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (ir.CompilerIrInstr.Splat
-        dst
-        (opt-unroll-subst-value remap value)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-bin-op
-          dst
-          op
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-          (opt-unroll-subst-value remap rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (ir.CompilerIrInstr.VectorReduce
-        dst
-        op
-        (opt-unroll-subst-value remap src)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-compare
-          dst
-          op
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-          (opt-unroll-subst-value remap rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (ir.CompilerIrInstr.MaskBinOp
-        dst
-        op
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-        (opt-unroll-subst-value remap rhs)
-        lanes)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-select
-          dst
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) mask)
-          (opt-unroll-subst-value
-            (compiler-opt-global-shared-view remap)
-            on-true)
-          (opt-unroll-subst-value remap on-false)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorLoad dst base index lanes ty)
-      (ir.CompilerIrInstr.VectorLoad
-        dst
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) base)
-        (opt-unroll-subst-value remap index)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.BoundsCheck index length ok-label)
-      (ir.CompilerIrInstr.BoundsCheck
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) index)
-        (opt-unroll-subst-value remap length)
-        ok-label)]
-    [_ instr]))
-
 ;; Before the last copy is cloned, its destinations must map to THEMSELVES:
 ;; the remap still holds the previous copy's fresh vars, but the final copy IS
 ;; the original body (its defs feed the exit), so a use of a body-defined var
@@ -74752,8 +74414,12 @@
       (let
         [cloned : ir.CompilerIrInstr
           (if (and (= copy (- trips 1)) (not full-rename?))
-            (opt-unroll-const-keep-clone-instr
+            ;; Final-copy clone: keep the original destinations and BoundsCheck
+            ;; continuation labels, so the loop's outside uses (the rotated exit
+            ;; reads the last trip's defs) resolve unchanged.
+            (opt-region-clone-instr
               (compiler-opt-global-shared-view remap)
+              (OptCloneLabels.Keep)
               (ir.compiler-ir-instr-seq-ref instrs index))
             (opt-unroll-clone-instr
               (compiler-opt-global-shared-view remap)
@@ -76773,88 +76439,6 @@
       [(option_i64.None) (option_i64.None)])
     (option_i64.None)))
 
-(define (opt-unroll-simd-clone-recurrence
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.LaneId dst lanes ty)
-      (ir.CompilerIrInstr.LaneId dst lanes ty)]
-    [(ir.CompilerIrInstr.Splat dst value lanes ty)
-      (ir.CompilerIrInstr.Splat
-        dst
-        (opt-unroll-subst-value remap value)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-bin-op
-          dst
-          op
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-          (opt-unroll-subst-value remap rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
-      (ir.CompilerIrInstr.VectorReduce
-        dst
-        op
-        (opt-unroll-subst-value remap src)
-        lanes
-        ty)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-compare
-          dst
-          op
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-          (opt-unroll-subst-value remap rhs)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
-      (ir.CompilerIrInstr.MaskBinOp
-        dst
-        op
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-        (opt-unroll-subst-value remap rhs)
-        lanes)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-select
-          dst
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) mask)
-          (opt-unroll-subst-value
-            (compiler-opt-global-shared-view remap)
-            on-true)
-          (opt-unroll-subst-value remap on-false)
-          lanes
-          ty))]
-    [(ir.CompilerIrInstr.VectorLoad dst base index lanes ty)
-      (ir.CompilerIrInstr.VectorLoad
-        dst
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) base)
-        (opt-unroll-subst-value remap index)
-        lanes
-        ty)]
-    [_ instr]))
-
 (define (opt-unroll-simd-memory-index
   [type-segment-bases : i64]
   [memory-bases : (& memory-bases OptUnrollSimdMemoryList)]
@@ -76901,7 +76485,7 @@
         ;; The source occurrence denotes the mutable value written by the
         ;; preceding gang, not a transient clone from an earlier instruction.
         (opt-unroll-remap-set (&mut remap) dst (ir.CompilerIrValue.Var dst))
-        (opt-unroll-simd-clone-recurrence remap instr))]
+        (opt-region-clone-instr remap (OptCloneLabels.Keep) instr))]
     [(option_i64.None)
       (match (compiler-opt-global-shared-view instr)
         [(ir.CompilerIrInstr.VectorLoad dst base _ lanes ty)
@@ -93256,78 +92840,14 @@
     [(ir.CompilerIrValue.Var fresh) fresh]
     [_ dst]))
 
-;; Substitute a call's arguments through the clone's dense id REMAP.
-;;
-;; `opt-copy-subst-call-args` does the same shape of work but resolves through
-;; an `OptCopyEnv` association list, which this pass does not build: the clone's
-;; renaming lives in the remap array the fresh-id pass filled, and is read with
-;; `opt-unroll-subst-value` everywhere else in this cloner. An `Array` argument
-;; list is copied into a fresh array rather than mutated, because the original
-;; instruction stays live in the SLOW loop and shares that storage.
-(define (opt-bce-mb-subst-call-args
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (ir.compiler-ir-call-args-map
-    args
-    opt-unroll-subst-value
-    (compiler-opt-global-shared-view remap)))
-
-(define (opt-bce-mb-clone-switch-cases
-  [cases : ir.CompilerIrSwitchCaseSeq]
-  [body-labels : OptLabelSet]) : ir.CompilerIrSwitchCaseSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (__tl_make-array ir.CompilerIrSwitchCase cases.len)]
-    [index : i64 0]
-    (begin
-      (while (< index cases.len)
-        (begin
-          (match (ir.compiler-ir-switch-case-seq-ref cases index)
-            [(ir.CompilerIrSwitchCase.Case tag label)
-              (set!
-                (array-ref slots index)
-                (ir.CompilerIrSwitchCase.Case
-                  tag
-                  (opt-bce-mb-fast-label body-labels label)))])
-          (set! index (+ index 1))))
-      (ir.CompilerIrSwitchCaseSeq slots cases.len))))
-
-(define (opt-bce-mb-clone-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [body-labels : OptLabelSet]
-  [preheader : i64]
-  [guard-label : i64]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-89463-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-89463-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-89463-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-89463-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-89463-3.value]
-        [label : i64 phi-input-at-89463-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-89463-3.slots
-            (+ phi-inputs-at-89463-3.start 1)
-            (- phi-inputs-at-89463-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) value)
-          ;; only header phis carry a preheader input: it now comes from the
-          ;; guard; every other loop-edge input comes from the fast clone.
-          (if (= label preheader)
-            guard-label
-            (opt-bce-mb-fast-label body-labels label))
-          (opt-bce-mb-clone-phi-inputs
-            rest
-            remap
-            body-labels
-            preheader
-            guard-label))))))
-
+;; Pass B's clone of one loop instruction. A branch the guard already decides
+;; becomes the jump it always takes; DCE retires the compare and any arm that
+;; lost its last predecessor. Every other instruction is a region clone into
+;; the fast copy: a kept (underivable) check's ok-label naming a real loop block
+;; goes to its fast clone, one naming a block OUTSIDE the loop stays shared, and
+;; a synthetic mid-block continuation label is uniquified, or the slow and fast
+;; blocks would define it twice. Only header phis carry a preheader input: it
+;; now comes from the guard.
 (define (opt-bce-mb-clone-instr
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [body-labels : OptLabelSet]
@@ -93337,127 +92857,31 @@
   [facts : OptBceFoldFacts]
   [label : i64]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
-      (ir.CompilerIrInstr.Mov
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Cast
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Bitcast
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (ir.CompilerIrInstr.BinOp
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        op
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-        (opt-unroll-subst-value remap rhs)
-        ty)]
-    [(ir.CompilerIrInstr.UnOp dst op src ty)
-      (ir.CompilerIrInstr.UnOp
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        op
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (ir.CompilerIrInstr.Gep
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) base)
-        (opt-unroll-subst-value remap offset)
-        ty)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (ir.CompilerIrInstr.Load
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (ir.CompilerIrInstr.StorePtr
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) ptr)
-        (opt-unroll-subst-value remap value)
-        ty)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (ir.CompilerIrInstr.StoreOwned
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) ptr)
-        (opt-unroll-subst-value remap value)
-        ty)]
-    ;; A direct call: the callee name is a symbol and stays as it is, the
-    ;; arguments substitute through the remap, and the dst rebases like any
-    ;; other def -- the fresh-id pass allocated one for it, because
-    ;; opt-bce-mb-instr-dst-or reports it. Only `Call` reaches here; every other
-    ;; call form is outside opt-bce-mb-body-instr-ok?.
-    [(ir.CompilerIrInstr.Call dst name args ty)
-      (ir.CompilerIrInstr.Call
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        name
-        (opt-bce-mb-subst-call-args remap args)
-        ty)]
-    [(ir.CompilerIrInstr.Phi dst inputs ty)
-      (ir.CompilerIrInstr.Phi
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-bce-mb-clone-phi-inputs
-          inputs
-          remap
-          body-labels
-          preheader
-          guard-label)
-        ty)]
-    [(ir.CompilerIrInstr.Jump target)
-      (ir.CompilerIrInstr.Jump (opt-bce-mb-fast-label body-labels target))]
-    ;; A branch the guard already decides becomes the jump it always takes;
-    ;; DCE retires the compare and any arm that lost its last predecessor.
-    [(ir.CompilerIrInstr.Branch cond then-label else-label)
-      (match (opt-bce-fold-branch-verdict
-        facts
-        label
-        (compiler-opt-global-shared-view cond)
-        then-label
-        else-label)
-        [(OptBceFoldVerdict.True)
-          (ir.CompilerIrInstr.Jump
-            (opt-bce-mb-fast-label body-labels then-label))]
-        [(OptBceFoldVerdict.False)
-          (ir.CompilerIrInstr.Jump
-            (opt-bce-mb-fast-label body-labels else-label))]
-        [(OptBceFoldVerdict.Unknown)
-          (ir.CompilerIrInstr.Branch
-            (opt-unroll-subst-value remap cond)
-            (opt-bce-mb-fast-label body-labels then-label)
-            (opt-bce-mb-fast-label body-labels else-label))])]
-    [(ir.CompilerIrInstr.Switch index base cases default-label)
-      (ir.CompilerIrInstr.Switch
-        (opt-unroll-subst-value remap index)
-        base
-        (opt-bce-mb-clone-switch-cases cases body-labels)
-        (opt-bce-mb-fast-label body-labels default-label))]
-    ;; A kept (underivable) check: remap operands and the ok edge. An ok-label
-    ;; naming a real loop block remaps to its fast clone; one naming a real
-    ;; block OUTSIDE the loop stays shared; anything else is a synthetic
-    ;; mid-block continuation label the backend re-emits at the check site, so
-    ;; it must be uniquified per clone or the slow and fast blocks define it
-    ;; twice.
-    [(ir.CompilerIrInstr.BoundsCheck index length ok-label)
-      (ir.CompilerIrInstr.BoundsCheck
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) index)
-        (opt-unroll-subst-value remap length)
-        (if (opt-label-contains body-labels ok-label)
-          (opt-bce-mb-fast-label body-labels ok-label)
-          (if (opt-label-contains all-labels ok-label)
-            ok-label
-            (ir.compiler-ir-label
-              (str_cat.str-cat
-                (ir.compiler-ir-label-text ok-label)
-                "__bce_fast")))))]
-    ;; unreachable: the shape scan whitelisted every loop instruction
-    [_ instr]))
+  (let
+    [labels : OptCloneLabels
+      (OptCloneLabels.Region
+        (compiler-opt-global-shared-view body-labels)
+        all-labels
+        "__bce_fast"
+        preheader
+        guard-label)]
+    (match (compiler-opt-global-shared-view instr)
+      [(ir.CompilerIrInstr.Branch cond then-label else-label)
+        (match (opt-bce-fold-branch-verdict
+          facts
+          label
+          (compiler-opt-global-shared-view cond)
+          then-label
+          else-label)
+          [(OptBceFoldVerdict.True)
+            (ir.CompilerIrInstr.Jump
+              (opt-bce-mb-fast-label body-labels then-label))]
+          [(OptBceFoldVerdict.False)
+            (ir.CompilerIrInstr.Jump
+              (opt-bce-mb-fast-label body-labels else-label))]
+          [(OptBceFoldVerdict.Unknown)
+            (opt-region-clone-instr-remapped remap labels instr)])]
+      [_ (opt-region-clone-instr-remapped remap labels instr)])))
 
 ;; Every block label in the function: a kept check's ok-label that names a
 ;; real block outside the loop must NOT be renamed, while a synthetic
@@ -93493,73 +92917,39 @@
     unit
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (compiler-opt-global-shared-view instr)
-        [(ir.CompilerIrInstr.BoundsCheck _ _ _)
-          (if (opt-bce-mb-keep-contains?
-            (compiler-opt-global-shared-view keep)
-            label
-            index)
-            (begin
-              (ir.compiler-ir-instr-builder-push!
-                builder
-                (opt-bce-mb-clone-instr
-                  (compiler-opt-global-shared-view remap)
-                  body-labels
-                  all-labels
-                  preheader
-                  guard-label
-                  (compiler-opt-global-shared-view facts)
-                  label
-                  instr))
-              (opt-bce-mb-push-clone-instrs!
+      (begin
+        (if (match (compiler-opt-global-shared-view instr)
+          [(ir.CompilerIrInstr.BoundsCheck _ _ _)
+            (not
+              (opt-bce-mb-keep-contains?
+                (compiler-opt-global-shared-view keep)
                 label
-                instrs
-                (+ index 1)
-                remap
-                body-labels
-                all-labels
-                preheader
-                guard-label
-                facts
-                keep
-                builder))
-            (opt-bce-mb-push-clone-instrs!
-              label
-              instrs
-              (+ index 1)
-              remap
+                index))]
+          [_ false])
+          unit
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (opt-bce-mb-clone-instr
+              (compiler-opt-global-shared-view remap)
               body-labels
               all-labels
               preheader
               guard-label
-              facts
-              keep
-              builder))]
-        [_
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              builder
-              (opt-bce-mb-clone-instr
-                (compiler-opt-global-shared-view remap)
-                body-labels
-                all-labels
-                preheader
-                guard-label
-                (compiler-opt-global-shared-view facts)
-                label
-                instr))
-            (opt-bce-mb-push-clone-instrs!
+              (compiler-opt-global-shared-view facts)
               label
-              instrs
-              (+ index 1)
-              remap
-              body-labels
-              all-labels
-              preheader
-              guard-label
-              facts
-              keep
-              builder))]))))
+              instr)))
+        (opt-bce-mb-push-clone-instrs!
+          label
+          instrs
+          (+ index 1)
+          remap
+          body-labels
+          all-labels
+          preheader
+          guard-label
+          facts
+          keep
+          builder)))))
 
 (define (opt-bce-mb-clone-instrs
   [label : i64]
@@ -96898,34 +96288,6 @@
                           cond-var
                           exit-label))])])))])]))
 
-;; Map ordinary intra-loop phi edges for one copy. Header phis are handled
-;; separately because copy 0 has three entry sources and copy 1 has one.
-(define (opt-unroll-mb-clone-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [body-labels : OptLabelSet]
-  [copy : i64]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-92378-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-92378-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-92378-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-92378-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-92378-3.value]
-        [label : i64 phi-input-at-92378-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-92378-3.slots
-            (+ phi-inputs-at-92378-3.start 1)
-            (- phi-inputs-at-92378-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (opt-unroll-subst-value (compiler-opt-global-shared-view remap) value)
-          (opt-unroll-mb-label body-labels label copy)
-          (opt-unroll-mb-clone-phi-inputs rest remap body-labels copy))))))
-
 (define (opt-unroll-mb-clone-header-phi
   [instr : ir.CompilerIrInstr]
   [shape : OptUnrollMbShape]
@@ -96967,72 +96329,24 @@
   [shape : (& shape OptUnrollMbShape)]
   [copy : i64]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Mov dst src ty)
-      (ir.CompilerIrInstr.Mov
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Cast
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (ir.CompilerIrInstr.Bitcast
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        from-ty
-        to-ty)]
-    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (ir.CompilerIrInstr.BinOp
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        op
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) lhs)
-        (if (and (= copy 1) (= dst shape.inext))
+    ;; The second copy's counter increment steps over both copies.
+    [(ir.CompilerIrInstr.BinOp dst op lhs _ ty)
+      (if (and (= copy 1) (= dst shape.inext))
+        (ir.CompilerIrInstr.BinOp
+          (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
+          op
+          (opt-unroll-subst-value remap lhs)
           (ir.CompilerIrValue.I64 2)
-          (opt-unroll-subst-value remap rhs))
-        ty)]
-    [(ir.CompilerIrInstr.UnOp dst op src ty)
-      (ir.CompilerIrInstr.UnOp
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        op
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.Gep dst base offset ty)
-      (ir.CompilerIrInstr.Gep
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) base)
-        (opt-unroll-subst-value remap offset)
-        ty)]
-    [(ir.CompilerIrInstr.Load dst src ty)
-      (ir.CompilerIrInstr.Load
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-subst-value remap src)
-        ty)]
-    [(ir.CompilerIrInstr.StorePtr ptr value ty)
-      (ir.CompilerIrInstr.StorePtr
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) ptr)
-        (opt-unroll-subst-value remap value)
-        ty)]
-    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
-      (ir.CompilerIrInstr.StoreOwned
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) ptr)
-        (opt-unroll-subst-value remap value)
-        ty)]
-    [(ir.CompilerIrInstr.Phi dst inputs ty)
-      (ir.CompilerIrInstr.Phi
-        (opt-bce-mb-remap-dst (compiler-opt-global-shared-view remap) dst)
-        (opt-unroll-mb-clone-phi-inputs inputs remap body-labels copy)
-        ty)]
-    [(ir.CompilerIrInstr.Jump target)
-      (ir.CompilerIrInstr.Jump (opt-unroll-mb-label body-labels target copy))]
-    [(ir.CompilerIrInstr.Branch cond then-label else-label)
-      (ir.CompilerIrInstr.Branch
-        (opt-unroll-subst-value remap cond)
-        (opt-unroll-mb-label body-labels then-label copy)
-        (opt-unroll-mb-label body-labels else-label copy))]
-    [_ instr]))
+          ty)
+        (opt-region-clone-instr-remapped
+          remap
+          (OptCloneLabels.Body body-labels (opt-unroll-mb-copy-suffix copy))
+          instr))]
+    [_
+      (opt-region-clone-instr-remapped
+        remap
+        (OptCloneLabels.Body body-labels (opt-unroll-mb-copy-suffix copy))
+        instr)]))
 
 (define (opt-unroll-mb-copy0-counter-tail?
   [instr : ir.CompilerIrInstr]

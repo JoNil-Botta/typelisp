@@ -5071,13 +5071,21 @@
     [direct-local-id : i64
       (tc_core.macro-hygiene-local-id
         session-a
-        (tc_core.MacroHygieneContext source-id root-module-id declaration-id 0)
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          declaration-id
+          (compiler_symbols.compiler-symbols-empty))
         3
         source-id)]
     [surface-local-id : i64
       (tc_core.macro-hygiene-local-id
         session-a
-        (tc_core.MacroHygieneContext source-id root-module-id -1 0)
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          -1
+          (compiler_symbols.compiler-symbols-empty))
         3
         source-id)]
     [other-macro-local-id : i64
@@ -5087,25 +5095,37 @@
           (+ source-id 1)
           root-module-id
           declaration-id
-          0)
+          (compiler_symbols.compiler-symbols-empty))
         3
         source-id)]
     [deep-local-id : i64
       (tc_core.macro-hygiene-local-id
         session-a
-        (tc_core.MacroHygieneContext source-id root-module-id declaration-id 0)
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          declaration-id
+          (compiler_symbols.compiler-symbols-empty))
         1024
         source-id)]
     [deep-local-again : i64
       (tc_core.macro-hygiene-local-id
         session-a
-        (tc_core.MacroHygieneContext source-id root-module-id -1 0)
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          -1
+          (compiler_symbols.compiler-symbols-empty))
         1024
         source-id)]
     [collision-local-id : i64
       (tc_core.macro-hygiene-local-id
         session-a
-        (tc_core.MacroHygieneContext source-id root-module-id declaration-id 0)
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          declaration-id
+          (compiler_symbols.compiler-symbols-empty))
         1536
         source-id)]
     [b-context-id : i64
@@ -5113,7 +5133,11 @@
     [b-local-id : i64
       (tc_core.macro-hygiene-local-id
         session-b
-        (tc_core.MacroHygieneContext source-id root-module-id declaration-id 0)
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          declaration-id
+          (compiler_symbols.compiler-symbols-empty))
         3
         source-id)]
     [before-reset : bool

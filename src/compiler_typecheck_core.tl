@@ -85125,16 +85125,7 @@
   (macro-name-id i64)
   (definition-module-id i64)
   (declaration-id i64)
-  ;; The expanding context's shared block, whose first word addresses its
-  ;; symbols; keeping the address instead of the symbols makes this Copy.
-  (context-shared u64))
-
-(define (macro-hygiene-symbols [hygiene : (& hygiene MacroHygieneContext)]) : (&
-    hygiene
-    csym.CompilerSymbols)
-  (unsafe
-    (ptr-read
-      (int->ptr hygiene.context-shared : (Ptr (& hygiene csym.CompilerSymbols))))))
+  (symbols csym.CompilerSymbols))
 
 (defenum ResultMacroCallDecl
   (Ok MacroMaybeDecl)
@@ -94827,19 +94818,19 @@
         module-id)]
     [value-handle : i64
       (csym.compiler-symbols-lookup-value-in-module-id-or
-        (macro-hygiene-symbols hygiene)
+        hygiene.symbols
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
     [type-handle : i64
       (csym.compiler-symbols-lookup-type-in-module-id-or
-        (macro-hygiene-symbols hygiene)
+        hygiene.symbols
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
     [macro-handle : i64
       (csym.compiler-symbols-lookup-macro-in-module-id-or
-        (macro-hygiene-symbols hygiene)
+        hygiene.symbols
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
@@ -94857,7 +94848,7 @@
       (let
         [owner-module-id : i64
           (csym.compiler-symbols-owner-module-id-at-index-or
-            (macro-hygiene-symbols hygiene)
+            hygiene.symbols
             declaration-id
             fallback)]
         ;; A prior expansion can add a flat unqualified alias after a root
@@ -94911,7 +94902,7 @@
           (if (or (< full-module-id 0) (< final-id 0))
             -2
             (macro-hygiene-binding-owner-module-id-or
-              hygiene
+              (tc-global-shared-view hygiene)
               full-module-id
               final-id
               -2))]
@@ -94953,7 +94944,7 @@
                   [enum-owner-module-id : i64
                     (if (csym.compiler-symbols-handle-found?
                       (csym.compiler-symbols-lookup-type-in-module-id-or
-                        (macro-hygiene-symbols hygiene)
+                        hygiene.symbols
                         lookup-module-id
                         alias-id
                         (csym.compiler-symbols-missing-handle)))
@@ -96067,7 +96058,7 @@
           expr-bases
           (ast.ast-expr-list-get exprs index 0)
           env
-          macro-name
+          (tc-global-shared-view macro-name)
           depth))
       (macro-hygiene-expr-list-into
         expr-bases
@@ -96098,7 +96089,7 @@
                 expr-bases
                 (ast.ast-expr-list-get (& exprs) index 0)
                 env
-                macro-name
+                (tc-global-shared-view macro-name)
                 depth)))
           (set! index (+ index 1))))
       out)))
@@ -96170,7 +96161,7 @@
             (&mut out)
             (macro-hygiene-rename-lifetime-id
               env
-              macro-name
+              (tc-global-shared-view macro-name)
               (ast.ast-lifetime-list-get
                 (& lifetimes)
                 index
@@ -96220,7 +96211,7 @@
                     index
                     (ast.ast-type-id-fallback)))
                 env
-                macro-name)))
+                (tc-global-shared-view macro-name))))
           (set! index (+ index 1))))
       out)))
 
@@ -96234,7 +96225,7 @@
         (macro-hygiene-type-list
           (ast.ast-type-list-box-shared-view args)
           env
-          macro-name)
+          (tc-global-shared-view macro-name))
         (macro-hygiene-type (macro-hygiene-type-get env ret) env macro-name))]
     [(ast.AstType.Tuple elems)
       (ast.ast-ty-tuple
@@ -96263,15 +96254,24 @@
         (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
     [(ast.AstType.Ref region inner)
       (ast.ast-ty-ref
-        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-rename-lifetime-id
+          env
+          (tc-global-shared-view macro-name)
+          region)
         (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
     [(ast.AstType.MutRef region inner)
       (ast.ast-ty-mut-ref
-        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-rename-lifetime-id
+          env
+          (tc-global-shared-view macro-name)
+          region)
         (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
     [(ast.AstType.Region region inner)
       (ast.ast-ty-region
-        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-rename-lifetime-id
+          env
+          (tc-global-shared-view macro-name)
+          region)
         (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
     [(ast.AstType.EnumArgs name lifetimes)
       (ast.ast-ty-enum-args
@@ -96333,8 +96333,13 @@
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(ast.AstParam.Param name ty comptime?)
         (let
-          [nty : ast.AstType (macro-hygiene-type ty env macro-name)]
-          (match (macro-hygiene-bind-name-id env macro-name depth name)
+          [nty : ast.AstType
+            (macro-hygiene-type ty env (tc-global-shared-view macro-name))]
+          (match (macro-hygiene-bind-name-id
+            env
+            (tc-global-shared-view macro-name)
+            depth
+            name)
             [(MacroHygieneName.Name renamed-id next-env)
               (match (macro-hygiene-param-list-at
                 params
@@ -96378,7 +96383,7 @@
     (match (macro-hygiene-pattern
       (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
       env
-      macro-name
+      (tc-global-shared-view macro-name)
       depth)
       [(MacroHygienePattern.Pattern npattern next-env)
         (begin
@@ -96400,7 +96405,10 @@
     [(ast.AstPattern.Var name maybe-ty)
       (let
         [nmaybe-ty : ast.AstMaybeType
-          (macro-hygiene-maybe-type maybe-ty env macro-name)]
+          (macro-hygiene-maybe-type
+            maybe-ty
+            env
+            (tc-global-shared-view macro-name))]
         (match (macro-hygiene-bind-name-id env macro-name depth name)
           [(MacroHygieneName.Name renamed-id next-env)
             (MacroHygienePattern.Pattern
@@ -96453,7 +96461,11 @@
       (let
         [args : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view args-box)]
-        (match (macro-hygiene-pattern-list args env macro-name depth)
+        (match (macro-hygiene-pattern-list
+          args
+          env
+          (tc-global-shared-view macro-name)
+          depth)
           [(MacroHygienePatternList.PatternList nargs next-env)
             (MacroHygienePattern.Pattern
               (ast.ast-pat-variant-id
@@ -96501,10 +96513,22 @@
       [(ast.AstLetBinding.Binding name maybe-ty init-box)
         (let
           [ninit : i64
-            (macro-hygiene-expr expr-bases init-box env macro-name depth)]
+            (macro-hygiene-expr
+              expr-bases
+              init-box
+              env
+              (tc-global-shared-view macro-name)
+              depth)]
           [nmaybe-ty : ast.AstMaybeType
-            (macro-hygiene-maybe-type maybe-ty env macro-name)]
-          (match (macro-hygiene-bind-name-id env macro-name depth name)
+            (macro-hygiene-maybe-type
+              maybe-ty
+              env
+              (tc-global-shared-view macro-name))]
+          (match (macro-hygiene-bind-name-id
+            env
+            (tc-global-shared-view macro-name)
+            depth
+            name)
             [(MacroHygieneName.Name renamed-id next-env)
               (begin
                 (ast.ast-let-binding-list-push
@@ -96557,10 +96581,24 @@
       [(ast.AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
           [ninit : i64
-            (macro-hygiene-expr expr-bases init-box env macro-name depth)]
+            (macro-hygiene-expr
+              expr-bases
+              init-box
+              env
+              (tc-global-shared-view macro-name)
+              depth)]
           [ncleanup : i64
-            (macro-hygiene-expr expr-bases cleanup-box env macro-name depth)]
-          (match (macro-hygiene-bind-name-id env macro-name depth name)
+            (macro-hygiene-expr
+              expr-bases
+              cleanup-box
+              env
+              (tc-global-shared-view macro-name)
+              depth)]
+          (match (macro-hygiene-bind-name-id
+            env
+            (tc-global-shared-view macro-name)
+            depth
+            name)
             [(MacroHygieneName.Name renamed-id next-env)
               (begin
                 (ast.ast-resource-binding-list-push
@@ -96610,7 +96648,11 @@
     unit
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
-        (match (macro-hygiene-pattern pattern env macro-name depth)
+        (match (macro-hygiene-pattern
+          pattern
+          env
+          (tc-global-shared-view macro-name)
+          depth)
           [(MacroHygienePattern.Pattern npattern arm-env)
             (begin
               (ast.ast-match-arm-list-push
@@ -96621,7 +96663,7 @@
                     expr-bases
                     body-box
                     arm-env
-                    macro-name
+                    (tc-global-shared-view macro-name)
                     depth)))
               (macro-hygiene-arm-list-into
                 expr-bases
@@ -96731,7 +96773,12 @@
         (ast.ast-expr-binary-with-pools
           env.pools
           op
-          (macro-hygiene-expr expr-bases left env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            left
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases right env macro-name depth)))]
     [(ast.AstExpr.Unary op inner-box)
       (let
@@ -96752,7 +96799,12 @@
             env)]
         (ast.ast-expr-call-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases func-box env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            func-box
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (match (ast.ast-expr-unspan func)
             [(ast.AstExpr.Var name-id)
               (if (=
@@ -96791,8 +96843,18 @@
         [else-branch : i64 else-branch-box]
         (ast.ast-expr-if-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases cond env macro-name depth)
-          (macro-hygiene-expr expr-bases then-branch env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            cond
+            env
+            (tc-global-shared-view macro-name)
+            depth)
+          (macro-hygiene-expr
+            expr-bases
+            then-branch
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases else-branch env macro-name depth)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
@@ -96803,7 +96865,7 @@
               expr-bases
               bindings
               env
-              macro-name
+              (tc-global-shared-view macro-name)
               depth)
               [(MacroHygieneLetBindings.LetBindings nbindings body-env)
                 (ast.ast-expr-let-with-pools
@@ -96815,7 +96877,11 @@
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : i64 body-box]
-            (match (macro-hygiene-param-list params env macro-name depth)
+            (match (macro-hygiene-param-list
+              params
+              env
+              (tc-global-shared-view macro-name)
+              depth)
               [(MacroHygieneParams.Params nparams body-env)
                 (ast.ast-expr-lambda-with-pools
                   env.pools
@@ -96823,7 +96889,7 @@
                   (macro-hygiene-maybe-type
                     maybe-ret
                     (tc-global-shared-view body-env)
-                    macro-name)
+                    (tc-global-shared-view macro-name))
                   (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(ast.AstExpr.Tuple exprs)
       (ast.ast-node-pool-context-expr-push
@@ -96852,14 +96918,20 @@
         [len : i64 len-box]
         (ast.ast-expr-fixed-make-array-with-pools
           env.pools
-          (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)
+          (macro-hygiene-type
+            (ast.ty-node-get ty-id)
+            env
+            (tc-global-shared-view macro-name))
           (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(ast.AstExpr.MakeArray ty-id len-box)
       (let
         [len : i64 len-box]
         (ast.ast-expr-make-array-with-pools
           env.pools
-          (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)
+          (macro-hygiene-type
+            (ast.ty-node-get ty-id)
+            env
+            (tc-global-shared-view macro-name))
           (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (let
@@ -96867,7 +96939,12 @@
         [index : i64 index-box]
         (ast.ast-expr-array-ref-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases array env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            array
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (let
@@ -96876,8 +96953,18 @@
         [value : i64 value-box]
         (ast.ast-expr-array-set-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases array env macro-name depth)
-          (macro-hygiene-expr expr-bases index env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            array
+            env
+            (tc-global-shared-view macro-name)
+            depth)
+          (macro-hygiene-expr
+            expr-bases
+            index
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(ast.AstExpr.ArrayTake array-box live-box index-box)
       (let
@@ -96886,13 +96973,28 @@
         [index : i64 index-box]
         (ast.ast-expr-array-take-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases array env macro-name depth)
-          (macro-hygiene-expr expr-bases live env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            array
+            env
+            (tc-global-shared-view macro-name)
+            depth)
+          (macro-hygiene-expr
+            expr-bases
+            live
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(ast.AstExpr.FixedArrayTake array-box index-box)
       (ast.ast-expr-fixed-array-take-with-pools
         env.pools
-        (macro-hygiene-expr expr-bases array-box env macro-name depth)
+        (macro-hygiene-expr
+          expr-bases
+          array-box
+          env
+          (tc-global-shared-view macro-name)
+          depth)
         (macro-hygiene-expr expr-bases index-box env macro-name depth))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
@@ -96900,7 +97002,12 @@
         [value : i64 value-box]
         (ast.ast-expr-array-push-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases array env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            array
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(ast.AstExpr.StringRef text-box index-box)
       (let
@@ -96908,7 +97015,12 @@
         [index : i64 index-box]
         (ast.ast-expr-string-ref-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases text env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            text
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(ast.AstExpr.While cond-box body-box)
       (let
@@ -96916,7 +97028,12 @@
         [body : i64 body-box]
         (ast.ast-expr-while-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases cond env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            cond
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases body env macro-name depth)))]
     [(ast.AstExpr.ForOwnedState payload)
       (let
@@ -96929,19 +97046,34 @@
         (if (or (< source-name-id 0) (< index-name-id 0))
           (ast.ast-expr-for-owned-state-with-pools
             env.pools
-            (macro-hygiene-expr expr-bases source-name env macro-name depth)
-            (macro-hygiene-expr expr-bases index-name env macro-name depth)
-            (macro-hygiene-expr expr-bases source env macro-name depth)
+            (macro-hygiene-expr
+              expr-bases
+              source-name
+              env
+              (tc-global-shared-view macro-name)
+              depth)
+            (macro-hygiene-expr
+              expr-bases
+              index-name
+              env
+              (tc-global-shared-view macro-name)
+              depth)
+            (macro-hygiene-expr
+              expr-bases
+              source
+              env
+              (tc-global-shared-view macro-name)
+              depth)
             (macro-hygiene-expr expr-bases body env macro-name depth))
           (match (macro-hygiene-bind-name-id
             env
-            macro-name
+            (tc-global-shared-view macro-name)
             depth
             source-name-id)
             [(MacroHygieneName.Name nsource-name source-env)
               (match (macro-hygiene-bind-name-id
                 source-env
-                macro-name
+                (tc-global-shared-view macro-name)
                 depth
                 index-name-id)
                 [(MacroHygieneName.Name nindex-name body-env)
@@ -96949,7 +97081,12 @@
                     env.pools
                     (macro-hygiene-expr-push env (ast.AstExpr.Var nsource-name))
                     (macro-hygiene-expr-push env (ast.AstExpr.Var nindex-name))
-                    (macro-hygiene-expr expr-bases source env macro-name depth)
+                    (macro-hygiene-expr
+                      expr-bases
+                      source
+                      env
+                      (tc-global-shared-view macro-name)
+                      depth)
                     (macro-hygiene-expr
                       expr-bases
                       body
@@ -96968,13 +97105,38 @@
         (if (< binding-name-id 0)
           (ast.ast-expr-for-owned-step-with-pools
             env.pools
-            (macro-hygiene-expr expr-bases source-name env macro-name depth)
-            (macro-hygiene-expr expr-bases index-name env macro-name depth)
-            (macro-hygiene-expr expr-bases binding-name env macro-name depth)
+            (macro-hygiene-expr
+              expr-bases
+              source-name
+              env
+              (tc-global-shared-view macro-name)
+              depth)
+            (macro-hygiene-expr
+              expr-bases
+              index-name
+              env
+              (tc-global-shared-view macro-name)
+              depth)
+            (macro-hygiene-expr
+              expr-bases
+              binding-name
+              env
+              (tc-global-shared-view macro-name)
+              depth)
             (if (>= expected-type 0)
-              (macro-hygiene-expr expr-bases expected-type env macro-name depth)
+              (macro-hygiene-expr
+                expr-bases
+                expected-type
+                env
+                (tc-global-shared-view macro-name)
+                depth)
               -1)
-            (macro-hygiene-expr expr-bases done-name env macro-name depth)
+            (macro-hygiene-expr
+              expr-bases
+              done-name
+              env
+              (tc-global-shared-view macro-name)
+              depth)
             (macro-hygiene-expr expr-bases body env macro-name depth))
           (let
             ;; This binder is reconstructed from the user clause's name. Map
@@ -96990,18 +97152,33 @@
               (macro-hygiene-env-bind-raw env binding-name-id nbinding-name)]
             (ast.ast-expr-for-owned-step-with-pools
               env.pools
-              (macro-hygiene-expr expr-bases source-name env macro-name depth)
-              (macro-hygiene-expr expr-bases index-name env macro-name depth)
+              (macro-hygiene-expr
+                expr-bases
+                source-name
+                env
+                (tc-global-shared-view macro-name)
+                depth)
+              (macro-hygiene-expr
+                expr-bases
+                index-name
+                env
+                (tc-global-shared-view macro-name)
+                depth)
               (macro-hygiene-expr-push env (ast.AstExpr.Var nbinding-name))
               (if (>= expected-type 0)
                 (macro-hygiene-expr
                   expr-bases
                   expected-type
                   env
-                  macro-name
+                  (tc-global-shared-view macro-name)
                   depth)
                 -1)
-              (macro-hygiene-expr expr-bases done-name env macro-name depth)
+              (macro-hygiene-expr
+                expr-bases
+                done-name
+                env
+                (tc-global-shared-view macro-name)
+                depth)
               (macro-hygiene-expr expr-bases body body-env macro-name depth)))))]
     [(ast.AstExpr.Begin exprs)
       (ast.ast-node-pool-context-expr-push
@@ -97018,21 +97195,34 @@
         [rhs : i64 rhs-box]
         (ast.ast-expr-set-id-with-pools
           env.pools
-          (macro-hygiene-rename-var-id env macro-name name)
+          (macro-hygiene-rename-var-id
+            env
+            (tc-global-shared-view macro-name)
+            name)
           (macro-hygiene-expr expr-bases rhs env macro-name depth)))]
     [(ast.AstExpr.Ann inner-box ty-id)
       (let
         [inner : i64 inner-box]
         (ast.ast-expr-ann-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases inner env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            inner
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
     [(ast.AstExpr.Cast inner-box ty-id)
       (let
         [inner : i64 inner-box]
         (ast.ast-expr-cast-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases inner env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            inner
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
     [(ast.AstExpr.Borrow mutable lifetime-id place-box)
       (let
@@ -97043,7 +97233,7 @@
           (macro-hygiene-borrow-lifetime
             (ast.ast-borrow-lifetime-from-id lifetime-id)
             env
-            macro-name)
+            (tc-global-shared-view macro-name))
           (macro-hygiene-expr expr-bases place env macro-name depth)))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
@@ -97052,7 +97242,12 @@
             [scrut : i64 scrut-box]
             (ast.ast-expr-match-with-pools
               env.pools
-              (macro-hygiene-expr expr-bases scrut env macro-name depth)
+              (macro-hygiene-expr
+                expr-bases
+                scrut
+                env
+                (tc-global-shared-view macro-name)
+                depth)
               (macro-hygiene-arm-list expr-bases arms env macro-name depth)))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
@@ -97061,14 +97256,31 @@
             [start : i64 start-box]
             [end : i64 end-box]
             [body : i64 body-box]
-            (match (macro-hygiene-bind-name-id env macro-name depth index)
+            (match (macro-hygiene-bind-name-id
+              env
+              (tc-global-shared-view macro-name)
+              depth
+              index)
               [(MacroHygieneName.Name nindex-id body-env)
                 (ast.ast-expr-foreach-id-with-pools
                   env.pools
                   nindex-id
-                  (macro-hygiene-type index-ty env macro-name)
-                  (macro-hygiene-expr expr-bases start env macro-name depth)
-                  (macro-hygiene-expr expr-bases end env macro-name depth)
+                  (macro-hygiene-type
+                    index-ty
+                    env
+                    (tc-global-shared-view macro-name))
+                  (macro-hygiene-expr
+                    expr-bases
+                    start
+                    env
+                    (tc-global-shared-view macro-name)
+                    depth)
+                  (macro-hygiene-expr
+                    expr-bases
+                    end
+                    env
+                    (tc-global-shared-view macro-name)
+                    depth)
                   (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
@@ -97085,16 +97297,38 @@
             [end : i64 end-box]
             [init : i64 init-box]
             [value : i64 value-box]
-            (match (macro-hygiene-bind-name-id env macro-name depth index)
+            (match (macro-hygiene-bind-name-id
+              env
+              (tc-global-shared-view macro-name)
+              depth
+              index)
               [(MacroHygieneName.Name nindex-id body-env)
                 (ast.ast-expr-spmd-reduce-id-with-pools
                   env.pools
                   op
                   nindex-id
-                  (macro-hygiene-type index-ty env macro-name)
-                  (macro-hygiene-expr expr-bases start env macro-name depth)
-                  (macro-hygiene-expr expr-bases end env macro-name depth)
-                  (macro-hygiene-expr expr-bases init env macro-name depth)
+                  (macro-hygiene-type
+                    index-ty
+                    env
+                    (tc-global-shared-view macro-name))
+                  (macro-hygiene-expr
+                    expr-bases
+                    start
+                    env
+                    (tc-global-shared-view macro-name)
+                    depth)
+                  (macro-hygiene-expr
+                    expr-bases
+                    end
+                    env
+                    (tc-global-shared-view macro-name)
+                    depth)
+                  (macro-hygiene-expr
+                    expr-bases
+                    init
+                    env
+                    (tc-global-shared-view macro-name)
+                    depth)
                   (macro-hygiene-expr
                     expr-bases
                     value
@@ -97120,11 +97354,15 @@
             [init : i64 init-box]
             [value : i64 value-box]
             [body : i64 body-box]
-            (match (macro-hygiene-bind-name-id env macro-name depth index)
+            (match (macro-hygiene-bind-name-id
+              env
+              (tc-global-shared-view macro-name)
+              depth
+              index)
               [(MacroHygieneName.Name nindex-id value-env)
                 (match (macro-hygiene-bind-name-id
                   (tc-global-shared-view value-env)
-                  macro-name
+                  (tc-global-shared-view macro-name)
                   depth
                   prefix)
                   [(MacroHygieneName.Name nprefix-id body-env)
@@ -97132,20 +97370,38 @@
                       env.pools
                       op
                       nindex-id
-                      (macro-hygiene-type index-ty env macro-name)
-                      (macro-hygiene-expr expr-bases start env macro-name depth)
-                      (macro-hygiene-expr expr-bases end env macro-name depth)
+                      (macro-hygiene-type
+                        index-ty
+                        env
+                        (tc-global-shared-view macro-name))
+                      (macro-hygiene-expr
+                        expr-bases
+                        start
+                        env
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        end
+                        env
+                        (tc-global-shared-view macro-name)
+                        depth)
                       nprefix-id
                       (macro-hygiene-type
                         prefix-ty
                         (tc-global-shared-view value-env)
-                        macro-name)
-                      (macro-hygiene-expr expr-bases init env macro-name depth)
+                        (tc-global-shared-view macro-name))
+                      (macro-hygiene-expr
+                        expr-bases
+                        init
+                        env
+                        (tc-global-shared-view macro-name)
+                        depth)
                       (macro-hygiene-expr
                         expr-bases
                         value
                         value-env
-                        macro-name
+                        (tc-global-shared-view macro-name)
                         depth)
                       (macro-hygiene-expr
                         expr-bases
@@ -97171,31 +97427,53 @@
             [init : i64 init-box]
             [keep : i64 keep-box]
             [body : i64 body-box]
-            (match (macro-hygiene-bind-name-id env macro-name depth index)
+            (match (macro-hygiene-bind-name-id
+              env
+              (tc-global-shared-view macro-name)
+              depth
+              index)
               [(MacroHygieneName.Name nindex-id keep-env)
                 (match (macro-hygiene-bind-name-id
                   (tc-global-shared-view keep-env)
-                  macro-name
+                  (tc-global-shared-view macro-name)
                   depth
                   slot)
                   [(MacroHygieneName.Name nslot-id body-env)
                     (ast.ast-expr-spmd-compact-id-with-pools
                       env.pools
                       nindex-id
-                      (macro-hygiene-type index-ty env macro-name)
-                      (macro-hygiene-expr expr-bases start env macro-name depth)
-                      (macro-hygiene-expr expr-bases end env macro-name depth)
+                      (macro-hygiene-type
+                        index-ty
+                        env
+                        (tc-global-shared-view macro-name))
+                      (macro-hygiene-expr
+                        expr-bases
+                        start
+                        env
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        end
+                        env
+                        (tc-global-shared-view macro-name)
+                        depth)
                       nslot-id
                       (macro-hygiene-type
                         slot-ty
                         (tc-global-shared-view keep-env)
-                        macro-name)
-                      (macro-hygiene-expr expr-bases init env macro-name depth)
+                        (tc-global-shared-view macro-name))
+                      (macro-hygiene-expr
+                        expr-bases
+                        init
+                        env
+                        (tc-global-shared-view macro-name)
+                        depth)
                       (macro-hygiene-expr
                         expr-bases
                         keep
                         keep-env
-                        macro-name
+                        (tc-global-shared-view macro-name)
                         depth)
                       (macro-hygiene-expr
                         expr-bases
@@ -97209,7 +97487,12 @@
         [lane : i64 lane-box]
         (ast.ast-expr-spmd-broadcast-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases value env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            value
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases lane env macro-name depth)))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (let
@@ -97217,7 +97500,12 @@
         [lane : i64 lane-box]
         (ast.ast-expr-spmd-shuffle-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases value env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            value
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases lane env macro-name depth)))]
     [(ast.AstExpr.StructGet inner-box field)
       (let
@@ -97232,11 +97520,20 @@
         [value : i64 value-box]
         (ast.ast-expr-struct-set-id-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases inner env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            inner
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           field
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(ast.AstExpr.WithRegion name body)
-      (match (macro-hygiene-bind-name-id env macro-name depth name)
+      (match (macro-hygiene-bind-name-id
+        env
+        (tc-global-shared-view macro-name)
+        depth
+        name)
         [(MacroHygieneName.Name nname-id body-env)
           (ast.ast-node-pool-context-expr-push
             env.pools
@@ -97253,7 +97550,12 @@
         [scratch : i64 scratch-box]
         (ast.ast-expr-with-escape-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases scratch env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            scratch
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr-list expr-bases body env macro-name depth)))]
     [(ast.AstExpr.WithScratch body)
       (ast.ast-expr-with-scratch-with-pools
@@ -97264,7 +97566,12 @@
         [arena : i64 arena-box]
         (ast.ast-expr-in-arena-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases arena env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            arena
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr-list expr-bases body env macro-name depth)))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
@@ -97273,7 +97580,7 @@
             expr-bases
             bindings
             env
-            macro-name
+            (tc-global-shared-view macro-name)
             depth)
             [(MacroHygieneResourceBindings.ResourceBindings nbindings body-env)
               (ast.ast-node-pool-context-expr-push
@@ -97312,7 +97619,12 @@
         [value : i64 value-box]
         (ast.ast-expr-box-set-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases inner env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            inner
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(ast.AstExpr.TypeLiteral ty-id)
       (ast.ast-expr-type-literal-with-pools
@@ -97373,7 +97685,12 @@
         [value : i64 value-box]
         (ast.ast-expr-ptr-write-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases ptr env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            ptr
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (let
@@ -97381,14 +97698,24 @@
         [offset : i64 offset-box]
         (ast.ast-expr-ptr-offset-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases ptr env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            ptr
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases offset env macro-name depth)))]
     [(ast.AstExpr.PtrCast ptr-box ty-id)
       (let
         [ptr : i64 ptr-box]
         (ast.ast-expr-ptr-cast-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases ptr env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            ptr
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
     [(ast.AstExpr.PtrToInt ptr-box)
       (let
@@ -97401,7 +97728,12 @@
         [value : i64 value-box]
         (ast.ast-expr-int-to-ptr-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases value env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            value
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
     [(ast.AstExpr.StringData inner-box)
       (let
@@ -97415,7 +97747,12 @@
         [len : i64 len-box]
         (ast.ast-expr-string-from-bytes-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases ptr env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            ptr
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(ast.AstExpr.ArrayData inner-box)
       (let
@@ -97437,7 +97774,12 @@
         [subleaf : i64 subleaf-box]
         (ast.ast-expr-cpuid-eax-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases leaf env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            leaf
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
@@ -97445,7 +97787,12 @@
         [subleaf : i64 subleaf-box]
         (ast.ast-expr-cpuid-ebx-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases leaf env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            leaf
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
@@ -97453,7 +97800,12 @@
         [subleaf : i64 subleaf-box]
         (ast.ast-expr-cpuid-ecx-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases leaf env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            leaf
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
@@ -97461,7 +97813,12 @@
         [subleaf : i64 subleaf-box]
         (ast.ast-expr-cpuid-edx-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases leaf env macro-name depth)
+          (macro-hygiene-expr
+            expr-bases
+            leaf
+            env
+            (tc-global-shared-view macro-name)
+            depth)
           (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(ast.AstExpr.Xgetbv index-box)
       (let
@@ -104156,7 +104513,8 @@
                                     macro-name-id
                                     definition-module-id
                                     declaration-id
-                                    ctx.shared)
+                                    (csym.compiler-symbols-shared-view
+                                      (tc-context-symbols ctx)))
                                   (+ depth 1))]
                               (begin
                                 (macro-hygiene-env-root-finish!
@@ -104211,7 +104569,8 @@
                                     macro-name-id
                                     definition-module-id
                                     declaration-id
-                                    ctx.shared)
+                                    (csym.compiler-symbols-shared-view
+                                      (tc-context-symbols ctx)))
                                   (+ depth 1))]
                               (begin
                                 (macro-hygiene-env-root-finish!
@@ -106667,7 +107026,8 @@
                                               macro-name
                                               definition-module
                                               declaration-id
-                                              call-ctx.shared)
+                                              (csym.compiler-symbols-shared-view
+                                                (tc-context-symbols call-ctx)))
                                             params
                                             1)
                                           (tc-global-shared-view call-expr)
@@ -106944,7 +107304,9 @@
                                                     macro-name
                                                     definition-module
                                                     declaration-id
-                                                    call-ctx.shared)
+                                                    (csym.compiler-symbols-shared-view
+                                                      (tc-context-symbols
+                                                        call-ctx)))
                                                   params
                                                   1)
                                                 (tc-global-shared-view

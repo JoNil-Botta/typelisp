@@ -38961,11 +38961,13 @@
         ", 16("
         head-reg
         ")\n")
-      (runtime_common.compiler-backend-runtime-profile-alloc-account-with-scratch
-        (str_cat.str-cat "$" size-text)
-        profile-label
-        profile
-        scav)
+      (let
+        [size-reg (str_cat.str-cat "$" size-text)]
+        (runtime_common.compiler-backend-runtime-profile-alloc-account-with-scratch
+          size-reg
+          profile-label
+          profile
+          scav))
       (str_cat.str-cat "    jmp " done-label "\n" slow-label ":\n")
       (str_cat.str-cat
         "    call "

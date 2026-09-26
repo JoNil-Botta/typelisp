@@ -139,7 +139,7 @@ tl_startup_profile_process_entry_tick:
     ""))
 
 (define (compiler-backend-runtime-profile-alloc-account
-  [size-reg : String]
+  [size-reg : (& size-reg str)]
   [done-label : String]
   [profile : bool]) : String
   (compiler-backend-runtime-profile-alloc-account-with-scratch
@@ -149,7 +149,7 @@ tl_startup_profile_process_entry_tick:
     "%r10"))
 
 (define (compiler-backend-runtime-profile-alloc-account-with-scratch
-  [size-reg : String]
+  [size-reg : (& size-reg str)]
   [done-label : String]
   [profile : bool]
   [scratch-reg : String]) : String
@@ -248,11 +248,11 @@ tl_startup_profile_process_entry_tick:
     ""))
 
 (define (compiler-backend-runtime-fast-alloc-function
-  [current-arena-load : String]
-  [usable-end-offset : String]
+  [current-arena-load : (& current-arena-load str)]
+  [usable-end-offset : (& usable-end-offset str)]
   [size : i64]
-  [size-reg : String]
-  [next-reg : String]
+  [size-reg : (& size-reg str)]
+  [next-reg : (& next-reg str)]
   [profile : bool]) : String
   (let
     [size-text : String (string.int->string size)]
@@ -300,7 +300,7 @@ tl_startup_profile_process_entry_tick:
         ", 16(%r9)\n")]
     [ordinary-profile : String
       (compiler-backend-runtime-profile-alloc-account
-        (owned_view.compiler-owned-shared-view size-imm)
+        size-imm
         profile-label
         profile)]
     [atomic-body-a : String
@@ -370,53 +370,53 @@ tl_startup_profile_process_entry_tick:
   [profile : bool]) : String
   (str_cat.str-cat
     (compiler-backend-runtime-fast-alloc-function
-      (owned_view.compiler-owned-shared-view current-arena-load)
-      (owned_view.compiler-owned-shared-view usable-end-offset)
+      current-arena-load
+      usable-end-offset
       8
-      (owned_view.compiler-owned-shared-view size-reg)
-      (owned_view.compiler-owned-shared-view next-reg)
+      size-reg
+      next-reg
       profile)
     (compiler-backend-runtime-fast-alloc-function
-      (owned_view.compiler-owned-shared-view current-arena-load)
-      (owned_view.compiler-owned-shared-view usable-end-offset)
+      current-arena-load
+      usable-end-offset
       16
-      (owned_view.compiler-owned-shared-view size-reg)
-      (owned_view.compiler-owned-shared-view next-reg)
+      size-reg
+      next-reg
       profile)
     (compiler-backend-runtime-fast-alloc-function
-      (owned_view.compiler-owned-shared-view current-arena-load)
-      (owned_view.compiler-owned-shared-view usable-end-offset)
+      current-arena-load
+      usable-end-offset
       24
-      (owned_view.compiler-owned-shared-view size-reg)
-      (owned_view.compiler-owned-shared-view next-reg)
+      size-reg
+      next-reg
       profile)
     (compiler-backend-runtime-fast-alloc-function
-      (owned_view.compiler-owned-shared-view current-arena-load)
-      (owned_view.compiler-owned-shared-view usable-end-offset)
+      current-arena-load
+      usable-end-offset
       32
-      (owned_view.compiler-owned-shared-view size-reg)
-      (owned_view.compiler-owned-shared-view next-reg)
+      size-reg
+      next-reg
       profile)
     (compiler-backend-runtime-fast-alloc-function
-      (owned_view.compiler-owned-shared-view current-arena-load)
-      (owned_view.compiler-owned-shared-view usable-end-offset)
+      current-arena-load
+      usable-end-offset
       40
-      (owned_view.compiler-owned-shared-view size-reg)
-      (owned_view.compiler-owned-shared-view next-reg)
+      size-reg
+      next-reg
       profile)
     (compiler-backend-runtime-fast-alloc-function
-      (owned_view.compiler-owned-shared-view current-arena-load)
-      (owned_view.compiler-owned-shared-view usable-end-offset)
+      current-arena-load
+      usable-end-offset
       48
-      (owned_view.compiler-owned-shared-view size-reg)
-      (owned_view.compiler-owned-shared-view next-reg)
+      size-reg
+      next-reg
       profile)
     (compiler-backend-runtime-fast-alloc-function
-      (owned_view.compiler-owned-shared-view current-arena-load)
-      (owned_view.compiler-owned-shared-view usable-end-offset)
+      current-arena-load
+      usable-end-offset
       56
-      (owned_view.compiler-owned-shared-view size-reg)
-      (owned_view.compiler-owned-shared-view next-reg)
+      size-reg
+      next-reg
       profile)
     (compiler-backend-runtime-fast-alloc-function
       current-arena-load

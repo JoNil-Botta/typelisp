@@ -1,2 +1,0 @@
-# name|command|expected-status
-quote_runtime_value|compile|failure

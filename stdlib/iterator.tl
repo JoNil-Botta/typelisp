@@ -131,75 +131,63 @@
 
 (cfg
   test
-  (define (iterator-test-main) : i64
-    (begin
-      (test.assert-i64-eq
-        (iterator-test-range-sum (range 0 0))
-        0
-        "empty range sum")
-      (test.assert-i64-eq
-        (iterator-test-range-sum (range 5 3))
-        0
-        "descending range sum")
-      (test.assert-i64-eq
-        (iterator-test-range-sum (range 4 5))
-        4
-        "single range sum")
-      (test.assert-i64-eq
-        (iterator-test-range-sum (range 1 4))
-        6
-        "multi range sum")
-      (test.assert-i64-eq
-        (iterator-test-range-sum (range-inclusive 1 3))
-        6
-        "inclusive range sum")
-      (test.assert-i64-eq
-        (iterator-test-range-sum (range-inclusive 3 3))
-        3
-        "inclusive singleton sum")
-      (test.assert-i64-eq
-        (iterator-test-range-sum (range-inclusive 5 3))
-        0
-        "inclusive descending range sum")
-      (let
-        [iter : IntoIter (into-iterator (range 7 8))]
-        (begin
-          (iterator-test-expect-next (&mut iter) 7 "first next yields value")
-          (iterator-test-expect-done (&mut iter) "second next exhausted")
-          (iterator-test-expect-done
-            (&mut iter)
-            "repeated next stays exhausted")))
-      (let
-        [iter : IntoIter (into-iterator (range 8 10))]
-        (begin
-          (iterator-test-expect-next (&mut iter) 8 "canonical range first item")
-          (iterator-test-expect-next
-            (&mut iter)
-            9
-            "canonical range second item")
-          (iterator-test-expect-done (&mut iter) "canonical range exhausts")
-          (iterator-test-expect-done
-            (&mut iter)
-            "canonical range repeated exhaustion")))
-      (let
-        [iter : IntoIter
-          (into-iterator
-            (range-inclusive 9223372036854775807 9223372036854775807))]
-        (begin
-          (iterator-test-expect-next
-            (&mut iter)
-            9223372036854775807
-            "inclusive max endpoint yields")
-          (iterator-test-expect-done
-            (&mut iter)
-            "inclusive max endpoint exhausts")
-          (iterator-test-expect-done
-            (&mut iter)
-            "inclusive max endpoint repeated exhaustion")))
-      42)))
-
-(cfg
-  test
   (test
     iterator-range-api
-    (test.assert-i64-eq (iterator-test-main) 42 "iterator range fixture result")))
+    (test.assert-i64-eq
+      (iterator-test-range-sum (range 0 0))
+      0
+      "empty range sum")
+    (test.assert-i64-eq
+      (iterator-test-range-sum (range 5 3))
+      0
+      "descending range sum")
+    (test.assert-i64-eq
+      (iterator-test-range-sum (range 4 5))
+      4
+      "single range sum")
+    (test.assert-i64-eq
+      (iterator-test-range-sum (range 1 4))
+      6
+      "multi range sum")
+    (test.assert-i64-eq
+      (iterator-test-range-sum (range-inclusive 1 3))
+      6
+      "inclusive range sum")
+    (test.assert-i64-eq
+      (iterator-test-range-sum (range-inclusive 3 3))
+      3
+      "inclusive singleton sum")
+    (test.assert-i64-eq
+      (iterator-test-range-sum (range-inclusive 5 3))
+      0
+      "inclusive descending range sum")
+    (let
+      [iter : IntoIter (into-iterator (range 7 8))]
+      (begin
+        (iterator-test-expect-next (&mut iter) 7 "first next yields value")
+        (iterator-test-expect-done (&mut iter) "second next exhausted")
+        (iterator-test-expect-done (&mut iter) "repeated next stays exhausted")))
+    (let
+      [iter : IntoIter (into-iterator (range 8 10))]
+      (begin
+        (iterator-test-expect-next (&mut iter) 8 "canonical range first item")
+        (iterator-test-expect-next (&mut iter) 9 "canonical range second item")
+        (iterator-test-expect-done (&mut iter) "canonical range exhausts")
+        (iterator-test-expect-done
+          (&mut iter)
+          "canonical range repeated exhaustion")))
+    (let
+      [iter : IntoIter
+        (into-iterator
+          (range-inclusive 9223372036854775807 9223372036854775807))]
+      (begin
+        (iterator-test-expect-next
+          (&mut iter)
+          9223372036854775807
+          "inclusive max endpoint yields")
+        (iterator-test-expect-done
+          (&mut iter)
+          "inclusive max endpoint exhausts")
+        (iterator-test-expect-done
+          (&mut iter)
+          "inclusive max endpoint repeated exhaustion")))))

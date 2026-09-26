@@ -47552,10 +47552,7 @@
             (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 2))
             (ast.AstType.I64))])
       (irt.instr "%13 = gep @mbcall_workspace, 0 : i64")
-      (ir.CompilerIrInstr.Load
-        14
-        (ir.CompilerIrValue.Var 13)
-        (ast.AstType.DynArray 0)))))
+      (irt.instr "%14 = load %13 : (__tl_dyn-array i64)"))))
 
 (define (opt-bce-mbcall-test-blocks [variant : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
@@ -49006,16 +49003,7 @@
     (opt-test-instrs
       (irt.instr "%3 = phi [0, entry], [%10, next] : i64")
       (if variant-base?
-        (ir.CompilerIrInstr.Phi
-          16
-          (ir.compiler-ir-phi-input-seq-prepend
-            (ir.CompilerIrValue.Var 0)
-            (ir.compiler-ir-label "entry")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.Var 0)
-              (ir.compiler-ir-label "next")
-              (ir.compiler-ir-phi-input-seq-empty)))
-          (ast.AstType.DynArray 0))
+        (irt.instr "%16 = phi [%0, entry], [%0, next] : (__tl_dyn-array i64)")
         (ir.CompilerIrInstr.Mov 16 (ir.CompilerIrValue.I64 0) (ast.AstType.I64)))
       (irt.instr "%5 = lt %3, %2 : bool")
       (irt.instr "branch %5, body, exit"))))
@@ -49500,10 +49488,7 @@
           (opt-test-instrs-with-tail
             (opt-licm-loop-finish-instrs)
             (ir.CompilerIrInstr.Load 7 (ir.CompilerIrValue.Var 6) load-ty)
-            (ir.CompilerIrInstr.Load
-              12
-              (ir.CompilerIrValue.Var 11)
-              (ast.AstType.DynArray 0))
+            (irt.instr "%12 = load %11 : (__tl_dyn-array i64)")
             (irt.instr "%8 = gep %12, 0 : i64")
             (irt.instr "%9 = load %8 : u64")
             (irt.instr "%10 = gep %9, %4 : i64")
@@ -49544,10 +49529,7 @@
 ;; The same element store writing a DESCRIPTOR HANDLE -- the candidate's own
 ;; class -- which the rule must refuse.
 (define (opt-ec-element-store-handle) : ir.CompilerIrInstr
-  (ir.CompilerIrInstr.StorePtr
-    (ir.CompilerIrValue.Var 10)
-    (ir.CompilerIrValue.Var 12)
-    (ast.AstType.DynArray 0)))
+  (irt.instr "store_ptr %10, %12 : (__tl_dyn-array i64)"))
 
 ;; A store through the `raw` parameter: a pointer whose provenance the walk
 ;; cannot place, so it is a header-or-unknown store and no class bounds it.
@@ -64594,10 +64576,7 @@
       (ir.CompilerIrValue.I64 0)
       (ast.AstType.U8))
     (opt-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Load
-        7
-        (ir.CompilerIrValue.Var 6)
-        (ast.AstType.DynArray 0))
+      (irt.instr "%7 = load %6 : (__tl_dyn-array i64)")
       (opt-test-instr-seq-prepend
         (irt.instr "%8 = gep %7, 1 : i64")
         (opt-test-instr-seq-prepend
@@ -66189,10 +66168,7 @@
   (opt-test-instrs-with-tail
     rest
     (irt.instr "%1 = gep %0, 0 : u8")
-    (ir.CompilerIrInstr.Load
-      2
-      (ir.CompilerIrValue.Var 1)
-      (ast.AstType.DynArray 0))
+    (irt.instr "%2 = load %1 : (__tl_dyn-array i64)")
     (ir.CompilerIrInstr.Mov
       3
       (ir.CompilerIrValue.Var 2)
@@ -69615,15 +69591,8 @@
 ;; element address inside the buffer.
 (define (opt-load-cse-typed-element-store-instrs [store-ty : ast.AstType]) : ir.CompilerIrInstrSeq
   (opt-test-instrs
-    (ir.CompilerIrInstr.Gep
-      2
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.I64 0)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (ir.CompilerIrInstr.Load
-      3
-      (ir.CompilerIrValue.Var 2)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
+    (irt.instr "%2 = gep %0, 0 : (__tl_dyn-array i64)")
+    (irt.instr "%3 = load %2 : (__tl_dyn-array i64)")
     (irt.instr "%4 = gep %3, 0 : i64")
     (ir.CompilerIrInstr.Load 5 (ir.CompilerIrValue.Var 4) (ast.AstType.I64))
     (ir.CompilerIrInstr.Gep
@@ -69635,15 +69604,8 @@
       (ir.CompilerIrValue.Var 6)
       (ir.CompilerIrValue.I64 7)
       store-ty)
-    (ir.CompilerIrInstr.Gep
-      8
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.I64 0)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (ir.CompilerIrInstr.Load
-      9
-      (ir.CompilerIrValue.Var 8)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))))
+    (irt.instr "%8 = gep %0, 0 : (__tl_dyn-array i64)")
+    (irt.instr "%9 = load %8 : (__tl_dyn-array i64)")))
 
 ;; A generic FIELD store of `store-ty` through base var `store-base`, between
 ;; two reads of `Field(1, 0, (__tl_dyn-array i64))`. With store-base 0 the two
@@ -69654,15 +69616,8 @@
   [store-base : i64]
   [store-ty : ast.AstType]) : ir.CompilerIrInstrSeq
   (opt-test-instrs
-    (ir.CompilerIrInstr.Gep
-      2
-      (ir.CompilerIrValue.Var 1)
-      (ir.CompilerIrValue.I64 0)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (ir.CompilerIrInstr.Load
-      3
-      (ir.CompilerIrValue.Var 2)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
+    (irt.instr "%2 = gep %1, 0 : (__tl_dyn-array i64)")
+    (irt.instr "%3 = load %2 : (__tl_dyn-array i64)")
     (ir.CompilerIrInstr.Gep
       4
       (ir.CompilerIrValue.Var store-base)
@@ -69672,47 +69627,19 @@
       (ir.CompilerIrValue.Var 4)
       (ir.CompilerIrValue.I64 7)
       store-ty)
-    (ir.CompilerIrInstr.Gep
-      5
-      (ir.CompilerIrValue.Var 1)
-      (ir.CompilerIrValue.I64 0)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (ir.CompilerIrInstr.Load
-      6
-      (ir.CompilerIrValue.Var 5)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))))
+    (irt.instr "%5 = gep %1, 0 : (__tl_dyn-array i64)")
+    (irt.instr "%6 = load %5 : (__tl_dyn-array i64)")))
 
 ;; The same shape with a CopyBytes in the store's place: raw bytes carry no
 ;; static type, so the generic Field entry must still die.
 (define (opt-load-cse-typed-copybytes-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (ir.CompilerIrInstr.Gep
-      2
-      (ir.CompilerIrValue.Var 1)
-      (ir.CompilerIrValue.I64 0)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (ir.CompilerIrInstr.Load
-      3
-      (ir.CompilerIrValue.Var 2)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (ir.CompilerIrInstr.Gep
-      4
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.I64 0)
-      (ast.AstType.I64))
-    (ir.CompilerIrInstr.CopyBytes
-      (ir.CompilerIrValue.Var 4)
-      (ir.CompilerIrValue.Var 2)
-      8)
-    (ir.CompilerIrInstr.Gep
-      5
-      (ir.CompilerIrValue.Var 1)
-      (ir.CompilerIrValue.I64 0)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (ir.CompilerIrInstr.Load
-      6
-      (ir.CompilerIrValue.Var 5)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))))
+  (irt.instrs
+    "%2 = gep %1, 0 : (__tl_dyn-array i64)
+     %3 = load %2 : (__tl_dyn-array i64)
+     %4 = gep %0, 0 : i64
+     copy_bytes %4, %2, 8
+     %5 = gep %1, 0 : (__tl_dyn-array i64)
+     %6 = load %5 : (__tl_dyn-array i64)"))
 
 ;; Two shared-ref params: the alias layer proves nothing about a store rooted
 ;; at a Shared root, so every verdict below is the location rule's alone.
@@ -73425,29 +73352,15 @@
 ;; by MF-4 (ii)'s class field.
 (define (opt-t22-element-call-instrs [callee : i64]) : ir.CompilerIrInstrSeq
   (opt-test-instrs
-    (ir.CompilerIrInstr.Gep
-      2
-      (ir.CompilerIrValue.Var 1)
-      (ir.CompilerIrValue.I64 0)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (ir.CompilerIrInstr.Load
-      3
-      (ir.CompilerIrValue.Var 2)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
+    (irt.instr "%2 = gep %1, 0 : (__tl_dyn-array i64)")
+    (irt.instr "%3 = load %2 : (__tl_dyn-array i64)")
     (ir.CompilerIrInstr.Call
       4
       callee
       (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
       (ast.AstType.Unit))
-    (ir.CompilerIrInstr.Gep
-      5
-      (ir.CompilerIrValue.Var 1)
-      (ir.CompilerIrValue.I64 0)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (ir.CompilerIrInstr.Load
-      6
-      (ir.CompilerIrValue.Var 5)
-      (ast.ast-ty-dyn-array (ast.AstType.I64)))
+    (irt.instr "%5 = gep %1, 0 : (__tl_dyn-array i64)")
+    (irt.instr "%6 = load %5 : (__tl_dyn-array i64)")
     (irt.instr "return %6")))
 
 ;; The `cm_elem` accessor writer, with the stored element type as a parameter:
@@ -75801,10 +75714,7 @@
       (ir.compiler-ir-label "entry")
       (opt-test-instrs
         (irt.instr "%20 = gep %1, 0 : u8")
-        (ir.CompilerIrInstr.Load
-          21
-          (ir.CompilerIrValue.Var 20)
-          (ast.AstType.DynArray 0))
+        (irt.instr "%21 = load %20 : (__tl_dyn-array i64)")
         (irt.instr "%22 = gep %21, 1 : i64")
         (irt.instr "%23 = load %22 : i64")
         (irt.instr "%24 = lt %2, %23 : i64")
@@ -75833,10 +75743,7 @@
           (opt-test-instrs
             (opt-guard-dedup-extra mode callee)
             (irt.instr "%25 = gep %1, 0 : u8")
-            (ir.CompilerIrInstr.Load
-              26
-              (ir.CompilerIrValue.Var 25)
-              (ast.AstType.DynArray 0))
+            (irt.instr "%26 = load %25 : (__tl_dyn-array i64)")
             (irt.instr "%27 = gep %26, 1 : i64")
             (irt.instr "%28 = load %27 : i64")
             (irt.instr "%29 = le %2, %28 : i64")

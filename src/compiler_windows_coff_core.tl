@@ -104,9 +104,7 @@
 
 (define (compiler-windows-coff-linkability [image : cobj.CompilerObjectImage]) : CompilerWindowsCoffLinkability
   (cond
-    [(not
-        (compiler_object_coff.compiler-object-coff-image-supported?
-          (owned_view.compiler-owned-shared-view image)))
+    [(not (compiler_object_coff.compiler-object-coff-image-supported? image))
       (CompilerWindowsCoffLinkability.Unavailable
         compiler_backend.CompilerDirectObjectFallbackReason.UnsupportedCoffImage)]
     [(not
@@ -125,7 +123,7 @@
         compiler_backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
     [(<
         (compiler_object_coff.compiler-object-coff-section-label-offset
-          (owned_view.compiler-owned-shared-view image)
+          image
           (cobj.CompilerObjectSectionKind.Text)
           "tl_setup_argv")
         0)
@@ -309,7 +307,7 @@
                         (compiler_driver_core.compiler-driver-profile-start-phase
                           profile-state))
                       (match (compiler_object_coff.compiler-object-coff-render
-                        (owned_view.compiler-owned-shared-view image))
+                        image)
                         [(compiler_object_coff.ResultCompilerObjectCoff.Ok
                             object)
                           (begin

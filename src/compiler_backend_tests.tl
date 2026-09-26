@@ -2530,13 +2530,9 @@
               (coff.compiler-object-coff-section-header-offset
                 (cobj.CompilerObjectSectionKind.Text))]
             [text-size : i64
-              (coff.compiler-object-coff-u32-at
-                (owned_view.compiler-owned-shared-view obj)
-                (+ text-header 16))]
+              (coff.compiler-object-coff-u32-at obj (+ text-header 16))]
             [reloc-count : i64
-              (coff.compiler-object-coff-u16-at
-                (owned_view.compiler-owned-shared-view obj)
-                (+ text-header 32))]
+              (coff.compiler-object-coff-u16-at obj (+ text-header 32))]
             (and
               (> text-size 0)
               (> reloc-count 0)
@@ -2549,18 +2545,17 @@
     (compiler-backend-coff-real-text-source)
     (compiler_backend.CompilerBackendTarget.Linux))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
-      (match (elf.compiler-object-elf-render
-        (owned_view.compiler-owned-shared-view image))
+      (match (elf.compiler-object-elf-render image)
         [(elf.ResultCompilerObjectElf.Ok obj)
           (let
             [text-size : i64
               (elf.compiler-object-elf-section-header-size-at
-                (owned_view.compiler-owned-shared-view obj)
-                (owned_view.compiler-owned-shared-view image)
+                obj
+                image
                 elf.compiler-object-elf-section-text-index)]
             [rela-text-size : i64
               (elf.compiler-object-elf-section-header-size-at
-                (owned_view.compiler-owned-shared-view obj)
+                obj
                 image
                 elf.compiler-object-elf-section-rela-text-index)]
             (and
@@ -2589,41 +2584,30 @@
       (string.copy (& object_windows.compiler-backend-object-rsrc-data-label))]
     [manifest-offset : i64
       (coff.compiler-object-coff-section-label-offset
-        (owned_view.compiler-owned-shared-view image)
+        image
         (cobj.CompilerObjectSectionKind.Rsrc)
         (owned_view.compiler-owned-shared-view manifest-label))]
     [data-offset : i64
       (coff.compiler-object-coff-section-label-offset
-        (owned_view.compiler-owned-shared-view image)
+        image
         (cobj.CompilerObjectSectionKind.Rsrc)
         rsrc-data-label)]
-    (match (coff.compiler-object-coff-render
-      (owned_view.compiler-owned-shared-view image))
+    (match (coff.compiler-object-coff-render image)
       [(coff.ResultCompilerObjectCoff.Ok obj)
         (let
           [rsrc-header : i64
             (coff.compiler-object-coff-section-header-offset
               (cobj.CompilerObjectSectionKind.Rsrc))]
           [rsrc-size : i64
-            (coff.compiler-object-coff-u32-at
-              (owned_view.compiler-owned-shared-view obj)
-              (+ rsrc-header 16))]
+            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 16))]
           [rsrc-ptr : i64
-            (coff.compiler-object-coff-u32-at
-              (owned_view.compiler-owned-shared-view obj)
-              (+ rsrc-header 20))]
+            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 20))]
           [rsrc-reloc-ptr : i64
-            (coff.compiler-object-coff-u32-at
-              (owned_view.compiler-owned-shared-view obj)
-              (+ rsrc-header 24))]
+            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 24))]
           [rsrc-reloc-count : i64
-            (coff.compiler-object-coff-u16-at
-              (owned_view.compiler-owned-shared-view obj)
-              (+ rsrc-header 32))]
+            (coff.compiler-object-coff-u16-at obj (+ rsrc-header 32))]
           [rsrc-flags : i64
-            (coff.compiler-object-coff-u32-at
-              (owned_view.compiler-owned-shared-view obj)
-              (+ rsrc-header 36))]
+            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 36))]
           (and
             (compiler_backend.backend-and8
               (= rsrc-size (+ 88 manifest-size))
@@ -2652,59 +2636,53 @@
                 (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 manifest-label)
               (coff.compiler-object-coff-reloc-entry-ok?
-                (owned_view.compiler-owned-shared-view obj)
+                obj
                 rsrc-reloc-ptr
                 0
                 data-offset
                 (coff.compiler-object-coff-symbol-index image manifest-label)
                 coff.compiler-object-coff-reloc-amd64-addr32nb)
               (=
-                (coff.compiler-object-coff-u32-at
-                  (owned_view.compiler-owned-shared-view obj)
-                  (+ rsrc-ptr data-offset))
+                (coff.compiler-object-coff-u32-at obj (+ rsrc-ptr data-offset))
                 0)
               (=
                 (coff.compiler-object-coff-u32-at
-                  (owned_view.compiler-owned-shared-view obj)
+                  obj
                   (+ rsrc-ptr (+ data-offset 4)))
                 manifest-size)
               (=
                 (coff.compiler-object-coff-u32-at
-                  (owned_view.compiler-owned-shared-view obj)
+                  obj
                   (+ rsrc-ptr (+ data-offset 8)))
                 0)
               (=
                 (coff.compiler-object-coff-u32-at
-                  (owned_view.compiler-owned-shared-view obj)
+                  obj
                   (+ rsrc-ptr (+ data-offset 12)))
                 0))
             (compiler_backend.backend-and8
               (=
                 (coff.compiler-object-coff-u8-at
-                  (owned_view.compiler-owned-shared-view obj)
+                  obj
                   (+ rsrc-ptr manifest-offset))
                 0x3c)
               (=
                 (coff.compiler-object-coff-u8-at
-                  (owned_view.compiler-owned-shared-view obj)
+                  obj
                   (+ rsrc-ptr (+ manifest-offset 1)))
                 0x3f)
               (=
                 (coff.compiler-object-coff-u8-at
-                  (owned_view.compiler-owned-shared-view obj)
+                  obj
                   (+ rsrc-ptr (+ manifest-offset 2)))
                 0x78)
               (=
                 (coff.compiler-object-coff-u8-at
-                  (owned_view.compiler-owned-shared-view obj)
+                  obj
                   (+ rsrc-ptr (+ manifest-offset 3)))
                 0x6d)
-              (coff.compiler-object-coff-contains?
-                (owned_view.compiler-owned-shared-view obj)
-                "activeCodePage")
-              (coff.compiler-object-coff-contains?
-                (owned_view.compiler-owned-shared-view obj)
-                "UTF-8</activeCodePage>")
+              (coff.compiler-object-coff-contains? obj "activeCodePage")
+              (coff.compiler-object-coff-contains? obj "UTF-8</activeCodePage>")
               (coff.compiler-object-coff-contains? obj ".rsrc")
               true)))]
       [(coff.ResultCompilerObjectCoff.Err _) false])))
@@ -2789,19 +2767,19 @@
             (compiler_backend.backend-and8
               (>=
                 (coff.compiler-object-coff-section-label-offset
-                  (owned_view.compiler-owned-shared-view image)
+                  image
                   (cobj.CompilerObjectSectionKind.Text)
                   "tl_setup_argv")
                 0)
               (>=
                 (coff.compiler-object-coff-section-label-offset
-                  (owned_view.compiler-owned-shared-view image)
+                  image
                   (cobj.CompilerObjectSectionKind.Text)
                   ".L_tl_boot_alloc")
                 0)
               (>=
                 (coff.compiler-object-coff-section-label-offset
-                  (owned_view.compiler-owned-shared-view image)
+                  image
                   (cobj.CompilerObjectSectionKind.Text)
                   "tl_alloc")
                 0)
@@ -2824,7 +2802,7 @@
                 ".L_tl_main_fiber_pdata_begin")
               (>=
                 (coff.compiler-object-coff-section-label-offset
-                  (owned_view.compiler-owned-shared-view image)
+                  image
                   (cobj.CompilerObjectSectionKind.Text)
                   ".L_tl_main_fiber")
                 0))
@@ -2986,8 +2964,7 @@
           shape-ok
           (compiler-backend-windows-object-manifest-resource-ok?
             (owned_view.compiler-owned-shared-view image)))
-          (match (coff.compiler-object-coff-render
-            (owned_view.compiler-owned-shared-view image))
+          (match (coff.compiler-object-coff-render image)
             [(coff.ResultCompilerObjectCoff.Ok obj)
               (let
                 [pdata-header : i64
@@ -2997,9 +2974,7 @@
                   (coff.compiler-object-coff-section-header-offset
                     (cobj.CompilerObjectSectionKind.Text))]
                 [text-ptr : i64
-                  (coff.compiler-object-coff-u32-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ text-header 20))]
+                  (coff.compiler-object-coff-u32-at obj (+ text-header 20))]
                 [entry-offset : i64
                   (coff.compiler-object-coff-section-label-offset
                     image
@@ -3010,59 +2985,25 @@
                   (coff.compiler-object-coff-section-header-offset
                     (cobj.CompilerObjectSectionKind.Xdata))]
                 [pdata-size : i64
-                  (coff.compiler-object-coff-u32-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ pdata-header 16))]
+                  (coff.compiler-object-coff-u32-at obj (+ pdata-header 16))]
                 [pdata-relocs : i64
-                  (coff.compiler-object-coff-u16-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ pdata-header 32))]
+                  (coff.compiler-object-coff-u16-at obj (+ pdata-header 32))]
                 [xdata-size : i64
-                  (coff.compiler-object-coff-u32-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ xdata-header 16))]
+                  (coff.compiler-object-coff-u32-at obj (+ xdata-header 16))]
                 [xdata-ptr : i64
-                  (coff.compiler-object-coff-u32-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ xdata-header 20))]
+                  (coff.compiler-object-coff-u32-at obj (+ xdata-header 20))]
                 (and
                   (= pdata-size 36)
                   (= pdata-relocs 9)
                   (= xdata-size 8)
+                  (= (coff.compiler-object-coff-u8-at obj xdata-ptr) 0x01)
+                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 1)) 0x04)
+                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 2)) 0x01)
+                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 4)) 0x04)
+                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 5)) 0x42)
+                  (= (coff.compiler-object-coff-u8-at obj gs-clear-offset) 0x65)
                   (=
-                    (coff.compiler-object-coff-u8-at
-                      (owned_view.compiler-owned-shared-view obj)
-                      xdata-ptr)
-                    0x01)
-                  (=
-                    (coff.compiler-object-coff-u8-at
-                      (owned_view.compiler-owned-shared-view obj)
-                      (+ xdata-ptr 1))
-                    0x04)
-                  (=
-                    (coff.compiler-object-coff-u8-at
-                      (owned_view.compiler-owned-shared-view obj)
-                      (+ xdata-ptr 2))
-                    0x01)
-                  (=
-                    (coff.compiler-object-coff-u8-at
-                      (owned_view.compiler-owned-shared-view obj)
-                      (+ xdata-ptr 4))
-                    0x04)
-                  (=
-                    (coff.compiler-object-coff-u8-at
-                      (owned_view.compiler-owned-shared-view obj)
-                      (+ xdata-ptr 5))
-                    0x42)
-                  (=
-                    (coff.compiler-object-coff-u8-at
-                      (owned_view.compiler-owned-shared-view obj)
-                      gs-clear-offset)
-                    0x65)
-                  (=
-                    (coff.compiler-object-coff-u8-at
-                      (owned_view.compiler-owned-shared-view obj)
-                      (+ gs-clear-offset 1))
+                    (coff.compiler-object-coff-u8-at obj (+ gs-clear-offset 1))
                     0x48)
                   (=
                     (coff.compiler-object-coff-u8-at obj (+ gs-clear-offset 2))
@@ -3076,17 +3017,14 @@
     "(define (main) : unit unit)"
     (compiler_backend.CompilerBackendTarget.Windows))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
-      (match (coff.compiler-object-coff-render
-        (owned_view.compiler-owned-shared-view image))
+      (match (coff.compiler-object-coff-render image)
         [(coff.ResultCompilerObjectCoff.Ok obj)
           (let
             [text-header : i64
               (coff.compiler-object-coff-section-header-offset
                 (cobj.CompilerObjectSectionKind.Text))]
             [text-ptr : i64
-              (coff.compiler-object-coff-u32-at
-                (owned_view.compiler-owned-shared-view obj)
-                (+ text-header 20))]
+              (coff.compiler-object-coff-u32-at obj (+ text-header 20))]
             [main-offset : i64
               (coff.compiler-object-coff-section-label-offset
                 image
@@ -3096,41 +3034,13 @@
             (if (< main-offset 0)
               false
               (compiler_backend.backend-and8
-                (=
-                  (coff.compiler-object-coff-u8-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    main-ptr)
-                  0x55)
-                (=
-                  (coff.compiler-object-coff-u8-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ main-ptr 1))
-                  0x48)
-                (=
-                  (coff.compiler-object-coff-u8-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ main-ptr 2))
-                  0x89)
-                (=
-                  (coff.compiler-object-coff-u8-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ main-ptr 3))
-                  0xe5)
-                (=
-                  (coff.compiler-object-coff-u8-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ main-ptr 19))
-                  0x31)
-                (=
-                  (coff.compiler-object-coff-u8-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ main-ptr 20))
-                  0xc0)
-                (=
-                  (coff.compiler-object-coff-u8-at
-                    (owned_view.compiler-owned-shared-view obj)
-                    (+ main-ptr 21))
-                  0xc9)
+                (= (coff.compiler-object-coff-u8-at obj main-ptr) 0x55)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 1)) 0x48)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 2)) 0x89)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 3)) 0xe5)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 19)) 0x31)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 20)) 0xc0)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 21)) 0xc9)
                 (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 22)) 0xc3))))]
         [(coff.ResultCompilerObjectCoff.Err _) false])]
     [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
@@ -20465,8 +20375,7 @@ g:
           (owned_view.compiler-owned-shared-view image.relocations)]
         [table-label : String ".Lf0_entry_switch_table"]
         (and
-          (elf.compiler-object-elf-image-supported?
-            (owned_view.compiler-owned-shared-view image))
+          (elf.compiler-object-elf-image-supported? image)
           (coff.compiler-object-coff-image-supported? image)
           (cobj.compiler-object-symbol-list-contains?
             symbols

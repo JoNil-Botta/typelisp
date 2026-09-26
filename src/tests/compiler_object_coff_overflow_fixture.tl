@@ -15,8 +15,7 @@
     (let
       [image : cobj.CompilerObjectImage
         (coff.compiler-object-coff-boundary-image 0xffff 0x10000)]
-      (match (coff.compiler-object-coff-render
-        (owned_view.compiler-owned-shared-view image))
+      (match (coff.compiler-object-coff-render image)
         [(coff.ResultCompilerObjectCoff.Ok bytes)
           (begin
             (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& bytes)))

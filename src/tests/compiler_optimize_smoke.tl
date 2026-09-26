@@ -984,8 +984,7 @@
     [prefix-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view prefix))]
     [prefix-twice : ir.CompilerIrFunction
-      (ot.opt-switch-form-function
-        (opt.compiler-opt-global-shared-view prefix))]
+      (ot.opt-switch-form-function (opt.compiler-opt-global-shared-view prefix))]
     [prefix-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
         (opt.compiler-opt-global-shared-view prefix-blocks)

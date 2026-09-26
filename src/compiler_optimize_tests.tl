@@ -1473,7 +1473,12 @@
         0
         next)]
     [else
-      (opt.OptGlobalFact.PackWord next next (ir.CompilerIrValue.I64 next) 0 next)]))
+      (opt.OptGlobalFact.PackWord
+        next
+        next
+        (ir.CompilerIrValue.I64 next)
+        0
+        next)]))
 
 (define (opt-global-facts-push
   [facts : opt.OptGlobalFacts]
@@ -6199,10 +6204,10 @@
         (ir.compiler-ir-block-cons
           (opt.compiler-opt-global-shared-view block)
           ir.CompilerIrBlockList.Nil))]
-    [cleaned : ir.CompilerIrBlock (opt.opt-dce-block-array used block)]
-    (match cleaned
-      [(ir.CompilerIrBlock.Block _ cleaned-instrs)
-        (ir.compiler-ir-instr-seq-count cleaned-instrs)])))
+    (match block
+      [(ir.CompilerIrBlock.Block _ block-instrs)
+        (ir.compiler-ir-instr-seq-count
+          (opt.opt-dce-instr-seq-array used block-instrs))])))
 
 (define (compiler-optimize-dce-alloc-self-test) : i64
   (let
@@ -7637,8 +7642,7 @@
           (opt.compiler-opt-global-shared-view blocks)
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))]
-    [table : opt_i64_i64_map.Map
-      (opt-test-const-divisors globals functions)]
+    [table : opt_i64_i64_map.Map (opt-test-const-divisors globals functions)]
     [rewritten : ir.CompilerIrBlockList
       (opt.opt-const-divisor-rewrite-blocks table blocks)]
     ;; The P6 leg: run the same rewrite the pipeline runs at the top of the
@@ -13461,7 +13465,9 @@
                                 (opt.opt-type-eq type-segment-bases aty bty)
                                 (ast.ast-extern-abi-eq? aabi babi)
                                 (= asymbol bsymbol)
-                                (ast.ast-extern-link-input-list-eq? alinks blinks)
+                                (ast.ast-extern-link-input-list-eq?
+                                  alinks
+                                  blinks)
                                 (= aprovided bprovided)))])])
                     (set! index (+ index 1))))
                 same?)))])]))
@@ -26117,9 +26123,7 @@
       [(opt.OptMaybeFunction.Some private-main-level1)
         (match (opt-function-seq-find private-level2 "private_memory_main")
           [(opt.OptMaybeFunction.Some private-main-level2)
-            (match (opt-function-seq-find
-              source-level1
-              "source_collision_main")
+            (match (opt-function-seq-find source-level1 "source_collision_main")
               [(opt.OptMaybeFunction.Some source-main-level1)
                 (let
                   [private-level1-blocks : ir.CompilerIrBlockList
@@ -26644,11 +26648,9 @@
     [devirt-dynamic : ir.CompilerIrFunction
       (opt-devirt-known-function-function (opt-devirt-dynamic-caller))]
     [devirt-local-alias : ir.CompilerIrFunction
-      (opt-devirt-known-function-function
-        (opt-devirt-local-alias-caller false))]
+      (opt-devirt-known-function-function (opt-devirt-local-alias-caller false))]
     [devirt-duplicate-alias : ir.CompilerIrFunction
-      (opt-devirt-known-function-function
-        (opt-devirt-local-alias-caller true))]
+      (opt-devirt-known-function-function (opt-devirt-local-alias-caller true))]
     [devirt-inlined : ir.CompilerIrFunctionSeq
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -52501,8 +52503,7 @@
       (opt.opt-cfg-index-build
         (opt.compiler-opt-global-shared-view diamond-blocks))]
     [diamond-doms : opt.OptDomInfo
-      (opt-cfg-dominators
-        (opt.compiler-opt-global-shared-view diamond-blocks))]
+      (opt-cfg-dominators (opt.compiler-opt-global-shared-view diamond-blocks))]
     [then-frontier : opt.OptLabelSet
       (opt-cfg-dominance-frontier
         (opt.compiler-opt-global-shared-view diamond-blocks)
@@ -54782,12 +54783,10 @@
             1
             (opt.OptAliasKind.Derived 0)))
         2]
-      [(not
-          (opt-alias-absent? (opt.compiler-opt-global-shared-view unique) 2))
+      [(not (opt-alias-absent? (opt.compiler-opt-global-shared-view unique) 2))
         3]
       [(not (= (opt-alias-facts-len unique) 2)) 4]
-      [(not (opt-alias-contains? transitive 2 (opt.OptAliasKind.Derived 0)))
-        5]
+      [(not (opt-alias-contains? transitive 2 (opt.OptAliasKind.Derived 0))) 5]
       [(not
           (opt-alias-contains?
             (opt.compiler-opt-global-shared-view loaded)
@@ -54808,8 +54807,7 @@
       [(not (opt-alias-contains? copied 2 (opt.OptAliasKind.MayAlias))) 13]
       [(not
           (=
-            (opt-alias-facts-len
-              (opt.compiler-opt-global-shared-view joined))
+            (opt-alias-facts-len (opt.compiler-opt-global-shared-view joined))
             1))
         14]
       [(not
@@ -54820,8 +54818,7 @@
         15]
       [(opt-alias-contains? joined 1 (opt.OptAliasKind.Derived 0)) 16]
       [(opt.opt-alias-instr-clears-all? (opt-alias-sample-binop)) 17]
-      [(not
-          (opt-alias-contains? invalidated 0 (opt.OptAliasKind.Invalidated)))
+      [(not (opt-alias-contains? invalidated 0 (opt.OptAliasKind.Invalidated)))
         18]
       [(not
           (opt-alias-contains?
@@ -54829,8 +54826,7 @@
             0
             (opt.OptAliasKind.SharedRef)))
         19]
-      [(not (opt-alias-contains? seeded 1 (opt.OptAliasKind.ExclusiveRef)))
-        20]
+      [(not (opt-alias-contains? seeded 1 (opt.OptAliasKind.ExclusiveRef))) 20]
       ;; Allocation epochs survive the packed encoding, distinguish otherwise
       ;; identical Unique roots, and the retired -1 code stays conservative.
       [(not
@@ -59406,8 +59402,7 @@
           (opt.compiler-opt-global-shared-view blocks)
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))]
-    [table : opt_i64_i64_map.Map
-      (opt-test-const-divisors globals functions)]
+    [table : opt_i64_i64_map.Map (opt-test-const-divisors globals functions)]
     [rewritten : ir.CompilerIrBlockList
       (opt.opt-const-divisor-rewrite-blocks table blocks)]
     (cond
@@ -78643,7 +78638,9 @@
   [accesses : opt_aggregate_access_vec.Vec]) : i64
   (opt.opt-aggregate-access-list-store-count-from accesses 0))
 
-(define (opt-cfg-index-rpo-label [index : (& index opt.OptCfgIndex)] [slot : i64]) : i64
+(define (opt-cfg-index-rpo-label
+  [index : (& index opt.OptCfgIndex)]
+  [slot : i64]) : i64
   (opt.opt-cfg-index-label index (opt.opt-cfg-index-rpo-id index slot)))
 
 (define (opt-cfg-dominators [blocks : ir.CompilerIrBlockList]) : opt.OptDomInfo
@@ -78729,7 +78726,8 @@
     [(opt.OptLateRewriteResult.Result rewritten _) rewritten]))
 
 (define (opt-switch-form-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt.opt-switch-form-function-pass (opt.compiler-opt-global-shared-view func))
+  (match (opt.opt-switch-form-function-pass
+    (opt.compiler-opt-global-shared-view func))
     [(opt.OptFunctionPassResult.Result next changed)
       (if changed
         next
@@ -78740,7 +78738,9 @@
 
 (define (opt-gvn-map-empty [record-count : i64]) : opt.OptGvnMap
   (opt.OptGvnMap
-    (__tl_make-array opt.OptGvnBucket (opt.opt-gvn-bucket-capacity record-count))
+    (__tl_make-array
+      opt.OptGvnBucket
+      (opt.opt-gvn-bucket-capacity record-count))
     (opt.opt-gvn-affine-defs-empty)))
 
 (define (opt-gvn-table-insert!
@@ -78803,7 +78803,9 @@
     level
     (opt.opt-loop-bce-empty-summaries)))
 
-(define (opt-callgraph-callee-count [graph : opt.OptCallGraph] [from-slot : i64]) : i64
+(define (opt-callgraph-callee-count
+  [graph : opt.OptCallGraph]
+  [from-slot : i64]) : i64
   (if (or (< from-slot 0) (>= from-slot graph.count))
     -1
     (opt.opt-slot-list-count
@@ -78811,7 +78813,8 @@
 
 (define (opt-devirt-known-function-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (begin
-    (opt.opt-devirt-known-function-function! (opt.compiler-opt-global-shared-view func))
+    (opt.opt-devirt-known-function-function!
+      (opt.compiler-opt-global-shared-view func))
     func))
 
 (define (opt-function-seq-find
@@ -78846,7 +78849,8 @@
   (opt-dead-store-instr-seq-known
     type-segment-bases
     hs
-    (opt-dead-store-storeptr-capacity (opt.compiler-opt-global-shared-view instrs))
+    (opt-dead-store-storeptr-capacity
+      (opt.compiler-opt-global-shared-view instrs))
     instrs))
 
 (define (opt-load-cse-empty-state-for-size

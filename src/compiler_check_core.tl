@@ -364,6 +364,14 @@
           (cdiag.compiler-diagnostic-list-box-single diag)
           (compiler-check-serial-advisories)))]))
 
+(define (compiler-check-file-with-roots
+  [path : String]
+  [stdlib-roots : svec.Vec]) : ResultCompilerCheck
+  (compiler-check-file-with-roots-and-cfg
+    path
+    stdlib-roots
+    (compiler-check-language-cfgs)))
+
 (define (compiler-check-file-with-roots-and-cfg
   [path : String]
   [stdlib-roots : svec.Vec]
@@ -489,6 +497,13 @@
         "typecheck-prefix-check"
         stdlib-roots
         cfgs))))
+
+(define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
+  (compiler-check-source-with-roots-and-cfg
+    path
+    source
+    (svec.new)
+    (compiler-check-language-cfgs)))
 
 (define (compiler-check-source-with-roots-and-cfg-and-job-state
   [path : String]

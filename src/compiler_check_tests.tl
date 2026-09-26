@@ -78,7 +78,7 @@
 
 (define (main) : i64
   (render-vaule 42))"]
-    (match (compiler-check-source
+    (match (check_core.compiler-check-source
       (tc_core.tc-global-shared-view path)
       (tc_core.tc-global-shared-view source))
       [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
@@ -136,7 +136,7 @@
                       [cdiag.CompilerDiagnosticNoString false])))))))])))
 
 (define (compiler-check-stdlib-import-help-not-machine-fix-ok?) : bool
-  (match (compiler-check-source
+  (match (check_core.compiler-check-source
     "tests/import_help_only.tl"
     "(define (main) : i64 (begin (println \"value\") 0))")
     [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
@@ -155,7 +155,9 @@
   [col : i64]
   [end-line : i64]
   [end-col : i64]) : bool
-  (match (compiler-check-source (tc_core.tc-global-shared-view path) source)
+  (match (check_core.compiler-check-source
+    (tc_core.tc-global-shared-view path)
+    source)
     [(check_core.ResultCompilerCheck.Ok _ _) false]
     [(check_core.ResultCompilerCheck.Err diagnostics-box _)
       (let
@@ -305,7 +307,7 @@
             0)))]))
 
 (define (compiler-check-duplicate-type-location-ok?) : bool
-  (match (compiler-check-source
+  (match (check_core.compiler-check-source
     "tests/duplicate_type_location.tl"
     "(defstruct Point (x i64))
 (defstruct Point (y i64))
@@ -325,7 +327,7 @@
           (= (cdiag.compiler-diagnostic-col diag) 1)))]))
 
 (define (compiler-check-independent-diagnostics-ok?) : bool
-  (match (compiler-check-source
+  (match (check_core.compiler-check-source
     "tests/multiple_diagnostics.tl"
     "(define (a) : i64 (unknown-one 1))
 (define (b) : i64 (unknown-two 2))
@@ -411,7 +413,7 @@
 (define (main) : i64 0)"]
     (and
       (compiler-check-parser-recovery-result-ok?
-        (compiler-check-source
+        (check_core.compiler-check-source
           (tc_core.tc-global-shared-view path)
           (tc_core.tc-global-shared-view source)))
       (compiler-check-parser-recovery-result-ok?
@@ -424,7 +426,7 @@
           (compiler_check_core.compiler-check-language-cfgs))))))
 
 (define (compiler-check-poison-suppresses-derived-diagnostics-ok?) : bool
-  (match (compiler-check-source
+  (match (check_core.compiler-check-source
     "tests/poison_diagnostics.tl"
     "(define (broken) : i64 (unknown-origin 1))
 (define (derived-one) : i64 (broken))
@@ -801,23 +803,8 @@
       (compiler-check-qualified-near-miss-ok?)
       (compiler-check-qualified-unbound-display-ok?))))
 
-(define (compiler-check-file-with-roots
-  [path : String]
-  [stdlib-roots : svec.Vec]) : check_core.ResultCompilerCheck
-  (check_core.compiler-check-file-with-roots-and-cfg
-    path
-    stdlib-roots
-    (check_core.compiler-check-language-cfgs)))
-
-(define (compiler-check-source [path : String] [source : String]) : check_core.ResultCompilerCheck
-  (check_core.compiler-check-source-with-roots-and-cfg
-    path
-    source
-    (svec.new)
-    (check_core.compiler-check-language-cfgs)))
-
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
-  (match (compiler-check-source path source)
+  (match (check_core.compiler-check-source path source)
     [(check_core.ResultCompilerCheck.Ok _ _) true]
     [(check_core.ResultCompilerCheck.Err _ _) false]))
 
@@ -825,7 +812,7 @@
   [path : String]
   [source : String]
   [want : String]) : bool
-  (match (compiler-check-source path source)
+  (match (check_core.compiler-check-source path source)
     [(check_core.ResultCompilerCheck.Ok _ _) false]
     [(check_core.ResultCompilerCheck.Err diag _)
       (let
@@ -903,7 +890,7 @@
     (array-length items)))")
 
 (define (compiler-check-virtual-import-ok?) : bool
-  (match (compiler-check-source
+  (match (check_core.compiler-check-source
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source))
     [(check_core.ResultCompilerCheck.Ok summary _)
@@ -996,7 +983,7 @@
     [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]))
 
 (define (compiler-check-export-ok?) : bool
-  (match (compiler-check-source
+  (match (check_core.compiler-check-source
     "src/export_entry.tl"
     "(defstruct Pair (left i64))
 (defenum Maybe (Present i64))
@@ -1026,7 +1013,7 @@
 (define (main) : i64 a.x)")))
 
 (define (compiler-check-virtual-error-ok?) : bool
-  (match (compiler-check-source
+  (match (check_core.compiler-check-source
     "docs/examples/bad_type.tl"
     "(define (main) : i64 true)")
     [(check_core.ResultCompilerCheck.Ok _ _) false]
@@ -1115,13 +1102,15 @@
     [source : String "(define (main) : i64 0)"]
     (begin
       (ast.ty-node-pool-reset!)
-      (match (compiler-check-source
+      (match (check_core.compiler-check-source
         "tests/pool_reset_a.tl"
         (owned_view.compiler-owned-shared-view source))
         [(check_core.ResultCompilerCheck.Ok _ _)
           (let
             [first-len : i64 (ast.ty-node-pool-len)]
-            (match (compiler-check-source "tests/pool_reset_b.tl" source)
+            (match (check_core.compiler-check-source
+              "tests/pool_reset_b.tl"
+              source)
               [(check_core.ResultCompilerCheck.Ok _ _)
                 (let
                   [second-len : i64 (ast.ty-node-pool-len)]

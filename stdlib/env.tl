@@ -875,3 +875,26 @@
 ;: Join PATH-style items using the current platform separator.
 (define (path-join [items : EnvStringList]) : String
   (path-join-vec (string-list-to-vec items)))
+
+;: Inline test helper that forces a test failure without importing `io.tl`.
+(define (test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
+;: Inline test assertion for boolean predicates.
+(define (test-assert-true [condition : bool] [_message : String]) : unit
+  (if condition
+    unit
+    (test-fail)))
+
+;: Inline test assertion for `i64` equality.
+(define (test-assert-i64-eq [actual : i64] [expected : i64] [message : String]) : unit
+  (test-assert-true (= actual expected) message))
+
+;: Inline test assertion for owned string equality.
+(define (test-assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (test-assert-true (string.eq actual expected) message))

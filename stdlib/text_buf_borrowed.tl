@@ -29,6 +29,12 @@
 ;# Emit the complete borrowed family in one declaration splice.
 (text_buf_family.borrowed)
 
+;: Inline test helper that forces a borrowed text buffer test failure.
+(define (test-fail) : unit
+  (begin
+    (/ 1 0)
+    unit))
+
 ;: Inline test helper that exercises borrowed text buffer rendering.
 (define (test-render [text : (& text str)] [chunk : (& chunk str)]) : String
   (let

@@ -764,3 +764,4 @@ replayed_loop_call_lagged_2|all|0,1,2|tests/integration/replayed_loop_call_lagge
 replayed_loop_call_lagged_3|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=1 d=-3\n|3|stdlib/io.tl stdlib/string.tl|stage-stdlib
 replayed_loop_call_lagged_10|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=8 d=-10\n|10|stdlib/io.tl stdlib/string.tl|stage-stdlib
 replayed_loop_call_lagged_65|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|stage-stdlib
+linker_archive_container|all|-|src/linker_archive_core_tests.tl|42|-|-|linker_archive_core.tl linker_archive_output.tl|stage-stdlib

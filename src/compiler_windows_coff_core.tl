@@ -66,17 +66,13 @@
   [symbols : cobj.CompilerObjectSymbolList]
   [target : String]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [ok : bool true]
     [done : bool false]
     (begin
       (while (and (not done) (< index count))
-        (match (cobj.compiler-object-symbol-list-ref
-          (owned_view.compiler-owned-shared-view symbols)
-          index)
+        (match (cobj.compiler-object-symbol-list-ref symbols index)
           [(cobj.CompilerObjectSymbol.Symbol name binding kind _)
             (if (string.eq name target)
               (begin
@@ -97,9 +93,7 @@
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (cobj.compiler-object-relocation-list-ref
-          (owned_view.compiler-owned-shared-view relocs)
-          index)
+        (match (cobj.compiler-object-relocation-list-ref relocs index)
           [(cobj.CompilerObjectRelocation.Relocation _ _ _ target)
             (if (compiler-windows-coff-relocation-target-linkable?
               (owned_view.compiler-owned-shared-view symbols)
@@ -123,7 +117,7 @@
         compiler_backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
     [(not
         (cobj.compiler-object-symbol-list-contains?
-          (owned_view.compiler-owned-shared-view image.symbols)
+          image.symbols
           "_tl_start"
           (cobj.CompilerObjectSymbolBinding.Export)
           (cobj.CompilerObjectSymbolKind.Function)))

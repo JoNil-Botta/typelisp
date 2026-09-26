@@ -86887,18 +86887,24 @@
           [has-relocation : bool
             (backend-or4
               (cobj.compiler-object-relocation-builder-targets?
-                (compiler-backend-global-shared-view relocations)
-                (compiler-backend-global-shared-view link-symbol))
-              (cobj.compiler-object-relocation-builder-targets?
-                (compiler-backend-global-shared-view relocations)
-                (compiler-backend-state-user-symbol-id
-                  program-index.backend-state
-                  name-id))
-              (cobj.compiler-object-relocation-builder-targets?
                 relocations
-                (compiler-backend-state-user-symbol-id
-                  program-index.backend-state
-                  source-name-id))
+                link-symbol)
+              (let
+                [target
+                  (compiler-backend-state-user-symbol-id
+                    program-index.backend-state
+                    name-id)]
+                (cobj.compiler-object-relocation-builder-targets?
+                  relocations
+                  target))
+              (let
+                [target
+                  (compiler-backend-state-user-symbol-id
+                    program-index.backend-state
+                    source-name-id)]
+                (cobj.compiler-object-relocation-builder-targets?
+                  relocations
+                  target))
               false)]
           (compiler-backend-object-extern-seq
             (if (and
@@ -99019,9 +99025,7 @@
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-relocation-list-ref
-            (compiler-backend-global-shared-view relocs)
-            index)
+          (match (cobj.compiler-object-relocation-list-ref relocs index)
             [(cobj.CompilerObjectRelocation.Relocation _ _ kind target)
               (match kind
                 [(cobj.CompilerObjectRelocationKind.Abs64)
@@ -99040,9 +99044,7 @@
   [label : String]
   [offset : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (compiler-backend-global-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [cur-offset : i64 offset]
     [result : i64 -1]
@@ -99051,9 +99053,7 @@
       (while (and (not done) (< index count))
         (let
           [record : cobj.CompilerObjectDataRecord
-            (cobj.compiler-object-data-record-list-ref
-              (compiler-backend-global-shared-view records)
-              index)]
+            (cobj.compiler-object-data-record-list-ref records index)]
           (match (compiler-backend-global-shared-view record)
             [(cobj.CompilerObjectDataRecord.Label found)
               (if (string.eq found label)
@@ -99119,9 +99119,7 @@
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-relocation-list-ref
-            (compiler-backend-global-shared-view relocs)
-            index)
+          (match (cobj.compiler-object-relocation-list-ref relocs index)
             [(cobj.CompilerObjectRelocation.Relocation section site kind target)
               (match kind
                 [(cobj.CompilerObjectRelocationKind.Abs64)
@@ -99156,16 +99154,12 @@
 (define (compiler-backend-pic-symbols-have-extern?
   [symbols : cobj.CompilerObjectSymbolList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (compiler-backend-global-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (cobj.compiler-object-symbol-list-ref
-          (compiler-backend-global-shared-view symbols)
-          index)
+        (match (cobj.compiler-object-symbol-list-ref symbols index)
           [(cobj.CompilerObjectSymbol.Symbol _ binding _ _)
             (match binding
               [(cobj.CompilerObjectSymbolBinding.Extern) (set! found true)]
@@ -99176,17 +99170,13 @@
   [symbols : cobj.CompilerObjectSymbolList]
   [target : String]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (compiler-backend-global-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [result : bool false]
     [done : bool false]
     (begin
       (while (and (not done) (< index count))
-        (match (cobj.compiler-object-symbol-list-ref
-          (compiler-backend-global-shared-view symbols)
-          index)
+        (match (cobj.compiler-object-symbol-list-ref symbols index)
           [(cobj.CompilerObjectSymbol.Symbol name binding _ section)
             (if (string.eq name target)
               (begin
@@ -99242,9 +99232,7 @@
       (while (and ok (< index count))
         (if (compiler-backend-pic-reloc-site-valid?
           (compiler-backend-global-shared-view image)
-          (cobj.compiler-object-relocation-list-ref
-            (compiler-backend-global-shared-view relocs)
-            index))
+          (cobj.compiler-object-relocation-list-ref relocs index))
           (set! index (+ index 1))
           (set! ok false)))
       ok)))

@@ -846,12 +846,12 @@
           (not
             (or
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view image.symbols)
+                image.symbols
                 "_tl_start"
                 (cobj.CompilerObjectSymbolBinding.Export)
                 (cobj.CompilerObjectSymbolKind.Function))
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view image.symbols)
+                image.symbols
                 "main"
                 (cobj.CompilerObjectSymbolBinding.Export)
                 (cobj.CompilerObjectSymbolKind.Function))))]

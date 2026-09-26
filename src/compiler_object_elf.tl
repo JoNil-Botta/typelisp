@@ -166,9 +166,7 @@
   [records : cobj.CompilerObjectDataRecordList]
   [offset : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [cur-offset : i64 offset]
     (begin
@@ -177,9 +175,7 @@
           (set!
             cur-offset
             (compiler-object-elf-data-record-end-offset
-              (cobj.compiler-object-data-record-list-ref
-                (owned_view.compiler-owned-shared-view records)
-                index)
+              (cobj.compiler-object-data-record-list-ref records index)
               cur-offset))
           (set! index (+ index 1))))
       cur-offset)))
@@ -243,9 +239,7 @@
 (define (compiler-object-elf-instrs-relocation-count
   [instrs : cobj.CompilerObjectX64InstrList]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [total : i64 0]
     (begin
@@ -256,9 +250,7 @@
             (+
               total
               (compiler-object-elf-instr-relocation-count
-                (cobj.compiler-object-instr-list-ref
-                  (owned_view.compiler-owned-shared-view instrs)
-                  index))))
+                (cobj.compiler-object-instr-list-ref instrs index))))
           (set! index (+ index 1))))
       total)))
 
@@ -266,9 +258,7 @@
   [instrs : cobj.CompilerObjectX64InstrList]
   [offset : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [cur-offset : i64 offset]
     (begin
@@ -279,9 +269,7 @@
             (+
               cur-offset
               (compiler-object-elf-instr-size
-                (cobj.compiler-object-instr-list-ref
-                  (owned_view.compiler-owned-shared-view instrs)
-                  index))))
+                (cobj.compiler-object-instr-list-ref instrs index))))
           (set! index (+ index 1))))
       cur-offset)))
 
@@ -340,9 +328,7 @@
     (begin
       (while (and ok (< index count))
         (if (compiler-object-elf-relocation-supported?
-          (cobj.compiler-object-relocation-list-ref
-            (owned_view.compiler-owned-shared-view relocs)
-            index))
+          (cobj.compiler-object-relocation-list-ref relocs index))
           (set! index (+ index 1))
           (set! ok false)))
       ok)))
@@ -350,16 +336,12 @@
 (define (compiler-object-elf-instrs-supported?
   [instrs : cobj.CompilerObjectX64InstrList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (cobj.compiler-object-instr-list-ref
-          (owned_view.compiler-owned-shared-view instrs)
-          index)
+        (match (cobj.compiler-object-instr-list-ref instrs index)
           [(cobj.CompilerObjectX64Instr.Label _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.Call _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.TailCall _) (set! index (+ index 1))]
@@ -395,9 +377,7 @@
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (cobj.compiler-object-section-list-ref
-          (owned_view.compiler-owned-shared-view sections)
-          index)
+        (match (cobj.compiler-object-section-list-ref sections index)
           [(cobj.CompilerObjectSection.Section kind _ instrs)
             (if (and
               (match kind
@@ -419,17 +399,13 @@
 (define (compiler-object-elf-local-symbol-count
   [symbols : cobj.CompilerObjectSymbolList]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [total : i64 0]
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-symbol-list-ref
-            (owned_view.compiler-owned-shared-view symbols)
-            index)
+          (match (cobj.compiler-object-symbol-list-ref symbols index)
             [(cobj.CompilerObjectSymbol.Symbol _ binding _ _)
               (if (compiler-object-elf-symbol-binding-local? binding)
                 (set! total (+ total 1))
@@ -442,18 +418,14 @@
   [name : String]
   [index : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [slot : i64 0]
     [cur-index : i64 index]
     [result : i64 -1]
     [done : bool false]
     (begin
       (while (and (not done) (< slot count))
-        (match (cobj.compiler-object-symbol-list-ref
-          (owned_view.compiler-owned-shared-view symbols)
-          slot)
+        (match (cobj.compiler-object-symbol-list-ref symbols slot)
           [(cobj.CompilerObjectSymbol.Symbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
               (if (string.eq found name)
@@ -471,18 +443,14 @@
   [name : String]
   [index : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [slot : i64 0]
     [cur-index : i64 index]
     [result : i64 -1]
     [done : bool false]
     (begin
       (while (and (not done) (< slot count))
-        (match (cobj.compiler-object-symbol-list-ref
-          (owned_view.compiler-owned-shared-view symbols)
-          slot)
+        (match (cobj.compiler-object-symbol-list-ref symbols slot)
           [(cobj.CompilerObjectSymbol.Symbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
               (set! slot (+ slot 1))
@@ -517,9 +485,7 @@
   [label : String]
   [offset : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [cur-offset : i64 offset]
     [result : i64 -1]
@@ -528,9 +494,7 @@
       (while (and (not done) (< index count))
         (let
           [record : cobj.CompilerObjectDataRecord
-            (cobj.compiler-object-data-record-list-ref
-              (owned_view.compiler-owned-shared-view records)
-              index)]
+            (cobj.compiler-object-data-record-list-ref records index)]
           (match (owned_view.compiler-owned-shared-view record)
             [(cobj.CompilerObjectDataRecord.Label found)
               (if (string.eq found label)
@@ -551,9 +515,7 @@
   [label : String]
   [offset : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [cur-offset : i64 offset]
     [result : i64 -1]
@@ -562,9 +524,7 @@
       (while (and (not done) (< index count))
         (let
           [instr : cobj.CompilerObjectX64Instr
-            (cobj.compiler-object-instr-list-ref
-              (owned_view.compiler-owned-shared-view instrs)
-              index)]
+            (cobj.compiler-object-instr-list-ref instrs index)]
           (match (owned_view.compiler-owned-shared-view instr)
             [(cobj.CompilerObjectX64Instr.Label found)
               (if (string.eq found label)
@@ -600,9 +560,7 @@
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (cobj.compiler-object-relocation-list-ref
-          (owned_view.compiler-owned-shared-view relocs)
-          index)
+        (match (cobj.compiler-object-relocation-list-ref relocs index)
           [(cobj.CompilerObjectRelocation.Relocation section site _ target)
             (if (and
               (>=
@@ -624,16 +582,12 @@
   [image : cobj.CompilerObjectImage]
   [instrs : cobj.CompilerObjectX64InstrList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (cobj.compiler-object-instr-list-ref
-          (owned_view.compiler-owned-shared-view instrs)
-          index)
+        (match (cobj.compiler-object-instr-list-ref instrs index)
           [(cobj.CompilerObjectX64Instr.Label _) (set! index (+ index 1))]
           [(cobj.CompilerObjectX64Instr.Call target)
             (if (>=
@@ -778,7 +732,7 @@
 (define (compiler-object-elf-text-targets-known?
   [image : cobj.CompilerObjectImage]) : bool
   (match (cobj.compiler-object-section-list-find
-    (owned_view.compiler-owned-shared-view image.sections)
+    image.sections
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-instr-targets-known? image instrs)]))
@@ -823,9 +777,7 @@
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-relocation-list-ref
-            (owned_view.compiler-owned-shared-view relocs)
-            index)
+          (match (cobj.compiler-object-relocation-list-ref relocs index)
             [(cobj.CompilerObjectRelocation.Relocation section _ _ _)
               (if (cobj.compiler-object-section-kind-eq? section kind)
                 (set! total (+ total 1))
@@ -858,17 +810,13 @@
   [symbols : cobj.CompilerObjectSymbolList]
   [size : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [total : i64 size]
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-symbol-list-ref
-            (owned_view.compiler-owned-shared-view symbols)
-            index)
+          (match (cobj.compiler-object-symbol-list-ref symbols index)
             [(cobj.CompilerObjectSymbol.Symbol name _ _ _)
               (set!
                 total
@@ -1153,9 +1101,7 @@
   [records : cobj.CompilerObjectDataRecordList]
   [offset : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [cur-offset : i64 offset]
     (begin
@@ -1165,9 +1111,7 @@
             cur-offset
             (compiler-object-elf-render-data-record!
               out
-              (cobj.compiler-object-data-record-list-ref
-                (owned_view.compiler-owned-shared-view records)
-                index)
+              (cobj.compiler-object-data-record-list-ref records index)
               cur-offset))
           (set! index (+ index 1))))
       cur-offset)))
@@ -1296,18 +1240,14 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [instrs : cobj.CompilerObjectX64InstrList]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
           (compiler-object-elf-render-instr!
             out
-            (cobj.compiler-object-instr-list-ref
-              (owned_view.compiler-owned-shared-view instrs)
-              index))
+            (cobj.compiler-object-instr-list-ref instrs index))
           (set! index (+ index 1))))
       unit)))
 
@@ -1415,18 +1355,14 @@
   [instrs : cobj.CompilerObjectX64InstrList]
   [offset : i64]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [cur-offset : i64 offset]
     (begin
       (while (< index count)
         (let
           [instr : cobj.CompilerObjectX64Instr
-            (cobj.compiler-object-instr-list-ref
-              (owned_view.compiler-owned-shared-view instrs)
-              index)]
+            (cobj.compiler-object-instr-list-ref instrs index)]
           (begin
             (match (owned_view.compiler-owned-shared-view instr)
               [(cobj.CompilerObjectX64Instr.Label _) unit]
@@ -1563,7 +1499,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : cobj.CompilerObjectImage]) : unit
   (match (cobj.compiler-object-section-list-find
-    (owned_view.compiler-owned-shared-view image.sections)
+    image.sections
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-render-text-instr-relocations! out image instrs 0)]))
@@ -1580,9 +1516,7 @@
       (while (< index count)
         (let
           [reloc : cobj.CompilerObjectRelocation
-            (cobj.compiler-object-relocation-list-ref
-              (owned_view.compiler-owned-shared-view relocs)
-              index)]
+            (cobj.compiler-object-relocation-list-ref relocs index)]
           (begin
             (match (owned_view.compiler-owned-shared-view reloc)
               [(cobj.CompilerObjectRelocation.Relocation section _ _ _)
@@ -1620,18 +1554,14 @@
   [name : (& name str)]
   [offset : i64]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [cur-offset : i64 offset]
     [result : i64 0]
     [done : bool false]
     (begin
       (while (and (not done) (< index count))
-        (match (cobj.compiler-object-symbol-list-ref
-          (owned_view.compiler-owned-shared-view symbols)
-          index)
+        (match (cobj.compiler-object-symbol-list-ref symbols index)
           [(cobj.CompilerObjectSymbol.Symbol found _ _ _)
             (if (string.eq found name)
               (begin
@@ -1724,17 +1654,13 @@
   [symbols : cobj.CompilerObjectSymbolList]
   [want-local : bool]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
           [symbol : cobj.CompilerObjectSymbol
-            (cobj.compiler-object-symbol-list-ref
-              (owned_view.compiler-owned-shared-view symbols)
-              index)]
+            (cobj.compiler-object-symbol-list-ref symbols index)]
           (begin
             (match (owned_view.compiler-owned-shared-view symbol)
               [(cobj.CompilerObjectSymbol.Symbol _ binding _ _)
@@ -1773,16 +1699,12 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [symbols : cobj.CompilerObjectSymbolList]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-symbol-list-ref
-            (owned_view.compiler-owned-shared-view symbols)
-            index)
+          (match (cobj.compiler-object-symbol-list-ref symbols index)
             [(cobj.CompilerObjectSymbol.Symbol name _ _ _)
               (begin
                 (compiler-object-elf-push-string-bytes! out name)

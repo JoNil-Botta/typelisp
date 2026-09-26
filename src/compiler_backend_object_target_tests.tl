@@ -28,12 +28,12 @@
         "Linux leaf emits only the shared ELF section set")
       (test.assert-true
         (cobj.compiler-object-section-contains-bytes?
-          (owned_view.compiler-owned-shared-view linux-sections)
+          linux-sections
           (object_linux.compiler-backend-object-tlci-entry-bytes))
         "Linux leaf owns the System V TLCI image bridge")
       (test.assert-true
         (cobj.compiler-object-section-contains-bytes?
-          (owned_view.compiler-owned-shared-view linux-sections)
+          linux-sections
           (object_linux.compiler-backend-object-tlci-macro-entry-bytes))
         "Linux leaf owns the System V TLCI macro bridge")
       (test.assert-true
@@ -53,37 +53,45 @@
         "Windows leaf emits COFF pdata, xdata, and resource sections")
       (test.assert-true
         (cobj.compiler-object-section-contains-bytes?
-          (owned_view.compiler-owned-shared-view windows-sections)
+          windows-sections
           (object_windows.compiler-backend-object-tlci-entry-bytes))
         "Windows leaf owns the Win64 TLCI image bridge")
       (test.assert-true
         (cobj.compiler-object-section-contains-bytes?
-          (owned_view.compiler-owned-shared-view windows-sections)
+          windows-sections
           (object_windows.compiler-backend-object-tlci-macro-entry-bytes))
         "Windows leaf owns the Win64 TLCI macro bridge")
       (test.assert-true
         (cobj.compiler-object-section-contains-label?
-          (owned_view.compiler-owned-shared-view windows-sections)
+          windows-sections
           (cobj.CompilerObjectSectionKind.Pdata)
           ".L_tl_start_pdata_begin")
         "Windows leaf emits entry unwind pdata")
       (test.assert-true
         (cobj.compiler-object-section-contains-label?
-          (owned_view.compiler-owned-shared-view windows-sections)
+          windows-sections
           (cobj.CompilerObjectSectionKind.Xdata)
           ".L_tl_start_xdata")
         "Windows leaf emits entry unwind xdata")
       (test.assert-true
-        (cobj.compiler-object-section-contains-label?
-          windows-sections
-          (cobj.CompilerObjectSectionKind.Rsrc)
-          (object_windows.compiler-backend-object-manifest-label-shared-view))
+        (let
+          [kind (cobj.CompilerObjectSectionKind.Rsrc)]
+          [label
+            (object_windows.compiler-backend-object-manifest-label-shared-view)]
+          (cobj.compiler-object-section-contains-label?
+            windows-sections
+            kind
+            label))
         "Windows leaf emits the UTF-8 manifest resource")
       (test.assert-true
-        (cobj.compiler-object-relocation-list-contains?
-          windows-image.relocations
-          (cobj.CompilerObjectRelocationKind.Addr32Nb)
-          (object_windows.compiler-backend-object-manifest-label-shared-view))
+        (let
+          [kind (cobj.CompilerObjectRelocationKind.Addr32Nb)]
+          [target
+            (object_windows.compiler-backend-object-manifest-label-shared-view)]
+          (cobj.compiler-object-relocation-list-contains?
+            windows-image.relocations
+            kind
+            target))
         "Windows leaf relocates the manifest resource"))))
 
 (test
@@ -116,18 +124,21 @@
       (test.assert-true
         (not
           (cobj.compiler-object-symbol-list-contains?
-            (owned_view.compiler-owned-shared-view windows-image.symbols)
+            windows-image.symbols
             "_tl_start"
             (cobj.CompilerObjectSymbolBinding.Export)
             (cobj.CompilerObjectSymbolKind.Function)))
         "Windows CRT mode omits the backend-owned native entry")
       (test.assert-true
         (not
-          (cobj.compiler-object-symbol-list-contains?
-            windows-image.symbols
-            (object_windows.compiler-backend-object-manifest-label-shared-view)
-            (cobj.CompilerObjectSymbolBinding.Local)
-            (cobj.CompilerObjectSymbolKind.Data)))
+          (let
+            [name
+              (object_windows.compiler-backend-object-manifest-label-shared-view)]
+            (cobj.compiler-object-symbol-list-contains?
+              windows-image.symbols
+              name
+              (cobj.CompilerObjectSymbolBinding.Local)
+              (cobj.CompilerObjectSymbolKind.Data))))
         "Windows CRT mode omits the executable manifest symbol"))))
 
 (test

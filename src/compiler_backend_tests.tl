@@ -2038,74 +2038,74 @@
             (= (cobj.compiler-object-section-list-count sections) 4)
             (>
               (cobj.compiler-object-section-instr-count
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Text))
               0)
             (>
               (cobj.compiler-object-section-data-count
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Data))
               0)
             (>
               (cobj.compiler-object-section-data-count
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Rodata))
               0)
             (cobj.compiler-object-symbol-list-contains?
-              (owned_view.compiler-owned-shared-view symbols)
+              symbols
               "_tl_start"
               (cobj.CompilerObjectSymbolBinding.Export)
               (cobj.CompilerObjectSymbolKind.Function))
             (cobj.compiler-object-symbol-list-contains?
-              (owned_view.compiler-owned-shared-view symbols)
+              symbols
               "main"
               (cobj.CompilerObjectSymbolBinding.Export)
               (cobj.CompilerObjectSymbolKind.Function))
             (cobj.compiler-object-symbol-list-contains?
-              (owned_view.compiler-owned-shared-view symbols)
+              symbols
               "_tl_inc"
               (cobj.CompilerObjectSymbolBinding.Export)
               (cobj.CompilerObjectSymbolKind.Function))
             (cobj.compiler-object-symbol-list-contains?
-              (owned_view.compiler-owned-shared-view symbols)
+              symbols
               "foreign_exact"
               (cobj.CompilerObjectSymbolBinding.Extern)
               (cobj.CompilerObjectSymbolKind.Function)))
           (cobj.compiler-object-symbol-list-contains?
-            (owned_view.compiler-owned-shared-view symbols)
+            symbols
             "foreign_data_exact"
             (cobj.CompilerObjectSymbolBinding.Extern)
             (cobj.CompilerObjectSymbolKind.Function))
           (cobj.compiler-object-symbol-list-contains?
-            (owned_view.compiler-owned-shared-view symbols)
+            symbols
             "foreign_fn_exact"
             (cobj.CompilerObjectSymbolBinding.Extern)
             (cobj.CompilerObjectSymbolKind.Function))
           (cobj.compiler-object-symbol-list-contains?
-            (owned_view.compiler-owned-shared-view symbols)
+            symbols
             "tl_alloc"
             (cobj.CompilerObjectSymbolBinding.Local)
             (cobj.CompilerObjectSymbolKind.Runtime))
           (cobj.compiler-object-symbol-list-contains?
-            (owned_view.compiler-owned-shared-view symbols)
+            symbols
             "tl_tlci_call_image_entry"
             (cobj.CompilerObjectSymbolBinding.Local)
             (cobj.CompilerObjectSymbolKind.Runtime))
           (not
             (cobj.compiler-object-symbol-list-contains?
-              (owned_view.compiler-owned-shared-view symbols)
+              symbols
               "tl_tlci_call_macro_entry"
               (cobj.CompilerObjectSymbolBinding.Local)
               (cobj.CompilerObjectSymbolKind.Runtime)))
           (not
             (cobj.compiler-object-symbol-list-contains?
-              (owned_view.compiler-owned-shared-view symbols)
+              symbols
               "unused_foreign_exact"
               (cobj.CompilerObjectSymbolBinding.Extern)
               (cobj.CompilerObjectSymbolKind.Function)))
           (not
             (cobj.compiler-object-symbol-list-contains?
-              (owned_view.compiler-owned-shared-view symbols)
+              symbols
               "unused_foreign_data"
               (cobj.CompilerObjectSymbolBinding.Extern)
               (cobj.CompilerObjectSymbolKind.Function)))
@@ -2117,83 +2117,81 @@
               (cobj.CompilerObjectSymbolKind.Function)))
           (compiler_backend.backend-and8
             (cobj.compiler-object-section-contains-label?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (cobj.CompilerObjectSectionKind.Data)
               "_tl_answer")
-            (cobj.compiler-object-section-contains-label?
-              (owned_view.compiler-owned-shared-view sections)
-              (cobj.CompilerObjectSectionKind.Rodata)
-              (compiler_backend.compiler-backend-string-data-label "hi"))
-            (cobj.compiler-object-section-contains-label?
-              (owned_view.compiler-owned-shared-view sections)
-              (cobj.CompilerObjectSectionKind.Rodata)
-              (compiler_backend.compiler-backend-string-fat-label "hi"))
+            (let
+              [kind (cobj.CompilerObjectSectionKind.Rodata)]
+              [label (compiler_backend.compiler-backend-string-data-label "hi")]
+              (cobj.compiler-object-section-contains-label? sections kind label))
+            (let
+              [kind (cobj.CompilerObjectSectionKind.Rodata)]
+              [label (compiler_backend.compiler-backend-string-fat-label "hi")]
+              (cobj.compiler-object-section-contains-label? sections kind label))
             (cobj.compiler-object-section-contains-string?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (cobj.CompilerObjectSectionKind.Rodata)
               "hi")
             (cobj.compiler-object-section-contains-align?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (cobj.CompilerObjectSectionKind.Rodata)
               8)
             (cobj.compiler-object-section-contains-i64?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (cobj.CompilerObjectSectionKind.Rodata)
               2)
             (cobj.compiler-object-section-contains-f64?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (cobj.CompilerObjectSectionKind.Rodata)
               (compiler-backend-test-f64-bits "4.0"))
             true)
           (cobj.compiler-object-section-contains-f32?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (cobj.CompilerObjectSectionKind.Data)
             (compiler-backend-test-f32-bits "2.5"))
           (cobj.compiler-object-section-contains-f32?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (cobj.CompilerObjectSectionKind.Rodata)
             (compiler-backend-test-f32-bits "3.0"))
           (compiler_backend.backend-and8
+            (cobj.compiler-object-section-contains-call? sections "_tl_inc")
             (cobj.compiler-object-section-contains-call?
-              (owned_view.compiler-owned-shared-view sections)
-              "_tl_inc")
-            (cobj.compiler-object-section-contains-call?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               "foreign_exact")
             (cobj.compiler-object-relocation-list-contains?
-              (owned_view.compiler-owned-shared-view relocs)
+              relocs
               (cobj.CompilerObjectRelocationKind.Call)
               "_tl_inc")
             (cobj.compiler-object-relocation-list-contains?
-              (owned_view.compiler-owned-shared-view relocs)
+              relocs
               (cobj.CompilerObjectRelocationKind.Call)
               "foreign_exact")
             (cobj.compiler-object-relocation-list-contains?
-              (owned_view.compiler-owned-shared-view relocs)
+              relocs
               (cobj.CompilerObjectRelocationKind.Call)
               "tl_alloc")
             (cobj.compiler-object-section-contains-bytes?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (object_target.compiler-backend-object-bytes-from-hex "554889e5"))
             (cobj.compiler-object-section-contains-bytes?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (object_target.compiler-backend-object-bytes-from-hex "c9c3"))
             (cobj.compiler-object-section-contains-bytes?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (object_linux.compiler-backend-object-exit-bytes)))
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (object_linux.compiler-backend-object-tlci-entry-bytes))
           (not
             (cobj.compiler-object-section-contains-bytes?
               sections
               (object_linux.compiler-backend-object-tlci-macro-entry-bytes)))
+          (let
+            [kind (cobj.CompilerObjectRelocationKind.Abs64)]
+            [target (compiler_backend.compiler-backend-string-data-label "hi")]
+            (cobj.compiler-object-relocation-list-contains? relocs kind target))
           (cobj.compiler-object-relocation-list-contains?
-            (owned_view.compiler-owned-shared-view relocs)
-            (cobj.CompilerObjectRelocationKind.Abs64)
-            (compiler_backend.compiler-backend-string-data-label "hi"))
-          (cobj.compiler-object-relocation-list-contains?
-            (owned_view.compiler-owned-shared-view relocs)
+            relocs
             (cobj.CompilerObjectRelocationKind.RipValue)
             "_tl_answer")
           (> (cobj.compiler-object-relocation-list-count relocs) 5)))]
@@ -2269,18 +2267,14 @@
 (define (compiler-backend-object-merge-edge-stores
   [instrs : cobj.CompilerObjectX64InstrList]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [previous-store? : bool false]
     [edges : i64 0]
     (begin
       (while (and (>= edges 0) (< index count))
         (begin
-          (match (cobj.compiler-object-instr-list-ref
-            (owned_view.compiler-owned-shared-view instrs)
-            index)
+          (match (cobj.compiler-object-instr-list-ref instrs index)
             [(cobj.CompilerObjectX64Instr.Bytes value)
               (set!
                 previous-store?
@@ -2307,7 +2301,7 @@
         (and
           (not
             (cobj.compiler-object-section-contains-bytes?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (object_target.compiler-backend-object-bytes-from-hex "4883ec08")))
           (match (cobj.compiler-object-section-list-find
             sections
@@ -2640,23 +2634,23 @@
               (= data-offset 72)
               (= manifest-offset 88)
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Rsrc)
                 ".L_tl_rsrc_base"))
             (compiler_backend.backend-and8
               (cobj.compiler-object-section-contains-label?
                 sections
                 (cobj.CompilerObjectSectionKind.Rsrc)
-                (owned_view.compiler-owned-shared-view manifest-label))
+                manifest-label)
               (cobj.compiler-object-symbol-list-contains?
                 symbols
-                (owned_view.compiler-owned-shared-view manifest-label)
+                manifest-label
                 (cobj.CompilerObjectSymbolBinding.Local)
                 (cobj.CompilerObjectSymbolKind.Data))
               (cobj.compiler-object-relocation-list-contains?
                 relocs
                 (cobj.CompilerObjectRelocationKind.Addr32Nb)
-                (owned_view.compiler-owned-shared-view manifest-label))
+                manifest-label)
               (coff.compiler-object-coff-reloc-entry-ok?
                 (owned_view.compiler-owned-shared-view obj)
                 rsrc-reloc-ptr
@@ -2734,59 +2728,59 @@
             (compiler_backend.backend-and8
               (= (cobj.compiler-object-section-list-count sections) 7)
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 "_tl_start"
                 (cobj.CompilerObjectSymbolBinding.Export)
                 (cobj.CompilerObjectSymbolKind.Function))
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 ".L_tl_start_end"
                 (cobj.CompilerObjectSymbolBinding.Local)
                 (cobj.CompilerObjectSymbolKind.Function))
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 "ExitProcess"
                 (cobj.CompilerObjectSymbolBinding.Extern)
                 (cobj.CompilerObjectSymbolKind.Function))
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 "GetCommandLineA"
                 (cobj.CompilerObjectSymbolBinding.Extern)
                 (cobj.CompilerObjectSymbolKind.Function))
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 "__chkstk"
                 (cobj.CompilerObjectSymbolBinding.Local)
                 (cobj.CompilerObjectSymbolKind.Runtime))
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 ".L_tl_start_xdata"
                 (cobj.CompilerObjectSymbolBinding.Local)
                 (cobj.CompilerObjectSymbolKind.Data))
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 ".L_tl_main_fiber"
                 (cobj.CompilerObjectSymbolBinding.Local)
                 (cobj.CompilerObjectSymbolKind.Function)))
             (compiler_backend.backend-and8
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Data)
                 ".L_tl_argc")
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Bss)
                 "tl_boot_off")
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Bss)
                 "tl_boot_pool")
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Bss)
                 ".L_tl_main_stack_written")
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Rodata)
                 ".L_tl_main_stack_reservation_msg")
               true
@@ -2812,20 +2806,20 @@
                   "tl_alloc")
                 0)
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Pdata)
                 ".L_tl_start_pdata_begin")
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Xdata)
                 ".L_tl_start_xdata")
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 ".L_tl_boot_alloc"
                 (cobj.CompilerObjectSymbolBinding.Local)
                 (cobj.CompilerObjectSymbolKind.Runtime))
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Pdata)
                 ".L_tl_main_fiber_pdata_begin")
               (>=
@@ -2836,116 +2830,116 @@
                 0))
             (compiler_backend.backend-and8
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "tl_setup_argv")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "GetCommandLineA")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 ".L_tl_boot_alloc")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_argc")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_argv")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipValue)
                 "tl_boot_off")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipAddress)
                 "tl_boot_pool")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipAddress)
                 "tl_boot_off"))
             (compiler_backend.backend-and8
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "main")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "ExitProcess")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipValue)
                 ".L_tl_argc")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipValue)
                 ".L_tl_argv")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 "_tl_start")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 ".L_tl_start_end")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 ".L_tl_start_xdata")
               (and
                 (cobj.compiler-object-relocation-list-contains?
-                  (owned_view.compiler-owned-shared-view relocs)
+                  relocs
                   (cobj.CompilerObjectRelocationKind.Addr32Nb)
                   ".L_tl_main_fiber")
                 (cobj.compiler-object-relocation-list-contains?
-                  (owned_view.compiler-owned-shared-view relocs)
+                  relocs
                   (cobj.CompilerObjectRelocationKind.Addr32Nb)
                   ".L_tl_main_fiber_end")))
             (compiler_backend.backend-and8
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "ConvertThreadToFiber")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "CreateFiberEx")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "SwitchToFiber")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "GetStdHandle")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "WriteFile")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_main_fiber")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_main_stack_reservation_msg")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_main_stack_written"))
             (compiler_backend.backend-and8
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 ".L_tl_stack_overflow_filter"
                 (cobj.CompilerObjectSymbolBinding.Local)
                 (cobj.CompilerObjectSymbolKind.Function))
               (cobj.compiler-object-section-contains-label?
-                (owned_view.compiler-owned-shared-view sections)
+                sections
                 (cobj.CompilerObjectSectionKind.Rodata)
                 ".L_tl_stack_overflow_msg")
               (cobj.compiler-object-section-contains-label?
@@ -2953,23 +2947,23 @@
                 (cobj.CompilerObjectSectionKind.Pdata)
                 ".L_tl_stack_overflow_filter_pdata_begin")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "SetUnhandledExceptionFilter")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Call)
                 "SetThreadStackGuarantee")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_stack_overflow_filter")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_stack_overflow_msg")
               (cobj.compiler-object-relocation-list-contains?
-                (owned_view.compiler-owned-shared-view relocs)
+                relocs
                 (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 ".L_tl_stack_overflow_filter"))
             (compiler_backend.backend-and4
@@ -2978,7 +2972,7 @@
                 (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 ".L_tl_stack_overflow_filter_end")
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view symbols)
+                symbols
                 "SetUnhandledExceptionFilter"
                 (cobj.CompilerObjectSymbolBinding.Extern)
                 (cobj.CompilerObjectSymbolKind.Function))
@@ -3153,7 +3147,7 @@
         [sections : cobj.CompilerObjectSectionList image.sections]
         (and
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (object_target.compiler-backend-object-bytes-from-hex "488b00"))
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -3172,7 +3166,7 @@
         [sections : cobj.CompilerObjectSectionList image.sections]
         (compiler_backend.backend-and4
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (object_target.compiler-backend-object-bytes-from-hex "4889442420"))
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -10445,21 +10439,21 @@
           renders
           ;; Four scalar vars plus a four-slot word1 region.
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (compiler_backend.compiler-backend-object-prologue-bytes
               (compiler_backend.CompilerBackendTarget.Linux)
               (compiler_backend.compiler-backend-frame-size 8)))
           ;; Pack word1, copy it to the next pair, then extract it.
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (compiler_backend.compiler-backend-object-store-slot-bytes 4 "%rdx"))
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (compiler_backend.compiler-backend-object-load-rbp-disp-bytes
               (compiler_backend.compiler-backend-object-slot-disp 4)
               "%rdx"))
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (compiler_backend.compiler-backend-object-store-slot-bytes 5 "%rdx"))
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -11407,20 +11401,23 @@
     [relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish worded.relocations)]
     (and
-      (cobj.compiler-object-relocation-list-contains?
-        (owned_view.compiler-owned-shared-view relocs)
-        (cobj.CompilerObjectRelocationKind.RipAddress)
-        (compiler_backend.compiler-backend-string-fat-label "object-walked"))
-      (cobj.compiler-object-relocation-list-contains?
-        (owned_view.compiler-owned-shared-view relocs)
-        (cobj.CompilerObjectRelocationKind.RipValue)
-        (compiler_backend.compiler-backend-f64-label
-          (compiler-backend-test-f64-bits "6.25")))
-      (cobj.compiler-object-relocation-list-contains?
-        relocs
-        (cobj.CompilerObjectRelocationKind.RipAddress)
-        (compiler_backend.compiler-backend-closure-descriptor-label
-          "word_target")))))
+      (let
+        [kind (cobj.CompilerObjectRelocationKind.RipAddress)]
+        [target
+          (compiler_backend.compiler-backend-string-fat-label "object-walked")]
+        (cobj.compiler-object-relocation-list-contains? relocs kind target))
+      (let
+        [kind (cobj.CompilerObjectRelocationKind.RipValue)]
+        [target
+          (compiler_backend.compiler-backend-f64-label
+            (compiler-backend-test-f64-bits "6.25"))]
+        (cobj.compiler-object-relocation-list-contains? relocs kind target))
+      (let
+        [kind (cobj.CompilerObjectRelocationKind.RipAddress)]
+        [target
+          (compiler_backend.compiler-backend-closure-descriptor-label
+            "word_target")]
+        (cobj.compiler-object-relocation-list-contains? relocs kind target)))))
 
 (define (compiler-backend-ir-walker-object-refs-ok?) : bool
   (match (compiler_backend.compiler-backend-runtime-plan
@@ -20078,10 +20075,10 @@ g:
         (and
           (not
             (cobj.compiler-object-section-contains-bytes?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (compiler_backend.compiler-backend-object-cmp-imm32-rax-bytes 5)))
           (cobj.compiler-object-section-contains-label?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (cobj.CompilerObjectSectionKind.Rodata)
             ".Lf0_entry_switch_table_entry_5")
           (cobj.compiler-object-relocation-list-contains?
@@ -20473,35 +20470,35 @@ g:
           (coff.compiler-object-coff-image-supported? image)
           (cobj.compiler-object-symbol-list-contains?
             symbols
-            (owned_view.compiler-owned-shared-view table-label)
+            table-label
             (cobj.CompilerObjectSymbolBinding.Local)
             (cobj.CompilerObjectSymbolKind.Data))
           (cobj.compiler-object-section-contains-label?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (cobj.CompilerObjectSectionKind.Rodata)
-            (owned_view.compiler-owned-shared-view table-label))
+            table-label)
           (cobj.compiler-object-section-contains-align?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (cobj.CompilerObjectSectionKind.Rodata)
             8)
           (cobj.compiler-object-section-contains-label?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (cobj.CompilerObjectSectionKind.Rodata)
             ".Lf0_entry_switch_table_entry_0")
           (cobj.compiler-object-relocation-list-contains?
-            (owned_view.compiler-owned-shared-view relocs)
+            relocs
             (cobj.CompilerObjectRelocationKind.RipAddress)
             table-label)
           (cobj.compiler-object-relocation-list-contains?
-            (owned_view.compiler-owned-shared-view relocs)
+            relocs
             (cobj.CompilerObjectRelocationKind.Branch)
             ".Lf0_other")
           (cobj.compiler-object-relocation-list-contains?
-            (owned_view.compiler-owned-shared-view relocs)
+            relocs
             (cobj.CompilerObjectRelocationKind.Abs64)
             ".Lf0_zero")
           (cobj.compiler-object-relocation-list-contains?
-            (owned_view.compiler-owned-shared-view relocs)
+            relocs
             (cobj.CompilerObjectRelocationKind.Abs64)
             ".Lf0_one")
           (cobj.compiler-object-relocation-list-contains?
@@ -20509,7 +20506,7 @@ g:
             (cobj.CompilerObjectRelocationKind.Abs64)
             ".Lf0_two")
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (compiler_backend.compiler-backend-object-cmp-imm32-rax-bytes 2))
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -20525,7 +20522,7 @@ g:
         [sections : cobj.CompilerObjectSectionList image.sections]
         (and
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (compiler_backend.compiler-backend-object-sub-imm32-rax-bytes 4))
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -34630,26 +34627,24 @@ g:
           (compiler_backend.backend-and8
             (cobj.compiler-object-symbol-list-contains?
               symbols
-              (owned_view.compiler-owned-shared-view label)
+              label
               (cobj.CompilerObjectSymbolBinding.Local)
               (cobj.CompilerObjectSymbolKind.Data))
             (cobj.compiler-object-section-contains-label?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (cobj.CompilerObjectSectionKind.Rodata)
-              (owned_view.compiler-owned-shared-view label))
+              label)
             (cobj.compiler-object-section-contains-align?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (cobj.CompilerObjectSectionKind.Rodata)
               16)
             (cobj.compiler-object-section-label-has-i64-pair?
-              (owned_view.compiler-owned-shared-view sections)
+              sections
               (cobj.CompilerObjectSectionKind.Rodata)
-              (owned_view.compiler-owned-shared-view label)
+              label
               -9223372036854775808
               0)
-            (cobj.compiler-object-section-contains-xorpd-rip?
-              sections
-              (owned_view.compiler-owned-shared-view label))
+            (cobj.compiler-object-section-contains-xorpd-rip? sections label)
             (cobj.compiler-object-relocation-list-contains?
               relocs
               (cobj.CompilerObjectRelocationKind.RipValue)
@@ -34732,26 +34727,24 @@ g:
         (and
           (cobj.compiler-object-symbol-list-contains?
             symbols
-            (owned_view.compiler-owned-shared-view label)
+            label
             (cobj.CompilerObjectSymbolBinding.Local)
             (cobj.CompilerObjectSymbolKind.Data))
           (cobj.compiler-object-section-contains-label?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (cobj.CompilerObjectSectionKind.Rodata)
-            (owned_view.compiler-owned-shared-view label))
+            label)
           (cobj.compiler-object-section-contains-align?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (cobj.CompilerObjectSectionKind.Rodata)
             16)
           (cobj.compiler-object-section-label-has-i64-pair?
-            (owned_view.compiler-owned-shared-view sections)
+            sections
             (cobj.CompilerObjectSectionKind.Rodata)
-            (owned_view.compiler-owned-shared-view label)
+            label
             2147483648
             0)
-          (cobj.compiler-object-section-contains-xorpd-rip?
-            sections
-            (owned_view.compiler-owned-shared-view label))
+          (cobj.compiler-object-section-contains-xorpd-rip? sections label)
           (cobj.compiler-object-relocation-list-contains?
             relocs
             (cobj.CompilerObjectRelocationKind.RipValue)
@@ -49200,19 +49193,19 @@ b_keep:
         (compiler_backend.backend-and4
           ;; The rebind's byte copy, and the cell address it copies into.
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view image.sections)
+            image.sections
             (compiler_backend.compiler-backend-object-inline-aggregate-copy-bytes
               16))
           (cobj.compiler-object-section-contains-bytes?
-            (owned_view.compiler-owned-shared-view image.sections)
+            image.sections
             (compiler_backend.compiler-backend-object-inline-aggregate-copy-bytes
               24))
           (cobj.compiler-object-relocation-list-contains?
-            (owned_view.compiler-owned-shared-view image.relocations)
+            image.relocations
             (cobj.CompilerObjectRelocationKind.RipAddress)
             "_tl_cell")
           (cobj.compiler-object-section-contains-label?
-            (owned_view.compiler-owned-shared-view image.sections)
+            image.sections
             (cobj.CompilerObjectSectionKind.Bss)
             "_tl_cell"))
         (match (object_asm.compiler-object-asm-render image)

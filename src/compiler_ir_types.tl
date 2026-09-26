@@ -5212,7 +5212,7 @@
     (ir_i64_i64_map.with-capacity 1)))
 
 (define (compiler-ir-representation-index-kind-for-key
-  [index : CompilerIrRepresentationIndex]
+  [index : (& index CompilerIrRepresentationIndex)]
   [key : i64]) : CompilerIrRepresentationKind
   (match (ir_i64_i64_map.get (& index.word-counts) key)
     [(ir_i64_i64_map.LookupMissing) CompilerIrRepresentationKind.Unknown]
@@ -5229,7 +5229,7 @@
 
 (define (compiler-ir-representation-index-kind
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex]
+  [index : (& index CompilerIrRepresentationIndex)]
   [ty : ast.AstType]) : CompilerIrRepresentationKind
   (match (ast.ast-aggregate-type-key type-segment-bases ty)
     [(ast.AstMaybeNominalKey.Some key)

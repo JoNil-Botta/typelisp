@@ -39805,6 +39805,18 @@
     externs
     (profile_state.compiler-profile-state-new)))
 
+(define (compiler-backend-representation-kind
+  [type-segment-bases : i64]
+  [index : (& index CompilerBackendProgramIndex)]
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrRepresentationKind
+  (let
+    [tables : (& index CompilerBackendProgramTables)
+      (compiler-backend-program-tables index)]
+    (compiler_ir_types.compiler-ir-representation-index-kind
+      type-segment-bases
+      tables.representations
+      ty)))
+
 ;; Machine-word count for a value's type -- 2 (or more) for a
 ;; register-group aggregate constructed somewhere in the program, else 1.
 (define (compiler-backend-group-word-count
@@ -39821,10 +39833,7 @@
         2
         1)]
     [_
-      (match (compiler_ir_types.compiler-ir-representation-index-kind
-        type-segment-bases
-        (compiler-backend-program-index-representations index)
-        ty)
+      (match (compiler-backend-representation-kind type-segment-bases index ty)
         [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup count _)
           count]
         ;; Unknown values retain the backend's conservative one-slot fallback;
@@ -40120,10 +40129,7 @@
     [(compiler_ast_types.AstType.Ref _ _) 0]
     [(compiler_ast_types.AstType.MutRef _ _) 0]
     [_
-      (match (compiler_ir_types.compiler-ir-representation-index-kind
-        type-segment-bases
-        (compiler-backend-program-index-representations index)
-        ty)
+      (match (compiler-backend-representation-kind type-segment-bases index ty)
         [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup _ mask)
           mask]
         [_ 0])]))

@@ -1725,128 +1725,37 @@
   (if (>= index (ast.ast-expr-list-len (& exprs)))
     names
     (let
-      [head : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& exprs) index 0))]
+      [head : i64 (ast.ast-expr-list-get (& exprs) index 0)]
       (tltest-reach-mark-expr-list-at
         session
         exprs
         (tltest-reach-mark-expr session head names)
         (+ index 1)))))
 
-(define (tltest-reach-mark-let-bindings
+(define (tltest-reach-mark-children
   [session : cis.InternStructuralSessionHandle]
-  [bindings : ast.AstLetBindingList]
+  [node-id : i64]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (tltest-reach-mark-let-bindings-at session (& bindings) names 0))
-
-(define (tltest-reach-mark-let-bindings-at
-  [session : cis.InternStructuralSessionHandle]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [names : tltest_name_map.Map]
-  [index : i64]) : tltest_name_map.Map
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    names
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ _ value-box)
-        (let
-          [value : ast.AstExpr (ast.ast-node-get value-box)]
-          (tltest-reach-mark-let-bindings-at
-            session
-            bindings
-            (tltest-reach-mark-expr session value names)
-            (+ index 1)))])))
-
-(define (tltest-reach-mark-resource-bindings
-  [session : cis.InternStructuralSessionHandle]
-  [bindings : ast.AstResourceBindingList]
-  [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (tltest-reach-mark-resource-bindings-at session (& bindings) names 0))
-
-(define (tltest-reach-mark-resource-bindings-at
-  [session : cis.InternStructuralSessionHandle]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [names : tltest_name_map.Map]
-  [index : i64]) : tltest_name_map.Map
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    names
-    (match (ast.ast-resource-binding-list-get
-      bindings
-      index
-      (ast.ast-resource-binding-fallback))
-      [(ast.AstResourceBinding.Binding _ init-box cleanup-box _)
-        (let
-          [init : ast.AstExpr (ast.ast-node-get init-box)]
-          [cleanup : ast.AstExpr (ast.ast-node-get cleanup-box)]
-          (tltest-reach-mark-resource-bindings-at
-            session
-            bindings
-            (tltest-reach-mark-expr
-              session
-              cleanup
-              (tltest-reach-mark-expr session init names))
-            (+ index 1)))])))
-
-(define (tltest-reach-mark-match-arms
-  [session : cis.InternStructuralSessionHandle]
-  [arms : ast.AstMatchArmList]
-  [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (tltest-reach-mark-match-arms-at session (& arms) names 0))
-
-(define (tltest-reach-mark-match-arms-at
-  [session : cis.InternStructuralSessionHandle]
-  [arms : (& arms ast.AstMatchArmList)]
-  [names : tltest_name_map.Map]
-  [index : i64]) : tltest_name_map.Map
-  (if (>= index (ast.ast-match-arm-list-len arms))
-    names
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm _ body-box)
-        (let
-          [body : ast.AstExpr (ast.ast-node-get body-box)]
-          (tltest-reach-mark-match-arms-at
-            session
-            arms
-            (tltest-reach-mark-expr session body names)
-            (+ index 1)))])))
+  (tltest-reach-mark-expr-list
+    session
+    (ast.ast-expr-child-ids (ast.ast-node-get node-id))
+    names))
 
 (define (tltest-reach-mark-expr
   [session : cis.InternStructuralSessionHandle]
-  [expr : ast.AstExpr]
+  [node-id : i64]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tltest-reach-mark-expr session (ast.ast-node-get inner-box) names)]
-    [(ast.AstExpr.Literal _) names]
+  ;; The arms below mark names, the runtime helpers calls and closures need,
+  ;; and the read for-owned slots; every other variant's children are marked
+  ;; through the AstExpr child list.
+  (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Var name) (tltest-reach-mark-source-name session names name)]
-    [(ast.AstExpr.Binary _ left-box right-box)
+    [(ast.AstExpr.Call func args)
       (let
-        [left : ast.AstExpr (ast.ast-node-get left-box)]
-        [right : ast.AstExpr (ast.ast-node-get right-box)]
-        (tltest-reach-mark-expr
-          session
-          right
-          (tltest-reach-mark-expr session left names)))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.Call func-box args)
-      (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
         [called-names : tltest_name_map.Map
-          (tltest-reach-mark-expr
-            session
-            (owned_view.compiler-owned-shared-view func)
-            names)]
+          (tltest-reach-mark-expr session func names)]
         [runtime-names : tltest_name_map.Map
-          (match (ast.ast-expr-unspan func)
+          (match (ast.ast-expr-unspan (ast.ast-node-get func))
             [(ast.AstExpr.Var name)
               (tltest-reach-mark-lowered-runtime-for-call
                 session
@@ -1854,510 +1763,60 @@
                 called-names)]
             [_ called-names])]
         (tltest-reach-mark-expr-list session args runtime-names))]
-    [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
-      (let
-        [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-        [then-branch : ast.AstExpr (ast.ast-node-get then-branch-box)]
-        [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
-        (tltest-reach-mark-expr
-          session
-          else-branch
-          (tltest-reach-mark-expr
-            session
-            then-branch
-            (tltest-reach-mark-expr session cond names))))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
-            (tltest-reach-mark-expr
-              session
-              body
-              (tltest-reach-mark-let-bindings session bindings names)))])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda _ _ body-box)
-          (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
-            (tltest-reach-mark-expr
-              session
-              body
-              (tltest-reach-mark-string-snapshot-runtime names)))])]
-    [(ast.AstExpr.Tuple exprs)
-      (tltest-reach-mark-expr-list session exprs names)]
-    [(ast.AstExpr.TupleRef tuple-box _)
-      (let
-        [tuple : ast.AstExpr (ast.ast-node-get tuple-box)]
-        (tltest-reach-mark-expr session tuple names))]
-    [(ast.AstExpr.Array exprs)
-      (tltest-reach-mark-expr-list session exprs names)]
-    [(ast.AstExpr.DynArray exprs)
-      (tltest-reach-mark-expr-list session exprs names)]
-    [(ast.AstExpr.FixedMakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-node-get len-box)]
-        (tltest-reach-mark-expr session len names))]
-    [(ast.AstExpr.MakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-node-get len-box)]
-        (tltest-reach-mark-expr session len names))]
-    [(ast.AstExpr.ArrayRef array-box index-box)
-      (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
-        (tltest-reach-mark-expr
-          session
-          index
-          (tltest-reach-mark-expr session array names)))]
-    [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        (tltest-reach-mark-expr
-          session
-          value
-          (tltest-reach-mark-expr
-            session
-            index
-            (tltest-reach-mark-expr session array names))))]
-    [(ast.AstExpr.ArrayTake array-box live-box index-box)
-      (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [live : ast.AstExpr (ast.ast-node-get live-box)]
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
-        (tltest-reach-mark-expr
-          session
-          index
-          (tltest-reach-mark-expr
-            session
-            live
-            (tltest-reach-mark-expr session array names))))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
-        (tltest-reach-mark-expr
-          session
-          index
-          (tltest-reach-mark-expr session array names)))]
-    [(ast.AstExpr.Replace place-box replacement-box)
-      (let
-        [place : ast.AstExpr (ast.ast-node-get place-box)]
-        [replacement : ast.AstExpr (ast.ast-node-get replacement-box)]
-        (tltest-reach-mark-expr
-          session
-          replacement
-          (tltest-reach-mark-expr session place names)))]
-    [(ast.AstExpr.ArrayPush array-box value-box)
-      (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        (tltest-reach-mark-expr
-          session
-          value
-          (tltest-reach-mark-expr session array names)))]
-    [(ast.AstExpr.StringRef text-box index-box)
-      (let
-        [text : ast.AstExpr (ast.ast-node-get text-box)]
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
-        (tltest-reach-mark-expr
-          session
-          index
-          (tltest-reach-mark-expr session text names)))]
-    [(ast.AstExpr.While cond-box body-box)
-      (let
-        [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
-        (tltest-reach-mark-expr
-          session
-          body
-          (tltest-reach-mark-expr session cond names)))]
+    [(ast.AstExpr.Lambda _)
+      (tltest-reach-mark-children
+        session
+        node-id
+        (tltest-reach-mark-string-snapshot-runtime names))]
     [(ast.AstExpr.ForOwnedState payload)
       (tltest-reach-mark-expr
         session
-        (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
+        (ast.ast-for-owned-state-body (& payload))
         (tltest-reach-mark-expr
           session
-          (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
+          (ast.ast-for-owned-state-source (& payload))
           names))]
     [(ast.AstExpr.ForOwnedStep payload)
       (let
-        [source-box : i64 (ast.ast-for-owned-step-source-name (& payload))]
-        [index-box : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [source : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index : i64 (ast.ast-for-owned-step-index-name (& payload))]
         [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
-        [done-box : i64 (ast.ast-for-owned-step-done-name (& payload))]
-        [body-box : i64 (ast.ast-for-owned-step-body (& payload))]
+        [done : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
         (tltest-reach-mark-expr
           session
-          (ast.ast-node-get body-box)
+          body
           (tltest-reach-mark-expr
             session
-            (ast.ast-node-get done-box)
+            done
             (if (>= expected-type 0)
               (tltest-reach-mark-expr
                 session
-                (ast.ast-node-get expected-type)
+                expected-type
                 (tltest-reach-mark-expr
                   session
-                  (ast.ast-node-get index-box)
-                  (tltest-reach-mark-expr
-                    session
-                    (ast.ast-node-get source-box)
-                    names)))
+                  index
+                  (tltest-reach-mark-expr session source names)))
               (tltest-reach-mark-expr
                 session
-                (ast.ast-node-get index-box)
-                (tltest-reach-mark-expr
-                  session
-                  (ast.ast-node-get source-box)
-                  names))))))]
-    [(ast.AstExpr.Begin exprs)
-      (tltest-reach-mark-expr-list session exprs names)]
-    [(ast.AstExpr.Unsafe exprs)
-      (tltest-reach-mark-expr-list session exprs names)]
-    [(ast.AstExpr.Set name value-box)
-      (let
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        (tltest-reach-mark-expr
-          session
-          value
-          (tltest-reach-mark-source-name session names name)))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.Borrow _ _ place-box)
-      (let
-        [place : ast.AstExpr (ast.ast-node-get place-box)]
-        (tltest-reach-mark-expr session place names))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
-          (let
-            [scrutinee : ast.AstExpr (ast.ast-node-get scrutinee-box)]
-            (tltest-reach-mark-match-arms
-              session
-              arms
-              (tltest-reach-mark-expr session scrutinee names)))])]
-    [(ast.AstExpr.Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
-          (let
-            [start : ast.AstExpr (ast.ast-node-get start-box)]
-            [end : ast.AstExpr (ast.ast-node-get end-box)]
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
-            (tltest-reach-mark-expr
-              session
-              body
-              (tltest-reach-mark-expr
-                session
-                end
-                (tltest-reach-mark-expr session start names))))])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
-          (let
-            [start : ast.AstExpr (ast.ast-node-get start-box)]
-            [end : ast.AstExpr (ast.ast-node-get end-box)]
-            [init : ast.AstExpr (ast.ast-node-get init-box)]
-            [value : ast.AstExpr (ast.ast-node-get value-box)]
-            (tltest-reach-mark-expr
-              session
-              value
-              (tltest-reach-mark-expr
-                session
-                init
-                (tltest-reach-mark-expr
-                  session
-                  end
-                  (tltest-reach-mark-expr session start names)))))])]
-    [(ast.AstExpr.SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(ast.AstSpmdScan.Scan
-            _
-            _
-            _
-            start-box
-            end-box
-            _
-            _
-            init-box
-            value-box
-            body-box)
-          (let
-            [start : ast.AstExpr (ast.ast-node-get start-box)]
-            [end : ast.AstExpr (ast.ast-node-get end-box)]
-            [init : ast.AstExpr (ast.ast-node-get init-box)]
-            [value : ast.AstExpr (ast.ast-node-get value-box)]
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
-            (tltest-reach-mark-expr
-              session
-              body
-              (tltest-reach-mark-expr
-                session
-                value
-                (tltest-reach-mark-expr
-                  session
-                  init
-                  (tltest-reach-mark-expr
-                    session
-                    end
-                    (tltest-reach-mark-expr session start names))))))])]
-    [(ast.AstExpr.SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(ast.AstSpmdCompact.Compact
-            _
-            _
-            start-box
-            end-box
-            _
-            _
-            init-box
-            keep-box
-            body-box)
-          (let
-            [start : ast.AstExpr (ast.ast-node-get start-box)]
-            [end : ast.AstExpr (ast.ast-node-get end-box)]
-            [init : ast.AstExpr (ast.ast-node-get init-box)]
-            [keep : ast.AstExpr (ast.ast-node-get keep-box)]
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
-            (tltest-reach-mark-expr
-              session
-              body
-              (tltest-reach-mark-expr
-                session
-                keep
-                (tltest-reach-mark-expr
-                  session
-                  init
-                  (tltest-reach-mark-expr
-                    session
-                    end
-                    (tltest-reach-mark-expr session start names))))))])]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        [lane : ast.AstExpr (ast.ast-node-get lane-box)]
-        (tltest-reach-mark-expr
-          session
-          lane
-          (tltest-reach-mark-expr session value names)))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        [lane : ast.AstExpr (ast.ast-node-get lane-box)]
-        (tltest-reach-mark-expr
-          session
-          lane
-          (tltest-reach-mark-expr session value names)))]
-    [(ast.AstExpr.StructGet receiver-box _)
-      (let
-        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
-        (tltest-reach-mark-expr session receiver names))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        (tltest-reach-mark-expr
-          session
-          value
-          (tltest-reach-mark-expr session receiver names)))]
-    [(ast.AstExpr.WithRegion _ body)
-      (tltest-reach-mark-expr-list session body names)]
-    [(ast.AstExpr.WithEscape scratch-box body)
-      (let
-        [scratch : ast.AstExpr (ast.ast-node-get scratch-box)]
-        (tltest-reach-mark-expr-list
-          session
-          body
-          (tltest-reach-mark-expr
-            session
-            scratch
-            (tltest-reach-mark-string-snapshot-runtime names))))]
-    [(ast.AstExpr.WithScratch body)
-      (tltest-reach-mark-expr-list
+                index
+                (tltest-reach-mark-expr session source names))))))]
+    [(ast.AstExpr.Set name value)
+      (tltest-reach-mark-expr
         session
-        body
+        value
+        (tltest-reach-mark-source-name session names name))]
+    [(ast.AstExpr.WithEscape _ _)
+      (tltest-reach-mark-children
+        session
+        node-id
         (tltest-reach-mark-string-snapshot-runtime names))]
-    [(ast.AstExpr.InArena arena-box body)
-      (let
-        [arena : ast.AstExpr (ast.ast-node-get arena-box)]
-        (tltest-reach-mark-expr-list
-          session
-          body
-          (tltest-reach-mark-expr session arena names)))]
-    [(ast.AstExpr.WithResource wr-box)
-      (match (__tl-box-place wr-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (tltest-reach-mark-expr-list
-            session
-            body
-            (tltest-reach-mark-resource-bindings session bindings names))])]
-    [(ast.AstExpr.Box inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        (tltest-reach-mark-expr
-          session
-          value
-          (tltest-reach-mark-expr session inner names)))]
-    [(ast.AstExpr.Borrow _ _ place-box)
-      (let
-        [place : ast.AstExpr (ast.ast-node-get place-box)]
-        (tltest-reach-mark-expr session place names))]
-    [(ast.AstExpr.TypeLiteral _) names]
-    [(ast.AstExpr.Init _) names]
-    [(ast.AstExpr.Comptime inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.Quote inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.Quasiquote inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.Unquote inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.UnquoteSplicing inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.BracketClause items)
-      (tltest-reach-mark-expr-list session items names)]
-    [(ast.AstExpr.Try inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.Return inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.Break) names]
-    [(ast.AstExpr.Continue) names]
-    [(ast.AstExpr.PtrNull _) names]
-    [(ast.AstExpr.PtrNullCheck inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.PtrAddrOf place-box)
-      (let
-        [place : ast.AstExpr (ast.ast-node-get place-box)]
-        (tltest-reach-mark-expr session place names))]
-    [(ast.AstExpr.PtrRead ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
-        (tltest-reach-mark-expr session ptr names))]
-    [(ast.AstExpr.PtrWrite ptr-box value-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        (tltest-reach-mark-expr
-          session
-          value
-          (tltest-reach-mark-expr session ptr names)))]
-    [(ast.AstExpr.PtrOffset ptr-box offset-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
-        [offset : ast.AstExpr (ast.ast-node-get offset-box)]
-        (tltest-reach-mark-expr
-          session
-          offset
-          (tltest-reach-mark-expr session ptr names)))]
-    [(ast.AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
-        (tltest-reach-mark-expr session ptr names))]
-    [(ast.AstExpr.PtrToInt ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
-        (tltest-reach-mark-expr session ptr names))]
-    [(ast.AstExpr.IntToPtr value-box _)
-      (let
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        (tltest-reach-mark-expr session value names))]
-    [(ast.AstExpr.StringData inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.StringFromBytes ptr-box len-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
-        [len : ast.AstExpr (ast.ast-node-get len-box)]
-        (tltest-reach-mark-expr
-          session
-          len
-          (tltest-reach-mark-expr session ptr names)))]
-    [(ast.AstExpr.ArrayData inner-box)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tltest-reach-mark-expr session inner names))]
-    [(ast.AstExpr.BinaryData _) names]
-    [(ast.AstExpr.SpmdProgramIndex) names]
-    [(ast.AstExpr.SpmdProgramCount) names]
-    [(ast.AstExpr.ProgramArgc) names]
-    [(ast.AstExpr.ProgramArgv) names]
-    [(ast.AstExpr.ProgramEnvp) names]
-    [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr (ast.ast-node-get leaf-box)]
-        [subleaf : ast.AstExpr (ast.ast-node-get subleaf-box)]
-        (tltest-reach-mark-expr
-          session
-          subleaf
-          (tltest-reach-mark-expr session leaf names)))]
-    [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr (ast.ast-node-get leaf-box)]
-        [subleaf : ast.AstExpr (ast.ast-node-get subleaf-box)]
-        (tltest-reach-mark-expr
-          session
-          subleaf
-          (tltest-reach-mark-expr session leaf names)))]
-    [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr (ast.ast-node-get leaf-box)]
-        [subleaf : ast.AstExpr (ast.ast-node-get subleaf-box)]
-        (tltest-reach-mark-expr
-          session
-          subleaf
-          (tltest-reach-mark-expr session leaf names)))]
-    [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr (ast.ast-node-get leaf-box)]
-        [subleaf : ast.AstExpr (ast.ast-node-get subleaf-box)]
-        (tltest-reach-mark-expr
-          session
-          subleaf
-          (tltest-reach-mark-expr session leaf names)))]
-    [(ast.AstExpr.Xgetbv index-box)
-      (let
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
-        (tltest-reach-mark-expr session index names))]
-    [(ast.AstExpr.Syscall args)
-      (tltest-reach-mark-expr-list session args names)]))
+    [(ast.AstExpr.WithScratch _)
+      (tltest-reach-mark-children
+        session
+        node-id
+        (tltest-reach-mark-string-snapshot-runtime names))]
+    [_ (tltest-reach-mark-children session node-id names)]))
 
 (define (tltest-reach-mark-tests-from
   [session : cis.InternStructuralSessionHandle]
@@ -2375,7 +1834,7 @@
             session
             tests
             (- index 1)
-            (tltest-reach-mark-expr session (ast.ast-node-get body) names))]))))
+            (tltest-reach-mark-expr session body names))]))))
 
 (define (tltest-reach-mark-tests
   [session : cis.InternStructuralSessionHandle]
@@ -2537,29 +1996,23 @@
   [decl : ast.AstDecl]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match decl
-    [(ast.AstDecl.Def decl-meta name _ expr-box)
-      (let
-        [expr : ast.AstExpr (ast.ast-node-get expr-box)]
-        (if (tltest-reachable-name-marked? session names name)
-          (tltest-reach-mark-expr session expr names)
-          names))]
-    [(ast.AstDecl.DefFn decl-meta name _ _ body-box metadata)
-      (let
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
-        (match (ast.ast-fn-metadata-export metadata)
-          [(ast.AstFnExport.Export _)
-            (tltest-reach-mark-expr
-              session
-              body
-              (tltest-reach-mark-name-id names name))]
-          [(ast.AstFnExport.No)
-            (if (tltest-reachable-name-marked? session names name)
-              (tltest-reach-mark-expr session body names)
-              names)]))]
-    [(ast.AstDecl.DefMacro decl-meta _ _ _ body-box)
-      (let
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
-        (tltest-reach-mark-expr session body names))]
+    [(ast.AstDecl.Def decl-meta name _ expr)
+      (if (tltest-reachable-name-marked? session names name)
+        (tltest-reach-mark-expr session expr names)
+        names)]
+    [(ast.AstDecl.DefFn decl-meta name _ _ body metadata)
+      (match (ast.ast-fn-metadata-export metadata)
+        [(ast.AstFnExport.Export _)
+          (tltest-reach-mark-expr
+            session
+            body
+            (tltest-reach-mark-name-id names name))]
+        [(ast.AstFnExport.No)
+          (if (tltest-reachable-name-marked? session names name)
+            (tltest-reach-mark-expr session body names)
+            names)])]
+    [(ast.AstDecl.DefMacro decl-meta _ _ _ body)
+      (tltest-reach-mark-expr session body names)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]

@@ -111384,14 +111384,19 @@
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [state : OptPassState ,next]
-    (opt-pass-noted (opt-pass-observed state ,pass) ,pass start-ms)))
+    (begin
+      (opt-pass-observe state ,pass)
+      (opt-pass-note state ,pass start-ms)
+      state)))
 
 ;; A stage whose output `--trace-passes`/`--dump-ir` do not show.
 (defmacro (opt-stage-unobserved [pass : Expr] [next : Expr]) : Expr
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [state : OptPassState ,next]
-    (opt-pass-noted state ,pass start-ms)))
+    (begin
+      (opt-pass-note state ,pass start-ms)
+      state)))
 
 ;; A pass the frozen priced pipeline does not run.
 (defmacro (opt-live-only [state : Expr] [next : Expr]) : Expr
@@ -111405,12 +111410,25 @@
     ,next
     ,state))
 
+;; Show a state's function to `--trace-passes`/`--dump-ir` as `pass`'s output.
+;; `state` names a local, which this reads without copying.
+(defmacro (opt-pass-observe [state : Expr] [pass : Expr]) : Expr
+  `(compiler-opt-debug-observe-function
+    (__tl-project-field ,state type-segment-bases)
+    ,pass
+    (opt-pass-func ,state)))
+
+;; Note `pass`'s compile-profile row for a state's function.
+(defmacro (opt-pass-note [state : Expr] [pass : Expr] [start-ms : Expr]) : Expr
+  `(compiler-opt-profile-pass-note
+    (__tl-project-field ,state profile-state)
+    ,pass
+    (opt-function-name (opt-pass-func ,state))
+    ,start-ms))
+
 (define (opt-pass-observed [state : OptPassState] [pass : String]) : OptPassState
   (begin
-    (compiler-opt-debug-observe-function
-      state.type-segment-bases
-      pass
-      (opt-pass-func state))
+    (opt-pass-observe state pass)
     state))
 
 (define (opt-pass-noted
@@ -111418,11 +111436,7 @@
   [_pass : String]
   [_start-ms : i64]) : OptPassState
   (begin
-    (compiler-opt-profile-pass-note
-      state.profile-state
-      _pass
-      (opt-function-name (opt-pass-func state))
-      _start-ms)
+    (opt-pass-note state _pass _start-ms)
     state))
 
 (define (opt-pass-with
@@ -111461,14 +111475,25 @@
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]
   [state : OptPassState]) : OptPassState
-  (opt-pass-with-func
+  (opt-pass-with
     (opt-function-with-frame-blocks (opt-pass-func state) frame blocks)
+    (opt-pass-ctx state)
+    state.ctx-valid?
+    state.changed?
     state))
 
 (define (opt-pass-with-blocks
   [blocks : ir.CompilerIrBlockList]
   [state : OptPassState]) : OptPassState
-  (opt-pass-with-frame-blocks (opt-pass-frame state) blocks state))
+  (opt-pass-with
+    (opt-function-with-frame-blocks
+      (opt-pass-func state)
+      (opt-pass-frame state)
+      blocks)
+    (opt-pass-ctx state)
+    state.ctx-valid?
+    state.changed?
+    state))
 
 (define (opt-pass-with-changed [changed? : bool] [state : OptPassState]) : OptPassState
   (opt-pass-with
@@ -111483,7 +111508,15 @@
   [state : OptPassState]) : OptPassState
   (match result
     [(OptBlockListPassResult.Result blocks changed?)
-      (opt-pass-with-changed changed? (opt-pass-with-blocks blocks state))]))
+      (opt-pass-with
+        (opt-function-with-frame-blocks
+          (opt-pass-func state)
+          (opt-pass-frame state)
+          blocks)
+        (opt-pass-ctx state)
+        state.ctx-valid?
+        (or state.changed? changed?)
+        state)]))
 
 (define (opt-pass-with-block-ctx
   [result : OptBlockCtxResult]

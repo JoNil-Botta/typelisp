@@ -1391,7 +1391,7 @@
     (load.compiler-load-join-root-path manifest-dir dep-root)))
 
 (define (build-ensure-github-cache-parent
-  [manifest-dir : String]
+  [manifest-dir : (& manifest-dir str)]
   [alias : String]) : ResultBuildString
   (let
     [target-dir : String
@@ -1489,7 +1489,7 @@
 
 (define (build-package-cache-staging-path
   [alias : String]
-  [root : String]
+  [root : (& root str)]
   [key : (& key package_cache_core.PackageCacheKey)]
   [attempt : i64]) : ResultBuildString
   (if (> attempt 16)
@@ -1609,7 +1609,7 @@
     [(io.OkIoUnit)
       (match (build-package-cache-staging-path
         (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view root)
+        root
         key
         1)
         [(ResultBuildString.Err message) (ResultBuildString.Err message)]
@@ -1773,7 +1773,7 @@
         (owned_view.compiler-owned-shared-view alias)))
       (ResultBuildString.Ok manifest-path)
       (match (build-ensure-github-cache-parent
-        (owned_view.compiler-owned-shared-view manifest-dir)
+        manifest-dir
         (owned_view.compiler-owned-shared-view alias))
         [(ResultBuildString.Err message) (ResultBuildString.Err message)]
         [(ResultBuildString.Ok _)
@@ -2366,7 +2366,7 @@
 
 (define (build-package-root-compiler?
   [manifest-dir : String]
-  [manifest : load.CompilerPkgManifest]) : bool
+  [manifest : (& manifest load.CompilerPkgManifest)]) : bool
   ;; Keep the compiler-only cfg out of ordinary packages. The source marker
   ;; also prevents an unrelated package named `typelisp` from opting in.
   (and
@@ -2429,7 +2429,7 @@
 
 (define (build-package-compile-context
   [manifest-dir : String]
-  [manifest : load.CompilerPkgManifest]) : BuildPackageCompileContext
+  [manifest : (& manifest load.CompilerPkgManifest)]) : BuildPackageCompileContext
   (if (build-package-root-compiler?
     (owned_view.compiler-owned-shared-view manifest-dir)
     manifest)
@@ -2455,7 +2455,7 @@
 
 (define (build-ensure-package-output-dirs
   [manifest-dir : String]
-  [_name : String]
+  [_name : (& _name str)]
   [profile : BuildProfile]) : bool
   (let
     [target-dir : String
@@ -3352,7 +3352,7 @@
   [deps : (& deps load.CompilerPkgDepList)]
   [count : i64]
   [manifest-dir : String]
-  [root : String]) : bool
+  [root : (& root str)]) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -3396,7 +3396,7 @@
               deps
               direct-count
               (owned_view.compiler-owned-shared-view manifest-dir)
-              (owned_view.compiler-owned-shared-view root))
+              root)
               unit
               (set!
                 deps
@@ -3676,7 +3676,9 @@
       (build-package-graph-artifact-paths-smoke-ok?)
       (io.panic "build package graph artifact paths smoke failed"))))
 
-(define (build-package-tlci-owner-stdlib-path? [owner : String] [path : String]) : bool
+(define (build-package-tlci-owner-stdlib-path?
+  [owner : String]
+  [path : (& path str)]) : bool
   (if (= (string.string-length owner) 0)
     false
     (let
@@ -3686,7 +3688,7 @@
         (>= (string.string-length path) prefix-len)
         (string.eq (string.substring path 0 prefix-len) prefix)))))
 
-(define (build-package-tlci-stdlib-path? [owner : String] [path : String]) : bool
+(define (build-package-tlci-stdlib-path? [owner : String] [path : (& path str)]) : bool
   (or
     (load.compiler-load-stdlib-import? path)
     (build-package-tlci-owner-stdlib-path? owner path)))
@@ -4231,7 +4233,7 @@
 
 (define (build-package-tlci-source-owned?
   [owned-sources : (& owned-sources build_string_i64_map.Map)]
-  [path : String]) : bool
+  [path : (& path str)]) : bool
   (match (build_string_i64_map.get
     (& owned-sources)
     (load.compiler-load-normalize-path path))
@@ -4265,9 +4267,7 @@
                 [(ast.AstDeclPathListStep.Nil) fallback-path]
                 [(ast.AstDeclPathListStep.Cons path _) path])]
             [owned-path : String
-              (if (build-package-tlci-source-owned?
-                owned-sources
-                (owned_view.compiler-owned-shared-view decl-path))
+              (if (build-package-tlci-source-owned? owned-sources decl-path)
                 decl-path
                 "")]
             (begin
@@ -4441,9 +4441,7 @@
                   [(ast.AstDeclPathListStep.Nil) fallback-path]
                   [(ast.AstDeclPathListStep.Cons path _) path])]
               [owned-path : String
-                (if (build-package-tlci-source-owned?
-                  owned-sources
-                  (owned_view.compiler-owned-shared-view decl-path))
+                (if (build-package-tlci-source-owned? owned-sources decl-path)
                   decl-path
                   "")]
               (begin
@@ -4534,7 +4532,7 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-tlci-source-inputs
     [manifest-path : String]
-    [producer-identity : String]) : ResultBuildPackageTlciSourceInputs
+    [producer-identity : (& producer-identity str)]) : ResultBuildPackageTlciSourceInputs
     (if (not (tlci.tlci-producer-identity-valid? producer-identity))
       (ResultBuildPackageTlciSourceInputs.Err
         "build: exact producer compiler identity is unavailable")
@@ -4702,8 +4700,8 @@
         (string.eq (byte_buf.to-string contents) expected)]
       [(io.ErrIoBytes _) false])))
 
-(define (build-package-file-digest [path : String] [context : String]) : ResultBuildPackageFileDigest
-  (match (io.try-read-file (& path))
+(define (build-package-file-digest [path : (& path str)] [context : String]) : ResultBuildPackageFileDigest
+  (match (io.try-read-file path)
     [(io.ErrIoBytes error)
       (ResultBuildPackageFileDigest.Err
         (str_cat.str-cat context ": " (io.error-message error)))]
@@ -4765,8 +4763,10 @@
       ":"
       (string.int->string hash-b))))
 
-(define (build-package-tool-file-digest [path : String] [context : String]) : ResultBuildPackageFileDigest
-  (match (fs.try-file-metadata (& path))
+(define (build-package-tool-file-digest
+  [path : (& path str)]
+  [context : String]) : ResultBuildPackageFileDigest
+  (match (fs.try-file-metadata path)
     [(fs.ErrFsMetadata error)
       (ResultBuildPackageFileDigest.Err
         (str_cat.str-cat context ": " (io.error-message error)))]
@@ -4774,7 +4774,7 @@
       (let
         [size : i64 (fs.metadata-size metadata)]
         [sample-size : i64 65536]
-        (match (io.file-open (& path) (io.OpenMode.OpenRead))
+        (match (io.file-open path (io.OpenMode.OpenRead))
           [(io.ErrIoFile error)
             (ResultBuildPackageFileDigest.Err
               (str_cat.str-cat context ": " (io.error-message error)))]
@@ -4890,7 +4890,7 @@
           " executable "
           executable))
       (match (build-package-tool-file-digest
-        (owned_view.compiler-owned-shared-view executable)
+        executable
         (str_cat.str-cat
           "build: cannot fingerprint "
           (owned_view.compiler-owned-shared-view role)
@@ -4934,7 +4934,7 @@
 (define (build-package-link-path-transcript [path : String]) : ResultBuildString
   (if (build-package-file-regular? (owned_view.compiler-owned-shared-view path))
     (match (build-package-file-digest
-      (owned_view.compiler-owned-shared-view path)
+      path
       "build: cannot fingerprint native link input")
       [(ResultBuildPackageFileDigest.Err message)
         (ResultBuildString.Err message)]
@@ -5233,9 +5233,9 @@
 
 (define (build-package-runtime-output-fingerprint
   [input-transcript : String]
-  [asm-path : String]
-  [obj-path : String]
-  [artifact-path : String]) : ResultBuildString
+  [asm-path : (& asm-path str)]
+  [obj-path : (& obj-path str)]
+  [artifact-path : (& artifact-path str)]) : ResultBuildString
   (match (build-package-file-digest
     asm-path
     "build: cannot fingerprint package assembly")
@@ -5331,8 +5331,8 @@
       artifact-path
       fingerprint-path)))
 
-(define (build-package-path-present? [path : String]) : bool
-  (match (fs.try-file-metadata (& path))
+(define (build-package-path-present? [path : (& path str)]) : bool
+  (match (fs.try-file-metadata path)
     [(fs.OkFsMetadata _) true]
     [(fs.ErrFsMetadata _) false]))
 
@@ -5347,8 +5347,7 @@
         (load.compiler-load-join-root-path
           (owned_view.compiler-owned-shared-view output-dir)
           (str_cat.str-cat ".t" (string.int->string attempt)))]
-      (if (build-package-path-present?
-        (owned_view.compiler-owned-shared-view candidate))
+      (if (build-package-path-present? candidate)
         (build-package-stage-dir-attempt output-dir _name (+ attempt 1))
         (if (build-mkdir-ok-owned?
           (owned_view.compiler-owned-shared-view candidate))
@@ -5361,9 +5360,9 @@
 (define (build-package-stage-file
   [dir : String]
   [stem : String]
-  [final-path : String]) : String
+  [final-path : (& final-path str)]) : String
   (let
-    [extension : String (fs.extension (& final-path))]
+    [extension : String (fs.extension final-path)]
     (load.compiler-load-join-root-path
       dir
       (if (= (string.string-length extension) 0)
@@ -5373,11 +5372,11 @@
 (define (build-package-stage-paths
   [output-dir : String]
   [name : String]
-  [asm-path : String]
-  [obj-path : String]
-  [artifact-path : String]
-  [fingerprint-path : String]
-  [tlci-path : String]) : ResultBuildPackageStagePaths
+  [asm-path : (& asm-path str)]
+  [obj-path : (& obj-path str)]
+  [artifact-path : (& artifact-path str)]
+  [fingerprint-path : (& fingerprint-path str)]
+  [tlci-path : (& tlci-path str)]) : ResultBuildPackageStagePaths
   (match (build-package-stage-dir-attempt output-dir name 1)
     [(ResultBuildString.Err message) (ResultBuildPackageStagePaths.Err message)]
     [(ResultBuildString.Ok dir)
@@ -5423,8 +5422,8 @@
     unit))
 
 (define (build-package-rollback-preserves-backup?
-  [rollback : BuildPackageRollbackDisposition]
-  [backup-path : String]) : bool
+  [rollback : (& rollback BuildPackageRollbackDisposition)]
+  [backup-path : (& backup-path str)]) : bool
   (let
     [index : i64 0]
     [preserve : bool false]
@@ -5442,14 +5441,12 @@
 
 (define (build-package-remove-staged-file-after-rollback
   [path : String]
-  [rollback : BuildPackageRollbackDisposition]) : unit
+  [rollback : (& rollback BuildPackageRollbackDisposition)]) : unit
   (begin
     (fs.try-remove-file-if-exists (& path))
     (let
       [backup : String (str_cat.str-cat path ".previous")]
-      (if (build-package-rollback-preserves-backup?
-        rollback
-        (owned_view.compiler-owned-shared-view backup))
+      (if (build-package-rollback-preserves-backup? rollback backup)
         unit
         (let
           [_ : io.ResultIoUnit (fs.try-remove-file-if-exists (& backup))]
@@ -5462,21 +5459,11 @@
   ;; Always discard new staged data. Delete only superseded `.previous` files;
   ;; a retained entry also keeps the containing stage directory recoverable.
   (begin
-    (build-package-remove-staged-file-after-rollback
-      paths.asm
-      (owned_view.compiler-owned-shared-view rollback))
-    (build-package-remove-staged-file-after-rollback
-      paths.obj
-      (owned_view.compiler-owned-shared-view rollback))
-    (build-package-remove-staged-file-after-rollback
-      paths.artifact
-      (owned_view.compiler-owned-shared-view rollback))
-    (build-package-remove-staged-file-after-rollback
-      paths.fingerprint
-      (owned_view.compiler-owned-shared-view rollback))
-    (build-package-remove-staged-file-after-rollback
-      paths.tlci
-      (owned_view.compiler-owned-shared-view rollback))
+    (build-package-remove-staged-file-after-rollback paths.asm rollback)
+    (build-package-remove-staged-file-after-rollback paths.obj rollback)
+    (build-package-remove-staged-file-after-rollback paths.artifact rollback)
+    (build-package-remove-staged-file-after-rollback paths.fingerprint rollback)
+    (build-package-remove-staged-file-after-rollback paths.tlci rollback)
     (let
       [dir : String paths.dir]
       (if (build-package-rollback-recovery-required? rollback)
@@ -5587,7 +5574,8 @@
         "; restore the reported .previous files before removing it")
       with-secondary)))
 
-(define (build-package-commit-plan-preflight [plan : BuildPackageCommitPlan]) : ResultBuildString
+(define (build-package-commit-plan-preflight
+  [plan : (& plan BuildPackageCommitPlan)]) : ResultBuildString
   (let
     [index : i64 0]
     [count : i64 plan.len]
@@ -5711,8 +5699,7 @@
       rollback)))
 
 (define (build-package-commit-plan-run [plan : BuildPackageCommitPlan]) : ResultBuildPackageCommit
-  (match (build-package-commit-plan-preflight
-    (owned_view.compiler-owned-shared-view plan))
+  (match (build-package-commit-plan-preflight plan)
     [(ResultBuildString.Err message)
       (ResultBuildPackageCommit.Err
         message
@@ -5828,56 +5815,52 @@
 
 (cfg
   test
-  (define (build-package-rollback-test-path [root : String] [name : String]) : String
-    (fs.path-join (& root) (& name))))
+  (define (build-package-rollback-test-path
+    [root : (& root str)]
+    [name : String]) : String
+    (fs.path-join root (& name))))
 
 (cfg
   test
-  (define (build-package-rollback-test-stage [root : String]) : BuildPackageStagePaths
+  (define (build-package-rollback-test-stage [root : (& root str)]) : BuildPackageStagePaths
     (let
       [name : String "stage"]
-      [dir : String (fs.path-join (& root) (& name))]
+      [dir : String (fs.path-join root (& name))]
       (begin
         (build-package-rollback-test-expect-ok
           (fs.try-mkdir (& dir))
           "build package rollback test mkdir stage")
         (BuildPackageStagePaths
           (owned_view.compiler-owned-shared-view dir)
-          (build-package-rollback-test-path
-            (owned_view.compiler-owned-shared-view dir)
-            "a")
-          (build-package-rollback-test-path
-            (owned_view.compiler-owned-shared-view dir)
-            "o")
-          (build-package-rollback-test-path
-            (owned_view.compiler-owned-shared-view dir)
-            "r")
-          (build-package-rollback-test-path
-            (owned_view.compiler-owned-shared-view dir)
-            "f")
+          (build-package-rollback-test-path dir "a")
+          (build-package-rollback-test-path dir "o")
+          (build-package-rollback-test-path dir "r")
+          (build-package-rollback-test-path dir "f")
           (build-package-rollback-test-path dir "t"))))))
 
 (cfg
   test
-  (define (build-package-rollback-test-write [path : String] [text : String]) : unit
+  (define (build-package-rollback-test-write
+    [path : (& path str)]
+    [text : String]) : unit
     (build-package-rollback-test-expect-ok
-      (io.try-write-file (& path) (byte_buf.str-as-bytes (& text)))
+      (io.try-write-file path (byte_buf.str-as-bytes (& text)))
       "build package rollback test write")))
 
 (cfg
   test
-  (define (build-package-rollback-test-path-exists? [path : String]) : bool
-    (match (io.try-file-exists? (& path))
+  (define (build-package-rollback-test-path-exists? [path : (& path str)]) : bool
+    (match (io.try-file-exists? path)
       [(io.OkIoBool exists) exists]
       [(io.ErrIoBool _) false])))
 
 (cfg
   test
   (define (build-package-rollback-test-restored-at?
-    [rollback : BuildPackageRollbackDisposition]
+    [rollback : (& rollback BuildPackageRollbackDisposition)]
     [index : i64]
-    [backup-path : String]
-    [final-path : String]) : bool
+    [backup-path : (& backup-path str)]
+    [final-path : (& final-path str)]) : bool
     (if (>= index rollback.len)
       false
       (match (owned_view.compiler-owned-array-element-shared-view
@@ -5890,10 +5873,10 @@
 (cfg
   test
   (define (build-package-rollback-test-retained-at?
-    [rollback : BuildPackageRollbackDisposition]
+    [rollback : (& rollback BuildPackageRollbackDisposition)]
     [index : i64]
-    [backup-path : String]
-    [final-path : String]) : bool
+    [backup-path : (& backup-path str)]
+    [final-path : (& final-path str)]) : bool
     (if (>= index rollback.len)
       false
       (match (owned_view.compiler-owned-array-element-shared-view
@@ -5931,17 +5914,9 @@
     (let
       [root : String
         (build-package-rollback-test-temp "typelisp build rollback partial")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
-      [final-a : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final-a")]
-      [final-b : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final-b")]
+      [stage : BuildPackageStagePaths (build-package-rollback-test-stage root)]
+      [final-a : String (build-package-rollback-test-path root "final-a")]
+      [final-b : String (build-package-rollback-test-path root "final-b")]
       [backup-a : String
         (str_cat.str-cat
           (owned_view.compiler-owned-shared-view stage.asm)
@@ -5959,12 +5934,8 @@
           (owned_view.compiler-owned-shared-view final-b)
           (owned_view.compiler-owned-shared-view stage.obj))]
       (begin
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view backup-a)
-          "old-a")
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view backup-b)
-          "old-b")
+        (build-package-rollback-test-write backup-a "old-a")
+        (build-package-rollback-test-write backup-b "old-b")
         (build-package-rollback-test-expect-ok
           (fs.try-mkdir (& final-b))
           "build package rollback test mkdir restore collision")
@@ -5998,22 +5969,21 @@
                 (and
                   (= rollback.len 2)
                   (build-package-rollback-test-retained-at?
-                    (owned_view.compiler-owned-shared-view rollback)
+                    rollback
                     0
-                    (owned_view.compiler-owned-shared-view backup-b)
-                    (owned_view.compiler-owned-shared-view final-b))
+                    backup-b
+                    final-b)
                   (build-package-rollback-test-restored-at?
-                    (owned_view.compiler-owned-shared-view rollback)
+                    rollback
                     1
                     backup-a
-                    (owned_view.compiler-owned-shared-view final-a))
+                    final-a)
                   (build-package-rollback-recovery-required? rollback)
                   (build-package-file-text-eq?
                     (owned_view.compiler-owned-shared-view final-a)
                     "old-a")
                   (build-package-file-text-eq? backup-b "old-b")
-                  (build-package-rollback-test-path-exists?
-                    (owned_view.compiler-owned-shared-view stage.dir))
+                  (build-package-rollback-test-path-exists? stage.dir)
                   (string.eq
                     (string.substring
                       (& diagnostic)
@@ -6032,17 +6002,9 @@
     (let
       [root : String
         (build-package-rollback-test-temp "typelisp build rollback complete")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
-      [final : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final")]
-      [unused : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "unused")]
+      [stage : BuildPackageStagePaths (build-package-rollback-test-stage root)]
+      [final : String (build-package-rollback-test-path root "final")]
+      [unused : String (build-package-rollback-test-path root "unused")]
       [backup : String
         (str_cat.str-cat
           (owned_view.compiler-owned-shared-view stage.asm)
@@ -6053,12 +6015,8 @@
           (owned_view.compiler-owned-shared-view final)
           (owned_view.compiler-owned-shared-view stage.asm))]
       (begin
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view final)
-          "new")
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view backup)
-          "old")
+        (build-package-rollback-test-write final "new")
+        (build-package-rollback-test-write backup "old")
         (build-package-commit-plan-set-had-old!
           (owned_view.compiler-owned-shared-view plan)
           0)
@@ -6080,15 +6038,13 @@
                   (build-package-rollback-test-restored-at?
                     rollback
                     0
-                    (owned_view.compiler-owned-shared-view backup)
-                    (owned_view.compiler-owned-shared-view final))
+                    backup
+                    final)
                   (build-package-file-text-eq?
                     (owned_view.compiler-owned-shared-view final)
                     "old")
                   (not (build-package-rollback-test-path-exists? backup))
-                  (not
-                    (build-package-rollback-test-path-exists?
-                      (owned_view.compiler-owned-shared-view stage.dir))))]
+                  (not (build-package-rollback-test-path-exists? stage.dir)))]
               (begin
                 (build-package-rollback-test-clean root stage final unused)
                 ok))))))))
@@ -6099,17 +6055,12 @@
     (let
       [root : String
         (build-package-rollback-test-temp "typelisp build rollback remove")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
+      [stage : BuildPackageStagePaths (build-package-rollback-test-stage root)]
       ;; Empty paths are explicitly invalid on both hosts, so this injects a
       ;; deterministic removal failure without relying on directory unlink
       ;; differences between Linux and Windows.
       [final : String ""]
-      [unused : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "unused")]
+      [unused : String (build-package-rollback-test-path root "unused")]
       [plan : BuildPackageCommitPlan
         (build-package-commit-plan-add
           (build-package-commit-plan-new)
@@ -6133,9 +6084,7 @@
                 (string.contains (& rollback.errors) (& needle))
                 (string.contains (& rollback.errors) (& invalid-needle))
                 (not (build-package-rollback-recovery-required? rollback))
-                (not
-                  (build-package-rollback-test-path-exists?
-                    (owned_view.compiler-owned-shared-view stage.dir))))]
+                (not (build-package-rollback-test-path-exists? stage.dir)))]
             (begin
               (build-package-rollback-test-clean root stage final unused)
               ok)))))))
@@ -6146,17 +6095,9 @@
     (let
       [root : String
         (build-package-rollback-test-temp "typelisp build commit preflight")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
-      [final : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final")]
-      [unused : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "unused")]
+      [stage : BuildPackageStagePaths (build-package-rollback-test-stage root)]
+      [final : String (build-package-rollback-test-path root "final")]
+      [unused : String (build-package-rollback-test-path root "unused")]
       [plan : BuildPackageCommitPlan
         (build-package-commit-plan-add
           (build-package-commit-plan-new)
@@ -6180,9 +6121,7 @@
                   (= rollback.len 0)
                   (= (string.string-length rollback.errors) 0)
                   (string.contains (& message) (& needle))
-                  (not
-                    (build-package-rollback-test-path-exists?
-                      (owned_view.compiler-owned-shared-view stage.dir))))]
+                  (not (build-package-rollback-test-path-exists? stage.dir)))]
               (begin
                 (build-package-rollback-test-clean root stage final unused)
                 ok)))]))))
@@ -6193,17 +6132,9 @@
     (let
       [root : String
         (build-package-rollback-test-temp "typelisp build commit success")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
-      [final : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final")]
-      [unused : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "unused")]
+      [stage : BuildPackageStagePaths (build-package-rollback-test-stage root)]
+      [final : String (build-package-rollback-test-path root "final")]
+      [unused : String (build-package-rollback-test-path root "unused")]
       [backup : String
         (str_cat.str-cat
           (owned_view.compiler-owned-shared-view stage.asm)
@@ -6214,12 +6145,8 @@
           (owned_view.compiler-owned-shared-view final)
           (owned_view.compiler-owned-shared-view stage.asm))]
       (begin
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view final)
-          "old")
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view stage.asm)
-          "new")
+        (build-package-rollback-test-write final "old")
+        (build-package-rollback-test-write stage.asm "new")
         (match (build-package-commit-plan-run plan)
           [(ResultBuildPackageCommit.Err _ rollback)
             (begin
@@ -6239,9 +6166,7 @@
                       (owned_view.compiler-owned-shared-view final)
                       "new")
                     (not (build-package-rollback-test-path-exists? backup))
-                    (not
-                      (build-package-rollback-test-path-exists?
-                        (owned_view.compiler-owned-shared-view stage.dir))))]
+                    (not (build-package-rollback-test-path-exists? stage.dir)))]
                 (begin
                   (build-package-rollback-test-clean root stage final unused)
                   ok)))])))))
@@ -6346,9 +6271,9 @@
       (if runtime-dirty
         (match (build-package-runtime-output-fingerprint
           input-transcript
-          (owned_view.compiler-owned-shared-view stage.asm)
-          (owned_view.compiler-owned-shared-view stage.obj)
-          (owned_view.compiler-owned-shared-view stage.artifact))
+          stage.asm
+          stage.obj
+          stage.artifact)
           [(ResultBuildString.Err message)
             (begin
               (set! ok false)
@@ -6496,11 +6421,11 @@
             (match (build-package-stage-paths
               output-dir
               name
-              (owned_view.compiler-owned-shared-view asm-path)
-              (owned_view.compiler-owned-shared-view obj-path)
-              (owned_view.compiler-owned-shared-view artifact-path)
-              (owned_view.compiler-owned-shared-view fingerprint-path)
-              (owned_view.compiler-owned-shared-view tlci-path))
+              asm-path
+              obj-path
+              artifact-path
+              fingerprint-path
+              tlci-path)
               [(ResultBuildPackageStagePaths.Err message)
                 (begin
                   (io.print-error message)
@@ -6632,11 +6557,11 @@
             (match (build-package-stage-paths
               output-dir
               name
-              (owned_view.compiler-owned-shared-view asm-path)
-              (owned_view.compiler-owned-shared-view obj-path)
-              (owned_view.compiler-owned-shared-view artifact-path)
-              (owned_view.compiler-owned-shared-view fingerprint-path)
-              (owned_view.compiler-owned-shared-view tlci-path))
+              asm-path
+              obj-path
+              artifact-path
+              fingerprint-path
+              tlci-path)
               [(ResultBuildPackageStagePaths.Err message)
                 (begin
                   (io.print-error message)
@@ -6981,9 +6906,7 @@
             (build-package-doctest-paths
               (owned_view.compiler-owned-shared-view owner)
               rest)]
-          (if (build-package-tlci-stdlib-path?
-            owner
-            (owned_view.compiler-owned-shared-view path))
+          (if (build-package-tlci-stdlib-path? owner path)
             tail
             (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
               path
@@ -7130,9 +7053,7 @@
     [emit-entry : bool]
     [compile-cfgs : sym_i64_env.SymI64Env]
     [announce : bool]) : i64
-    (match (build-package-tlci-source-inputs
-      manifest-path
-      (owned_view.compiler-owned-shared-view producer-identity))
+    (match (build-package-tlci-source-inputs manifest-path producer-identity)
       [(ResultBuildPackageTlciSourceInputs.Err message)
         (begin
           (io.print-error message)
@@ -7236,7 +7157,7 @@
       [compile-context : BuildPackageCompileContext
         (build-package-compile-context
           (owned_view.compiler-owned-shared-view manifest-dir)
-          (owned_view.compiler-owned-shared-view manifest))]
+          manifest)]
       [entry-path : String
         (load.compiler-load-join-root-path
           (owned_view.compiler-owned-shared-view manifest-dir)
@@ -7281,7 +7202,7 @@
         (not
           (build-ensure-package-output-dirs
             (owned_view.compiler-owned-shared-view manifest-dir)
-            (owned_view.compiler-owned-shared-view name)
+            name
             profile)))
         (let
           [message : String
@@ -7792,7 +7713,7 @@
   [manifest-dir : String]
   [deps : load.CompilerPkgDepList]
   [index : i64]
-  [built : build_string_i64_map.Map]) : bool
+  [built : (& built build_string_i64_map.Map)]) : bool
   (if (>= index (load.compiler-pkg-dep-list-count deps))
     true
     (let
@@ -7800,14 +7721,14 @@
         (build-package-dep-manifest-path
           (owned_view.compiler-owned-shared-view manifest-dir)
           (load.compiler-pkg-dep-list-at deps index))]
-      (match (build_string_i64_map.get (& built) dep-manifest-path)
+      (match (build_string_i64_map.get built dep-manifest-path)
         [(build_string_i64_map.LookupFound _)
           (build-package-deps-built? manifest-dir deps (+ index 1) built)]
         [(build_string_i64_map.LookupMissing) false]))))
 
 (define (build-package-node-ready?
   [node : BuildPackageGraphNode]
-  [built : build_string_i64_map.Map]) : bool
+  [built : (& built build_string_i64_map.Map)]) : bool
   (let
     [manifest-path : String node.manifest-path]
     [manifest-dir : String (load.compiler-load-dirname manifest-path)]
@@ -7895,7 +7816,7 @@
 (define (build-package-schedule-pass-with
   [nodes : BuildPackageGraphNodeVec]
   [scheduled : build_string_i64_map.Map]
-  [built : build_string_i64_map.Map]
+  [built : (& built build_string_i64_map.Map)]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
@@ -7924,7 +7845,7 @@
         (not
           (build-package-node-ready?
             (owned_view.compiler-owned-shared-view node)
-            (owned_view.compiler-owned-shared-view built))))
+            built)))
         (build-package-schedule-pass-with
           nodes
           scheduled

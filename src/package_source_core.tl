@@ -58,7 +58,7 @@
   (UnsupportedSchema i64)
   (Malformed String))
 
-(define (package-source-char-code-at [text : String] [idx : i64]) : i64
+(define (package-source-char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
 
 (define (package-source-string-less? [left : String] [right : String]) : bool
@@ -75,14 +75,8 @@
     (begin
       (while (and (not done) (< idx limit))
         (let
-          [lc : i64
-            (package-source-char-code-at
-              (owned_view.compiler-owned-shared-view left)
-              idx)]
-          [rc : i64
-            (package-source-char-code-at
-              (owned_view.compiler-owned-shared-view right)
-              idx)]
+          [lc : i64 (package-source-char-code-at left idx)]
+          [rc : i64 (package-source-char-code-at right idx)]
           (if (= lc rc)
             (set! idx (+ idx 1))
             (begin
@@ -259,17 +253,13 @@
   [field : String]
   [requested : String]
   [checkout-root : String]
-  [normalized : String]
+  [normalized : (& normalized str)]
   [cursor : i64]
   [prefix : String]
   [expected : PackageSourceConfinedPathKind]) : ResultPackageSourceConfinedPath
   (let
     [n : i64 (string.string-length normalized)]
-    [separator : i64
-      (package-source-relative-separator
-        (owned_view.compiler-owned-shared-view normalized)
-        cursor
-        n)]
+    [separator : i64 (package-source-relative-separator normalized cursor n)]
     [segment : String (string.substring normalized cursor (- separator cursor))]
     [next-prefix : String (package-source-relative-join prefix segment)]
     [candidate : String (package-source-root-join checkout-root next-prefix)]
@@ -366,7 +356,7 @@
 (define (package-source-fetched-checkout-audit-entry
   [package-name : String]
   [checkout-root : String]
-  [relative : String]
+  [relative : (& relative str)]
   [name : String]) : ResultPackageSourceConfinedPath
   ;; The checkout implementation owns the root `.git` directory; it is not a
   ;; package-controlled input. A nested `.git` remains subject to the audit.
@@ -401,7 +391,7 @@
 (define (package-source-fetched-checkout-audit-entries-from
   [package-name : String]
   [checkout-root : String]
-  [relative : String]
+  [relative : (& relative str)]
   [entries : svec.Vec]
   [index : i64]) : ResultPackageSourceConfinedPath
   (if (>= index (svec.len (& entries)))
@@ -409,7 +399,7 @@
     (match (package-source-fetched-checkout-audit-entry
       (owned_view.compiler-owned-shared-view package-name)
       (owned_view.compiler-owned-shared-view checkout-root)
-      (owned_view.compiler-owned-shared-view relative)
+      relative
       (svec.get (& entries) index ""))
       [(ResultPackageSourceConfinedPath.Err message)
         (ResultPackageSourceConfinedPath.Err message)]
@@ -516,7 +506,7 @@
     (package-source-fetched-boundary-lexical-smoke-ok?)
     (io.panic "package-source: fetched boundary lexical smoke failed")))
 
-(define (package-source-internal-dir? [name : String]) : bool
+(define (package-source-internal-dir? [name : (& name str)]) : bool
   (or
     (string.eq name "target")
     (string.eq name ".git")
@@ -528,9 +518,7 @@
   (string.eq name "tests"))
 
 (define (package-source-skip-dir? [name : String]) : bool
-  (or
-    (package-source-internal-dir? (owned_view.compiler-owned-shared-view name))
-    (package-source-test-dir? name)))
+  (or (package-source-internal-dir? name) (package-source-test-dir? name)))
 
 (define (package-source-skip-dir-self-test?) : bool
   (and
@@ -631,10 +619,12 @@
   (io.file-exists?
     (compiler_load.compiler-load-join-root-path dir "typelisp.pkg")))
 
-(define (package-source-tl-file? [path : String]) : bool
-  (string.eq (fs.extension (& path)) "tl"))
+(define (package-source-tl-file? [path : (& path str)]) : bool
+  (string.eq (fs.extension path) "tl"))
 
-(define (package-source-include-kind? [path : String] [kind : fs.FsFileKind]) : bool
+(define (package-source-include-kind?
+  [path : (& path str)]
+  [kind : fs.FsFileKind]) : bool
   (and (fs.file-kind-regular? kind) (package-source-tl-file? path)))
 
 (define (package-source-entry-error
@@ -674,7 +664,7 @@
 
 (define (package-source-scan-dir
   [command : String]
-  [root : String]
+  [root : (& root str)]
   [relative : String]
   [acc : svec.Vec]) : ResultPackageSourceList
   (let
@@ -734,8 +724,8 @@
 
 (define (package-source-scan-one
   [command : String]
-  [root : String]
-  [relative : String]
+  [root : (& root str)]
+  [relative : (& relative str)]
   [name : String]
   [acc : svec.Vec]) : ResultPackageSourceList
   (if (package-source-skip-dir? (owned_view.compiler-owned-shared-view name))
@@ -754,9 +744,7 @@
             (if (package-source-dir-has-manifest? child-path)
               (ResultPackageSourceList.Ok acc)
               (package-source-scan-dir command root child-relative acc))
-            (if (package-source-include-kind?
-              (owned_view.compiler-owned-shared-view child-path)
-              kind)
+            (if (package-source-include-kind? child-path kind)
               (ResultPackageSourceList.Ok
                 (package-source-vec-insert
                   acc
@@ -765,8 +753,8 @@
 
 (define (package-source-scan-entries-from
   [command : String]
-  [root : String]
-  [relative : String]
+  [root : (& root str)]
+  [relative : (& relative str)]
   [entries : svec.Vec]
   [index : i64]
   [acc : svec.Vec]) : ResultPackageSourceList
@@ -774,8 +762,8 @@
     (ResultPackageSourceList.Ok acc)
     (match (package-source-scan-one
       (owned_view.compiler-owned-shared-view command)
-      (owned_view.compiler-owned-shared-view root)
-      (owned_view.compiler-owned-shared-view relative)
+      root
+      relative
       (svec.get (& entries) index "")
       acc)
       [(ResultPackageSourceList.Err message)
@@ -791,7 +779,7 @@
 
 (define (package-source-scan-entries
   [command : String]
-  [root : String]
+  [root : (& root str)]
   [relative : String]
   [entries : svec.Vec]
   [acc : svec.Vec]) : ResultPackageSourceList
@@ -818,7 +806,7 @@
 
 ;; Return the next normalized path-separator position, or `end`.
 (define (package-source-relative-separator
-  [relative : String]
+  [relative : (& relative str)]
   [start : i64]
   [end : i64]) : i64
   (let
@@ -833,10 +821,10 @@
 ;; Check the directory segments that lead to one source. The root's own
 ;; manifest is allowed; a manifest below it is a nested-package boundary.
 (define (package-source-relative-parent-eligible?
-  [root : String]
-  [relative : String]) : bool
+  [root : (& root str)]
+  [relative : (& relative str)]) : bool
   (let
-    [end : i64 (fs.last-separator-index (& relative))]
+    [end : i64 (fs.last-separator-index relative)]
     [cursor : i64 0]
     [prefix : String ""]
     [eligible : bool true]
@@ -844,10 +832,7 @@
       (while (and eligible (>= end 0) (< cursor end))
         (let
           [separator : i64
-            (package-source-relative-separator
-              (owned_view.compiler-owned-shared-view relative)
-              cursor
-              end)]
+            (package-source-relative-separator relative cursor end)]
           [name : String
             (string.substring relative cursor (- separator cursor))]
           (begin
@@ -1011,7 +996,9 @@
           (set! index (+ index 1))))
       next)))
 
-(define (package-source-binding-relative-path [root : String] [path : String]) : String
+(define (package-source-binding-relative-path
+  [root : (& root str)]
+  [path : (& path str)]) : String
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
@@ -1025,7 +1012,7 @@
       (> (string.string-length relative) 0)
       (not (string.eq relative "."))
       (fs.path-safe-relative? (& relative))
-      (package-source-tl-file? (owned_view.compiler-owned-shared-view relative))
+      (package-source-tl-file? relative)
       (not (string.eq relative normalized-path)))
       relative
       ;; A root of `.` has no lexical prefix after normalization; its
@@ -1035,8 +1022,7 @@
         (> (string.string-length normalized-path) 0)
         (not (string.eq normalized-path "."))
         (fs.path-safe-relative? (& normalized-path))
-        (package-source-tl-file?
-          (owned_view.compiler-owned-shared-view normalized-path)))
+        (package-source-tl-file? normalized-path))
         normalized-path
         ""))))
 
@@ -1104,10 +1090,7 @@
     (while (and (= (string.string-length error) 0) (< index count))
       (let
         [path : String (svec.get (& sources) index "")]
-        [relative : String
-          (package-source-binding-relative-path
-            (owned_view.compiler-owned-shared-view root)
-            (owned_view.compiler-owned-shared-view path))]
+        [relative : String (package-source-binding-relative-path root path)]
         (cond
           [(= (string.string-length relative) 0)
             (set!
@@ -1128,10 +1111,7 @@
                 (owned_view.compiler-owned-shared-view source-set)
                 path
                 "source paths must be unique and in deterministic order"))]
-          [(not
-              (package-source-relative-parent-eligible?
-                (owned_view.compiler-owned-shared-view root)
-                (owned_view.compiler-owned-shared-view relative)))
+          [(not (package-source-relative-parent-eligible? root relative))
             (set!
               error
               (package-source-binding-invalid-set-error
@@ -1148,10 +1128,7 @@
                     path
                     io-error))]
               [(fs.OkFsFileKind kind)
-                (if (not
-                  (package-source-include-kind?
-                    (owned_view.compiler-owned-shared-view path)
-                    kind))
+                (if (not (package-source-include-kind? path kind))
                   (set!
                     error
                     (package-source-binding-invalid-set-error

@@ -25,7 +25,7 @@
   (Ok CleanConfig)
   (Err String))
 
-(define (clean-vcs-metadata-path? [path : String]) : bool
+(define (clean-vcs-metadata-path? [path : (& path str)]) : bool
   (or
     (string.eq path ".git")
     (source_text.starts-with? path ".git/")
@@ -35,7 +35,7 @@
     (source_text.ends-with? path "/.git")
     (source_text.ends-with? path "\\.git")))
 
-(define (clean-dangerous-path? [path : String]) : bool
+(define (clean-dangerous-path? [path : (& path str)]) : bool
   (or
     (= (string.string-length path) 0)
     (string.eq path ".")
@@ -114,7 +114,7 @@
     1))
 
 (define (clean-remove-tree-entry [path : String]) : i64
-  (if (clean-vcs-metadata-path? (owned_view.compiler-owned-shared-view path))
+  (if (clean-vcs-metadata-path? path)
     (begin
       (io.print-error
         (str_cat.str-cat "clean: refusing VCS metadata path " path ""))
@@ -141,14 +141,14 @@
               1)])])))
 
 (define (clean-remove-tree-entries
-  [root : String]
+  [root : (& root str)]
   [entries : fs.FsStringVector]
   [index : i64]) : i64
   (if (>= index (fs.string-vector-len (& entries)))
     0
     (let
       [name : String (fs.string-vector-get (& entries) index "")]
-      [path : String (fs.path-join (& root) (& name))]
+      [path : String (fs.path-join root (& name))]
       [status : i64 (clean-remove-tree-entry path)]
       (if (= status 0)
         (clean-remove-tree-entries root entries (+ index 1))
@@ -160,11 +160,7 @@
       (clean-report-error "clean: failed to read directory " path error)]
     [(fs.OkIoStringVector entries)
       (let
-        [status : i64
-          (clean-remove-tree-entries
-            (owned_view.compiler-owned-shared-view path)
-            entries
-            0)]
+        [status : i64 (clean-remove-tree-entries path entries 0)]
         (if (not (= status 0))
           status
           (match (build_run.source-tool-try-remove-dir-if-exists
@@ -197,9 +193,9 @@
     right
     left))
 
-(define (clean-source-artifact-safe? [source : String] [path : String]) : bool
+(define (clean-source-artifact-safe? [source : String] [path : (& path str)]) : bool
   (and
-    (not (clean-dangerous-path? (owned_view.compiler-owned-shared-view path)))
+    (not (clean-dangerous-path? path))
     (not (string.eq source path))
     (not (source_text.ends-with? path ".tl"))))
 
@@ -207,9 +203,7 @@
   [source : String]
   [dry-run : bool]
   [path : String]) : i64
-  (if (clean-source-artifact-safe?
-    source
-    (owned_view.compiler-owned-shared-view path))
+  (if (clean-source-artifact-safe? source path)
     (clean-remove-file dry-run path)
     0))
 
@@ -287,14 +281,14 @@
 (define (clean-package-artifact-safe?
   [manifest-dir : String]
   [name : String]
-  [path : String]) : bool
+  [path : (& path str)]) : bool
   (let
     [output-dir : String
       (build_cli_core.build-package-output-dir manifest-dir name)]
     [output-prefix : String
       (str_cat.str-cat (owned_view.compiler-owned-shared-view output-dir) "/")]
     (and
-      (not (clean-dangerous-path? (owned_view.compiler-owned-shared-view path)))
+      (not (clean-dangerous-path? path))
       (or
         (string.eq path output-dir)
         (source_text.starts-with? path output-prefix)))))
@@ -304,10 +298,7 @@
   [name : String]
   [dry-run : bool]
   [path : String]) : i64
-  (if (clean-package-artifact-safe?
-    manifest-dir
-    name
-    (owned_view.compiler-owned-shared-view path))
+  (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-file dry-run path)
     (begin
       (io.print-error
@@ -336,10 +327,7 @@
   [name : String]
   [dry-run : bool]
   [path : String]) : i64
-  (if (clean-package-artifact-safe?
-    manifest-dir
-    name
-    (owned_view.compiler-owned-shared-view path))
+  (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-dir dry-run path)
     (begin
       (io.print-error
@@ -488,7 +476,8 @@
           1)]
       [(CompilerLoadSomePath path) (clean-package-from-path path dry-run)])))
 
-(define (clean-experiments-artifact-path [manifest-path : String]) : String
+(define (clean-experiments-artifact-path
+  [manifest-path : (& manifest-path str)]) : String
   (load.compiler-load-normalize-path
     (load.compiler-load-join-root-path
       (load.compiler-load-dirname manifest-path)
@@ -496,14 +485,12 @@
 
 (define (clean-experiments-artifact-safe?
   [manifest-path : String]
-  [path : String]) : bool
+  [path : (& path str)]) : bool
   (let
     [expected : String (clean-experiments-artifact-path manifest-path)]
     [normalized : String (load.compiler-load-normalize-path path)]
     (and
-      (not
-        (clean-dangerous-path?
-          (owned_view.compiler-owned-shared-view normalized)))
+      (not (clean-dangerous-path? normalized))
       (string.eq normalized expected)
       (or
         (string.eq expected "target/exp")
@@ -519,12 +506,8 @@
         1)]
     [(build_cli_core.ResultBuildManifest.Ok _)
       (let
-        [path : String
-          (clean-experiments-artifact-path
-            (owned_view.compiler-owned-shared-view manifest-path))]
-        (if (clean-experiments-artifact-safe?
-          manifest-path
-          (owned_view.compiler-owned-shared-view path))
+        [path : String (clean-experiments-artifact-path manifest-path)]
+        (if (clean-experiments-artifact-safe? manifest-path path)
           (clean-remove-tree dry-run path)
           (begin
             (io.print-error

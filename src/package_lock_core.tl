@@ -93,10 +93,12 @@
   (unsafe
     (ptr-read (ptr-addr-of package-lock-version))))
 
-(define (package-lock-char-code-at [text : String] [idx : i64]) : i64
+(define (package-lock-char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
 
-(define (package-lock-string-less? [left : String] [right : String]) : bool
+(define (package-lock-string-less?
+  [left : (& left str)]
+  [right : (& right str)]) : bool
   (let
     [left-len : i64 (string.string-length left)]
     [right-len : i64 (string.string-length right)]
@@ -110,14 +112,8 @@
     (begin
       (while (and (not done) (< idx limit))
         (let
-          [lc : i64
-            (package-lock-char-code-at
-              (owned_view.compiler-owned-shared-view left)
-              idx)]
-          [rc : i64
-            (package-lock-char-code-at
-              (owned_view.compiler-owned-shared-view right)
-              idx)]
+          [lc : i64 (package-lock-char-code-at left idx)]
+          [rc : i64 (package-lock-char-code-at right idx)]
           (if (= lc rc)
             (set! idx (+ idx 1))
             (begin
@@ -137,7 +133,7 @@
       (= code 45)
       (= code 95))))
 
-(define (package-lock-alias-token-valid? [value : String]) : bool
+(define (package-lock-alias-token-valid? [value : (& value str)]) : bool
   (let
     [n : i64 (string.string-length value)]
     [i : i64 0]
@@ -177,7 +173,7 @@
 
 (define (package-lock-entry-list-insert-position
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [alias : String]
+  [alias : (& alias str)]
   [index : i64]) : i64
   (if (>= index (package_lock_entry_vec.len entries))
     index
@@ -189,9 +185,7 @@
           (package-lock-entry-list-fallback))]
       (if (string.eq head.alias alias)
         -1
-        (if (package-lock-string-less?
-          (owned_view.compiler-owned-shared-view alias)
-          head.alias)
+        (if (package-lock-string-less? alias head.alias)
           index
           (package-lock-entry-list-insert-position entries alias (+ index 1)))))))
 
@@ -224,10 +218,7 @@
   (let
     [next : package_lock_entry_vec.Vec entries]
     [index : i64
-      (package-lock-entry-list-insert-position
-        (& next)
-        (owned_view.compiler-owned-shared-view entry.alias)
-        0)]
+      (package-lock-entry-list-insert-position (& next) entry.alias 0)]
     (if (< index 0)
       (ResultPackageLockEntryList.Err
         (str_cat.str-cat
@@ -351,9 +342,7 @@
         [(string.eq alias "")
           (ResultPackageLockEntry.Err
             "package-lock: dependency alias must not be empty")]
-        [(not
-            (package-lock-alias-token-valid?
-              (owned_view.compiler-owned-shared-view alias)))
+        [(not (package-lock-alias-token-valid? alias))
           (ResultPackageLockEntry.Err
             "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")]
         [(string.eq url "")
@@ -612,7 +601,7 @@
 (define (package-lock-backslash-text) : String
   "\\")
 
-(define (package-lock-escape-string [text : String]) : String
+(define (package-lock-escape-string [text : (& text str)]) : String
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -623,10 +612,7 @@
       (while (< i n)
         (begin
           (let
-            [code : i64
-              (package-lock-char-code-at
-                (owned_view.compiler-owned-shared-view text)
-                i)]
+            [code : i64 (package-lock-char-code-at text i)]
             (cond
               [(= code 34)
                 (set!

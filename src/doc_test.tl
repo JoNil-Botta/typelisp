@@ -411,7 +411,7 @@
         (DocTestMaybeOutput.No
           "doctest output metadata must be '-' or 'literal:<escaped text>'")))))
 
-(define (doc-test-string-blank? [text : String]) : bool
+(define (doc-test-string-blank? [text : (& text str)]) : bool
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -427,7 +427,7 @@
           (set! i n)))
       blank)))
 
-(define (doc-test-word-end [text : String] [start : i64]) : i64
+(define (doc-test-word-end [text : (& text str)] [start : i64]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 start]
@@ -466,7 +466,7 @@
 (define (doc-test-item-doc-comment-body [line : String]) : DocTestMaybeString
   (doc-test-doc-comment-body-with-prefix line ";:"))
 
-(define (doc-test-starts-with-form-head? [text : String] [head : String]) : bool
+(define (doc-test-starts-with-form-head? [text : (& text str)] [head : String]) : bool
   (if (source_text.starts-with? text head)
     (let
       [head-len : i64 (string.string-length head)]
@@ -488,15 +488,9 @@
             (doc-test-trim-left
               (string.substring trimmed 1 (- (string.string-length trimmed) 1)))]
           (or
-            (doc-test-starts-with-form-head?
-              (owned_view.compiler-owned-shared-view rest)
-              "define")
-            (doc-test-starts-with-form-head?
-              (owned_view.compiler-owned-shared-view rest)
-              "extern")
-            (doc-test-starts-with-form-head?
-              (owned_view.compiler-owned-shared-view rest)
-              "defenum")
+            (doc-test-starts-with-form-head? rest "define")
+            (doc-test-starts-with-form-head? rest "extern")
+            (doc-test-starts-with-form-head? rest "defenum")
             (doc-test-starts-with-form-head? rest "defstruct")))
         false)
       false)))
@@ -510,8 +504,7 @@
     (if (= (string.string-length trimmed) 0)
       (DocTestFenceInfo.TypeLisp mode)
       (let
-        [end : i64
-          (doc-test-word-end (owned_view.compiler-owned-shared-view trimmed) 0)]
+        [end : i64 (doc-test-word-end trimmed 0)]
         [option : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
@@ -555,8 +548,7 @@
     (if (= (string.string-length trimmed) 0)
       (DocTestFenceInfo.Ignore)
       (let
-        [end : i64
-          (doc-test-word-end (owned_view.compiler-owned-shared-view trimmed) 0)]
+        [end : i64 (doc-test-word-end trimmed 0)]
         [language : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
@@ -866,8 +858,7 @@
       (match state
         [(DocTestScanState.State examples errors next-index)
           (if closed
-            (if (doc-test-string-blank?
-              (owned_view.compiler-owned-shared-view code))
+            (if (doc-test-string-blank? code)
               (doc-test-scan-doc-block-from
                 lines
                 remaining
@@ -998,8 +989,7 @@
                     (&mut module-lines)
                     (DocTestLine.Line line-number body)))]
               [(DocTestMaybeString.No)
-                (if (doc-test-string-blank?
-                  (owned_view.compiler-owned-shared-view line))
+                (if (doc-test-string-blank? line)
                   unit
                   (begin
                     (set! state (doc-test-scan-doc-block module-lines state))
@@ -2046,7 +2036,7 @@
     stdlib-roots
     cfgs))
 
-(define (doc-test-path-under-root? [path : String] [root : String]) : bool
+(define (doc-test-path-under-root? [path : (& path str)] [root : (& root str)]) : bool
   (let
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
@@ -2059,7 +2049,7 @@
           normalized-root)))))
 
 (define (doc-test-dep-list-path?
-  [path : String]
+  [path : (& path str)]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDepList]
   [index : i64]) : bool
@@ -2078,9 +2068,7 @@
               (owned_view.compiler-owned-shared-view dep-path))))]
       (if (and
         (not (compiler_load.compiler-load-github-dependency-path? dep-path))
-        (doc-test-path-under-root?
-          (owned_view.compiler-owned-shared-view path)
-          dep-root))
+        (doc-test-path-under-root? path dep-root))
         true
         (doc-test-dep-list-path? path manifest-dir deps (+ index 1))))))
 
@@ -2102,9 +2090,7 @@
         [rooted : String
           (if (or
             (compiler_load.compiler-load-absolute-path? path)
-            (doc-test-path-under-root?
-              (owned_view.compiler-owned-shared-view normalized)
-              (owned_view.compiler-owned-shared-view manifest-dir)))
+            (doc-test-path-under-root? normalized manifest-dir))
             normalized
             (compiler_load.compiler-load-normalize-path
               (compiler_load.compiler-load-join-root-path
@@ -2127,23 +2113,16 @@
           (if (string.eq manifest-root ".")
             (and
               (not (compiler_load.compiler-load-absolute-path? rooted))
-              (doc-test-path-under-root?
-                (owned_view.compiler-owned-shared-view rooted)
-                (owned_view.compiler-owned-shared-view manifest-dir)))
-            (doc-test-path-under-root?
-              (owned_view.compiler-owned-shared-view rooted)
-              (owned_view.compiler-owned-shared-view manifest-dir)))]
+              (doc-test-path-under-root? rooted manifest-dir))
+            (doc-test-path-under-root? rooted manifest-dir))]
         [package-local : bool
           (and
             (> (string.string-length path) 0)
             (not (compiler_load.compiler-load-stdlib-import? stdlib-path))
-            (not
-              (doc-test-path-under-root?
-                (owned_view.compiler-owned-shared-view rooted)
-                manifest-stdlib-root))
+            (not (doc-test-path-under-root? rooted manifest-stdlib-root))
             (not
               (doc-test-dep-list-path?
-                (owned_view.compiler-owned-shared-view rooted)
+                rooted
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (compiler_load.compiler-pkg-deps-list
                   (owned_view.compiler-owned-shared-view deps))

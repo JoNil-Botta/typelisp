@@ -116,7 +116,7 @@
         (str_cat.str-cat base "::" (doc_extract.doc-item-signature item))
         base))))
 
-(define (doc-render-escape-one [text : String] [idx : i64]) : String
+(define (doc-render-escape-one [text : (& text str)] [idx : i64]) : String
   (let
     [c : char (string.string-ref text idx)]
     (cond
@@ -141,14 +141,7 @@
     (begin
       (while (< i n)
         (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (doc-render-escape-one
-                (owned_view.compiler-owned-shared-view text)
-                i)
-              ""))
+          (set! out (str_cat.str-cat out (doc-render-escape-one text i) ""))
           (set! i (+ i 1))))
       out)))
 

@@ -276,7 +276,7 @@
     (- (lint_core.lint-findings-count items) 1)
     0))
 
-(define (selfhost-lint-form-delim? [source : String] [idx : i64]) : bool
+(define (selfhost-lint-form-delim? [source : (& source str)] [idx : i64]) : bool
   (let
     [source-len : i64 (string.string-length source)]
     (if (>= idx source-len)
@@ -312,7 +312,10 @@
       (ast.ast-source-span-start-line span))
     (- (ast.ast-source-span-start-col span) 1)))
 
-(define (selfhost-lint-skip-ws-comments [source : String] [idx : i64] [n : i64]) : i64
+(define (selfhost-lint-skip-ws-comments
+  [source : (& source str)]
+  [idx : i64]
+  [n : i64]) : i64
   (let
     [j : i64 idx]
     [done : bool false]
@@ -335,7 +338,10 @@
     (= c ']')
     (= c ';')))
 
-(define (selfhost-lint-skip-atom [source : String] [idx : i64] [n : i64]) : i64
+(define (selfhost-lint-skip-atom
+  [source : (& source str)]
+  [idx : i64]
+  [n : i64]) : i64
   (let
     [j : i64 idx]
     (begin
@@ -346,7 +352,7 @@
       j)))
 
 (define (selfhost-lint-skip-source-group
-  [source : String]
+  [source : (& source str)]
   [idx : i64]
   [n : i64]) : i64
   (let
@@ -377,13 +383,12 @@
             [else (set! j (+ j 1))])))
       j)))
 
-(define (selfhost-lint-skip-source-form [source : String] [idx : i64] [n : i64]) : i64
+(define (selfhost-lint-skip-source-form
+  [source : (& source str)]
+  [idx : i64]
+  [n : i64]) : i64
   (let
-    [j : i64
-      (selfhost-lint-skip-ws-comments
-        (owned_view.compiler-owned-shared-view source)
-        idx
-        n)]
+    [j : i64 (selfhost-lint-skip-ws-comments source idx n)]
     (if (>= j n)
       j
       (let
@@ -408,9 +413,7 @@
     [needle-len : i64 (string.string-length needle)]
     (if (and
       (string.is-string-prefix-at source needle start)
-      (selfhost-lint-form-delim?
-        (owned_view.compiler-owned-shared-view source)
-        (+ start needle-len)))
+      (selfhost-lint-form-delim? source (+ start needle-len)))
       (let
         [idx : i64 (+ start needle-len)]
         [count : i64 0]
@@ -418,12 +421,7 @@
         (begin
           (while (and (< idx n) (not done))
             (begin
-              (set!
-                idx
-                (selfhost-lint-skip-ws-comments
-                  (owned_view.compiler-owned-shared-view source)
-                  idx
-                  n))
+              (set! idx (selfhost-lint-skip-ws-comments source idx n))
               (if (>= idx n)
                 (set! done true)
                 (let
@@ -432,12 +430,7 @@
                     (set! done true)
                     (begin
                       (set! count (+ count 1))
-                      (set!
-                        idx
-                        (selfhost-lint-skip-source-form
-                          (owned_view.compiler-owned-shared-view source)
-                          idx
-                          n))))))))
+                      (set! idx (selfhost-lint-skip-source-form source idx n))))))))
           count))
       1)))
 
@@ -528,7 +521,7 @@
     (> (selfhost-lint-begin-source-form-count source finding.span) 1)))
 
 (define (selfhost-lint-path-suffix-at?
-  [path : String]
+  [path : (& path str)]
   [suffix : String]
   [base : i64]
   [index : i64]) : bool
@@ -543,7 +536,7 @@
         (selfhost-lint-path-suffix-at? path suffix base (+ index 1))
         false))))
 
-(define (selfhost-lint-path-suffix? [path : String] [suffix : String]) : bool
+(define (selfhost-lint-path-suffix? [path : (& path str)] [suffix : String]) : bool
   (let
     [path-len : i64 (string.string-length path)]
     [suffix-len : i64 (string.string-length suffix)]
@@ -561,160 +554,96 @@
 ;; #6620 owns classification/migration of the residual entries and should only
 ;; shrink this exact module set. Deliberate runtime-protocol fixtures stay
 ;; explicit so a new test or source module cannot silently inherit permission.
-(define (selfhost-lint-raw-arena-op-allowlisted? [path : String]) : bool
+(define (selfhost-lint-raw-arena-op-allowlisted? [path : (& path str)]) : bool
   (or
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compile_cli_core.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_ast_types.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_backend_tests.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_backend.tl")
+    (selfhost-lint-path-suffix? path "src/compile_cli_core.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_ast_types.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_backend_tests.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_backend.tl")
     ;; The advisory sink owns a lazily allocated payload arena and destroys it
     ;; at the explicit per-job reset boundary.
+    (selfhost-lint-path-suffix? path "src/compiler_diagnostic.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_driver_core.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_driver_smoke_tests.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_intern.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_ir_types.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_load.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_lower_tests.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_lower.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_optimize_tests.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_optimize.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_semantic_index.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_symbols.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_typecheck_core.tl")
+    (selfhost-lint-path-suffix? path "src/lex.tl")
+    (selfhost-lint-path-suffix? path "src/lint_driver_core.tl")
+    (selfhost-lint-path-suffix? path "src/lsp_frame_core.tl")
+    (selfhost-lint-path-suffix? path "src/read.tl")
+    (selfhost-lint-path-suffix? path "src/test_cli_core.tl")
+    (selfhost-lint-path-suffix? path "src/tests/compiler_ast_types_smoke.tl")
+    (selfhost-lint-path-suffix? path "src/tests/compiler_ir_types_smoke.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_diagnostic.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_driver_core.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_driver_smoke_tests.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_intern.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_ir_types.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_load.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_lower_tests.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_lower.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_optimize_tests.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_optimize.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_semantic_index.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_symbols.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/compiler_typecheck_core.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/lex.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/lint_driver_core.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/lsp_frame_core.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/read.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/test_cli_core.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/tests/compiler_ast_types_smoke.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/tests/compiler_ir_types_smoke.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "src/tests/compiler_typecheck_list_storage_unit.tl")
+    (selfhost-lint-path-suffix? path "src/tlci_loader.tl")
+    (selfhost-lint-path-suffix? path "stdlib/arena.tl")
+    (selfhost-lint-path-suffix? path "stdlib/tests/arena_atomic_api.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/arena_escape_stress.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "src/tlci_loader.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "stdlib/arena.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "stdlib/tests/arena_atomic_api.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "tests/integration/arena_escape_stress.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/arena_growth_stable_handle.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/arena_lazy_singleton_raw_addr_escape.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/arena_poison_clone_survives.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/arena_poison_stale_array_trap.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/arena_pool_context_escape.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/arena_rewind_make_array_zero.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/atomic_thread_spawn.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/clone_deep_copy.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "tests/integration/atomic_thread_spawn.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "tests/integration/clone_deep_copy.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/clone_dynarray_scalar_bulk.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/compiler_arena_debug.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/make_array_default_reads_zero.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/mem_fill8_runtime_contract.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/region_reset_discard.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/region_reset_invalid_trap.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/region_reset_overflow_retains.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/region_reset_preserve.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/region_reset_zero.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/sym_i64_env.tl")
     (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "tests/integration/region_reset_zero.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
-      "tests/integration/sym_i64_env.tl")
-    (selfhost-lint-path-suffix?
-      (owned_view.compiler-owned-shared-view path)
+      path
       "tests/integration/with_escape_clone_out.tl")
     (selfhost-lint-path-suffix?
       path
       "tools/embedded-stdlib-tlci/prelude_surface_producer.tl")))
 
 (define (selfhost-lint-filter-derived-origins-from
-  [path : String]
+  [path : (& path str)]
   [source : String]
   [items : lint_core.LintFindings]
   [index : i64]
@@ -772,7 +701,7 @@
       (selfhost-lint-findings-have-rule-from? items rule-id (+ index 1)))))
 
 (define (selfhost-lint-filter-derived-origins
-  [path : String]
+  [path : (& path str)]
   [source : String]
   [items : lint_core.LintFindings]) : lint_core.LintFindings
   (let
@@ -782,8 +711,7 @@
           (owned_view.compiler-owned-shared-view items)
           (lint_core.lint-rule-raw-arena-op-id)
           0)
-        (selfhost-lint-raw-arena-op-allowlisted?
-          (owned_view.compiler-owned-shared-view path)))]
+        (selfhost-lint-raw-arena-op-allowlisted? path))]
     (selfhost-lint-filter-derived-origins-from
       path
       source
@@ -793,7 +721,7 @@
       (lint_core.lint-findings-empty))))
 
 (define (selfhost-lint-program-findings-with-all-options
-  [path : String]
+  [path : (& path str)]
   [source : String]
   [program : ast.AstProgram]
   [deprecated-string-concat : bool]
@@ -1103,7 +1031,7 @@
       (__tl-project-set-field selfhost-lint-unsafe-surface-cache len (+ n 1)))))
 
 (define (selfhost-lint-unsafe-surface-cache-store-summary!
-  [path : String]
+  [path : (& path str)]
   [summary : compiler_load.CompilerLoadSurfaceSummary]) : unit
   (in-arena
     (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
@@ -1116,7 +1044,8 @@
           summary.declaration-module-id
           (selfhost-lint-unsafe-surface-names-empty))))))
 
-(define (selfhost-lint-unsafe-surface-cache-store-invalid! [path : String]) : unit
+(define (selfhost-lint-unsafe-surface-cache-store-invalid!
+  [path : (& path str)]) : unit
   (in-arena
     (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
     (selfhost-lint-unsafe-surface-cache-push!
@@ -1166,16 +1095,14 @@
                   true)
                   [(compiler_load.ResultCompilerLoadSurfaceSummary.Ok summary)
                     (selfhost-lint-unsafe-surface-cache-store-summary!
-                      (owned_view.compiler-owned-shared-view normalized)
+                      normalized
                       summary)]
                   [(compiler_load.ResultCompilerLoadSurfaceSummary.Err _)
                     (selfhost-lint-unsafe-surface-cache-store-invalid!
-                      (owned_view.compiler-owned-shared-view normalized))])]
+                      normalized)])]
               [(parser.ResultAstProgramDiagnostic.Err _)
-                (selfhost-lint-unsafe-surface-cache-store-invalid!
-                  (owned_view.compiler-owned-shared-view normalized))])
-            (selfhost-lint-unsafe-surface-cache-store-invalid!
-              (owned_view.compiler-owned-shared-view normalized)))
+                (selfhost-lint-unsafe-surface-cache-store-invalid! normalized)])
+            (selfhost-lint-unsafe-surface-cache-store-invalid! normalized))
           (selfhost-lint-unsafe-surface-cache-lookup normalized))])))
 
 (define (selfhost-lint-unsafe-surface-import-alias
@@ -1317,7 +1244,7 @@
 
 (define (selfhost-lint-unused-unsafe-findings-from
   [state : tc.TcUnusedUnsafeState]
-  [path : String]
+  [path : (& path str)]
   [index : i64]
   [out : lint_core.LintFindings]) : lint_core.LintFindings
   (if (>= index (tc.tc-unused-unsafe-block-count state))
@@ -1379,7 +1306,7 @@
             [unused-findings : lint_core.LintFindings
               (selfhost-lint-unused-unsafe-findings-from
                 unused-unsafe
-                (owned_view.compiler-owned-shared-view path)
+                path
                 0
                 (lint_core.lint-findings-empty))]
             [findings : lint_core.LintFindings
@@ -1458,7 +1385,7 @@
     (let
       [ordinary : lint_core.LintFindings
         (selfhost-lint-program-findings-with-all-options
-          (owned_view.compiler-owned-shared-view path)
+          path
           (owned_view.compiler-owned-shared-view source)
           program
           deprecated-string-concat
@@ -1527,7 +1454,7 @@
             (let
               [ordinary : lint_core.LintFindings
                 (selfhost-lint-program-findings-with-all-options
-                  (owned_view.compiler-owned-shared-view path)
+                  path
                   (owned_view.compiler-owned-shared-view source)
                   (owned_view.compiler-owned-shared-view program)
                   deprecated-string-concat
@@ -1831,31 +1758,27 @@
 (define (selfhost-lint-dead-qualified-ref [key : String] [fallback : String]) : String
   (str_cat.str-cat (selfhost-lint-dead-qualified-ref-prefix) key "\n" fallback))
 
-(define (selfhost-lint-dead-qualified-ref? [ref : String]) : bool
+(define (selfhost-lint-dead-qualified-ref? [ref : (& ref str)]) : bool
   (string.is-string-prefix-at ref (selfhost-lint-dead-qualified-ref-prefix) 0))
 
-(define (selfhost-lint-dead-qualified-ref-separator [ref : String]) : i64
+(define (selfhost-lint-dead-qualified-ref-separator [ref : (& ref str)]) : i64
   (string.index-of-byte
-    (& ref)
+    ref
     (string.string-length (selfhost-lint-dead-qualified-ref-prefix))
     (cast '\n' : u8)))
 
-(define (selfhost-lint-dead-qualified-ref-key [ref : String]) : String
+(define (selfhost-lint-dead-qualified-ref-key [ref : (& ref str)]) : String
   (let
     [start : i64
       (string.string-length (selfhost-lint-dead-qualified-ref-prefix))]
-    [sep : i64
-      (selfhost-lint-dead-qualified-ref-separator
-        (owned_view.compiler-owned-shared-view ref))]
+    [sep : i64 (selfhost-lint-dead-qualified-ref-separator ref)]
     (if (< sep start)
       ""
       (string.substring ref start (- sep start)))))
 
-(define (selfhost-lint-dead-qualified-ref-fallback [ref : String]) : String
+(define (selfhost-lint-dead-qualified-ref-fallback [ref : (& ref str)]) : String
   (let
-    [sep : i64
-      (selfhost-lint-dead-qualified-ref-separator
-        (owned_view.compiler-owned-shared-view ref))]
+    [sep : i64 (selfhost-lint-dead-qualified-ref-separator ref)]
     [name-len : i64 (string.string-length ref)]
     (if (or (< sep 0) (>= (+ sep 1) name-len))
       ""
@@ -1864,45 +1787,40 @@
 (define (selfhost-lint-dead-source-root-prefix) : String
   "\nselfhost-lint-dead-source-root\n")
 
-(define (selfhost-lint-dead-source-root [path : String] [name : String]) : String
+(define (selfhost-lint-dead-source-root [path : (& path str)] [name : String]) : String
   (str_cat.str-cat
     (selfhost-lint-dead-source-root-prefix)
     (compiler_load.compiler-load-normalize-path path)
     "\n"
     name))
 
-(define (selfhost-lint-dead-source-root? [root : String]) : bool
+(define (selfhost-lint-dead-source-root? [root : (& root str)]) : bool
   (string.is-string-prefix-at root (selfhost-lint-dead-source-root-prefix) 0))
 
-(define (selfhost-lint-dead-source-root-separator [root : String]) : i64
+(define (selfhost-lint-dead-source-root-separator [root : (& root str)]) : i64
   (string.index-of-byte
-    (& root)
+    root
     (string.string-length (selfhost-lint-dead-source-root-prefix))
     (cast '\n' : u8)))
 
-(define (selfhost-lint-dead-source-root-path [root : String]) : String
+(define (selfhost-lint-dead-source-root-path [root : (& root str)]) : String
   (let
     [start : i64 (string.string-length (selfhost-lint-dead-source-root-prefix))]
-    [sep : i64
-      (selfhost-lint-dead-source-root-separator
-        (owned_view.compiler-owned-shared-view root))]
+    [sep : i64 (selfhost-lint-dead-source-root-separator root)]
     (if (< sep start)
       ""
       (string.substring root start (- sep start)))))
 
-(define (selfhost-lint-dead-source-root-name [root : String]) : String
+(define (selfhost-lint-dead-source-root-name [root : (& root str)]) : String
   (let
-    [sep : i64
-      (selfhost-lint-dead-source-root-separator
-        (owned_view.compiler-owned-shared-view root))]
+    [sep : i64 (selfhost-lint-dead-source-root-separator root)]
     [n : i64 (string.string-length root)]
     (if (or (< sep 0) (>= (+ sep 1) n))
       ""
       (string.substring root (+ sep 1) (- n (+ sep 1))))))
 
 (define (selfhost-lint-dead-local-ref [module : String] [ref : String]) : String
-  (if (selfhost-lint-dead-qualified-ref?
-    (owned_view.compiler-owned-shared-view ref))
+  (if (selfhost-lint-dead-qualified-ref? ref)
     ref
     (if (= (string.string-length module) 0)
       ref
@@ -1946,25 +1864,24 @@
         next-refs))))
 
 (define (selfhost-lint-dead-last-dot-from
-  [name : String]
+  [name : (& name str)]
   [index : i64]
   [last-dot : i64]) : i64
   (if (>= index (string.string-length name))
     last-dot
     (selfhost-lint-dead-last-dot-from
-      (owned_view.compiler-owned-shared-view name)
+      name
       (+ index 1)
       (if (= (string.string-ref name index) '.')
         index
         last-dot))))
 
-(define (selfhost-lint-dead-last-dot [name : String]) : i64
+(define (selfhost-lint-dead-last-dot [name : (& name str)]) : i64
   (selfhost-lint-dead-last-dot-from name 0 (- 0 1)))
 
 (define (selfhost-lint-dead-ref-add [refs : lint_svec.Vec] [name : String]) : lint_svec.Vec
   (let
-    [last-dot : i64
-      (selfhost-lint-dead-last-dot (owned_view.compiler-owned-shared-view name))]
+    [last-dot : i64 (selfhost-lint-dead-last-dot name)]
     [name-len : i64 (string.string-length name)]
     (if (and (>= last-dot 0) (< (+ last-dot 1) name-len))
       (let
@@ -2290,8 +2207,8 @@
     [_ (lint_core.lint-no-span)]))
 
 (define (selfhost-lint-dead-find-prefix-from
-  [source : String]
-  [needle : String]
+  [source : (& source str)]
+  [needle : (& needle str)]
   [idx : i64]) : i64
   (let
     [source-len : i64 (string.string-length source)]
@@ -2305,24 +2222,20 @@
       found)))
 
 (define (selfhost-lint-dead-find-name-prefix-from
-  [source : String]
+  [source : (& source str)]
   [needle : String]
   [idx : i64]) : i64
   (let
-    [found : i64
-      (selfhost-lint-dead-find-prefix-from
-        (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view needle)
-        idx)]
+    [found : i64 (selfhost-lint-dead-find-prefix-from source needle idx)]
     (if (< found 0)
       found
       (if (selfhost-lint-form-delim?
-        (owned_view.compiler-owned-shared-view source)
+        source
         (+ found (string.string-length needle)))
         found
         (selfhost-lint-dead-find-name-prefix-from source needle (+ found 1))))))
 
-(define (selfhost-lint-dead-index-line [source : String] [target : i64]) : i64
+(define (selfhost-lint-dead-index-line [source : (& source str)] [target : i64]) : i64
   (let
     [i : i64 0]
     [line : i64 1]
@@ -2335,7 +2248,7 @@
           (set! i (+ i 1))))
       line)))
 
-(define (selfhost-lint-dead-index-col [source : String] [target : i64]) : i64
+(define (selfhost-lint-dead-index-col [source : (& source str)] [target : i64]) : i64
   (let
     [i : i64 0]
     [col : i64 1]
@@ -2349,35 +2262,28 @@
       col)))
 
 (define (selfhost-lint-dead-index-span
-  [source : String]
+  [source : (& source str)]
   [idx : i64]
   [fallback : ast.AstSourceSpan]) : ast.AstSourceSpan
   (if (< idx 0)
     fallback
     (let
-      [line : i64
-        (selfhost-lint-dead-index-line
-          (owned_view.compiler-owned-shared-view source)
-          idx)]
+      [line : i64 (selfhost-lint-dead-index-line source idx)]
       [col : i64 (selfhost-lint-dead-index-col source idx)]
       (ast.ast-source-span line col line (+ col 1)))))
 
 (define (selfhost-lint-dead-decl-span
-  [source : String]
+  [source : (& source str)]
   [name : String]
   [body-span : ast.AstSourceSpan]) : ast.AstSourceSpan
   (let
     [fn-needle : String
       (str_cat.str-cat "(define (" (owned_view.compiler-owned-shared-view name))]
-    [fn-idx : i64
-      (selfhost-lint-dead-find-name-prefix-from
-        (owned_view.compiler-owned-shared-view source)
-        fn-needle
-        0)]
+    [fn-idx : i64 (selfhost-lint-dead-find-name-prefix-from source fn-needle 0)]
     (if (>= fn-idx 0)
       (selfhost-lint-dead-index-span source fn-idx body-span)
       (selfhost-lint-dead-index-span
-        (owned_view.compiler-owned-shared-view source)
+        source
         (selfhost-lint-dead-find-name-prefix-from
           source
           (str_cat.str-cat "(define " name)
@@ -2639,7 +2545,7 @@
                 (selfhost-lint-dead-maybe-type-refs maybe-ty (lint_svec.new)))]
             [span : ast.AstSourceSpan
               (selfhost-lint-dead-decl-span
-                (owned_view.compiler-owned-shared-view source)
+                source
                 (owned_view.compiler-owned-shared-view text)
                 (selfhost-lint-dead-expr-span body))]
             (selfhost-lint-dead-add-visible-node
@@ -2663,7 +2569,7 @@
                   (selfhost-lint-dead-param-list-refs params (lint_svec.new))))]
             [span : ast.AstSourceSpan
               (selfhost-lint-dead-decl-span
-                (owned_view.compiler-owned-shared-view source)
+                source
                 (owned_view.compiler-owned-shared-view text)
                 (selfhost-lint-dead-expr-span body))]
             (selfhost-lint-dead-add-visible-node
@@ -3155,14 +3061,12 @@
 (define (selfhost-lint-dead-mark-reachable-ref
   [items : SelfhostLintDeadDecls]
   [ref : String]) : SelfhostLintDeadDecls
-  (if (selfhost-lint-dead-qualified-ref?
-    (owned_view.compiler-owned-shared-view ref))
+  (if (selfhost-lint-dead-qualified-ref? ref)
     (let
       [index : i64
         (selfhost-lint-dead-decls-index-of-key
           (owned_view.compiler-owned-shared-view items)
-          (selfhost-lint-dead-qualified-ref-key
-            (owned_view.compiler-owned-shared-view ref)))]
+          (selfhost-lint-dead-qualified-ref-key ref))]
       (if (< index 0)
         (selfhost-lint-dead-mark-reachable-name
           items
@@ -3209,16 +3113,13 @@
   [items : SelfhostLintDeadDecls]
   [name : String]) : SelfhostLintDeadDecls
   (cond
-    [(selfhost-lint-dead-source-root?
-        (owned_view.compiler-owned-shared-view name))
+    [(selfhost-lint-dead-source-root? name)
       (selfhost-lint-dead-mark-source-root-from
         items
-        (selfhost-lint-dead-source-root-path
-          (owned_view.compiler-owned-shared-view name))
+        (selfhost-lint-dead-source-root-path name)
         (selfhost-lint-dead-source-root-name name)
         0)]
-    [(selfhost-lint-dead-qualified-ref?
-        (owned_view.compiler-owned-shared-view name))
+    [(selfhost-lint-dead-qualified-ref? name)
       (selfhost-lint-dead-mark-reachable-ref items name)]
     [else (selfhost-lint-dead-mark-root-name-from items name 0)]))
 
@@ -3299,7 +3200,7 @@
 
 (define (selfhost-lint-package-source-list-contains-from
   [sources : (& sources lint_svec.Vec)]
-  [path : String]
+  [path : (& path str)]
   [index : i64]) : bool
   (if (>= index (lint_svec.len (& sources)))
     false
@@ -3312,14 +3213,14 @@
 
 (define (selfhost-lint-package-source-list-contains?
   [sources : (& sources lint_svec.Vec)]
-  [path : String]) : bool
+  [path : (& path str)]) : bool
   (selfhost-lint-package-source-list-contains-from sources path 0))
 
 (define (selfhost-lint-package-empty-source-list) : lint_svec.Vec
   (lint_svec.new))
 
 (define (selfhost-lint-package-stdlib-source?
-  [path : String]
+  [path : (& path str)]
   [stdlib-roots : lint_svec.Vec]) : bool
   (let
     [normalized : String (compiler_load.compiler-load-normalize-path path)]
@@ -3332,14 +3233,12 @@
     (compiler_load.compiler-load-stdlib-import? stdlib-path)))
 
 (define (selfhost-lint-package-dead-source-path?
-  [path : String]
+  [path : (& path str)]
   [sources : (& sources lint_svec.Vec)]
   [stdlib-roots : lint_svec.Vec]) : bool
   (and
     (> (string.string-length path) 0)
-    (selfhost-lint-package-source-list-contains?
-      sources
-      (owned_view.compiler-owned-shared-view path))
+    (selfhost-lint-package-source-list-contains? sources path)
     (not (selfhost-lint-package-stdlib-source? path stdlib-roots))))
 
 (define (selfhost-lint-package-dead-graph-source-path?
@@ -3350,12 +3249,8 @@
   (and
     (> (string.string-length path) 0)
     (or
-      (selfhost-lint-package-source-list-contains?
-        sources
-        (owned_view.compiler-owned-shared-view path))
-      (selfhost-lint-package-source-list-contains?
-        root-sources
-        (owned_view.compiler-owned-shared-view path)))
+      (selfhost-lint-package-source-list-contains? sources path)
+      (selfhost-lint-package-source-list-contains? root-sources path))
     (not (selfhost-lint-package-stdlib-source? path stdlib-roots))))
 
 (define (selfhost-lint-package-dead-graph-source-insert
@@ -3383,7 +3278,7 @@
         value)
       value)))
 
-(define (selfhost-lint-dead-manifest-field [line : String] [target : i64]) : String
+(define (selfhost-lint-dead-manifest-field [line : (& line str)] [target : i64]) : String
   (let
     [n : i64 (string.string-length line)]
     [field : i64 0]
@@ -3413,7 +3308,9 @@
             (set! index (+ index 1)))))
       value)))
 
-(define (selfhost-lint-dead-manifest-line-end [source : String] [start : i64]) : i64
+(define (selfhost-lint-dead-manifest-line-end
+  [source : (& source str)]
+  [start : i64]) : i64
   (let
     [n : i64 (string.string-length source)]
     [index : i64 start]
@@ -3428,7 +3325,7 @@
       index)))
 
 (define (selfhost-lint-dead-manifest-roots-from
-  [source : String]
+  [source : (& source str)]
   [manifest-dir : String]
   [index : i64]
   [case-path : String]
@@ -3438,15 +3335,9 @@
     (if (>= index n)
       roots
       (let
-        [line-end : i64
-          (selfhost-lint-dead-manifest-line-end
-            (owned_view.compiler-owned-shared-view source)
-            index)]
+        [line-end : i64 (selfhost-lint-dead-manifest-line-end source index)]
         [line : String (string.substring source index (- line-end index))]
-        [kind : String
-          (selfhost-lint-dead-manifest-field
-            (owned_view.compiler-owned-shared-view line)
-            0)]
+        [kind : String (selfhost-lint-dead-manifest-field line 0)]
         [next-index : i64
           (if (< line-end n)
             (+ line-end 1)
@@ -3478,9 +3369,7 @@
                   roots
                   (selfhost-lint-dead-root-add
                     roots
-                    (selfhost-lint-dead-source-root
-                      (owned_view.compiler-owned-shared-view case-path)
-                      name)))]
+                    (selfhost-lint-dead-source-root case-path name)))]
               (selfhost-lint-dead-manifest-roots-from
                 source
                 manifest-dir

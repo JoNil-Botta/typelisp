@@ -68,7 +68,7 @@
 (define (doc-print-wrote [output-path : String]) : unit
   (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n")))
 
-(define (doc-write-text [output-path : String] [contents : String]) : unit
+(define (doc-write-text [output-path : (& output-path str)] [contents : String]) : unit
   (io.write-file output-path (byte_buf.str-as-bytes (& contents))))
 
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
@@ -77,9 +77,7 @@
     [markdown : String
       (doc_render.doc-render-markdown (doc_extract.doc-extract-source source))]
     (begin
-      (doc-write-text
-        (owned_view.compiler-owned-shared-view output-path)
-        markdown)
+      (doc-write-text output-path markdown)
       (doc-print-wrote output-path)
       0)))
 
@@ -384,7 +382,7 @@
                     (doc_module_vec.new)])]
               (begin
                 (doc-write-text
-                  (owned_view.compiler-owned-shared-view output-path)
+                  output-path
                   (doc-render-loaded-markdown
                     input-path
                     paths
@@ -527,7 +525,7 @@
                   (owned_view.compiler-owned-shared-view package-identity)
                   (owned_view.compiler-owned-shared-view modules)))
               (doc-write-text
-                (owned_view.compiler-owned-shared-view index-path)
+                index-path
                 (doc_local_site.doc-local-site-render-index
                   manifest.name
                   compiler-identity
@@ -560,7 +558,7 @@
         [(DocMaybeString.Some out)
           (begin
             (doc-write-text
-              (owned_view.compiler-owned-shared-view out)
+              out
               (doc_render.doc-render-module-graph-markdown
                 (doc-modules-from-package-sources source-set.sources)))
             (doc-print-wrote out)
@@ -575,7 +573,7 @@
         (io.read-file (owned_view.compiler-owned-shared-view input-path)))]
     [html : String (doc_html.doc-html-render-source input-path source)]
     (begin
-      (doc-write-text (owned_view.compiler-owned-shared-view output-path) html)
+      (doc-write-text output-path html)
       (doc-print-wrote output-path)
       0)))
 
@@ -584,7 +582,7 @@
     [modules : doc_module_vec.Vec (doc-read-modules 2 (- (io.arg-count) 1))]
     (begin
       (doc-write-text
-        (owned_view.compiler-owned-shared-view output-path)
+        output-path
         (doc_html.doc-html-render-module-graph modules))
       (doc-print-wrote output-path)
       0)))
@@ -654,7 +652,7 @@
         (- (doc_svec.len (& paths)) 1))]
     (begin
       (doc-write-text
-        (owned_view.compiler-owned-shared-view output-path)
+        output-path
         (doc_render.doc-render-module-graph-markdown modules))
       (doc-print-wrote output-path)
       0)))

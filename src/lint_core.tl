@@ -1116,7 +1116,7 @@
 (define (lint-name-case-ascii-digit? [c : char]) : bool
   (and (>= c '0') (<= c '9')))
 
-(define (lint-name-case-has-ascii-letter? [name : String]) : bool
+(define (lint-name-case-has-ascii-letter? [name : (& name str)]) : bool
   (let
     [n : i64 (string.string-length name)]
     [index : i64 0]
@@ -1128,7 +1128,7 @@
           (set! index (+ index 1))))
       found)))
 
-(define (lint-name-case-terminal-suffix-start [name : String]) : i64
+(define (lint-name-case-terminal-suffix-start [name : (& name str)]) : i64
   (let
     [n : i64 (string.string-length name)]
     (if (= n 0)
@@ -1139,7 +1139,10 @@
           (- n 1)
           n)))))
 
-(define (lint-name-case-kebab-range? [name : String] [start : i64] [end : i64]) : bool
+(define (lint-name-case-kebab-range?
+  [name : (& name str)]
+  [start : i64]
+  [end : i64]) : bool
   (let
     [index : i64 start]
     [segment-start : bool true]
@@ -1176,12 +1179,10 @@
 ;: conversion separator are accepted. Names without ASCII letters are operator
 ;: spellings and are exempt.
 (define (lint-name-case-kebab? [name : String]) : bool
-  (if (not
-    (lint-name-case-has-ascii-letter?
-      (owned_view.compiler-owned-shared-view name)))
+  (if (not (lint-name-case-has-ascii-letter? name))
     true
     (lint-name-case-kebab-range?
-      (owned_view.compiler-owned-shared-view name)
+      name
       0
       (lint-name-case-terminal-suffix-start name))))
 
@@ -1190,9 +1191,7 @@
 (define (lint-name-case-local-kebab? [name : String]) : bool
   (if (string.eq name "_")
     true
-    (if (not
-      (lint-name-case-has-ascii-letter?
-        (owned_view.compiler-owned-shared-view name)))
+    (if (not (lint-name-case-has-ascii-letter? name))
       true
       (let
         [n : i64 (string.string-length name)]
@@ -1201,16 +1200,14 @@
             1
             0)]
         (lint-name-case-kebab-range?
-          (owned_view.compiler-owned-shared-view name)
+          name
           start
           (lint-name-case-terminal-suffix-start name))))))
 
 ;: Struct and enum names use uppercase-initial CamelCase. Acronym runs remain
 ;: valid; separators and non-ASCII alphanumerics are rejected.
 (define (lint-name-case-upper-camel? [name : String]) : bool
-  (if (not
-    (lint-name-case-has-ascii-letter?
-      (owned_view.compiler-owned-shared-view name)))
+  (if (not (lint-name-case-has-ascii-letter? name))
     true
     (let
       [n : i64 (string.string-length name)]
@@ -1246,7 +1243,7 @@
 
 ;: Dotted symbols in match patterns are qualified nullary variants, not local
 ;: binders. The parser intentionally leaves that distinction to typechecking.
-(define (lint-name-case-qualified-symbol? [name : String]) : bool
+(define (lint-name-case-qualified-symbol? [name : (& name str)]) : bool
   (let
     [n : i64 (string.string-length name)]
     [index : i64 0]
@@ -1281,7 +1278,7 @@
       1)))
 
 (define (lint-name-case-lower-suggestion-from
-  [name : String]
+  [name : (& name str)]
   [index : i64]
   [end : i64]
   [out : String]
@@ -1293,7 +1290,7 @@
       (cond
         [(lint-name-case-ascii-lower? c)
           (lint-name-case-lower-suggestion-from
-            (owned_view.compiler-owned-shared-view name)
+            name
             (+ index 1)
             end
             (str_cat.str-cat out (string.substring name index 1))
@@ -1315,7 +1312,7 @@
           (if at-word-start
             ""
             (lint-name-case-lower-suggestion-from
-              (owned_view.compiler-owned-shared-view name)
+              name
               (+ index 1)
               end
               (str_cat.str-cat out (string.substring name index 1))
@@ -1352,16 +1349,9 @@
       (if unused
         1
         0)]
-    [end : i64
-      (lint-name-case-terminal-suffix-start
-        (owned_view.compiler-owned-shared-view name))]
+    [end : i64 (lint-name-case-terminal-suffix-start name)]
     [body : String
-      (lint-name-case-lower-suggestion-from
-        (owned_view.compiler-owned-shared-view name)
-        start
-        end
-        ""
-        true)]
+      (lint-name-case-lower-suggestion-from name start end "" true)]
     [suffix : String
       (if (< end n)
         (string.substring name end 1)
@@ -1376,7 +1366,7 @@
         (str_cat.str-cat with-unused suffix)))))
 
 (define (lint-name-case-upper-camel-suggestion-from
-  [name : String]
+  [name : (& name str)]
   [index : i64]
   [out : String]
   [capitalize : bool]) : String
@@ -1400,7 +1390,7 @@
           (if (string.eq out "")
             ""
             (lint-name-case-upper-camel-suggestion-from
-              (owned_view.compiler-owned-shared-view name)
+              name
               (+ index 1)
               (str_cat.str-cat out (string.substring name index 1))
               false))]
@@ -1606,7 +1596,7 @@
     [(ast.AstExpr.PtrNull _) true]
     [_ false]))
 
-(define (lint-deprecated-string-concat-name? [name : String]) : bool
+(define (lint-deprecated-string-concat-name? [name : (& name str)]) : bool
   (or
     (string.eq name "string-append")
     (string.eq name "string.append")
@@ -1616,7 +1606,7 @@
     (string.eq name "string.concat4")
     (string.eq name "string.concat5")))
 
-(define (lint-deprecated-string-concat-loop-form? [name : String]) : bool
+(define (lint-deprecated-string-concat-loop-form? [name : (& name str)]) : bool
   (or
     (string.eq name "while")
     (string.eq name "foreach")
@@ -1677,7 +1667,7 @@
     [(ast.AstExpr.Var name) (lint-and-or-op-name (ci.intern-str name))]
     [_ ""]))
 
-(define (lint-transitional-core-macro-bare-name [name : String]) : String
+(define (lint-transitional-core-macro-bare-name [name : (& name str)]) : String
   (cond
     [(string.eq name "core.when") "when"]
     [(string.eq name "core.unless") "unless"]
@@ -1695,10 +1685,7 @@
     [(ast.AstExpr.Var name)
       (let
         [text : String (ci.intern-str name)]
-        (if (string.eq
-          (lint-transitional-core-macro-bare-name
-            (owned_view.compiler-owned-shared-view text))
-          "")
+        (if (string.eq (lint-transitional-core-macro-bare-name text) "")
           ""
           text))]
     [_ ""]))
@@ -1724,9 +1711,7 @@
   [acc : LintFindings]) : LintFindings
   (let
     [qualified : String (lint-transitional-core-macro-qualified-name func)]
-    [bare : String
-      (lint-transitional-core-macro-bare-name
-        (owned_view.compiler-owned-shared-view qualified))]
+    [bare : String (lint-transitional-core-macro-bare-name qualified)]
     (if (string.eq bare "")
       acc
       (lint-findings-add
@@ -1841,7 +1826,7 @@
           (lint-expr-render inner)))]
     [_ "<expr>"]))
 
-(define (lint-and-or-call-kind? [op : String] [expr : ast.AstExpr]) : bool
+(define (lint-and-or-call-kind? [op : (& op str)] [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (let
@@ -1859,7 +1844,7 @@
   (lint-and-or-args-have-kind-at? op (& args) 0))
 
 (define (lint-and-or-args-have-kind-at?
-  [op : String]
+  [op : (& op str)]
   [args : (& args ast.AstExprList)]
   [index : i64]) : bool
   (if (>= index args.len)
@@ -1867,9 +1852,7 @@
     (let
       [head-expr : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
-      (if (lint-and-or-call-kind?
-        (owned_view.compiler-owned-shared-view op)
-        head-expr)
+      (if (lint-and-or-call-kind? op head-expr)
         true
         (lint-and-or-args-have-kind-at? op args (+ index 1))))))
 
@@ -1901,7 +1884,7 @@
         (lint-str-cat-args-have-nested-at? args (+ index 1))))))
 
 (define (lint-cascading-and-or-flat-arg-render
-  [op : String]
+  [op : (& op str)]
   [expr : ast.AstExpr]) : String
   (match (owned_view.compiler-owned-shared-view expr)
     [(ast.AstExpr.Spanned inner-box _)
@@ -1917,12 +1900,12 @@
     [_ (lint-expr-render expr)]))
 
 (define (lint-cascading-and-or-flat-args-render
-  [op : String]
+  [op : (& op str)]
   [args : (& args ast.AstExprList)]) : String
   (lint-cascading-and-or-flat-args-render-at op (& args) 0))
 
 (define (lint-cascading-and-or-flat-args-render-at
-  [op : String]
+  [op : (& op str)]
   [args : (& args ast.AstExprList)]
   [index : i64]) : String
   (if (>= index args.len)
@@ -1931,13 +1914,11 @@
       [head-expr : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
       (lint-render-args-join
-        (lint-cascading-and-or-flat-arg-render
-          (owned_view.compiler-owned-shared-view op)
-          head-expr)
+        (lint-cascading-and-or-flat-arg-render op head-expr)
         (lint-cascading-and-or-flat-args-render-at op args (+ index 1))))))
 
 (define (lint-cascading-and-or-flat-arg-count
-  [op : String]
+  [op : (& op str)]
   [expr : ast.AstExpr]) : i64
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
@@ -1953,12 +1934,12 @@
     [_ 1]))
 
 (define (lint-cascading-and-or-flat-arg-count-list
-  [op : String]
+  [op : (& op str)]
   [args : (& args ast.AstExprList)]) : i64
   (lint-cascading-and-or-flat-arg-count-list-at op (& args) 0))
 
 (define (lint-cascading-and-or-flat-arg-count-list-at
-  [op : String]
+  [op : (& op str)]
   [args : (& args ast.AstExprList)]
   [index : i64]) : i64
   (if (>= index args.len)
@@ -1967,14 +1948,12 @@
       [head-expr : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
       (+
-        (lint-cascading-and-or-flat-arg-count
-          (owned_view.compiler-owned-shared-view op)
-          head-expr)
+        (lint-cascading-and-or-flat-arg-count op head-expr)
         (lint-cascading-and-or-flat-arg-count-list-at op args (+ index 1))))))
 
 (define (lint-cascading-and-or-flat-call
   [callee : String]
-  [op : String]
+  [op : (& op str)]
   [args : (& args ast.AstExprList)]) : String
   (lint-parenthesized-call-render
     callee
@@ -1990,10 +1969,7 @@
       "cascading "
       (owned_view.compiler-owned-shared-view op)
       ": prefer flat n-ary form "
-      (lint-cascading-and-or-flat-call
-        callee
-        (owned_view.compiler-owned-shared-view op)
-        args))
+      (lint-cascading-and-or-flat-call callee op args))
     (lint-rule-cascading-and-or-id)
     (lint-cascading-and-or-flat-arg-count-list op args)
     span
@@ -2053,11 +2029,9 @@
                           (owned_view.compiler-owned-shared-view head-spanned))]
                       [name : String (lint-token-name head)]
                       [is-loop : bool
-                        (lint-deprecated-string-concat-loop-form?
-                          (owned_view.compiler-owned-shared-view name))]
+                        (lint-deprecated-string-concat-loop-form? name)]
                       [is-concat : bool
-                        (lint-deprecated-string-concat-name?
-                          (owned_view.compiler-owned-shared-view name))]
+                        (lint-deprecated-string-concat-name? name)]
                       (begin
                         (set! depth (+ depth 1))
                         (set! (array-ref loop-stack depth) is-loop)
@@ -2100,8 +2074,8 @@
           findings))]))
 
 (define (lint-name-qualified-by-separator?
-  [name : String]
-  [qualifier : String]
+  [name : (& name str)]
+  [qualifier : (& qualifier str)]
   [separator : char]) : bool
   (let
     [name-len : i64 (string.string-length name)]
@@ -2112,69 +2086,66 @@
       [(not (source_text.starts-with? name qualifier)) false]
       [else (= (string.string-ref name qualifier-len) separator)])))
 
-(define (lint-name-qualified-by? [name : String] [qualifier : String]) : bool
-  (if (lint-name-qualified-by-separator?
-    (owned_view.compiler-owned-shared-view name)
-    (owned_view.compiler-owned-shared-view qualifier)
-    '.')
+(define (lint-name-qualified-by?
+  [name : (& name str)]
+  [qualifier : (& qualifier str)]) : bool
+  (if (lint-name-qualified-by-separator? name qualifier '.')
     true
     (lint-name-qualified-by-separator? name qualifier '/')))
 
 (define (lint-name-uses-import?
   [name : String]
-  [alias : String]
-  [module-name : String]) : bool
-  (if (lint-name-qualified-by?
-    (owned_view.compiler-owned-shared-view name)
-    alias)
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
+  (if (lint-name-qualified-by? name alias)
     true
     (lint-name-qualified-by? name module-name)))
 
 (define (lint-name-id-uses-import?
   [name : i64]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (lint-name-uses-import? (ci.intern-str name) alias module-name))
 
 (define (lint-maybe-type-uses-import?
   [maybe-ty : ast.AstMaybeType]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match maybe-ty
     [(ast.AstMaybeType.No) false]
     [(ast.AstMaybeType.Some ty) (lint-type-uses-import? ty alias module-name)]))
 
 (define (lint-type-list-uses-import?
   [types : ast.AstTypeList]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (lint-type-list-uses-import-at? (& types) alias module-name 0))
 
 (define (lint-type-list-uses-import-at?
   [types : (& types ast.AstTypeList)]
-  [alias : String]
-  [module-name : String]
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]
   [index : i64]) : bool
   (if (>= index (ast.ast-type-list-len types))
     false
     (if (lint-type-uses-import?
       (ast.ty-node-get
         (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-      (owned_view.compiler-owned-shared-view alias)
-      (owned_view.compiler-owned-shared-view module-name))
+      alias
+      module-name)
       true
       (lint-type-list-uses-import-at? types alias module-name (+ index 1)))))
 
 (define (lint-type-id-uses-import?
   [ty : i64]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (lint-type-uses-import? (ast.ty-node-get ty) alias module-name))
 
 (define (lint-type-uses-import?
   [ty : ast.AstType]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match ty
     [(ast.AstType.I64) false]
     [(ast.AstType.I32) false]
@@ -2196,10 +2167,7 @@
     [(ast.AstType.Expr) false]
     [(ast.AstType.ExprList) false]
     [(ast.AstType.Func args ret)
-      (if (lint-type-list-uses-import?
-        (deref args)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-type-list-uses-import? (deref args) alias module-name)
         true
         (lint-type-id-uses-import? ret alias module-name))]
     [(ast.AstType.CFunc signature _)
@@ -2236,36 +2204,33 @@
 
 (define (lint-param-list-uses-import?
   [params : ast.AstParamList]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (lint-param-list-uses-import-at? (& params) alias module-name 0))
 
 (define (lint-param-list-uses-import-at?
   [params : (& params ast.AstParamList)]
-  [alias : String]
-  [module-name : String]
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]
   [index : i64]) : bool
   (if (>= index (ast.ast-param-list-len params))
     false
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(ast.AstParam.Param _ ty _)
-        (if (lint-type-uses-import?
-          ty
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+        (if (lint-type-uses-import? ty alias module-name)
           true
           (lint-param-list-uses-import-at? params alias module-name (+ index 1)))])))
 
 (define (lint-macro-param-list-uses-import?
   [params : ast.AstMacroParamList]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (lint-macro-param-list-uses-import-at? (& params) alias module-name 0))
 
 (define (lint-macro-param-list-uses-import-at?
   [params : (& params ast.AstMacroParamList)]
-  [alias : String]
-  [module-name : String]
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]
   [index : i64]) : bool
   (if (>= index (ast.ast-macro-param-list-len params))
     false
@@ -2274,10 +2239,7 @@
       index
       (ast.ast-macro-param-fallback))
       [(ast.AstMacroParam.Param _ ty _ _)
-        (if (lint-type-uses-import?
-          ty
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+        (if (lint-type-uses-import? ty alias module-name)
           true
           (lint-macro-param-list-uses-import-at?
             params
@@ -2287,28 +2249,28 @@
 
 (define (lint-pattern-list-uses-import?
   [patterns : ast.AstPatternList]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (lint-pattern-list-uses-import-at? (& patterns) alias module-name 0))
 
 (define (lint-pattern-list-uses-import-at?
   [patterns : (& patterns ast.AstPatternList)]
-  [alias : String]
-  [module-name : String]
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]
   [index : i64]) : bool
   (if (>= index patterns.len)
     false
     (if (lint-pattern-uses-import?
       (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
-      (owned_view.compiler-owned-shared-view alias)
-      (owned_view.compiler-owned-shared-view module-name))
+      alias
+      module-name)
       true
       (lint-pattern-list-uses-import-at? patterns alias module-name (+ index 1)))))
 
 (define (lint-pattern-uses-import?
   [pattern : ast.AstPattern]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match pattern
     [(ast.AstPattern.Var _ maybe-ty)
       (lint-maybe-type-uses-import? maybe-ty alias module-name)]
@@ -2319,24 +2281,21 @@
     [(ast.AstPattern.Wildcard) false]
     [(ast.AstPattern.Binding _) false]
     [(ast.AstPattern.Variant name items)
-      (if (lint-name-id-uses-import?
-        name
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-name-id-uses-import? name alias module-name)
         true
         (lint-pattern-list-uses-import? (deref items) alias module-name))]
     [(ast.AstPattern.Literal _) false]))
 
 (define (lint-unused-unsafe-candidate-sentinel?
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (and
     (string.eq alias "__tl_lint_unused_unsafe_candidate")
     (string.eq module-name "")))
 
 (define (lint-requires-enclosing-unsafe-sentinel?
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (and
     (string.eq alias "__tl_lint_requires_enclosing_unsafe")
     (string.eq module-name "")))
@@ -2351,28 +2310,28 @@
 
 (define (lint-expr-list-uses-import?
   [exprs : ast.AstExprList]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (lint-expr-list-uses-import-at? (& exprs) alias module-name 0))
 
 (define (lint-expr-list-uses-import-at?
   [exprs : (& exprs ast.AstExprList)]
-  [alias : String]
-  [module-name : String]
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]
   [index : i64]) : bool
   (and
     (< index exprs.len)
     (or
       (lint-expr-uses-import?
         (ast.ast-expr-list-get exprs index 0)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        alias
+        module-name)
       (lint-expr-list-uses-import-at? exprs alias module-name (+ index 1)))))
 
 (define (lint-expr-children-use-import-at?
   [children : (& children ast.AstExprChildList)]
-  [alias : String]
-  [module-name : String]
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]
   [index : i64]) : bool
   (and
     (< index children.len)
@@ -2382,25 +2341,13 @@
         index
         (ast.ast-expr-child-fallback))
         [(ast.AstExprChild.Expr id)
-          (lint-expr-uses-import?
-            id
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))]
+          (lint-expr-uses-import? id alias module-name)]
         [(ast.AstExprChild.TypeId id)
-          (lint-type-id-uses-import?
-            id
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))]
+          (lint-type-id-uses-import? id alias module-name)]
         [(ast.AstExprChild.Type ty)
-          (lint-type-uses-import?
-            ty
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))]
+          (lint-type-uses-import? ty alias module-name)]
         [(ast.AstExprChild.Pattern pattern)
-          (lint-pattern-uses-import?
-            pattern
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))])
+          (lint-pattern-uses-import? pattern alias module-name)])
       (lint-expr-children-use-import-at? children alias module-name (+ index 1)))))
 
 ;; Unsafe operations with expression children; ProgramArgv and ProgramEnvp
@@ -2422,8 +2369,8 @@
 
 (define (lint-expr-uses-import?
   [expr-id : i64]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   ;; The arms below check names and the for-owned and unsafe forms; every other
   ;; variant's children are checked through the AstExpr child list.
   (match (ast.ast-node-get expr-id)
@@ -2432,8 +2379,8 @@
       (or
         (lint-expr-uses-import?
           (ast.ast-for-owned-state-source (& payload))
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+          alias
+          module-name)
         (lint-expr-uses-import?
           (ast.ast-for-owned-state-body (& payload))
           alias
@@ -2444,33 +2391,22 @@
         (or
           (and
             (>= expected-type 0)
-            (lint-expr-uses-import?
-              expected-type
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name)))
+            (lint-expr-uses-import? expected-type alias module-name))
           (lint-expr-uses-import?
             (ast.ast-for-owned-step-body (& payload))
             alias
             module-name)))]
     [(ast.AstExpr.Unsafe exprs)
       (cond
-        [(lint-requires-enclosing-unsafe-sentinel?
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
-          false]
-        [(lint-unused-unsafe-candidate-sentinel?
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+        [(lint-requires-enclosing-unsafe-sentinel? alias module-name) false]
+        [(lint-unused-unsafe-candidate-sentinel? alias module-name)
           (if (lint-expr-list-requires-enclosing-unsafe? exprs)
             (lint-expr-list-uses-import? exprs alias module-name)
             true)]
         [else (lint-expr-list-uses-import? exprs alias module-name)])]
     [(ast.AstExpr.Set target value)
       (or
-        (lint-name-id-uses-import?
-          target
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+        (lint-name-id-uses-import? target alias module-name)
         (lint-expr-uses-import? value alias module-name))]
     [_
       (let
@@ -2480,15 +2416,13 @@
         (or
           (and
             unsafe-operation
-            (lint-requires-enclosing-unsafe-sentinel?
-              (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view module-name)))
+            (lint-requires-enclosing-unsafe-sentinel? alias module-name))
           (lint-expr-children-use-import-at? (& children) alias module-name 0)))]))
 
 (define (lint-extern-abi-uses-import?
   [abi : ast.AstExternAbi]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match abi
     [(ast.AstExternAbi.C) false]
     [(ast.AstExternAbi.CVarargsOpen) false]
@@ -2497,16 +2431,16 @@
 
 (define (lint-extern-metadata-uses-import?
   [meta : ast.AstExternMetadata]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match meta
     [(ast.AstExternMetadata.Metadata abi _ _ _ _)
       (lint-extern-abi-uses-import? abi alias module-name)]))
 
 (define (lint-field-cleanup-uses-import?
   [cleanup : ast.AstFieldCleanup]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match cleanup
     [(ast.AstFieldCleanup.No) false]
     [(ast.AstFieldCleanup.Fn name)
@@ -2524,8 +2458,8 @@
 
 (define (lint-field-def-list-uses-import-at?
   [fields : (& fields ast.AstFieldDefList)]
-  [alias : String]
-  [module-name : String]
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]
   [index : i64]) : bool
   (if (>= index fields.len)
     false
@@ -2534,15 +2468,9 @@
       index
       (ast.ast-field-def-fallback))
       [(ast.AstFieldDef.Def _ ty cleanup)
-        (if (lint-type-uses-import?
-          ty
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+        (if (lint-type-uses-import? ty alias module-name)
           true
-          (if (lint-field-cleanup-uses-import?
-            cleanup
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+          (if (lint-field-cleanup-uses-import? cleanup alias module-name)
             true
             (lint-field-def-list-uses-import-at?
               fields
@@ -2552,8 +2480,8 @@
 
 (define (lint-struct-cleanup-uses-import?
   [cleanup : ast.AstStructCleanup]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match cleanup
     [(ast.AstStructCleanup.No) false]
     [(ast.AstStructCleanup.Fn name)
@@ -2564,8 +2492,8 @@
 
 (define (lint-enum-cleanup-uses-import?
   [cleanup : ast.AstEnumCleanup]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match cleanup
     [(ast.AstEnumCleanup.No) false]
     [(ast.AstEnumCleanup.Fn name)
@@ -2576,8 +2504,8 @@
 
 (define (lint-variant-payload-cleanup-uses-import?
   [cleanup : ast.AstVariantPayloadCleanup]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match cleanup
     [(ast.AstVariantPayloadCleanup.No) false]
     [(ast.AstVariantPayloadCleanup.Fn name)
@@ -2589,8 +2517,8 @@
 
 (define (lint-variant-payload-cleanup-list-uses-import?
   [items : ast.AstVariantPayloadCleanupList]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (lint-variant-payload-cleanup-list-uses-import-at?
     (& items)
     alias
@@ -2599,8 +2527,8 @@
 
 (define (lint-variant-payload-cleanup-list-uses-import-at?
   [items : (& items ast.AstVariantPayloadCleanupList)]
-  [alias : String]
-  [module-name : String]
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]
   [index : i64]) : bool
   (if (>= index items.len)
     false
@@ -2609,8 +2537,8 @@
         items
         index
         (ast.ast-variant-payload-cleanup-fallback))
-      (owned_view.compiler-owned-shared-view alias)
-      (owned_view.compiler-owned-shared-view module-name))
+      alias
+      module-name)
       true
       (lint-variant-payload-cleanup-list-uses-import-at?
         items
@@ -2626,8 +2554,8 @@
 
 (define (lint-variant-def-list-uses-import-at?
   [variants : (& variants ast.AstVariantDefList)]
-  [alias : String]
-  [module-name : String]
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]
   [index : i64]) : bool
   (if (>= index variants.len)
     false
@@ -2636,15 +2564,12 @@
       index
       (ast.ast-variant-def-fallback))
       [(ast.AstVariantDef.Def _ payloads cleanups)
-        (if (lint-type-list-uses-import?
-          payloads
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+        (if (lint-type-list-uses-import? payloads alias module-name)
           true
           (if (lint-variant-payload-cleanup-list-uses-import?
             cleanups
-            (owned_view.compiler-owned-shared-view alias)
-            (owned_view.compiler-owned-shared-view module-name))
+            alias
+            module-name)
             true
             (lint-variant-def-list-uses-import-at?
               variants
@@ -2655,8 +2580,8 @@
 (define (lint-dispatch-variant-list-uses-import-from?
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (if (>= index variants.len)
     false
     (match (ast.ast-dispatch-variant-list-get
@@ -2664,10 +2589,7 @@
       index
       (ast.ast-dispatch-variant-fallback))
       [(ast.AstDispatchVariant.Variant _ name)
-        (if (lint-name-id-uses-import?
-          name
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+        (if (lint-name-id-uses-import? name alias module-name)
           true
           (lint-dispatch-variant-list-uses-import-from?
             variants
@@ -2687,8 +2609,8 @@
 
 (define (lint-generated-decl-meta-uses-import?
   [meta : ast.AstGeneratedDeclMeta]
-  [alias : String]
-  [module-name : String]) : bool
+  [alias : (& alias str)]
+  [module-name : (& module-name str)]) : bool
   (match meta
     [(ast.AstGeneratedDeclMeta.No) false]
     [(ast.AstGeneratedDeclMeta.Some _ _ args _)
@@ -2706,69 +2628,42 @@
         alias
         module-name)]
     [(ast.AstDecl.Def decl-meta _ maybe-ty body)
-      (if (lint-maybe-type-uses-import?
-        maybe-ty
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-maybe-type-uses-import? maybe-ty alias module-name)
         true
         (lint-expr-uses-import? body alias module-name))]
     [(ast.AstDecl.DefFn decl-meta _ params ret body _)
-      (if (lint-param-list-uses-import?
-        params
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-param-list-uses-import? params alias module-name)
         true
-        (if (lint-type-uses-import?
-          ret
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+        (if (lint-type-uses-import? ret alias module-name)
           true
           (lint-expr-uses-import? body alias module-name)))]
     [(ast.AstDecl.DefMacro decl-meta _ params ret body)
-      (if (lint-macro-param-list-uses-import?
-        params
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-macro-param-list-uses-import? params alias module-name)
         true
-        (if (lint-type-uses-import?
-          ret
-          (owned_view.compiler-owned-shared-view alias)
-          (owned_view.compiler-owned-shared-view module-name))
+        (if (lint-type-uses-import? ret alias module-name)
           true
           (lint-expr-uses-import? body alias module-name)))]
     [(ast.AstDecl.Extern decl-meta _ _ meta ty)
       (if (lint-extern-metadata-uses-import?
         (ast.ast-extern-metadata-box-shared-view meta)
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+        alias
+        module-name)
         true
         (lint-type-uses-import? ty alias module-name))]
     [(ast.AstDecl.DefEnum decl-meta _ cleanup variants)
-      (if (lint-enum-cleanup-uses-import?
-        cleanup
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-enum-cleanup-uses-import? cleanup alias module-name)
         true
         (lint-variant-def-list-uses-import? variants alias module-name))]
     [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
-      (if (lint-enum-cleanup-uses-import?
-        cleanup
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-enum-cleanup-uses-import? cleanup alias module-name)
         true
         (lint-variant-def-list-uses-import? variants alias module-name))]
     [(ast.AstDecl.DefStruct decl-meta _ _ cleanup fields)
-      (if (lint-struct-cleanup-uses-import?
-        cleanup
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-struct-cleanup-uses-import? cleanup alias module-name)
         true
         (lint-field-def-list-uses-import? fields alias module-name))]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup fields)
-      (if (lint-struct-cleanup-uses-import?
-        cleanup
-        (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view module-name))
+      (if (lint-struct-cleanup-uses-import? cleanup alias module-name)
         true
         (lint-field-def-list-uses-import? fields alias module-name))]
     [(ast.AstDecl.Import
@@ -2805,8 +2700,8 @@
   [module-name : String]) : bool
   (if (lint-generated-decl-meta-uses-import?
     (ast.ast-decl-generated-meta (owned_view.compiler-owned-shared-view decl))
-    (owned_view.compiler-owned-shared-view alias)
-    (owned_view.compiler-owned-shared-view module-name))
+    alias
+    module-name)
     true
     (lint-decl-uses-import-inner? decl alias module-name)))
 
@@ -3197,12 +3092,12 @@
       (string.substring module-name start (- n start)))))
 
 (define (lint-source-span-end-index
-  [source : String]
+  [source : (& source str)]
   [span : ast.AstSourceSpan]) : i64
   (let
     [idx : i64
       (lint-source-span-start-index
-        (owned_view.compiler-owned-shared-view source)
+        source
         (ast.ast-source-span
           (ast.ast-source-span-end-line span)
           (ast.ast-source-span-end-col span)
@@ -3213,7 +3108,7 @@
       idx)))
 
 (define (lint-source-name-in-range?
-  [source : String]
+  [source : (& source str)]
   [name : String]
   [start : i64]
   [limit : i64]) : bool
@@ -3222,29 +3117,19 @@
     (and (>= found 0) (< found limit))))
 
 (define (lint-import-span-has-explicit-alias?
-  [source : String]
+  [source : (& source str)]
   [span : ast.AstSourceSpan]) : bool
   (let
-    [start : i64
-      (lint-source-span-start-index
-        (owned_view.compiler-owned-shared-view source)
-        span)]
-    [limit : i64
-      (lint-source-span-end-index
-        (owned_view.compiler-owned-shared-view source)
-        span)]
+    [start : i64 (lint-source-span-start-index source span)]
+    [limit : i64 (lint-source-span-end-index source span)]
     (if (< start 0)
       false
       (or
-        (lint-source-name-in-range?
-          (owned_view.compiler-owned-shared-view source)
-          "as"
-          start
-          limit)
+        (lint-source-name-in-range? source "as" start limit)
         (lint-source-name-in-range? source ":as" start limit)))))
 
 (define (lint-redundant-import-alias-add-if-needed
-  [source : String]
+  [source : (& source str)]
   [spec : ast.AstImportSpec]
   [acc : LintFindings]) : LintFindings
   (match spec
@@ -3274,7 +3159,7 @@
         [_ acc])]))
 
 (define (lint-unused-import-add-if-needed
-  [source : String]
+  [source : (& source str)]
   [all-decls : ast.AstDeclList]
   [current-module-id : i64]
   [spec : ast.AstImportSpec]
@@ -3317,7 +3202,7 @@
                         acc)))])]))])))
 
 (define (lint-unused-imports-in-decl-list
-  [source : String]
+  [source : (& source str)]
   [all-decls : ast.AstDeclList]
   [decls : ast.AstDeclList]
   [acc : LintFindings]) : LintFindings
@@ -3329,7 +3214,7 @@
     acc))
 
 (define (lint-unused-imports-in-decl-list-at
-  [source : String]
+  [source : (& source str)]
   [all-decls : ast.AstDeclList]
   [decls : ast.AstDeclList]
   [current-module-id : i64]
@@ -3340,7 +3225,7 @@
       (let
         [rest : ast.AstDeclList rest]
         (lint-unused-imports-in-decl-list-at
-          (owned_view.compiler-owned-shared-view source)
+          source
           (owned_view.compiler-owned-shared-view all-decls)
           rest
           (match (owned_view.compiler-owned-shared-view decl)
@@ -4081,8 +3966,8 @@
   (LintCopyOnUpdateStructList (__tl_make-array LintCopyOnUpdateStructShape 0) 0))
 
 (define (lint-copy-on-update-struct-find-at
-  [shapes : LintCopyOnUpdateStructList]
-  [name : String]
+  [shapes : (& shapes LintCopyOnUpdateStructList)]
+  [name : (& name str)]
   [index : i64]) : LintCopyOnUpdateMaybeStruct
   (if (< index 0)
     LintCopyOnUpdateMaybeStruct.NoStruct
@@ -4094,26 +3979,21 @@
         (lint-copy-on-update-struct-find-at shapes name (- index 1))))))
 
 (define (lint-copy-on-update-struct-find
-  [shapes : LintCopyOnUpdateStructList]
-  [name : String]) : LintCopyOnUpdateMaybeStruct
-  (lint-copy-on-update-struct-find-at
-    (owned_view.compiler-owned-shared-view shapes)
-    name
-    (- shapes.len 1)))
+  [shapes : (& shapes LintCopyOnUpdateStructList)]
+  [name : (& name str)]) : LintCopyOnUpdateMaybeStruct
+  (lint-copy-on-update-struct-find-at shapes name (- shapes.len 1)))
 
 (define (lint-copy-on-update-struct-known-name
-  [shapes : LintCopyOnUpdateStructList]
+  [shapes : (& shapes LintCopyOnUpdateStructList)]
   [name-id : i64]) : String
   (let
     [name : String (ci.intern-str name-id)]
-    (match (lint-copy-on-update-struct-find
-      shapes
-      (owned_view.compiler-owned-shared-view name))
+    (match (lint-copy-on-update-struct-find shapes name)
       [(LintCopyOnUpdateMaybeStruct.NoStruct) ""]
       [(LintCopyOnUpdateMaybeStruct.SomeStruct _) name])))
 
 (define (lint-copy-on-update-struct-name-from-type
-  [shapes : LintCopyOnUpdateStructList]
+  [shapes : (& shapes LintCopyOnUpdateStructList)]
   [ty : ast.AstType]) : String
   (match ty
     [(ast.AstType.Struct name)
@@ -4126,7 +4006,7 @@
     [_ ""]))
 
 (define (lint-copy-on-update-struct-name-from-maybe-type
-  [shapes : LintCopyOnUpdateStructList]
+  [shapes : (& shapes LintCopyOnUpdateStructList)]
   [maybe-ty : ast.AstMaybeType]) : String
   (match maybe-ty
     [(ast.AstMaybeType.No) ""]
@@ -4214,7 +4094,7 @@
 
 (define (lint-copy-on-update-param-locals-at
   [params : (& params ast.AstParamList)]
-  [shapes : LintCopyOnUpdateStructList]
+  [shapes : (& shapes LintCopyOnUpdateStructList)]
   [locals : LintCopyOnUpdateLocalList]
   [index : i64]) : LintCopyOnUpdateLocalList
   (if (>= index (ast.ast-param-list-len params))
@@ -4223,7 +4103,7 @@
       [(ast.AstParam.Param name ty _)
         (lint-copy-on-update-param-locals-at
           params
-          (owned_view.compiler-owned-shared-view shapes)
+          shapes
           (lint-copy-on-update-local-add
             locals
             (ci.intern-str name)
@@ -4238,7 +4118,7 @@
 
 (define (lint-copy-on-update-macro-param-locals-at
   [params : (& params ast.AstMacroParamList)]
-  [shapes : LintCopyOnUpdateStructList]
+  [shapes : (& shapes LintCopyOnUpdateStructList)]
   [locals : LintCopyOnUpdateLocalList]
   [index : i64]) : LintCopyOnUpdateLocalList
   (if (>= index (ast.ast-macro-param-list-len params))
@@ -4250,7 +4130,7 @@
       [(ast.AstMacroParam.Param name ty _ _)
         (lint-copy-on-update-macro-param-locals-at
           params
-          (owned_view.compiler-owned-shared-view shapes)
+          shapes
           (lint-copy-on-update-local-add
             locals
             (ci.intern-str name)
@@ -4397,9 +4277,7 @@
               (lint-copy-on-update-expr-var-name (ast.ast-node-get callee))]
             (if (not (string.eq callee-name type-name))
               state
-              (match (lint-copy-on-update-struct-find
-                (owned_view.compiler-owned-shared-view state.shapes)
-                type-name)
+              (match (lint-copy-on-update-struct-find state.shapes type-name)
                 [(LintCopyOnUpdateMaybeStruct.NoStruct) state]
                 [(LintCopyOnUpdateMaybeStruct.SomeStruct shape)
                   (let
@@ -4430,7 +4308,7 @@
       (let
         [annotated : String
           (lint-copy-on-update-struct-name-from-type
-            (owned_view.compiler-owned-shared-view state.shapes)
+            state.shapes
             (ast.ty-node-get ty-id))]
         (if (string.eq annotated "")
           (lint-copy-on-update-init-type-name state (ast.ast-node-get inner))
@@ -4439,7 +4317,7 @@
       (let
         [casted : String
           (lint-copy-on-update-struct-name-from-type
-            (owned_view.compiler-owned-shared-view state.shapes)
+            state.shapes
             (ast.ty-node-get ty-id))]
         (if (string.eq casted "")
           (lint-copy-on-update-init-type-name state (ast.ast-node-get inner))
@@ -4448,9 +4326,7 @@
       (let
         [callee-name : String
           (lint-copy-on-update-expr-var-name (ast.ast-node-get callee))]
-        (match (lint-copy-on-update-struct-find
-          state.shapes
-          (owned_view.compiler-owned-shared-view callee-name))
+        (match (lint-copy-on-update-struct-find state.shapes callee-name)
           [(LintCopyOnUpdateMaybeStruct.NoStruct) ""]
           [(LintCopyOnUpdateMaybeStruct.SomeStruct _) callee-name]))]
     [(ast.AstExpr.Var name)
@@ -4463,9 +4339,7 @@
   [init : i64]) : String
   (let
     [annotated : String
-      (lint-copy-on-update-struct-name-from-maybe-type
-        (owned_view.compiler-owned-shared-view state.shapes)
-        maybe-ty)]
+      (lint-copy-on-update-struct-name-from-maybe-type state.shapes maybe-ty)]
     (if (string.eq annotated "")
       (lint-copy-on-update-init-type-name state (ast.ast-node-get init))
       annotated)))
@@ -5110,7 +4984,7 @@
 (define (lint-single-element-array-make-array-callee? [name : String]) : bool
   (string.eq name "__tl_make-array"))
 
-(define (lint-single-element-array-ref-callee? [name : String]) : bool
+(define (lint-single-element-array-ref-callee? [name : (& name str)]) : bool
   (or (string.eq name "array-ref") (string.eq name "__tl_array-ref")))
 
 (define (lint-single-element-array-set-callee? [name : String]) : bool
@@ -5210,7 +5084,7 @@
             (+ index 1)))])))
 
 (define (lint-single-element-array-finalize-candidates-at
-  [items : LintSingleElementArrayCandidateList]
+  [items : (& items LintSingleElementArrayCandidateList)]
   [acc : LintFindings]
   [index : i64]) : LintFindings
   (if (< index 0)
@@ -5232,12 +5106,9 @@
       (lint-single-element-array-finalize-candidates-at items next (- index 1)))))
 
 (define (lint-single-element-array-finalize-candidates
-  [items : LintSingleElementArrayCandidateList]
+  [items : (& items LintSingleElementArrayCandidateList)]
   [acc : LintFindings]) : LintFindings
-  (lint-single-element-array-finalize-candidates-at
-    (owned_view.compiler-owned-shared-view items)
-    acc
-    (- items.len 1)))
+  (lint-single-element-array-finalize-candidates-at items acc (- items.len 1)))
 
 (define (lint-single-element-array-finalize-state
   [state : LintSingleElementArrayState]) : LintFindings
@@ -5500,7 +5371,7 @@
 
 (define (lint-prefer-dynamic-array-literal-first-write-bare-var?
   [expr : ast.AstExpr]
-  [name : String]) : bool
+  [name : (& name str)]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner _)
       (lint-prefer-dynamic-array-literal-first-write-bare-var?
@@ -5571,7 +5442,7 @@
             (= length 2)
             (lint-prefer-dynamic-array-literal-first-write-bare-var?
               (ast.ast-node-get (ast.ast-expr-list-get (& exprs) 0 0))
-              (owned_view.compiler-owned-shared-view name))))
+              name)))
         (lint-prefer-dynamic-array-literal-write-sequence? exprs name length 0))]
     [_ false]))
 
@@ -5649,8 +5520,7 @@
         [after-func : LintSingleElementArrayState
           (lint-single-element-array-expr func state)]
         (cond
-          [(lint-single-element-array-ref-callee?
-              (owned_view.compiler-owned-shared-view callee))
+          [(lint-single-element-array-ref-callee? callee)
             (lint-single-element-array-call-ref args after-func)]
           [(lint-single-element-array-set-callee? callee)
             (lint-single-element-array-call-set args after-func)]
@@ -5805,7 +5675,7 @@
       (lint-pending-assignment-index items name (+ index 1)))))
 
 (define (lint-pending-assignment-find
-  [items : LintPendingAssignmentList]
+  [items : (& items LintPendingAssignmentList)]
   [name : String]) : LintMaybePendingAssignment
   (let
     [found : i64 (lint-pending-assignment-index items name 0)]
@@ -5893,7 +5763,7 @@
       (let
         [found : LintMaybePendingAssignment
           (lint-pending-assignment-find
-            (owned_view.compiler-owned-shared-view state.pending)
+            state.pending
             (owned_view.compiler-owned-shared-view name))]
         [next-findings : LintFindings
           (match found
@@ -6229,7 +6099,7 @@
 (define lint-source-line-starts : (__tl_dyn-array i64)
   (__tl_make-array i64 0))
 
-(define (lint-source-line-index-build! [source : String]) : unit
+(define (lint-source-line-index-build! [source : (& source str)]) : unit
   (set! lint-source-line-starts (source_text.source-text-line-starts source)))
 
 (define (lint-source-line-start [line : i64]) : i64
@@ -6307,7 +6177,7 @@
   (>= (lint-unused-variable-binding-index bindings name (- bindings.len 1)) 0))
 
 (define (lint-unused-unsafe-frame-list-contains-at?
-  [frames : LintUnusedVariableFrameList]
+  [frames : (& frames LintUnusedVariableFrameList)]
   [name : String]
   [index : i64]) : bool
   (if (< index 0)
@@ -6319,14 +6189,11 @@
       (lint-unused-unsafe-frame-list-contains-at? frames name (- index 1)))))
 
 (define (lint-unused-unsafe-frame-list-contains?
-  [frames : LintUnusedVariableFrameList]
+  [frames : (& frames LintUnusedVariableFrameList)]
   [name : String]) : bool
-  (lint-unused-unsafe-frame-list-contains-at?
-    (owned_view.compiler-owned-shared-view frames)
-    name
-    (- frames.len 1)))
+  (lint-unused-unsafe-frame-list-contains-at? frames name (- frames.len 1)))
 
-(define (lint-unused-unsafe-first-separator [name : String]) : i64
+(define (lint-unused-unsafe-first-separator [name : (& name str)]) : i64
   (let
     [len : i64 (string.string-length name)]
     [index : i64 0]
@@ -6342,9 +6209,7 @@
 
 (define (lint-unused-unsafe-name-root [name : String]) : String
   (let
-    [separator : i64
-      (lint-unused-unsafe-first-separator
-        (owned_view.compiler-owned-shared-view name))]
+    [separator : i64 (lint-unused-unsafe-first-separator name)]
     (if (> separator 0)
       (string.substring name 0 separator)
       name)))
@@ -6467,9 +6332,9 @@
     (lint-unused-unsafe-block-pop-findings state.findings)))
 
 (define (lint-source-prefix-at?
-  [source : String]
+  [source : (& source str)]
   [start : i64]
-  [needle : String]) : bool
+  [needle : (& needle str)]) : bool
   (let
     [source-len : i64 (string.string-length source)]
     [needle-len : i64 (string.string-length needle)]
@@ -6490,8 +6355,8 @@
             ok))))))
 
 (define (lint-source-find-prefix-backward-from
-  [source : String]
-  [needle : String]
+  [source : (& source str)]
+  [needle : (& needle str)]
   [idx : i64]) : i64
   (let
     [needle-len : i64 (string.string-length needle)]
@@ -6503,15 +6368,12 @@
     [found : i64 (- 0 1)]
     (begin
       (while (and (< found 0) (>= cursor 0))
-        (if (lint-source-prefix-at?
-          (owned_view.compiler-owned-shared-view source)
-          cursor
-          (owned_view.compiler-owned-shared-view needle))
+        (if (lint-source-prefix-at? source cursor needle)
           (set! found cursor)
           (set! cursor (- cursor 1))))
       found)))
 
-(define (lint-source-symbol-boundary? [source : String] [idx : i64]) : bool
+(define (lint-source-symbol-boundary? [source : (& source str)] [idx : i64]) : bool
   (let
     [source-len : i64 (string.string-length source)]
     (if (< idx 0)
@@ -6520,22 +6382,20 @@
         true
         (not (lexer.is-symbol-char (string.string-ref source idx)))))))
 
-(define (lint-source-name-at? [source : String] [idx : i64] [name : String]) : bool
+(define (lint-source-name-at?
+  [source : (& source str)]
+  [idx : i64]
+  [name : (& name str)]) : bool
   (let
     [end : i64 (+ idx (string.string-length name))]
     (and
-      (lint-source-prefix-at?
-        (owned_view.compiler-owned-shared-view source)
-        idx
-        name)
-      (lint-source-symbol-boundary?
-        (owned_view.compiler-owned-shared-view source)
-        (- idx 1))
+      (lint-source-prefix-at? source idx name)
+      (lint-source-symbol-boundary? source (- idx 1))
       (lint-source-symbol-boundary? source end))))
 
 (define (lint-source-find-name-from
-  [source : String]
-  [name : String]
+  [source : (& source str)]
+  [name : (& name str)]
   [idx : i64]) : i64
   (let
     [source-len : i64 (string.string-length source)]
@@ -6543,10 +6403,7 @@
     [i : i64 idx]
     (begin
       (while (and (< found 0) (< i source-len))
-        (if (lint-source-name-at?
-          (owned_view.compiler-owned-shared-view source)
-          i
-          (owned_view.compiler-owned-shared-view name))
+        (if (lint-source-name-at? source i name)
           (set! found i)
           (set! i (+ i 1))))
       found)))
@@ -6572,7 +6429,7 @@
       (ast.ast-source-span line col line (+ col width)))))
 
 (define (lint-source-span-start-index
-  [source : String]
+  [source : (& source str)]
   [span : ast.AstSourceSpan]) : i64
   (let
     [target-line : i64 (ast.ast-source-span-start-line span)]
@@ -6591,16 +6448,12 @@
       candidate)))
 
 (define (lint-source-name-span-from
-  [source : String]
-  [name : String]
+  [source : (& source str)]
+  [name : (& name str)]
   [cursor : i64]
   [fallback : ast.AstSourceSpan]) : LintSourceNameSpan
   (let
-    [found : i64
-      (lint-source-find-name-from
-        source
-        (owned_view.compiler-owned-shared-view name)
-        cursor)]
+    [found : i64 (lint-source-find-name-from source name cursor)]
     [width : i64 (string.string-length name)]
     (if (< found 0)
       (LintSourceNameSpan fallback cursor)
@@ -6609,16 +6462,12 @@
         (+ found width)))))
 
 (define (lint-source-name-span-between
-  [source : String]
-  [name : String]
+  [source : (& source str)]
+  [name : (& name str)]
   [cursor : i64]
   [limit : i64]) : LintSourceNameSpan
   (let
-    [found : i64
-      (lint-source-find-name-from
-        source
-        (owned_view.compiler-owned-shared-view name)
-        cursor)]
+    [found : i64 (lint-source-find-name-from source name cursor)]
     [width : i64 (string.string-length name)]
     (if (or (< found 0) (>= found limit))
       (LintSourceNameSpan (lint-no-span) cursor)
@@ -6641,11 +6490,7 @@
   [limit : i64]) : LintNameCaseLocalScan
   (let
     [found : LintSourceNameSpan
-      (lint-source-name-span-between
-        (owned_view.compiler-owned-shared-view state.source)
-        (owned_view.compiler-owned-shared-view name)
-        cursor
-        limit)]
+      (lint-source-name-span-between state.source name cursor limit)]
     (LintNameCaseLocalScan
       (lint-unused-variable-add-local-name-case state name found.span)
       found.next-index)))
@@ -6656,14 +6501,8 @@
   [span : ast.AstSourceSpan]
   [form-head : String]) : LintNameCaseLocalScan
   (let
-    [start : i64
-      (lint-source-span-start-index
-        (owned_view.compiler-owned-shared-view state.source)
-        span)]
-    [limit : i64
-      (lint-source-span-end-index
-        (owned_view.compiler-owned-shared-view state.source)
-        span)]
+    [start : i64 (lint-source-span-start-index state.source span)]
+    [limit : i64 (lint-source-span-end-index state.source span)]
     (if (or (< start 0) (< limit 0))
       (LintNameCaseLocalScan state 0)
       (lint-unused-variable-scan-local-name
@@ -6673,7 +6512,7 @@
         limit))))
 
 (define (lint-name-case-pattern-add
-  [source : String]
+  [source : (& source str)]
   [name : String]
   [cursor : i64]
   [limit : i64]
@@ -6681,19 +6520,13 @@
   [report : bool]) : LintNameCasePatternScan
   (let
     [found : LintSourceNameSpan
-      (lint-source-name-span-between
-        source
-        (owned_view.compiler-owned-shared-view name)
-        cursor
-        limit)]
+      (lint-source-name-span-between source name cursor limit)]
     [span : ast.AstSourceSpan found.span]
     [next : LintFindings
       (if (and
         report
         (lint-name-case-source-span? span)
-        (not
-          (lint-name-case-qualified-symbol?
-            (owned_view.compiler-owned-shared-view name)))
+        (not (lint-name-case-qualified-symbol? name))
         (not
           (lint-name-case-local-kebab?
             (owned_view.compiler-owned-shared-view name))))
@@ -6703,7 +6536,7 @@
 
 (define (lint-name-case-pattern-list
   [patterns : ast.AstPatternList]
-  [source : String]
+  [source : (& source str)]
   [cursor : i64]
   [limit : i64]
   [findings : LintFindings]) : LintNameCasePatternScan
@@ -6711,7 +6544,7 @@
 
 (define (lint-name-case-pattern-list-at
   [patterns : (& patterns ast.AstPatternList)]
-  [source : String]
+  [source : (& source str)]
   [cursor : i64]
   [limit : i64]
   [findings : LintFindings]
@@ -6722,7 +6555,7 @@
       [scanned : LintNameCasePatternScan
         (lint-name-case-pattern
           (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
-          (owned_view.compiler-owned-shared-view source)
+          source
           cursor
           limit
           findings)]
@@ -6736,7 +6569,7 @@
 
 (define (lint-name-case-pattern
   [pattern : ast.AstPattern]
-  [source : String]
+  [source : (& source str)]
   [cursor : i64]
   [limit : i64]
   [findings : LintFindings]) : LintNameCasePatternScan
@@ -6765,7 +6598,7 @@
       (let
         [variant : LintNameCasePatternScan
           (lint-name-case-pattern-add
-            (owned_view.compiler-owned-shared-view source)
+            source
             (ci.intern-str name)
             cursor
             limit
@@ -6785,7 +6618,7 @@
 ;; payload patterns and nested tuple positions remain definite binder slots.
 (define (lint-name-case-match-pattern
   [pattern : ast.AstPattern]
-  [source : String]
+  [source : (& source str)]
   [cursor : i64]
   [limit : i64]
   [findings : LintFindings]) : LintNameCasePatternScan
@@ -6808,7 +6641,9 @@
 (define (lint-name-case-space? [c : char]) : bool
   (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
 
-(define (lint-name-case-skip-space-comments [source : String] [start : i64]) : i64
+(define (lint-name-case-skip-space-comments
+  [source : (& source str)]
+  [start : i64]) : i64
   (let
     [n : i64 (string.string-length source)]
     [index : i64 start]
@@ -6831,7 +6666,7 @@
             unit)))
       index)))
 
-(define (lint-name-case-skip-line [source : String] [start : i64]) : i64
+(define (lint-name-case-skip-line [source : (& source str)] [start : i64]) : i64
   (let
     [n : i64 (string.string-length source)]
     [index : i64 start]
@@ -6841,7 +6676,7 @@
       index)))
 
 (define (lint-name-case-skip-quoted
-  [source : String]
+  [source : (& source str)]
   [start : i64]
   [delimiter : char]) : i64
   (let
@@ -6863,8 +6698,8 @@
 
 ;; Find a form head in source code, excluding text in comments and literals.
 (define (lint-name-case-find-code-prefix-from
-  [source : String]
-  [needle : String]
+  [source : (& source str)]
+  [needle : (& needle str)]
   [start : i64]) : i64
   (let
     [n : i64 (string.string-length source)]
@@ -6875,39 +6710,20 @@
         (let
           [c : char (string.string-ref source index)]
           (cond
-            [(= c ';')
-              (set!
-                index
-                (lint-name-case-skip-line
-                  (owned_view.compiler-owned-shared-view source)
-                  index))]
+            [(= c ';') (set! index (lint-name-case-skip-line source index))]
             [(= c '"')
-              (set!
-                index
-                (lint-name-case-skip-quoted
-                  (owned_view.compiler-owned-shared-view source)
-                  index
-                  '"'))]
+              (set! index (lint-name-case-skip-quoted source index '"'))]
             [(= c '\'')
-              (set!
-                index
-                (lint-name-case-skip-quoted
-                  (owned_view.compiler-owned-shared-view source)
-                  index
-                  '\''))]
-            [(lint-source-prefix-at?
-                (owned_view.compiler-owned-shared-view source)
-                index
-                (owned_view.compiler-owned-shared-view needle))
-              (set! found index)]
+              (set! index (lint-name-case-skip-quoted source index '\''))]
+            [(lint-source-prefix-at? source index needle) (set! found index)]
             [else (set! index (+ index 1))])))
       found)))
 
 (define (lint-name-case-find-decl-name-from
-  [source : String]
+  [source : (& source str)]
   [cursor : i64]
   [form : String]
-  [name : String]
+  [name : (& name str)]
   [function-head : bool]) : LintSourceNameSpan
   (let
     [needle : String (str_cat.str-cat "(" form)]
@@ -6918,25 +6734,20 @@
       (while (and (< found 0) (< search n))
         (let
           [form-index : i64
-            (lint-name-case-find-code-prefix-from
-              (owned_view.compiler-owned-shared-view source)
-              (owned_view.compiler-owned-shared-view needle)
-              search)]
+            (lint-name-case-find-code-prefix-from source needle search)]
           (if (< form-index 0)
             (set! search n)
             (let
               [after-form : i64
                 (lint-name-case-skip-space-comments
-                  (owned_view.compiler-owned-shared-view source)
+                  source
                   (+ form-index (string.string-length needle)))]
               [name-index : i64
                 (if function-head
                   (if (and
                     (< after-form n)
                     (= (string.string-ref source after-form) '('))
-                    (lint-name-case-skip-space-comments
-                      (owned_view.compiler-owned-shared-view source)
-                      (+ after-form 1))
+                    (lint-name-case-skip-space-comments source (+ after-form 1))
                     (- 0 1))
                   (if (and
                     (< after-form n)
@@ -6945,10 +6756,7 @@
                     after-form))]
               (if (and
                 (>= name-index 0)
-                (lint-source-name-at?
-                  (owned_view.compiler-owned-shared-view source)
-                  name-index
-                  (owned_view.compiler-owned-shared-view name)))
+                (lint-source-name-at? source name-index name))
                 (set! found name-index)
                 (set! search (+ form-index 1)))))))
       (if (< found 0)
@@ -6969,10 +6777,10 @@
   (let
     [found : LintSourceNameSpan
       (lint-name-case-find-decl-name-from
-        (owned_view.compiler-owned-shared-view state.source)
+        state.source
         state.cursor
         form
-        (owned_view.compiler-owned-shared-view name)
+        name
         function-head)]
     [span : ast.AstSourceSpan found.span]
     [valid : bool
@@ -7000,9 +6808,7 @@
   [body : i64]) : LintNameCaseDeclState
   (let
     [end : i64
-      (lint-source-span-end-index
-        (owned_view.compiler-owned-shared-view state.source)
-        (lint-no-effect-span-id body))]
+      (lint-source-span-end-index state.source (lint-no-effect-span-id body))]
     (if (> end state.cursor)
       (LintNameCaseDeclState state.source end state.findings)
       state)))
@@ -7135,8 +6941,8 @@
   (or (= module-char name-char) (and (= module-char '_') (= name-char '-'))))
 
 (define (lint-redundant-function-module-prefix-at?
-  [name : String]
-  [module-name : String]
+  [name : (& name str)]
+  [module-name : (& module-name str)]
   [idx : i64]) : bool
   (let
     [module-len : i64 (string.string-length module-name)]
@@ -7148,17 +6954,16 @@
         (lint-redundant-function-module-prefix-at? name module-name (+ idx 1))
         false))))
 
-(define (lint-redundant-function-name? [module-name : String] [name : String]) : bool
+(define (lint-redundant-function-name?
+  [module-name : (& module-name str)]
+  [name : (& name str)]) : bool
   (let
     [module-len : i64 (string.string-length module-name)]
     [name-len : i64 (string.string-length name)]
     (and
       (> module-len 0)
       (> name-len (+ module-len 1))
-      (lint-redundant-function-module-prefix-at?
-        (owned_view.compiler-owned-shared-view name)
-        module-name
-        0)
+      (lint-redundant-function-module-prefix-at? name module-name 0)
       (= (string.string-ref name module-len) '-'))))
 
 (define (lint-redundant-function-name-add
@@ -7167,16 +6972,10 @@
   [fallback : ast.AstSourceSpan]) : LintRedundantFunctionNameState
   (let
     [module-name : String state.module-name]
-    (if (lint-redundant-function-name?
-      (owned_view.compiler-owned-shared-view module-name)
-      (owned_view.compiler-owned-shared-view name))
+    (if (lint-redundant-function-name? module-name name)
       (let
         [found : LintSourceNameSpan
-          (lint-source-name-span-from
-            (owned_view.compiler-owned-shared-view state.source)
-            (owned_view.compiler-owned-shared-view name)
-            state.cursor
-            fallback)]
+          (lint-source-name-span-from state.source name state.cursor fallback)]
         (lint-redundant-function-name-state-with-results
           (owned_view.compiler-owned-shared-view state)
           found.next-index
@@ -7571,7 +7370,7 @@
 
 (define (lint-unused-variable-add-binding-name-cases-at
   [state : LintUnusedVariableState]
-  [bindings : LintUnusedVariableBindingList]
+  [bindings : (& bindings LintUnusedVariableBindingList)]
   [index : i64]) : LintUnusedVariableState
   (if (< index 0)
     state
@@ -7587,10 +7386,10 @@
 
 (define (lint-unused-variable-add-binding-name-cases
   [state : LintUnusedVariableState]
-  [bindings : LintUnusedVariableBindingList]) : LintUnusedVariableState
+  [bindings : (& bindings LintUnusedVariableBindingList)]) : LintUnusedVariableState
   (lint-unused-variable-add-binding-name-cases-at
     state
-    (owned_view.compiler-owned-shared-view bindings)
+    bindings
     (- bindings.len 1)))
 
 (define (lint-unused-variable-binding-mark-used
@@ -7666,7 +7465,7 @@
   [name : i64]) : LintUnusedVariableState
   (lint-unused-variable-read-name state (ci.intern-str name)))
 
-(define (lint-unused-variable-first-dot-index [text : String]) : i64
+(define (lint-unused-variable-first-dot-index [text : (& text str)]) : i64
   (let
     [n : i64 (string.string-length text)]
     [idx : i64 0]
@@ -7686,9 +7485,7 @@
       (lint-unused-variable-read-name
         state
         (owned_view.compiler-owned-shared-view name))]
-    [dot : i64
-      (lint-unused-variable-first-dot-index
-        (owned_view.compiler-owned-shared-view name))]
+    [dot : i64 (lint-unused-variable-first-dot-index name)]
     (if (> dot 0)
       (lint-unused-variable-read-name with-full (string.substring name 0 dot))
       with-full)))
@@ -7729,7 +7526,7 @@
     state.findings))
 
 (define (lint-unused-variable-report-bindings-at
-  [bindings : LintUnusedVariableBindingList]
+  [bindings : (& bindings LintUnusedVariableBindingList)]
   [findings : LintFindings]
   [index : i64]) : LintFindings
   (if (< index 0)
@@ -7755,10 +7552,7 @@
 (define (lint-unused-variable-report-bindings
   [bindings : LintUnusedVariableBindingList]
   [findings : LintFindings]) : LintFindings
-  (lint-unused-variable-report-bindings-at
-    (owned_view.compiler-owned-shared-view bindings)
-    findings
-    (- bindings.len 1)))
+  (lint-unused-variable-report-bindings-at bindings findings (- bindings.len 1)))
 
 (define (lint-unused-variable-pop-frame [state : LintUnusedVariableState]) : LintUnusedVariableState
   (let
@@ -7782,7 +7576,7 @@
 
 (define (lint-unused-variable-param-bindings
   [params : (& params ast.AstParamList)]
-  [source : String]
+  [source : (& source str)]
   [cursor : i64]
   [fallback : ast.AstSourceSpan]
   [reportable : bool]) : LintUnusedVariableBindingBuild
@@ -7802,7 +7596,7 @@
 ;; head, which is now the last slot.
 (define (lint-unused-variable-param-bindings-at
   [params : (& params ast.AstParamList)]
-  [source : String]
+  [source : (& source str)]
   [cursor : i64]
   [fallback : ast.AstSourceSpan]
   [reportable : bool]
@@ -7819,11 +7613,7 @@
         (let
           [text : String (ci.intern-str name)]
           [found : LintSourceNameSpan
-            (lint-source-name-span-from
-              (owned_view.compiler-owned-shared-view source)
-              (owned_view.compiler-owned-shared-view text)
-              cursor
-              fallback)]
+            (lint-source-name-span-from source text cursor fallback)]
           (begin
             (set!
               (array-ref slots (- (array-length slots) (+ index 1)))
@@ -7848,7 +7638,7 @@
 
 (define (lint-unused-variable-macro-param-bindings
   [params : (& params ast.AstMacroParamList)]
-  [source : String]
+  [source : (& source str)]
   [cursor : i64]
   [fallback : ast.AstSourceSpan]
   [reportable : bool]) : LintUnusedVariableBindingBuild
@@ -7865,7 +7655,7 @@
 
 (define (lint-unused-variable-macro-param-bindings-at
   [params : (& params ast.AstMacroParamList)]
-  [source : String]
+  [source : (& source str)]
   [cursor : i64]
   [fallback : ast.AstSourceSpan]
   [reportable : bool]
@@ -7885,11 +7675,7 @@
         (let
           [text : String (ci.intern-str name)]
           [found : LintSourceNameSpan
-            (lint-source-name-span-from
-              (owned_view.compiler-owned-shared-view source)
-              (owned_view.compiler-owned-shared-view text)
-              cursor
-              fallback)]
+            (lint-source-name-span-from source text cursor fallback)]
           (begin
             (set!
               (array-ref slots (- (array-length slots) (+ index 1)))
@@ -8259,7 +8045,7 @@
           [found : LintSourceNameSpan
             (lint-source-name-span-from
               state.source
-              (owned_view.compiler-owned-shared-view text)
+              text
               cursor
               (lint-no-effect-span-id init))]
           [with-case : LintUnusedVariableState
@@ -8285,10 +8071,7 @@
   (let
     [cursor : i64
       (let
-        [start : i64
-          (lint-source-span-start-index
-            (owned_view.compiler-owned-shared-view state.source)
-            span)]
+        [start : i64 (lint-source-span-start-index state.source span)]
         (if (< start 0)
           0
           start))]
@@ -8333,13 +8116,11 @@
           [init-span : ast.AstSourceSpan (lint-no-effect-span-id init)]
           [cleanup-span : ast.AstSourceSpan (lint-no-effect-span-id cleanup)]
           [init-start : i64
-            (lint-source-span-start-index
-              (owned_view.compiler-owned-shared-view state.source)
-              init-span)]
+            (lint-source-span-start-index state.source init-span)]
           [found : LintSourceNameSpan
             (lint-source-name-span-between
-              (owned_view.compiler-owned-shared-view state.source)
-              (owned_view.compiler-owned-shared-view text)
+              state.source
+              text
               cursor
               (if (< init-start 0)
                 (string.string-length state.source)
@@ -8373,10 +8154,7 @@
   [state : LintUnusedVariableState]
   [span : ast.AstSourceSpan]) : LintUnusedVariableState
   (let
-    [start : i64
-      (lint-source-span-start-index
-        (owned_view.compiler-owned-shared-view state.source)
-        span)]
+    [start : i64 (lint-source-span-start-index state.source span)]
     (lint-unused-variable-match-arms-at
       (& arms)
       state
@@ -8407,14 +8185,12 @@
           [body-span : ast.AstSourceSpan
             (lint-no-effect-span-id body-source-id)]
           [body-start : i64
-            (lint-source-span-start-index
-              (owned_view.compiler-owned-shared-view state.source)
-              body-span)]
+            (lint-source-span-start-index state.source body-span)]
           [scanned : LintNameCasePatternScan
             (if state.name-case
               (lint-name-case-match-pattern
                 (owned_view.compiler-owned-shared-view pattern)
-                (owned_view.compiler-owned-shared-view state.source)
+                state.source
                 cursor
                 (if (< body-start 0)
                   (string.string-length state.source)
@@ -8450,25 +8226,15 @@
   [state : LintUnusedVariableState]
   [span : ast.AstSourceSpan]) : LintUnusedVariableState
   (let
-    [start : i64
-      (lint-source-span-start-index
-        (owned_view.compiler-owned-shared-view state.source)
-        span)]
+    [start : i64 (lint-source-span-start-index state.source span)]
     [cursor : i64
       (if (< start 0)
         0
         (+ start (string.string-length "(lambda")))]
     [built : LintUnusedVariableBindingBuild
-      (lint-unused-variable-param-bindings
-        params
-        (owned_view.compiler-owned-shared-view state.source)
-        cursor
-        span
-        true)]
+      (lint-unused-variable-param-bindings params state.source cursor span true)]
     [with-cases : LintUnusedVariableState
-      (lint-unused-variable-add-binding-name-cases
-        state
-        (owned_view.compiler-owned-shared-view built.bindings))]
+      (lint-unused-variable-add-binding-name-cases state built.bindings)]
     [with-frame : LintUnusedVariableState
       (lint-unused-variable-push-frame with-cases built.bindings)]
     [with-param-types : LintUnusedVariableState
@@ -8748,10 +8514,7 @@
             [prefix-scan : LintNameCaseLocalScan
               (if state.name-case
                 (let
-                  [limit : i64
-                    (lint-source-span-end-index
-                      (owned_view.compiler-owned-shared-view state.source)
-                      span)]
+                  [limit : i64 (lint-source-span-end-index state.source span)]
                   (lint-unused-variable-scan-local-name
                     index-scan.state
                     (ci.intern-str prefix)
@@ -8806,10 +8569,7 @@
             [slot-scan : LintNameCaseLocalScan
               (if state.name-case
                 (let
-                  [limit : i64
-                    (lint-source-span-end-index
-                      (owned_view.compiler-owned-shared-view state.source)
-                      span)]
+                  [limit : i64 (lint-source-span-end-index state.source span)]
                   (lint-unused-variable-scan-local-name
                     index-scan.state
                     (ci.intern-str slot)
@@ -8878,16 +8638,13 @@
     [_ (lint-unused-variable-children node-id state span)]))
 
 (define (lint-unused-variable-decl-param-cursor
-  [source : String]
+  [source : (& source str)]
   [prefix : String]
   [name : String]
   [fallback : ast.AstSourceSpan]) : i64
   (let
     [needle : String (str_cat.str-cat prefix name)]
-    [fallback-start : i64
-      (lint-source-span-start-index
-        (owned_view.compiler-owned-shared-view source)
-        fallback)]
+    [fallback-start : i64 (lint-source-span-start-index source fallback)]
     [found : i64 (- 0 1)]
     [cursor : i64 fallback-start]
     (begin
@@ -8897,17 +8654,12 @@
       (while (and (< found 0) (>= cursor 0))
         (let
           [candidate : i64
-            (lint-source-find-prefix-backward-from
-              (owned_view.compiler-owned-shared-view source)
-              (owned_view.compiler-owned-shared-view needle)
-              cursor)]
+            (lint-source-find-prefix-backward-from source needle cursor)]
           (if (< candidate 0)
             (set! cursor (- 0 1))
             (let
               [end : i64 (+ candidate (string.string-length needle))]
-              (if (lint-source-symbol-boundary?
-                (owned_view.compiler-owned-shared-view source)
-                end)
+              (if (lint-source-symbol-boundary? source end)
                 (set! found candidate)
                 (set! cursor (- candidate 1)))))))
       (if (< found 0)
@@ -8930,17 +8682,12 @@
     [body-span : ast.AstSourceSpan (lint-no-effect-span-id body)]
     [cursor : i64
       (lint-unused-variable-decl-param-cursor
-        (owned_view.compiler-owned-shared-view source)
+        source
         prefix
         (ci.intern-str name)
         body-span)]
     [built : LintUnusedVariableBindingBuild
-      (lint-unused-variable-param-bindings
-        params
-        (owned_view.compiler-owned-shared-view source)
-        cursor
-        body-span
-        true)]
+      (lint-unused-variable-param-bindings params source cursor body-span true)]
     [base-state : LintUnusedVariableState
       (LintUnusedVariableState
         source
@@ -8949,9 +8696,7 @@
         name-case
         report-unused)]
     [with-cases : LintUnusedVariableState
-      (lint-unused-variable-add-binding-name-cases
-        base-state
-        (owned_view.compiler-owned-shared-view built.bindings))]
+      (lint-unused-variable-add-binding-name-cases base-state built.bindings)]
     [state : LintUnusedVariableState
       (lint-unused-variable-push-frame with-cases built.bindings)]
     [with-param-types : LintUnusedVariableState
@@ -8976,14 +8721,14 @@
     [body-span : ast.AstSourceSpan (lint-no-effect-span-id body)]
     [cursor : i64
       (lint-unused-variable-decl-param-cursor
-        (owned_view.compiler-owned-shared-view source)
+        source
         prefix
         (ci.intern-str name)
         body-span)]
     [built : LintUnusedVariableBindingBuild
       (lint-unused-variable-macro-param-bindings
         params
-        (owned_view.compiler-owned-shared-view source)
+        source
         cursor
         body-span
         true)]
@@ -8995,9 +8740,7 @@
         name-case
         report-unused)]
     [with-cases : LintUnusedVariableState
-      (lint-unused-variable-add-binding-name-cases
-        base-state
-        (owned_view.compiler-owned-shared-view built.bindings))]
+      (lint-unused-variable-add-binding-name-cases base-state built.bindings)]
     [state : LintUnusedVariableState
       (lint-unused-variable-push-frame with-cases built.bindings)]
     [with-param-types : LintUnusedVariableState
@@ -9876,7 +9619,7 @@
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (if (lint-and-or-call-kind?
-          (owned_view.compiler-owned-shared-view op)
+          op
           (owned_view.compiler-owned-shared-view inner))
           (lint-walk-and-or-skip-expr op inner threshold acc)
           (lint-walk-expr expr threshold acc)))]
@@ -10178,9 +9921,7 @@
     [(ast.AstProgram.Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        [_line-index : unit
-          (lint-source-line-index-build!
-            (owned_view.compiler-owned-shared-view source))]
+        [_line-index : unit (lint-source-line-index-build! source)]
         [copy-on-update-shapes : LintCopyOnUpdateStructList
           (lint-copy-on-update-collect-structs
             (owned_view.compiler-owned-shared-view decls)
@@ -10205,7 +9946,7 @@
             copy-on-update)]
         [unused-imports : LintFindings
           (lint-unused-imports-in-decl-list
-            (owned_view.compiler-owned-shared-view source)
+            source
             (owned_view.compiler-owned-shared-view decls)
             (owned_view.compiler-owned-shared-view decls)
             single-element-array-cells)]

@@ -83,8 +83,8 @@
 (define (repl-stderr-write-line [text : String]) : unit
   (io.stderr-write-line (byte_buf.str-as-bytes (& text))))
 
-(define (repl-path-join [left : String] [right : String]) : String
-  (fs.path-join (& left) (& right)))
+(define (repl-path-join [left : (& left str)] [right : String]) : String
+  (fs.path-join left (& right)))
 
 (define (repl-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
   (fs.try-remove-file-if-exists (& path)))
@@ -104,12 +104,12 @@
     (io.stdout-flush)))
 
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
-(define (repl-dot-command? [line : String]) : bool
+(define (repl-dot-command? [line : (& line str)]) : bool
   (if (> (string.string-length line) 0)
     (= (string.string-ref line 0) '.')
     false))
 
-(define (repl-trim-left-from [text : String] [start : i64]) : String
+(define (repl-trim-left-from [text : (& text str)] [start : i64]) : String
   (let
     [i : i64 start]
     [len : i64 (string.string-length text)]
@@ -125,7 +125,7 @@
 (define (repl-line-ending? [c : char]) : bool
   (or (= c '\r') (= c '\n')))
 
-(define (repl-leading-utf8-bom? [text : String]) : bool
+(define (repl-leading-utf8-bom? [text : (& text str)]) : bool
   (if (< (string.string-length text) 3)
     false
     (and
@@ -134,7 +134,7 @@
       (= (cast (string.string-ref text 2) : i64) 191))))
 
 (define (repl-trim-leading-utf8-bom [text : String]) : String
-  (if (repl-leading-utf8-bom? (owned_view.compiler-owned-shared-view text))
+  (if (repl-leading-utf8-bom? text)
     (string.substring text 3 (- (string.string-length text) 3))
     text))
 
@@ -157,7 +157,7 @@
 (define (repl-normalize-input-line [text : String]) : String
   (repl-trim-right-line-ending (repl-trim-leading-utf8-bom text)))
 
-(define (repl-type-command [line : String]) : ReplTypeCommand
+(define (repl-type-command [line : (& line str)]) : ReplTypeCommand
   (if (source_text.starts-with? line ".type")
     (if (= (string.string-length line) 5)
       (ReplTypeCommand.Expr "")
@@ -166,7 +166,7 @@
         (ReplTypeCommand.No)))
     (ReplTypeCommand.No)))
 
-(define (repl-load-command [line : String]) : ReplLoadCommand
+(define (repl-load-command [line : (& line str)]) : ReplLoadCommand
   (if (source_text.starts-with? line ".load")
     (if (= (string.string-length line) 5)
       (ReplLoadCommand.Path "")
@@ -588,10 +588,7 @@
   (match (build_run_core.source-tool-create-temp-dir "typelisp-repl")
     [(build_run_core.ResultSourceToolString.Ok temp-dir)
       (let
-        [source-path : String
-          (repl-path-join
-            (owned_view.compiler-owned-shared-view temp-dir)
-            "repl_expr.tl")]
+        [source-path : String (repl-path-join temp-dir "repl_expr.tl")]
         (match (build_run_core.source-tool-write-file
           (owned_view.compiler-owned-shared-view source-path)
           source
@@ -740,14 +737,14 @@
 ;; Completeness tracking is a delimiter check: strings, comments, and char
 ;; literals do not count delimiters; unmatched closing delimiters are considered
 ;; complete so parsing can report the real error and the session can recover.
-(define (repl-skip-comment [text : String] [idx : i64] [len : i64]) : i64
+(define (repl-skip-comment [text : (& text str)] [idx : i64] [len : i64]) : i64
   (if (>= idx len)
     idx
     (if (= (string.string-ref text idx) '\n')
       (+ idx 1)
       (repl-skip-comment text (+ idx 1) len))))
 
-(define (repl-skip-char-literal [text : String] [idx : i64] [len : i64]) : i64
+(define (repl-skip-char-literal [text : (& text str)] [idx : i64] [len : i64]) : i64
   (if (>= idx len)
     idx
     (if (= (string.string-ref text idx) '\'')
@@ -755,7 +752,7 @@
       (repl-skip-char-literal text (+ idx 1) len))))
 
 (define (repl-input-complete-loop
-  [text : String]
+  [text : (& text str)]
   [idx : i64]
   [len : i64]
   [parens : i64]
@@ -807,7 +804,7 @@
                 false)])]
         [(= c ';')
           (repl-input-complete-loop
-            (owned_view.compiler-owned-shared-view text)
+            text
             (repl-skip-comment text (+ idx 1) len)
             len
             parens
@@ -825,7 +822,7 @@
             false)]
         [(= c '\'')
           (repl-input-complete-loop
-            (owned_view.compiler-owned-shared-view text)
+            text
             (source_text.source-text-skip-char-literal text idx len)
             len
             parens
@@ -834,7 +831,7 @@
             false)]
         [(= c '#')
           (repl-input-complete-loop
-            (owned_view.compiler-owned-shared-view text)
+            text
             (repl-skip-char-literal text (+ idx 1) len)
             len
             parens
@@ -891,9 +888,9 @@
             false
             false)]))))
 
-(define (repl-input-complete? [input : String]) : bool
+(define (repl-input-complete? [input : (& input str)]) : bool
   (repl-input-complete-loop
-    (owned_view.compiler-owned-shared-view input)
+    input
     0
     (string.string-length input)
     0
@@ -912,8 +909,7 @@
   [line : String]) : ReplLineResult
   (let
     [next-pending : String (repl-append-pending pending line)]
-    (if (repl-input-complete?
-      (owned_view.compiler-owned-shared-view next-pending))
+    (if (repl-input-complete? next-pending)
       (ReplLineResult.Line (repl-handle-input session-source next-pending) "")
       (ReplLineResult.Line session-source next-pending))))
 
@@ -926,7 +922,7 @@
   (if (string.eq pending "")
     (if (string.eq line "")
       (ReplLineResult.Line session-source "")
-      (match (repl-type-command (owned_view.compiler-owned-shared-view line))
+      (match (repl-type-command line)
         [(ReplTypeCommand.Expr expr-source)
           (begin
             (repl-handle-type-command
@@ -934,8 +930,7 @@
               expr-source)
             (ReplLineResult.Line session-source ""))]
         [(ReplTypeCommand.No)
-          (match (repl-load-command
-            (owned_view.compiler-owned-shared-view line))
+          (match (repl-load-command line)
             [(ReplLoadCommand.Path path)
               (ReplLineResult.Line
                 (repl-handle-load-command session-source path)
@@ -945,8 +940,7 @@
                 (begin
                   (repl-stdout-write (repl-help-text))
                   (ReplLineResult.Line session-source ""))
-                (if (repl-dot-command?
-                  (owned_view.compiler-owned-shared-view line))
+                (if (repl-dot-command? line)
                   (begin
                     (repl-stderr-write
                       (str_cat.str-cat "Unknown REPL command: " line))

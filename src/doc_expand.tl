@@ -165,7 +165,7 @@
 
 (define (doc-import-form-list-mut-contains-from?
   [forms : (&mut forms doc_import_form_vec.Vec)]
-  [form : String]
+  [form : (& form str)]
   [index : i64]) : bool
   (if (>= index (doc_import_form_vec.len forms))
     false
@@ -175,15 +175,13 @@
 
 (define (doc-import-form-list-mut-contains?
   [forms : (&mut forms doc_import_form_vec.Vec)]
-  [form : String]) : bool
+  [form : (& form str)]) : bool
   (doc-import-form-list-mut-contains-from? forms form 0))
 
 (define (doc-import-form-list-push-unique!
   [forms : (&mut forms doc_import_form_vec.Vec)]
   [form : String]) : unit
-  (if (doc-import-form-list-mut-contains?
-    forms
-    (owned_view.compiler-owned-shared-view form))
+  (if (doc-import-form-list-mut-contains? forms form)
     unit
     (doc_import_form_vec.push-ref! forms form)))
 
@@ -349,7 +347,7 @@
       (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]))
 
 (define (doc-expand-escape-string-loop
-  [text : String]
+  [text : (& text str)]
   [index : i64]
   [count : i64]
   [out : String]) : String
@@ -370,11 +368,7 @@
         (doc-cat2 out piece)))))
 
 (define (doc-expand-escape-string [text : String]) : String
-  (doc-expand-escape-string-loop
-    (owned_view.compiler-owned-shared-view text)
-    0
-    (string.string-length text)
-    ""))
+  (doc-expand-escape-string-loop text 0 (string.string-length text) ""))
 
 (define (doc-ast-literal-source [ctx : DocExpandContext] [lit : ast.AstLiteral]) : String
   (match (owned_view.compiler-owned-shared-view lit)
@@ -521,7 +515,7 @@
 
 (define (doc-generated-target-example-find-from
   [examples : (& examples doc_generated_target_example_vec.Vec)]
-  [target : String]
+  [target : (& target str)]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -542,7 +536,7 @@
 
 (define (doc-generated-target-example-find
   [examples : (& examples doc_generated_target_example_vec.Vec)]
-  [target : String]) : String
+  [target : (& target str)]) : String
   (doc-generated-target-example-find-from
     examples
     target
@@ -551,7 +545,7 @@
 
 (define (doc-generated-target-example-mut-find-from
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
-  [target : String]
+  [target : (& target str)]
   [index : i64]) : String
   (if (>= index examples.len)
     ""
@@ -566,7 +560,7 @@
 
 (define (doc-generated-target-example-mut-find
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
-  [target : String]) : String
+  [target : (& target str)]) : String
   (doc-generated-target-example-mut-find-from examples target 0))
 
 (define (doc-generated-target-example-add!
@@ -578,9 +572,7 @@
     (= (string.string-length form) 0)
     (>
       (string.string-length
-        (doc-generated-target-example-mut-find
-          examples
-          (owned_view.compiler-owned-shared-view target)))
+        (doc-generated-target-example-mut-find examples target))
       0))
     unit
     (doc_generated_target_example_vec.push-ref!
@@ -1054,10 +1046,7 @@
   [targets : (& targets doc_generated_target_example_vec.Vec)]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
   (let
-    [form : String
-      (doc-generated-target-example-find
-        (& targets)
-        (owned_view.compiler-owned-shared-view module-name))]
+    [form : String (doc-generated-target-example-find (& targets) module-name)]
     (if (and
       has-generated
       (> (string.string-length module-name) 0)
@@ -1174,7 +1163,10 @@
           (cdiag.compiler-diagnostic-render
             (cdiag.compiler-diagnostic-box-shared-view diag)))])))
 
-(define (doc-expand-find-prefix [text : String] [prefix : String] [from : i64]) : i64
+(define (doc-expand-find-prefix
+  [text : (& text str)]
+  [prefix : String]
+  [from : i64]) : i64
   (let
     [i : i64 from]
     [n : i64 (string.string-length text)]
@@ -1271,11 +1263,7 @@
               (owned_view.compiler-owned-shared-view doc-text)
               cursor
               n)]
-          [start : i64
-            (doc-expand-find-prefix
-              (owned_view.compiler-owned-shared-view doc-text)
-              "(import "
-              cursor)]
+          [start : i64 (doc-expand-find-prefix doc-text "(import " cursor)]
           (if (< ignored-fence start)
             (set!
               cursor

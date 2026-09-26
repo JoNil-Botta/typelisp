@@ -2353,13 +2353,55 @@
   [exprs : ast.AstExprList]
   [alias : String]
   [module-name : String]) : bool
-  (ast.ast-expr-list-fold
-    exprs
-    ast.ast-fold-or
-    false
-    lint-child-expr-uses-import?
-    alias
-    module-name))
+  (lint-expr-list-uses-import-at? (& exprs) alias module-name 0))
+
+(define (lint-expr-list-uses-import-at?
+  [exprs : (& exprs ast.AstExprList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (and
+    (< index exprs.len)
+    (or
+      (lint-expr-uses-import?
+        (ast.ast-expr-list-get exprs index 0)
+        (owned_view.compiler-owned-shared-view alias)
+        (owned_view.compiler-owned-shared-view module-name))
+      (lint-expr-list-uses-import-at? exprs alias module-name (+ index 1)))))
+
+(define (lint-expr-children-use-import-at?
+  [children : (& children ast.AstExprChildList)]
+  [alias : String]
+  [module-name : String]
+  [index : i64]) : bool
+  (and
+    (< index children.len)
+    (or
+      (match (ast.ast-expr-child-list-get
+        children
+        index
+        (ast.ast-expr-child-fallback))
+        [(ast.AstExprChild.Expr id)
+          (lint-expr-uses-import?
+            id
+            (owned_view.compiler-owned-shared-view alias)
+            (owned_view.compiler-owned-shared-view module-name))]
+        [(ast.AstExprChild.TypeId id)
+          (lint-type-id-uses-import?
+            id
+            (owned_view.compiler-owned-shared-view alias)
+            (owned_view.compiler-owned-shared-view module-name))]
+        [(ast.AstExprChild.Type ty)
+          (lint-type-uses-import?
+            ty
+            (owned_view.compiler-owned-shared-view alias)
+            (owned_view.compiler-owned-shared-view module-name))]
+        [(ast.AstExprChild.Pattern pattern)
+          (lint-pattern-uses-import?
+            pattern
+            (owned_view.compiler-owned-shared-view alias)
+            (owned_view.compiler-owned-shared-view module-name))])
+      (lint-expr-children-use-import-at? children alias module-name (+ index 1)))))
 
 ;; Unsafe operations with expression children; ProgramArgv and ProgramEnvp
 ;; also need an enclosing unsafe block but have none.
@@ -2378,49 +2420,12 @@
     [(ast.AstExpr.Syscall _) true]
     [_ false]))
 
-;; AstExpr child schema hooks take the walk's contexts first and the child last.
-(defmacro (lint-child-expr-uses-import?
-  [alias : Expr]
-  [module-name : Expr]
-  [expr-id : Expr]) : Expr
-  `(lint-expr-uses-import?
-    ,expr-id
-    (owned_view.compiler-owned-shared-view ,alias)
-    (owned_view.compiler-owned-shared-view ,module-name)))
-
-(defmacro (lint-child-type-id-uses-import?
-  [alias : Expr]
-  [module-name : Expr]
-  [ty-id : Expr]) : Expr
-  `(lint-type-id-uses-import?
-    ,ty-id
-    (owned_view.compiler-owned-shared-view ,alias)
-    (owned_view.compiler-owned-shared-view ,module-name)))
-
-(defmacro (lint-child-type-uses-import?
-  [alias : Expr]
-  [module-name : Expr]
-  [ty : Expr]) : Expr
-  `(lint-type-uses-import?
-    ,ty
-    (owned_view.compiler-owned-shared-view ,alias)
-    (owned_view.compiler-owned-shared-view ,module-name)))
-
-(defmacro (lint-child-pattern-uses-import?
-  [alias : Expr]
-  [module-name : Expr]
-  [pattern : Expr]) : Expr
-  `(lint-pattern-uses-import?
-    ,pattern
-    (owned_view.compiler-owned-shared-view ,alias)
-    (owned_view.compiler-owned-shared-view ,module-name)))
-
 (define (lint-expr-uses-import?
   [expr-id : i64]
   [alias : String]
   [module-name : String]) : bool
   ;; The arms below check names and the for-owned and unsafe forms; every other
-  ;; variant's children are checked through the AstExpr child schema.
+  ;; variant's children are checked through the AstExpr child list.
   (match (ast.ast-node-get expr-id)
     [(ast.AstExpr.Var name) (lint-name-id-uses-import? name alias module-name)]
     [(ast.AstExpr.ForOwnedState payload)
@@ -2470,20 +2475,15 @@
     [_
       (let
         [expr : ast.AstExpr (ast.ast-node-get expr-id)]
+        [unsafe-operation : bool (lint-expr-unsafe-operation? (& expr))]
+        [children : ast.AstExprChildList (ast.ast-expr-children expr)]
         (or
           (and
-            (lint-expr-unsafe-operation? (& expr))
+            unsafe-operation
             (lint-requires-enclosing-unsafe-sentinel?
               (owned_view.compiler-owned-shared-view alias)
               (owned_view.compiler-owned-shared-view module-name)))
-          (ast.ast-expr-children-any?
-            expr
-            lint-child-expr-uses-import?
-            lint-child-type-id-uses-import?
-            lint-child-type-uses-import?
-            lint-child-pattern-uses-import?
-            alias
-            module-name)))]))
+          (lint-expr-children-use-import-at? (& children) alias module-name 0)))]))
 
 (define (lint-extern-abi-uses-import?
   [abi : ast.AstExternAbi]
@@ -3677,33 +3677,17 @@
             init-scan
             (lint-unsafe-scan-combine cleanup-scan rest-scan)))])))
 
-;; AstExpr child schema hooks: scan an expression child, skip type and pattern
-;; children.
-(defmacro (lint-unsafe-scan-child [scope : Expr] [node-id : Expr]) : Expr
-  `(lint-unsafe-scan-node
-    ,node-id
-    (owned_view.compiler-owned-shared-view ,scope)))
-
-(defmacro (lint-unsafe-scan-skip [_ignored : Expr ...]) : Expr
-  `(lint-unsafe-scan-empty))
-
 (define (lint-unsafe-scan-children
   [expr : ast.AstExpr]
   [scope : LintUnsafeScope]) : LintUnsafeScan
-  (ast.ast-expr-children-fold
-    expr
-    lint-unsafe-scan-combine
-    (lint-unsafe-scan-empty)
-    lint-unsafe-scan-child
-    lint-unsafe-scan-skip
-    lint-unsafe-scan-skip
-    lint-unsafe-scan-skip
-    scope))
+  (let
+    [ids : ast.AstExprList (ast.ast-expr-child-ids expr)]
+    (lint-unsafe-scan-expr-list (& ids) scope)))
 
 (define (lint-unsafe-scan-node [node-id : i64] [scope : LintUnsafeScope]) : LintUnsafeScan
   ;; The arms below bind names, mark unsafe calls and blocks, or scan the
   ;; for-owned forms; every other variant's children are scanned through the
-  ;; AstExpr child schema.
+  ;; AstExpr child list.
   (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Call func _)
       (let
@@ -4489,12 +4473,15 @@
 (define (lint-copy-on-update-expr-list
   [exprs : ast.AstExprList]
   [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
-  (lint-copy-on-update-expr-list-at (& exprs) 0 state))
+  (lint-copy-on-update-expr-list-at (& exprs) 0 state (lint-no-span)))
 
+;; Walk `exprs` in order under `span`: no span for the items of a list form,
+;; the enclosing span for the expression children of any other node.
 (define (lint-copy-on-update-expr-list-at
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
-  [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
+  [state : LintCopyOnUpdateState]
+  [span : ast.AstSourceSpan]) : LintCopyOnUpdateState
   (if (>= index exprs.len)
     state
     (lint-copy-on-update-expr-list-at
@@ -4503,7 +4490,8 @@
       (lint-copy-on-update-expr
         (ast.ast-expr-list-get exprs index 0)
         state
-        (lint-no-span)))))
+        span)
+      span)))
 
 (define (lint-copy-on-update-let-bindings
   [bindings : ast.AstLetBindingList]
@@ -4598,14 +4586,6 @@
             (lint-copy-on-update-expr init state (lint-no-effect-span-id init))
             (lint-no-effect-span-id cleanup))
           (+ index 1))])))
-
-;; AstExpr child schema hook: walk an expression child under the enclosing
-;; span, threading `state`.
-(defmacro (lint-copy-on-update-child!
-  [state : Expr]
-  [span : Expr]
-  [child : Expr]) : Expr
-  `(set! ,state (lint-copy-on-update-expr ,child ,state ,span)))
 
 (define (lint-copy-on-update-expr
   [node-id : i64]
@@ -4737,17 +4717,9 @@
     [(ast.AstExpr.ForOwnedStep _) state]
     [_
       (let
-        [next : LintCopyOnUpdateState state]
-        (begin
-          (ast.ast-expr-children-for-each
-            (ast.ast-node-get node-id)
-            lint-copy-on-update-child!
-            ast.ast-child-unit
-            ast.ast-child-unit
-            ast.ast-child-unit
-            next
-            span)
-          next))]))
+        [ids : ast.AstExprList
+          (ast.ast-expr-child-ids (ast.ast-node-get node-id))]
+        (lint-copy-on-update-expr-list-at (& ids) 0 state span))]))
 
 (define (lint-copy-on-update-field-names [fields : ast.AstFieldDefList]) : LintNameSet
   (lint-copy-on-update-field-names-at (& fields) 0 (lint-name-set-empty)))
@@ -5654,31 +5626,19 @@
             next
             (+ index 1)))])))
 
-;; AstExpr child schema hook: walk an expression child, threading `state`.
-(defmacro (lint-single-element-array-child! [state : Expr] [child : Expr]) : Expr
-  `(set! ,state (lint-single-element-array-expr ,child ,state)))
-
 (define (lint-single-element-array-children
   [node-id : i64]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
-  (let
-    [next : LintSingleElementArrayState state]
-    (begin
-      (ast.ast-expr-children-for-each
-        (ast.ast-node-get node-id)
-        lint-single-element-array-child!
-        ast.ast-child-unit
-        ast.ast-child-unit
-        ast.ast-child-unit
-        next)
-      next)))
+  (lint-single-element-array-expr-list
+    (ast.ast-expr-child-ids (ast.ast-node-get node-id))
+    state))
 
 (define (lint-single-element-array-expr
   [node-id : i64]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
   ;; The arms below track candidate cells and their uses, bind names and skip
   ;; quoted syntax; every other variant's children are walked through the
-  ;; AstExpr child schema.
+  ;; AstExpr child list.
   (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Var name)
       (lint-single-element-array-note-var state (ci.intern-str name))]
@@ -5995,25 +5955,9 @@
         next)
       next)))
 
-;; AstExpr child schema hook: note the reads of an expression child, threading
-;; `state`.
+;; List fold hook: note the reads of an expression, threading `state`.
 (defmacro (lint-unused-assignment-child! [state : Expr] [child : Expr]) : Expr
   `(set! ,state (lint-unused-assignment-note-reads ,child ,state)))
-
-(define (lint-unused-assignment-note-reads-children
-  [expr : ast.AstExpr]
-  [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
-  (let
-    [next : LintUnusedAssignmentState state]
-    (begin
-      (ast.ast-expr-children-for-each
-        expr
-        lint-unused-assignment-child!
-        ast.ast-child-unit
-        ast.ast-child-unit
-        ast.ast-child-unit
-        next)
-      next)))
 
 ;; Calls, branches, loops and binding forms end the straight-line stretch in
 ;; which a pending assignment can still be overwritten unread.
@@ -6036,7 +5980,7 @@
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   ;; The arms below read names, skip quoted syntax and read only some
   ;; for-owned slots; every other variant reads its children through the
-  ;; AstExpr child schema.
+  ;; AstExpr child list.
   (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Var name) (lint-unused-assignment-read-id state name)]
     [(ast.AstExpr.ForOwnedState payload)
@@ -6074,7 +6018,9 @@
         [clears-pending : bool
           (lint-unused-assignment-clears-pending? (& expr))]
         [after-reads : LintUnusedAssignmentState
-          (lint-unused-assignment-note-reads-children expr state)]
+          (lint-unused-assignment-note-reads-list
+            (ast.ast-expr-child-ids expr)
+            state)]
         (if clears-pending
           (lint-unused-assignment-clear-pending after-reads)
           after-reads))]))
@@ -8205,16 +8151,27 @@
             (lint-unused-variable-maybe-type maybe-ty state))
           (+ index 1))])))
 
-;; AstExpr child schema hooks for template syntax: walk an expression child as
-;; template syntax and a type child for the type bindings it names, threading
-;; `state`.
-(defmacro (lint-unused-variable-quasiquote-child! [state : Expr] [child : Expr]) : Expr
-  `(set! ,state (lint-unused-variable-quasiquote-expr ,child ,state)))
-
-(defmacro (lint-unused-variable-quasiquote-type-id-child!
-  [state : Expr]
-  [ty-id : Expr]) : Expr
-  `(set! ,state (lint-unused-variable-type (ast.ty-node-get ,ty-id) ,state)))
+;; Walk a template node's expression children as template syntax and its
+;; type-id children for the type bindings they name, in payload order; its
+;; inline type and pattern children are not walked.
+(define (lint-unused-variable-quasiquote-children-at
+  [children : (& children ast.AstExprChildList)]
+  [index : i64]
+  [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (if (>= index children.len)
+    state
+    (lint-unused-variable-quasiquote-children-at
+      children
+      (+ index 1)
+      (match (ast.ast-expr-child-list-get
+        children
+        index
+        (ast.ast-expr-child-fallback))
+        [(ast.AstExprChild.Expr id)
+          (lint-unused-variable-quasiquote-expr id state)]
+        [(ast.AstExprChild.TypeId id)
+          (lint-unused-variable-type (ast.ty-node-get id) state)]
+        [_ state]))))
 
 (define (lint-unused-variable-quasiquote-expr
   [node-id : i64]
@@ -8222,7 +8179,7 @@
   ;; The arms below walk unquoted code as code, skip nested quoted syntax and
   ;; walk a type operand before its expression; every other variant's
   ;; expression and type-id children are walked through the AstExpr child
-  ;; schema. Quoted type operands substitute type bindings during macro
+  ;; list. Quoted type operands substitute type bindings during macro
   ;; expansion.
   (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Unquote inner)
@@ -8266,16 +8223,9 @@
     [(ast.AstExpr.ForOwnedStep _) state]
     [_
       (let
-        [next : LintUnusedVariableState state]
-        (begin
-          (ast.ast-expr-children-for-each
-            (ast.ast-node-get node-id)
-            lint-unused-variable-quasiquote-child!
-            lint-unused-variable-quasiquote-type-id-child!
-            ast.ast-child-unit
-            ast.ast-child-unit
-            next)
-          next))]))
+        [children : ast.AstExprChildList
+          (ast.ast-expr-children (ast.ast-node-get node-id))]
+        (lint-unused-variable-quasiquote-children-at (& children) 0 state))]))
 
 (define (lint-unused-variable-let-bindings
   [bindings : ast.AstLetBindingList]
@@ -8594,36 +8544,37 @@
       (lint-unused-variable-expr body with-slot span)]
     (lint-unused-variable-pop-frame (lint-unused-variable-pop-frame with-body))))
 
-;; AstExpr child schema hooks: walk an expression child under the enclosing
-;; span and a type-id child, threading `state`.
-(defmacro (lint-unused-variable-child!
-  [state : Expr]
-  [span : Expr]
-  [child : Expr]) : Expr
-  `(set! ,state (lint-unused-variable-expr ,child ,state ,span)))
-
-(defmacro (lint-unused-variable-type-id-child!
-  [state : Expr]
-  [_span : Expr]
-  [ty-id : Expr]) : Expr
-  `(set! ,state (lint-unused-variable-type (ast.ty-node-get ,ty-id) ,state)))
+;; Walk a node's expression children under the enclosing span and its type-id
+;; children, in payload order. The variants with inline type or pattern
+;; children have their own arms.
+(define (lint-unused-variable-children-at
+  [children : (& children ast.AstExprChildList)]
+  [index : i64]
+  [state : LintUnusedVariableState]
+  [span : ast.AstSourceSpan]) : LintUnusedVariableState
+  (if (>= index children.len)
+    state
+    (lint-unused-variable-children-at
+      children
+      (+ index 1)
+      (match (ast.ast-expr-child-list-get
+        children
+        index
+        (ast.ast-expr-child-fallback))
+        [(ast.AstExprChild.Expr id) (lint-unused-variable-expr id state span)]
+        [(ast.AstExprChild.TypeId id)
+          (lint-unused-variable-type (ast.ty-node-get id) state)]
+        [_ state])
+      span)))
 
 (define (lint-unused-variable-children
   [node-id : i64]
   [state : LintUnusedVariableState]
   [span : ast.AstSourceSpan]) : LintUnusedVariableState
   (let
-    [next : LintUnusedVariableState state]
-    (begin
-      (ast.ast-expr-children-for-each
-        (ast.ast-node-get node-id)
-        lint-unused-variable-child!
-        lint-unused-variable-type-id-child!
-        ast.ast-child-unit
-        ast.ast-child-unit
-        next
-        span)
-      next)))
+    [children : ast.AstExprChildList
+      (ast.ast-expr-children (ast.ast-node-get node-id))]
+    (lint-unused-variable-children-at (& children) 0 state span)))
 
 (define (lint-unused-variable-expr
   [node-id : i64]
@@ -8632,7 +8583,7 @@
   ;; The arms below read names, open binding scopes, walk list items without
   ;; an enclosing span, track unsafe blocks and walk quoted syntax as a
   ;; template; every other variant's expression and type-id children are
-  ;; walked through the AstExpr child schema.
+  ;; walked through the AstExpr child list.
   (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Spanned inner inner-span)
       (lint-unused-variable-expr inner state inner-span)]
@@ -10039,10 +9990,6 @@
           (lint-findings-add (lint-nested-str-cat-finding span) callee-findings))
         (lint-walk-expr-list args threshold callee-findings)))))
 
-;; AstExpr child schema hook: walk an expression child, threading `acc`.
-(defmacro (lint-walk-child! [threshold : Expr] [acc : Expr] [child : Expr]) : Expr
-  `(set! ,acc (lint-walk-expr (ast.ast-node-get ,child) ,threshold ,acc)))
-
 ;: Walk `expr`, collecting active lint findings while recursing into all
 ;: sub-expressions. Spanned expressions pass their wrapper span to rules that
 ;: need source locations.
@@ -10052,7 +9999,7 @@
   [acc : LintFindings]) : LintFindings
   ;; The arms below apply the rules and walk sequences and quoted syntax;
   ;; every other variant's children are walked through the AstExpr child
-  ;; schema.
+  ;; list.
   (match (owned_view.compiler-owned-shared-view expr)
     [(ast.AstExpr.Spanned inner-box span)
       (let
@@ -10163,19 +10110,7 @@
             (lint-walk-resource-bindings bindings threshold acc))])]
     [(ast.AstExpr.Quote _) acc]
     [(ast.AstExpr.Quasiquote _) acc]
-    [_
-      (let
-        [next : LintFindings acc]
-        (begin
-          (ast.ast-expr-children-for-each
-            expr
-            lint-walk-child!
-            ast.ast-child-unit
-            ast.ast-child-unit
-            ast.ast-child-unit
-            threshold
-            next)
-          next))]))
+    [_ (lint-walk-expr-list (ast.ast-expr-child-ids expr) threshold acc)]))
 
 ;: Walk the body expression(s) carried by a declaration, if any.
 (define (lint-walk-decl

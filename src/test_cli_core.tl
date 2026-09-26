@@ -1715,42 +1715,31 @@
   [session : cis.InternStructuralSessionHandle]
   [exprs : ast.AstExprList]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (let
-    [next : tltest_name_map.Map names]
-    (begin
-      (ast.ast-expr-list-fold
-        exprs
-        ast.ast-fold-seq
-        unit
-        tltest-reach-mark-child!
-        session
-        next)
-      next)))
+  (tltest-reach-mark-expr-list-at session exprs names 0))
 
-;; AstExpr child schema hook: mark what an expression child reaches, threading
-;; `names`.
-(defmacro (tltest-reach-mark-child!
-  [session : Expr]
-  [names : Expr]
-  [child : Expr]) : Expr
-  `(set! ,names (tltest-reach-mark-expr ,session ,child ,names)))
+(define (tltest-reach-mark-expr-list-at
+  [session : cis.InternStructuralSessionHandle]
+  [exprs : ast.AstExprList]
+  [names : tltest_name_map.Map]
+  [index : i64]) : tltest_name_map.Map
+  (if (>= index (ast.ast-expr-list-len (& exprs)))
+    names
+    (let
+      [head : i64 (ast.ast-expr-list-get (& exprs) index 0)]
+      (tltest-reach-mark-expr-list-at
+        session
+        exprs
+        (tltest-reach-mark-expr session head names)
+        (+ index 1)))))
 
 (define (tltest-reach-mark-children
   [session : cis.InternStructuralSessionHandle]
   [node-id : i64]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (let
-    [next : tltest_name_map.Map names]
-    (begin
-      (ast.ast-expr-children-for-each
-        (ast.ast-node-get node-id)
-        tltest-reach-mark-child!
-        ast.ast-child-unit
-        ast.ast-child-unit
-        ast.ast-child-unit
-        session
-        next)
-      next)))
+  (tltest-reach-mark-expr-list
+    session
+    (ast.ast-expr-child-ids (ast.ast-node-get node-id))
+    names))
 
 (define (tltest-reach-mark-expr
   [session : cis.InternStructuralSessionHandle]
@@ -1758,7 +1747,7 @@
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   ;; The arms below mark names, the runtime helpers calls and closures need,
   ;; and the read for-owned slots; every other variant's children are marked
-  ;; through the AstExpr child schema.
+  ;; through the AstExpr child list.
   (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Var name) (tltest-reach-mark-source-name session names name)]
     [(ast.AstExpr.Call func args)

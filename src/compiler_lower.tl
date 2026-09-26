@@ -3891,17 +3891,13 @@
   [expr-id : i64]) : ir.CompilerMaybeSourceSpan
   (lower-ast-expr-span pools (ast.ast-node-pool-context-expr-get pools expr-id)))
 
-;; AstExpr child schema fold for the first source span: keep a span found in an
-;; earlier child, otherwise ask the next child. Type and pattern children carry
-;; no span.
+;; List fold for the first source span: keep a span found in an earlier child,
+;; otherwise ask the next child.
 (defmacro (lower-first-span [found : Expr] [next : Expr]) : Expr
   `(match ,found
     [(ir.CompilerMaybeSourceSpan.Some span)
       (ir.CompilerMaybeSourceSpan.Some span)]
     [(ir.CompilerMaybeSourceSpan.No) ,next]))
-
-(defmacro (lower-no-span [_ignored : Expr ...]) : Expr
-  `(ir.CompilerMaybeSourceSpan.No))
 
 (define (lower-ast-expr-direct-span [expr : ast.AstExpr]) : ir.CompilerMaybeSourceSpan
   (match expr
@@ -3920,14 +3916,11 @@
     [(ast.AstExpr.ForOwnedState _) (ir.CompilerMaybeSourceSpan.No)]
     [(ast.AstExpr.ForOwnedStep _) (ir.CompilerMaybeSourceSpan.No)]
     [_
-      (ast.ast-expr-children-fold
-        expr
+      (ast.ast-expr-list-fold
+        (ast.ast-expr-child-ids expr)
         lower-first-span
         (ir.CompilerMaybeSourceSpan.No)
         lower-expr-id-span
-        lower-no-span
-        lower-no-span
-        lower-no-span
         pools)]))
 
 (define (lower-diagnostic-at-expr-with-pools
@@ -15126,67 +15119,54 @@
           params
           (+ index 1))])))
 
-;; AstExpr child schema hooks: add the types an expression, type-id, type or
-;; pattern child names, threading `used`.
-(defmacro (lower-used-types-child!
-  [session : Expr]
-  [pools : Expr]
-  [used : Expr]
-  [module : Expr]
-  [expr-id : Expr]) : Expr
-  `(set!
-    ,used
-    (lower-used-types-add-expr-id
-      ,session
-      ,pools
-      ,used
-      (lower-global-shared-view ,module)
-      ,expr-id)))
-
-(defmacro (lower-used-types-type-id-child!
-  [session : Expr]
-  [pools : Expr]
-  [used : Expr]
-  [module : Expr]
-  [ty-id : Expr]) : Expr
-  `(set!
-    ,used
-    (lower-used-types-add-type
-      ,session
-      ,pools
-      ,used
-      (lower-global-shared-view ,module)
-      (ast.ast-node-pool-context-type-get ,pools ,ty-id))))
-
-(defmacro (lower-used-types-type-child!
-  [session : Expr]
-  [pools : Expr]
-  [used : Expr]
-  [module : Expr]
-  [ty : Expr]) : Expr
-  `(set!
-    ,used
-    (lower-used-types-add-type
-      ,session
-      ,pools
-      ,used
-      (lower-global-shared-view ,module)
-      ,ty)))
-
-(defmacro (lower-used-types-pattern-child!
-  [session : Expr]
-  [pools : Expr]
-  [used : Expr]
-  [module : Expr]
-  [pattern : Expr]) : Expr
-  `(set!
-    ,used
-    (lower-used-types-add-pattern
-      ,session
-      ,pools
-      ,used
-      (lower-global-shared-view ,module)
-      ,pattern)))
+;; Add the types a node's children name, in payload order.
+(define (lower-used-types-add-children-at
+  [session : cis.InternStructuralSessionHandle]
+  [pools : ast.AstNodePoolContext]
+  [used : lower_i64_i64_map.Map]
+  [module : String]
+  [children : (& children ast.AstExprChildList)]
+  [index : i64]) : lower_i64_i64_map.Map
+  (if (>= index children.len)
+    used
+    (lower-used-types-add-children-at
+      session
+      pools
+      (match (ast.ast-expr-child-list-get
+        children
+        index
+        (ast.ast-expr-child-fallback))
+        [(ast.AstExprChild.Expr id)
+          (lower-used-types-add-expr-id
+            session
+            pools
+            used
+            (lower-global-shared-view module)
+            id)]
+        [(ast.AstExprChild.TypeId id)
+          (lower-used-types-add-type
+            session
+            pools
+            used
+            (lower-global-shared-view module)
+            (ast.ast-node-pool-context-type-get pools id))]
+        [(ast.AstExprChild.Type ty)
+          (lower-used-types-add-type
+            session
+            pools
+            used
+            (lower-global-shared-view module)
+            ty)]
+        [(ast.AstExprChild.Pattern pattern)
+          (lower-used-types-add-pattern
+            session
+            pools
+            used
+            (lower-global-shared-view module)
+            pattern)])
+      module
+      children
+      (+ index 1))))
 
 ;; A type operand is added before the expression it annotates or converts.
 (define (lower-used-types-add-type-then-expr
@@ -15217,7 +15197,7 @@
   ;; The arms below add a type operand before its expression, keep the SPMD
   ;; scan and compact types ahead of their operands, read only some for-owned
   ;; slots and skip quoted syntax; every other variant's children are added
-  ;; through the AstExpr child schema.
+  ;; through the AstExpr child list.
   (match (ast.ast-node-pool-context-expr-get pools expr-id)
     [(ast.AstExpr.ForOwnedState payload)
       (lower-used-types-add-expr-id
@@ -15380,19 +15360,16 @@
         value-box)]
     [_
       (let
-        [next : lower_i64_i64_map.Map used]
-        (begin
-          (ast.ast-expr-children-for-each
-            (ast.ast-node-pool-context-expr-get pools expr-id)
-            lower-used-types-child!
-            lower-used-types-type-id-child!
-            lower-used-types-type-child!
-            lower-used-types-pattern-child!
-            session
-            pools
-            next
-            module)
-          next))]))
+        [children : ast.AstExprChildList
+          (ast.ast-expr-children
+            (ast.ast-node-pool-context-expr-get pools expr-id))]
+        (lower-used-types-add-children-at
+          session
+          pools
+          used
+          module
+          (& children)
+          0))]))
 
 (define (lower-used-types-add-pattern
   [session : cis.InternStructuralSessionHandle]
@@ -70847,7 +70824,7 @@
       (ir.CompilerIrInstr.Return
         (lower-return-maybe (ir.CompilerIrValue.Var sret-var) ret-ty)))))
 
-;; AstExpr child schema hook for the early-return scan.
+;; List fold hook for the early-return scan.
 (defmacro (lower-rvo-child-has-early-return? [ctx : Expr] [id : Expr]) : Expr
   `(lower-rvo-node-has-early-return? (lower-global-shared-view ,ctx) ,id))
 
@@ -70856,7 +70833,7 @@
   ;; syntax (no), for the forms this scan does not descend into (yes, to stay
   ;; conservative) and for TupleRef, whose index it reads as a node; every
   ;; other variant asks its expression children through the AstExpr child
-  ;; schema.
+  ;; list.
   (match (lower-context-expr-get (lower-global-shared-view ctx) id)
     [(ast.AstExpr.Return _) true]
     [(ast.AstExpr.Try _) true]
@@ -70880,12 +70857,12 @@
     [(ast.AstExpr.ForOwnedStep _) true]
     [(ast.AstExpr.MacroExpansion _ _ _) true]
     [_
-      (ast.ast-expr-children-any?
-        (lower-context-expr-get (lower-global-shared-view ctx) id)
+      (ast.ast-expr-list-fold
+        (ast.ast-expr-child-ids
+          (lower-context-expr-get (lower-global-shared-view ctx) id))
+        ast.ast-fold-or
+        false
         lower-rvo-child-has-early-return?
-        ast.ast-child-false
-        ast.ast-child-false
-        ast.ast-child-false
         ctx)]))
 
 ;; Aliasing guard for sret-forwarding RVO. The forwarded sret is the
@@ -77327,7 +77304,7 @@
   ;; The arms below check call heads, keep this scan's own operands for
   ;; TupleRef (its index read as a node) and SpmdScan, and skip the forms it
   ;; does not descend into; every other variant asks its expression children
-  ;; through the AstExpr child schema.
+  ;; through the AstExpr child list.
   (match (ast.ast-node-pool-context-expr-get pools id)
     [(ast.AstExpr.Call func-box args)
       (or
@@ -77370,12 +77347,11 @@
     [(ast.AstExpr.ForOwnedStep _) false]
     [(ast.AstExpr.MacroExpansion _ _ _) false]
     [_
-      (ast.ast-expr-children-any?
-        (ast.ast-node-pool-context-expr-get pools id)
+      (ast.ast-expr-list-fold
+        (ast.ast-expr-child-ids (ast.ast-node-pool-context-expr-get pools id))
+        ast.ast-fold-or
+        false
         lower-source-node-has-import-call?
-        ast.ast-child-false
-        ast.ast-child-false
-        ast.ast-child-false
         pools)]))
 
 (define (lower-source-decl-needs-loader?

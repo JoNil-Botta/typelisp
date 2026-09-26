@@ -2146,50 +2146,49 @@
 (define (selfhost-lint-dead-expr-list-refs
   [exprs : ast.AstExprList]
   [refs : lint_svec.Vec]) : lint_svec.Vec
-  (let
-    [next : lint_svec.Vec refs]
-    (begin
-      (ast.ast-expr-list-fold
-        exprs
-        ast.ast-fold-seq
-        unit
-        selfhost-lint-dead-expr-child!
-        next)
-      next)))
+  (selfhost-lint-dead-expr-list-refs-from exprs refs 0))
 
-;; AstExpr child schema hooks: collect the references of a child, threading
-;; `refs`.
-(defmacro (selfhost-lint-dead-expr-child! [refs : Expr] [child : Expr]) : Expr
-  `(set! ,refs (selfhost-lint-dead-expr-refs ,child ,refs)))
+(define (selfhost-lint-dead-expr-list-refs-from
+  [exprs : (& exprs ast.AstExprList)]
+  [refs : lint_svec.Vec]
+  [index : i64]) : lint_svec.Vec
+  (if (>= index exprs.len)
+    refs
+    (selfhost-lint-dead-expr-list-refs-from
+      exprs
+      (selfhost-lint-dead-expr-refs (ast.ast-expr-list-get exprs index 0) refs)
+      (+ index 1))))
 
-(defmacro (selfhost-lint-dead-type-id-child! [refs : Expr] [ty-id : Expr]) : Expr
-  `(set! ,refs (selfhost-lint-dead-type-id-refs ,ty-id ,refs)))
-
-(defmacro (selfhost-lint-dead-type-child! [refs : Expr] [ty : Expr]) : Expr
-  `(set! ,refs (selfhost-lint-dead-type-refs ,ty ,refs)))
-
-(defmacro (selfhost-lint-dead-pattern-child! [refs : Expr] [pattern : Expr]) : Expr
-  `(set! ,refs (selfhost-lint-dead-pattern-refs ,pattern ,refs)))
+(define (selfhost-lint-dead-child-list-refs-from
+  [children : (& children ast.AstExprChildList)]
+  [refs : lint_svec.Vec]
+  [index : i64]) : lint_svec.Vec
+  (if (>= index children.len)
+    refs
+    (selfhost-lint-dead-child-list-refs-from
+      children
+      (match (ast.ast-expr-child-list-get
+        children
+        index
+        (ast.ast-expr-child-fallback))
+        [(ast.AstExprChild.Expr id) (selfhost-lint-dead-expr-refs id refs)]
+        [(ast.AstExprChild.TypeId id) (selfhost-lint-dead-type-id-refs id refs)]
+        [(ast.AstExprChild.Type ty) (selfhost-lint-dead-type-refs ty refs)]
+        [(ast.AstExprChild.Pattern pattern)
+          (selfhost-lint-dead-pattern-refs pattern refs)])
+      (+ index 1))))
 
 (define (selfhost-lint-dead-expr-children
   [expr : ast.AstExpr]
   [refs : lint_svec.Vec]) : lint_svec.Vec
   (let
-    [next : lint_svec.Vec refs]
-    (begin
-      (ast.ast-expr-children-for-each
-        expr
-        selfhost-lint-dead-expr-child!
-        selfhost-lint-dead-type-id-child!
-        selfhost-lint-dead-type-child!
-        selfhost-lint-dead-pattern-child!
-        next)
-      next)))
+    [children : ast.AstExprChildList (ast.ast-expr-children expr)]
+    (selfhost-lint-dead-child-list-refs-from (& children) refs 0)))
 
 (define (selfhost-lint-dead-expr-refs [node-id : i64] [refs : lint_svec.Vec]) : lint_svec.Vec
   ;; The arms below collect names, fields and the read for-owned slots, and
   ;; keep the SPMD scan and compact types ahead of their operands; every other
-  ;; variant's children are collected through the AstExpr child schema.
+  ;; variant's children are collected through the AstExpr child list.
   (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Var name) (selfhost-lint-dead-ref-add-id refs name)]
     [(ast.AstExpr.ForOwnedState payload)

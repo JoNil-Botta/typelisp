@@ -477,6 +477,23 @@ function window_from(re,   i, inblk) {
     }
 }
 
+# Every sed-style range /START/,/END/ (ARG is START~END, both EREs): a line
+# matching START through the next later line matching END, then the next range.
+function window_ranges(spec,   i, cut, start_re, end_re, inblk) {
+    cut = index(spec, "~")
+    start_re = substr(spec, 1, cut - 1)
+    end_re = substr(spec, cut + 1)
+    for (i = 1; i <= NR; i++) {
+        if (inblk) {
+            print L[i]
+            if (L[i] ~ end_re) inblk = 0
+        } else if (L[i] ~ start_re) {
+            print L[i]
+            inblk = 1
+        }
+    }
+}
+
 # The lines after a label matching the ERE ARG, up to the next .L label.
 function window_block_after(re,   i, inblk) {
     for (i = 1; i <= NR; i++) {
@@ -539,6 +556,7 @@ END {
     else if (analyzer == "window-after") window_after(arg)
     else if (analyzer == "window-from") window_from(arg)
     else if (analyzer == "window-block-after") window_block_after(arg)
+    else if (analyzer == "window-ranges") window_ranges(arg)
     else if (analyzer == "window-call-args") window_call_args(arg)
     else if (analyzer == "window-tl-code") window_tl_code()
     else {

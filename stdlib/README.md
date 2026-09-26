@@ -82,7 +82,8 @@ so this section only maps the modules by area. Import a module with
   `string_caller_result`, `text_buf`, `text_buf_borrowed`, `text_buf_family`,
   `format`, `format_writer_core`, `json`, `serialize`.
 - Collections: `vector`, `dense_list`, `hashmap`, `set`, `queue`, `sort`,
-  `byte_buf`, `byte_buf_core`.
+  `byte_buf`, `byte_buf_core`, `checked_size` (checked storage-size
+  arithmetic).
 - Binary encoding: `byte_le` (little-endian integer fields), `byte_reader`
   (bounded cursor with a sticky error and a work limit).
 - Memory and concurrency: `arena`, `atomic`, `thread`, `sync`,
@@ -404,7 +405,7 @@ contracts, and intentional panic/exit-status checks.
 12. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
 13. Link user-facing docs or tests to the new module when appropriate.
 
-Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 61 explicit
+Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 62 explicit
 build inputs, prove deterministic one-byte mutation propagation, and decode
 every embedded module against its exact source bytes.
 `scripts/verify-stdlib.sh` includes this gate in CI.

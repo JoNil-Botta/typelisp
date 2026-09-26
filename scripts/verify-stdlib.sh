@@ -197,6 +197,7 @@ byte_buf_core.tl
 byte_le.tl
 byte_reader.tl
 clone.tl
+checked_size.tl
 comptime.tl
 concurrency_registry.tl
 core_macros.tl
@@ -301,6 +302,7 @@ stdlib/tests/format_precision_io.tl|42|printf:abc/   tr\n1.25/-0000.00\n|literal
 stdlib/tests/format_primitive_display.tl|42|-|-|-
 stdlib/tests/io_float_parse_exact.tl|42|-|-|-
 stdlib/tests/string_eq_lengths.tl|42|-|-|-
+stdlib/tests/json_sequence_api.tl|42|-|-|-
 stdlib/tests/string_utf8_api.tl|42|-|-|-
 stdlib/tests/http_head_codec.tl|42|-|-|-
 stdlib/tests/http_trailer.tl|42|-|-|-

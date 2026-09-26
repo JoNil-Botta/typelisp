@@ -18279,8 +18279,39 @@
     (lower-string-handle-type? ctx (lower-global-shared-view ty))
     (lower-bytes-handle-type? ctx ty)))
 
-(define (lower-string-concat-legacy-name? [name : (& name str)]) : bool
-  (or (string.eq name "string-append") (string.eq name "string-concat")))
+;; A deprecated bare concat spelling (`string-append`, `string-concat`) lowers
+;; to the runtime concat ABI wherever it is not shadowed: as a plain builtin,
+;; or as the stdlib.string helper that typecheck gave the two-String-handle
+;; type (`tc-string-copy-helper-call-id?`, asked through the visibility test it
+;; shares, as for the eq family). The runtime prelude's own `string-concat`
+;; definition does not count as a shadow (see
+;; `lower-stdlib-string-helper-unshadowed-id?`). The spelling is tested by id
+;; first, so other calls pay only two comparisons.
+(define (lower-string-concat-legacy-call-id?
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [state : LowerState]
+  [type-env : tc_core.TcTypeEnv]
+  [source-id : i64]
+  [name-id : i64]) : bool
+  (and
+    (or
+      (= source-id cbi.compiler-builtin-id-string-append)
+      (= source-id cbi.compiler-builtin-id-string-concat))
+    (or
+      (lower-builtin-call-available-id? ctx env name-id)
+      (and
+        (tc_core.tc-stdlib-string-helper-visible-or-wrapper-id?
+          ctx
+          type-env
+          source-id
+          true
+          name-id
+          source-id
+          (if (= source-id cbi.compiler-builtin-id-string-append)
+            "string-append"
+            "string-concat"))
+        (lower-stdlib-string-helper-unshadowed-id? ctx env state name-id)))))
 
 (define (lower-string-concat-public-target? [name : (& name str)]) : bool
   ;; Dotted imports resolve to module-key names before direct-call lowering.
@@ -18326,6 +18357,7 @@
 (define (lower-string-concat-call-source?
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
+  [state : LowerState]
   [type-env : tc_core.TcTypeEnv]
   [name-id : i64]) : bool
   (let
@@ -18334,13 +18366,16 @@
         (tc_core.tc-context-structural-session ctx)
         name-id
         name-id)]
-    [raw-name : String (lower-context-intern-str ctx source-id)]
     (and
       (not (tc_core.tc-dotted-local-field-name-id? type-env source-id))
       (or
-        (and
-          (lower-string-concat-legacy-name? raw-name)
-          (lower-builtin-call-available-id? ctx env name-id))
+        (lower-string-concat-legacy-call-id?
+          ctx
+          env
+          state
+          type-env
+          source-id
+          name-id)
         (match (lower-source-name-lookup-key-id ctx type-env source-id)
           [(tc_core.ResultTcString.Ok lookup-name)
             (lower-string-concat-public-target? lookup-name)]
@@ -18349,6 +18384,7 @@
 (define (lower-string-concat-call-parts
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
+  [state : LowerState]
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]) : LowerMaybeStringConcatCall
   (let
@@ -18376,9 +18412,13 @@
                         raw-name-id))
                     (not (sym_i64_env.sym-i64-contains-id env raw-name-id))
                     (not (lower-top-level-value-defined-id? ctx raw-name-id)))
-                  (and
-                    (lower-string-concat-legacy-name? raw-name)
-                    (lower-builtin-call-available-id? ctx env name))
+                  (lower-string-concat-legacy-call-id?
+                    ctx
+                    env
+                    state
+                    type-env
+                    raw-name-id
+                    name)
                   (match (lower-source-name-lookup-key-id
                     ctx
                     type-env
@@ -18409,6 +18449,7 @@
 (define (lower-string-concat-exprs-all
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
+  [state : LowerState]
   [type-env : tc_core.TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]) : ast.AstExprList
   (let
@@ -18426,7 +18467,7 @@
           [expr-id : i64 (lower-string-concat-work-pop (&mut pending))]
           [expr : ast.AstExpr (tc_core.tc-context-expr-get ctx expr-id)]
           (begin
-            (match (lower-string-concat-call-parts ctx env type-env expr)
+            (match (lower-string-concat-call-parts ctx env state type-env expr)
               [(LowerMaybeStringConcatCall.Some nested-left nested-right)
                 (begin
                   (ast.ast-expr-list-push (&mut pending) nested-right)
@@ -24233,29 +24274,76 @@
                   origin
                   "typecheck: try requires enclosing Result-like function")))])])))
 
-(define (lower-top-level-value-defined-id?
+(define (lower-top-level-value-handle-id
   [ctx : tc_core.TcContext]
-  [name-id : i64]) : bool
+  [name-id : i64]) : i64
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc_core.tc-context-symbols ctx)]
     [module : String (tc_core.tc-context-module ctx)]
     [module-id : i64 (tc_core.tc-context-module-id ctx)]
-    (csym.compiler-symbols-handle-found?
-      (if (and
-        (> (string.string-length module) 0)
-        (not
-          (tc_core.tc-name-qualified-id?
-            (tc_core.tc-context-structural-session ctx)
-            name-id)))
-        (csym.compiler-symbols-lookup-value-in-module-id-or
-          symbols
-          module-id
-          name-id
-          (csym.compiler-symbols-missing-handle))
-        (csym.compiler-symbols-lookup-value-id-or
-          symbols
-          name-id
-          (csym.compiler-symbols-missing-handle))))))
+    (if (and
+      (> (string.string-length module) 0)
+      (not
+        (tc_core.tc-name-qualified-id?
+          (tc_core.tc-context-structural-session ctx)
+          name-id)))
+      (csym.compiler-symbols-lookup-value-in-module-id-or
+        symbols
+        module-id
+        name-id
+        (csym.compiler-symbols-missing-handle))
+      (csym.compiler-symbols-lookup-value-id-or
+        symbols
+        name-id
+        (csym.compiler-symbols-missing-handle)))))
+
+(define (lower-top-level-value-defined-id?
+  [ctx : tc_core.TcContext]
+  [name-id : i64]) : bool
+  (csym.compiler-symbols-handle-found?
+    (lower-top-level-value-handle-id ctx name-id)))
+
+;; A bare `stdlib.string` helper spelling (`string-concat`, `string-eq`, ...)
+;; is shadowed only by a local or by the definition an ordinary call of that
+;; spelling reaches through the lowering name cache: one the current module
+;; declares, or one it imports unqualified (`m.*`, `m.item`), which resolves to
+;; that module's key.
+;; The runtime prelude's private helpers (its `string-concat` implements the
+;; `tl_string_concat` ABI) and stdlib.string's own definitions are what the
+;; spelling names, not shadows of it. An unresolved bare name in the root file
+;; also reaches other modules' bare alias keys; the root can name those
+;; definitions only qualified, so they do not shadow either.
+(define (lower-stdlib-string-helper-unshadowed-id?
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [state : LowerState]
+  [name-id : i64]) : bool
+  (and
+    (not (sym_i64_env.sym-i64-contains-id env name-id))
+    (let
+      [names : LowerNameCache (lower-state-names state)]
+      [resolved-id : i64
+        (lower-name-cache-resolve-logical-id (& names) name-id name-id)]
+      [handle : i64 (lower-top-level-value-handle-id ctx resolved-id)]
+      (or
+        (not (csym.compiler-symbols-handle-found? handle))
+        (let
+          [owner : i64
+            (csym.compiler-symbols-owner-module-id-at-index-or
+              (tc_core.tc-context-symbols ctx)
+              (csym.compiler-symbol-handle-index handle)
+              -1)]
+          [module : String (tc_core.tc-context-module ctx)]
+          (or
+            (= owner cbi.compiler-builtin-id-runtime-module)
+            (= owner cbi.compiler-builtin-id-fix-stdlib_dot_string)
+            (and
+              (= (string.string-length module) 0)
+              (not (csym.compiler-symbol-root-module-id? owner))
+              (not
+                (tc_core.tc-name-qualified-id?
+                  (tc_core.tc-context-structural-session ctx)
+                  resolved-id)))))))))
 
 (define (lower-top-level-callable-defined-id?
   [ctx : tc_core.TcContext]
@@ -32329,7 +32417,7 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (let
     [exprs : ast.AstExprList
-      (lower-string-concat-exprs-all ctx env type-env args)]
+      (lower-string-concat-exprs-all ctx env state type-env args)]
     ;; A single public stdlib wrapper call already has compact, stable codegen.
     ;; Keep it on the ordinary direct-call path; only a nested public tree needs
     ;; the fused runtime batches. Legacy intrinsics have always used the runtime
@@ -35929,7 +36017,13 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (if (lower-private-string-eq-helper-call-id? ctx type-env source-id)
+  (if (lower-string-eq-helper-call-id?
+    ctx
+    env
+    state
+    type-env
+    source-id
+    source-id)
     (lower-string-eq-call ctx state env type-env args result-ty origin)
     (if (lower-private-string-to-int-helper-call-id? ctx type-env source-id)
       (lower-string-to-int-call ctx state env type-env args result-ty origin)
@@ -35944,13 +36038,54 @@
         result-ty
         origin))))
 
-(define (lower-private-string-eq-helper-call-id?
+;; The spellings typecheck types as the `__tl_string_eq` builtin
+;; (`tc-string-eq-helper-call-id?`, asked through the visibility test it is
+;; built from): the private intrinsic where it is available, and bare `eq`,
+;; `string-eq` and `string=?` where stdlib.string's helpers are visible and
+;; user code does not shadow them. A qualified `string.eq` stays an ordinary
+;; call of stdlib.string's `eq`.
+(define (lower-string-eq-helper-call-id?
   [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [state : LowerState]
   [type-env : tc_core.TcTypeEnv]
+  [source-id : i64]
   [name-id : i64]) : bool
-  (and
-    (cbi.compiler-builtin-typecheck-string-eq-id? name-id)
-    (lower-top-level-builtin-available-id? ctx type-env name-id)))
+  (or
+    (and
+      (cbi.compiler-builtin-typecheck-string-eq-id? name-id)
+      (lower-top-level-builtin-available-id? ctx type-env name-id))
+    (and
+      (cond
+        [(= source-id cbi.compiler-builtin-id-eq)
+          (tc_core.tc-stdlib-string-helper-visible-or-wrapper-id?
+            ctx
+            type-env
+            source-id
+            true
+            name-id
+            cbi.compiler-builtin-id-eq
+            "eq")]
+        [(= source-id cbi.compiler-builtin-id-string-eq-question)
+          (tc_core.tc-stdlib-string-helper-visible-or-wrapper-id?
+            ctx
+            type-env
+            source-id
+            true
+            name-id
+            cbi.compiler-builtin-id-string-eq-question
+            "string=?")]
+        [(= source-id cbi.compiler-builtin-id-string-eq)
+          (tc_core.tc-stdlib-string-helper-visible-or-wrapper-id?
+            ctx
+            type-env
+            source-id
+            true
+            name-id
+            cbi.compiler-builtin-id-string-eq
+            "string-eq")]
+        [else false])
+      (lower-stdlib-string-helper-unshadowed-id? ctx env state name-id))))
 
 (define (lower-private-string-to-int-helper-call-id?
   [ctx : tc_core.TcContext]
@@ -37447,9 +37582,12 @@
                             args
                             result-ty
                             origin)]
-                        [(lower-private-string-eq-helper-call-id?
+                        [(lower-string-eq-helper-call-id?
                             ctx
+                            env
+                            state
                             type-env
+                            source-id
                             name-id)
                           (lower-string-eq-call
                             ctx
@@ -37473,9 +37611,13 @@
                             origin)]
                         [(or
                             (lower-string-concat-public-target? name)
-                            (and
-                              builtin-available
-                              (lower-string-concat-legacy-name? name)))
+                            (lower-string-concat-legacy-call-id?
+                              ctx
+                              env
+                              state
+                              type-env
+                              source-id
+                              name-id))
                           (lower-string-concat-call
                             ctx
                             state
@@ -65453,7 +65595,7 @@
                   "lower: comptime-error is compile-time only")))]
           [(and
               unshadowed
-              (lower-string-concat-call-source? ctx env type-env name))
+              (lower-string-concat-call-source? ctx env state type-env name))
             (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
           [(and
               unshadowed

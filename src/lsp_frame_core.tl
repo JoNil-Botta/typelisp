@@ -11305,7 +11305,7 @@
 (define (lsp-rename-validate-query
   [state : (& state lsp_vector_families.LspServerState)]
   [query : (& query LspWorkspaceSemanticQuery)]
-  [target : LspRenameTarget]
+  [target : (& target LspRenameTarget)]
   [new-name : String]
   [check-collisions : bool]) : LspRenameValidation
   (if (not (= query.completeness 0))
@@ -12150,7 +12150,7 @@
 (define (lsp-workspace-index-adopt-rootless-overlays!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
-  [root : lsp_vector_families.LspWorkspaceRoot]) : unit
+  [root : (& root lsp_vector_families.LspWorkspaceRoot)]) : unit
   (let
     [paths : lsp_svec.Vec (lsp_svec.new)]
     [source-index : i64 0]
@@ -12184,10 +12184,7 @@
       (lsp-workspace-roots-push!
         (&mut workspace.roots)
         (owned_view.compiler-owned-shared-view root))
-      (lsp-workspace-index-adopt-rootless-overlays!
-        workspace
-        docs
-        (owned_view.compiler-owned-shared-view root))
+      (lsp-workspace-index-adopt-rootless-overlays! workspace docs root)
       ;; Discover only the added root. URI de-duplication preserves the first
       ;; root in client order when roots overlap.
       (lsp-workspace-index-build-root! workspace docs root))))
@@ -15912,12 +15909,7 @@
   [query : (& query LspWorkspaceSemanticQuery)]
   [target : LspRenameTarget]) : unit
   (if (string.eq method "textDocument/prepareRename")
-    (match (lsp-rename-validate-query
-      state
-      query
-      (lsp-global-shared-view target)
-      ""
-      false)
+    (match (lsp-rename-validate-query state query target "" false)
       [(LspRenameValidation.Ok _)
         (lsp-write-response id (lsp-prepare-rename-result target))]
       [(LspRenameValidation.Err message) (lsp-write-error id -32803 message)])
@@ -15945,7 +15937,7 @@
                 (match (lsp-rename-validate-query
                   state
                   query
-                  (lsp-global-shared-view target)
+                  target
                   (lsp-global-shared-view new-name)
                   true)
                   [(LspRenameValidation.Ok _)

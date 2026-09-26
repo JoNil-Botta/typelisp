@@ -769,7 +769,7 @@
 
 (define (surface-identity-hydrate-payload
   [payload : SurfaceIdentityPayload]
-  [expected-key : SurfaceIdentityKey]) : ResultSurfaceIdentityHydration
+  [expected-key : (& expected-key SurfaceIdentityKey)]) : ResultSurfaceIdentityHydration
   (if (not (surface-identity-key-eq? payload.key expected-key))
     (ResultSurfaceIdentityHydration.KeyMismatch
       "surface identity: package key mismatch")
@@ -804,7 +804,7 @@
 
 (define (surface-identity-hydrate
   [bytes : (__tl_dyn-array u8)]
-  [expected-key : SurfaceIdentityKey]) : ResultSurfaceIdentityHydration
+  [expected-key : (& expected-key SurfaceIdentityKey)]) : ResultSurfaceIdentityHydration
   (match (surface-identity-decode bytes)
     [(ResultSurfaceIdentityPayload.Err message)
       (ResultSurfaceIdentityHydration.Err message)]

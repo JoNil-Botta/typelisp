@@ -1638,10 +1638,10 @@
   (define (surface-ast-write-modules!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [modules : ast.AstDeclModuleList]) : unit
+    [modules : (& modules ast.AstDeclModuleList)]) : unit
     (let
       [index : i64 0]
-      [count : i64 (ast.ast-decl-module-list-len (& modules))]
+      [count : i64 (ast.ast-decl-module-list-len modules)]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
@@ -1721,7 +1721,7 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [program : ast.AstProgram]
     [paths : ast.AstDeclPathList]
-    [modules : ast.AstDeclModuleList]
+    [modules : (& modules ast.AstDeclModuleList)]
     [seen : sym_i64_env.SymI64Env]
     [pools : ast.AstNodePoolContext]) : unit
     (let
@@ -1766,7 +1766,7 @@
     [structural-session : cis.InternStructuralSessionHandle]
     [decls : ast.AstDeclList]
     [paths : ast.AstDeclPathList]
-    [modules : ast.AstDeclModuleList]
+    [modules : (& modules ast.AstDeclModuleList)]
     [seen : sym_i64_env.SymI64Env]
     [source-pools : ast.AstNodePoolContext]
     [source-identity-count : i64]

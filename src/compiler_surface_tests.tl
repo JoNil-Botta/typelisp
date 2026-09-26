@@ -223,9 +223,7 @@
                 (ci.intern-reset!)
                 (let
                   [unrelated : i64 (ci.intern "unrelated")]
-                  (match (surface_identity.surface-identity-hydrate
-                    bytes
-                    (surface_identity.surface-identity-shared-view key))
+                  (match (surface_identity.surface-identity-hydrate bytes key)
                     [(surface_identity.ResultSurfaceIdentityHydration.Err _)
                       false]
                     [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch
@@ -525,7 +523,7 @@
     [structural-session : cis.InternStructuralSessionHandle]
     [decls : ast.AstDeclList]
     [paths : ast.AstDeclPathList]
-    [modules : ast.AstDeclModuleList]
+    [modules : (& modules ast.AstDeclModuleList)]
     [seen : sym_i64_env.SymI64Env]
     [source-pools : ast.AstNodePoolContext]
     [source-count : i64]
@@ -534,7 +532,7 @@
       structural-session
       (owned_view.compiler-owned-shared-view decls)
       (owned_view.compiler-owned-shared-view paths)
-      (owned_view.compiler-owned-shared-view modules)
+      modules
       seen
       source-pools
       source-count
@@ -1604,7 +1602,7 @@
               (owned_view.compiler-owned-shared-view payloads.identity-bytes)
               (owned_view.compiler-owned-shared-view payloads.ast-bytes)
               payloads.fact-one-bytes
-              (owned_view.compiler-owned-shared-view payloads.key)
+              payloads.key
               structural-session
               pools)
               [(surface_hydrate.ResultCompilerSurfaceHydration.Ok hydration)
@@ -1629,7 +1627,7 @@
               (owned_view.compiler-owned-shared-view payloads.identity-bytes)
               (owned_view.compiler-owned-shared-view payloads.ast-bytes)
               (__tl_make-array u8 0)
-              (owned_view.compiler-owned-shared-view payloads.key)
+              payloads.key
               structural-session
               pools)
               [(surface_hydrate.ResultCompilerSurfaceHydration.Err _) unit]
@@ -1645,7 +1643,7 @@
               payloads.identity-bytes
               payloads.ast-bytes
               payloads.fact-two-bytes
-              (owned_view.compiler-owned-shared-view payloads.key)
+              payloads.key
               structural-session
               pools)
               [(surface_hydrate.ResultCompilerSurfaceHydration.Ok hydration)

@@ -22,6 +22,8 @@ echo "[public-tools] package artifact freshness"
 sh scripts/verify-package-artifact-freshness.sh
 echo "[public-tools] LSP transcript batch manifest contract"
 sh scripts/verify-lsp-transcript-batch.sh
+echo "[public-tools] corpus result-check self-test"
+sh tests/public-tools/test-result-checks.sh
 echo "[public-tools] LSP corpus"
 sh tests/public-tools/run-corpus.sh lsp
 echo "[public-tools] REPL corpus"

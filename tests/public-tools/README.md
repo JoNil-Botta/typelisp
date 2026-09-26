@@ -10,25 +10,37 @@ stem. A `.linux.` infix (`name.linux.in`, `name.linux.spec.json`) limits the
 fixture to Linux hosts.
 
 - `repl/*.in` is sent to `typelisp repl` on stdin.
-- `lsp/*.in.json` is an array of JSON-RPC messages; the runner adds the
-  `Content-Length` framing. An optional `name.prep.sh` runs first with
-  `FIXTURE_TMP` and `FIXTURE_TMP_URI` set to the case's temporary directory.
+- `lsp/*.in.json` is an array of JSON-RPC messages, one per line; the runner
+  adds the byte-counted `Content-Length` framing. An optional `name.prep.sh`
+  runs first with `FIXTURE_TMP` and `FIXTURE_TMP_URI` set to the case's
+  temporary directory.
 - `selfhost-lsp/*.linux.in.json` are framed the same way; `*.linux.in` files
   are raw protocol bytes, for malformed-frame cases.
 
-Inputs and expectations may use `${{TMP}}` and `${{TMP_URI}}` for the case's
-temporary directory.
+Inputs and `message_checks` strings may use `${{TMP}}` and `${{TMP_URI}}` for
+the case's temporary directory.
 
-A `.spec.json` may contain:
+A `.spec.json` is read line by line and may contain:
 
 - `exit`: the expected exit code (default 0);
-- `stdout_exact`, `stderr_exact`: the whole stream;
+- `stdout_exact`, `stderr_exact`: the whole stream, byte for byte including
+  the final newline; on Windows only these two comparisons ignore carriage
+  returns;
 - `stdout_contains`, `stdout_not_contains`, `stderr_contains`,
-  `stderr_not_contains`: substrings;
-- LSP only: `message_count`, the number of parsed JSON-RPC messages, and
-  `message_checks`, each of which some message must pass: an optional
-  `jsonpath_id` (the message's `id`), an optional `"jsonpath_result": null`,
-  and `raw_contains`, `raw_not_contains` and `json_contains` strings.
+  `stderr_not_contains`: fixed substrings; a decoded newline splits a string
+  into separate substrings, and empty ones are ignored;
+- LSP only: `message_count`, the number of newline-terminated parsed JSON-RPC
+  messages, and `message_checks`, one object per line, each of which some
+  message must pass: an optional `jsonpath_id` (the message's `id`), an
+  optional `"jsonpath_result": null`, and `raw_contains`, `raw_not_contains`
+  and `json_contains` strings. A key may repeat within one check and every
+  occurrence applies, so a check is not read as a JSON object.
+
+`lib-result-checks.sh` checks a case's exit code, streams and messages in one
+awk process, for both corpora. `test-result-checks.sh` is its self-test
+(passing and failing checks, the order of the failure lines, repeated keys,
+path substitution, byte and final-newline edges); `verify-public-tools.sh`
+runs it before the corpora.
 
 ## Running
 
@@ -44,7 +56,8 @@ TYPELISP_BIN=./target/stage0/typelisp tests/public-tools/run-corpus.sh lsp fresh
 `run-corpus.sh [repl|lsp] [fresh|batch|differential]` runs one corpus; LSP cases
 run one process per case (`fresh`), all cases through one batch process
 (`batch`, the Windows default), or both with their results compared
-(`differential`, the Linux default).
+(`differential`, the Linux default). Every mode checks results with the same
+expectations and checker.
 
 The command-surface list of the freshly built `src/main.tl` binary, with one
 smoke case per command, is `tests/cli/selfhost-surface.cases`.

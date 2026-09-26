@@ -883,3 +883,4 @@ replayed_loop_call_lagged_10_opt2|tests/integration/replayed_loop_call_lagged.tl
 replayed_loop_call_lagged_65_opt0|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|opt-level:0+stage-stdlib
 replayed_loop_call_lagged_65_opt1|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|opt-level:1+stage-stdlib
 replayed_loop_call_lagged_65_opt2|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|opt-level:2+stage-stdlib
+linker_archive_core|src/linker_archive_core_tests.tl|42|-|-|linker_archive_core.tl linker_archive_output.tl compiler_incremental_binary.tl|stage-stdlib

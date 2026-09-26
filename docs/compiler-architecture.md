@@ -501,6 +501,70 @@ rendered centrally in `compiler_backend.tl`, without parsing serializer errors.
 The package freshness gate checks the shared ELF boundary, including mutations
 that bypass it; inline tests cover policy combinations and malformed images.
 
+The common `ar` byte-container boundary lives in `src/linker_archive_core.tl`
+(#7392). `scan` accepts immutable arbitrary-byte `str`, caller-assigned input
+and content/revision tokens, an explicit profile, and explicit limits. The
+profile selects each numeric field's decimal/octal grammar, blank policy and
+maximum, raw-name ASCII policy, exact sixteen-byte special-name patterns, and
+whether an odd final payload may omit its pad. Size is always nonblank decimal.
+No path, extension, host locale, decoded name or object symbol selects policy.
+The fixed signature/header/padding layout follows the [PE/COFF archive format](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#archive-library-file-format).
+
+The scanner validates the complete input before allocating an exact-size
+physical directory. A second bounded header pass fills descriptors containing
+raw names, classification and payload spans; neither pass reads or copies
+payload bytes. Subtraction-based range checks precede offset additions, and
+numeric maxima are checked before multiply/add. `ArchiveMemberId` combines
+input/content identity, physical ordinal and header offset, so duplicate names
+remain distinct. The caller must not reuse a content token for changed bytes or
+a profile tag for changed policy, and must retain the scanned directory
+unchanged. Public record constructors are not a capability-security boundary.
+
+A separate `ArchiveSession` owns claim bits and operation budgets. `open!`
+validates all ID components before indexing: the first request returns the ID
+and exact borrowed payload, subsequent requests return `AlreadyOpened` with
+that ID. Payload lifetimes follow the input, so they survive later session
+operations. `map-index!` is the dialect hook: a bounded binary search maps an
+adapter-decoded offset only to an existing header and can reject special
+members. Failed index requests consume their attempt/work budget. This layer
+never caches parsed objects or chooses symbols; those decisions belong to
+#7099. The GNU/BSD and Microsoft adapters (#7038, #7244) own name/index decoding,
+special-payload validation and dispatch. Thin archives, nested interpretation,
+filesystem lookup and mutation are not provided here.
+
+Limits bound input/output bytes, member count, retained descriptor/name/claim
+storage, special members, index attempts, diagnostic rows and work. Retained
+storage charges `sizeof(ArchiveMember) + sizeof(bool) + 16` per member, with
+names inline and input bytes borrowed. The extra sixteen bytes reserve the
+current runtime payload-view record; header comparisons create no views. A scan returns at most one fixed-size error
+carrying kind, input/content identity, ordinal and byte offset; at least one
+diagnostic row must be available. Ordinal -1 identifies archive/profile errors.
+Work is a conservative byte-visit/comparison budget rather than CPU time:
+13 base units plus 17 per profile pattern, then 137 plus 32 per pattern for each
+member's validation/fill passes. Session initialization charges one unit per
+claim slot; opens charge one and index attempts charge one plus each search
+comparison. Consumers use one session per archive input for load-once behavior;
+creating another session deliberately starts an independent consumer budget.
+All checks precede variable-size allocations, and no allocation scales with
+payload size during scanning or opening.
+
+`src/linker_archive_output.tl` borrows a native Slice of encoder plans whose
+payload strings remain owned by the caller. It preflights the whole layout,
+field widths, limits and work before allocating output, then writes canonical
+left-justified numeric fields, the terminator, opaque payloads and newline pads.
+Metadata -1 requests an allowed blank; all other metadata is nonnegative.
+Writers supply names, metadata, special members and physical/index order; the
+container never synthesizes dialect indexes. Its byte buffer copies payloads
+directly into output, with no intermediate payload String copy. Encoding
+charges 120 units plus 16 per pattern per member, and three per output byte
+for initialization, writes and final String conversion. `dump` shares session
+work and diagnostic limits, emits a 42-byte identity row plus one 103-byte
+physical-member row, and charges three units per byte. Fixed-width hexadecimal
+IDs, spans and raw names make dumps independent of locale and path spelling.
+`linker_archive_core_tests.tl` covers byte goldens, every truncation boundary,
+limits, forged/stale IDs, borrowed addresses and a fixed mutation corpus; its
+same assertion body runs in both native host manifests and inline tests.
+
 AMD64 import-library member encoding lives separately in
 `src/linker_coff_import_member_writer.tl`. Its caller supplies a validated DLL
 basename/stem pair and ordered, explicit import plans. The encoder validates

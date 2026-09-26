@@ -801,6 +801,12 @@ decision|src/lint_fix_plan_core.tl|pure snapshot-bound lint fix planning (#7279)
 
 decision|src/lint_fix_plan_core_tests.tl|inline planner conformance tests (#7279) found by scripts/verify-inline-tests.sh; checks multi-file/large edits, stale sources, UTF-8/CRLF boundaries, conflicts, deterministic ordering, and atomicity
 
+decision|src/linker_archive_core.tl|bounded immutable ar directory, stable IDs and lazy claims (#7392); exercised by linker_archive_core_tests inline/native coverage, with dialect consumers #7038 and #7244 and resolver consumer #7099
+decision|src/linker_archive_output.tl|checked canonical ar encoding and bounded structural dumps (#7392); exercised by linker_archive_core_tests inline/native goldens and consumed next by #7033/#7038/#7244
+case|selfhost_linker_archive_core_tests|src/linker_archive_core_tests.tl|assembly|exactly-one|direct
+contains|main:
+end
+
 decision|src/linker_coff_import_member_writer.tl|main-less bounded AMD64 import-library member encoder (#7441); inline tests compare checked-in LLVM member payloads and validate plans, limits, COFF fields, and ordered index symbols
 decision|src/linker_coff_directive_reader.tl|main-less pure COFF .drectve reader (#7241): admits .drectve sections with IMAGE_SCN_LNK_INFO and no relocations/line numbers, tokenizes the documented quoting grammar under byte/option/token limits, accepts ASCII or BOM-marked strict UTF-8, and returns ordered typed /DEFAULTLIB, /NODEFAULTLIB, /INCLUDE, /EXPORT, /ALTERNATENAME, /FAILIFMISMATCH, /DELAYLOAD and /DELAY records with byte provenance for #7102, #7125, #7094 and #7423; exercised by src/linker_coff_directive_reader_tests.tl
 decision|src/linker_coff_directive_reader_tests.tl|inline .drectve reader conformance tests (#7241) found by scripts/verify-inline-tests.sh: MSVC/clang-cl shaped goldens, every admitted option, spelling/provenance, exact-span rejection of quote/encoding/field/option failures, section header and limit boundaries, truncation at every byte, and range-only reads

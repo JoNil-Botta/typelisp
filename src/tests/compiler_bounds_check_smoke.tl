@@ -75,9 +75,7 @@
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (let
           [symbol-count : i64
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              "tl_oob_abort")]
+            (compiler_backend.compiler-backend-string-count asm "tl_oob_abort")]
           [defines-abort : bool
             (compiler_backend.compiler-backend-string-contains?
               asm

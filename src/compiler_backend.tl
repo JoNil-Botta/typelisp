@@ -39814,7 +39814,9 @@
           type-segment-bases
           tables.representations
           ty)
-          [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup count _)
+          [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup
+              count
+              _)
             count]
           ;; Unknown values retain the backend's conservative one-slot fallback;
           ;; only KnownOneWord is positive proof exposed to optimization clients.
@@ -98914,7 +98916,9 @@
               (set! done true)))
           found)))))
 
-(define (compiler-backend-string-count [text : String] [needle : String]) : i64
+(define (compiler-backend-string-count
+  [text : (& text str)]
+  [needle : (& needle str)]) : i64
   (let
     [text-len : i64 (string.string-length text)]
     [needle-len : i64 (string.string-length needle)]

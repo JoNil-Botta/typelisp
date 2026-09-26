@@ -1487,36 +1487,34 @@
 
 (define (compiler-backend-alloc-call-count [asm : String]) : i64
   (+
-    (compiler_backend.compiler-backend-string-count
-      (owned_view.compiler-owned-shared-view asm)
-      "    call tl_alloc\n")
+    (compiler_backend.compiler-backend-string-count asm "    call tl_alloc\n")
     (+
       (compiler_backend.compiler-backend-string-count
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         "    call .L_tl_alloc8\n")
       (+
         (compiler_backend.compiler-backend-string-count
-          (owned_view.compiler-owned-shared-view asm)
+          asm
           "    call .L_tl_alloc16\n")
         (+
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call .L_tl_alloc24\n")
           (+
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call .L_tl_alloc32\n")
             (+
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    call .L_tl_alloc40\n")
               (+
                 (compiler_backend.compiler-backend-string-count
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "    call .L_tl_alloc48\n")
                 (+
                   (compiler_backend.compiler-backend-string-count
-                    (owned_view.compiler-owned-shared-view asm)
+                    asm
                     "    call .L_tl_alloc56\n")
                   (compiler_backend.compiler-backend-string-count
                     asm
@@ -2337,7 +2335,7 @@
               (compiler_backend.compiler-backend-string-contains? asm needle))
             (>=
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    .quad 0\n")
               2)
             (not
@@ -5485,9 +5483,7 @@
       (and
         (compiler_backend.backend-and8
           (>=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              ".globl _tl_f")
+            (compiler_backend.compiler-backend-string-count asm ".globl _tl_f")
             4)
           (compiler_backend.compiler-backend-string-contains? asm "_tl_f")
           (compiler_backend.compiler-backend-string-contains?
@@ -5542,10 +5538,10 @@
           (>=
             (+
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    call *(%r10)\n")
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    jmp *(%r10)\n"))
             4)
           (and
@@ -5556,10 +5552,10 @@
             (=
               (+
                 (compiler_backend.compiler-backend-string-count
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "    call *(%r11)\n")
                 (compiler_backend.compiler-backend-string-count
-                  (owned_view.compiler-owned-shared-view asm)
+                  asm
                   "    jmp *(%r11)\n"))
               0))
           (not
@@ -5587,12 +5583,12 @@
           (and
             (>
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".cfi_startproc")
               1)
             (=
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 ".cfi_startproc")
               (compiler_backend.compiler-backend-string-count
                 asm
@@ -6632,9 +6628,7 @@
           (not (string.eq body ""))
           ;; Each branch owns a compare, and each of those fuses.
           (>=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view body)
-              "    cmpq ")
+            (compiler_backend.compiler-backend-string-count body "    cmpq ")
             2)
           ;; The boolean is never materialised, so neither half of the
           ;; `setcc`/`movzbq` pair survives and no site spends a `test`.
@@ -7002,16 +6996,12 @@
               ;; Every unrolled clear store folds its address into an indexed
               ;; addressing mode: one instruction, no address temp at all.
               (>=
-                (compiler_backend.compiler-backend-string-count
-                  (owned_view.compiler-owned-shared-view block)
-                  ",8)\n")
+                (compiler_backend.compiler-backend-string-count block ",8)\n")
                 64)
               ;; No address is materialised, and no scratch register or gep
               ;; result takes the round trip through a frame slot.
               (=
-                (compiler_backend.compiler-backend-string-count
-                  (owned_view.compiler-owned-shared-view block)
-                  "leaq")
+                (compiler_backend.compiler-backend-string-count block "leaq")
                 0)
               (=
                 (compiler_backend.compiler-backend-string-count block "(%rsp)")
@@ -7969,12 +7959,12 @@
             "    movq %rbp, -72(%rbp)\n"))
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view prologue)
+            prologue
             "    pushq %")
           8)
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view prologue)
+            prologue
             "    .seh_pushreg %")
           8)
         (compiler_backend.compiler-backend-string-contains?
@@ -8193,7 +8183,7 @@
         (= full-frame 224)
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view full-save)
+            full-save
             "    movdqu %xmm")
           10)
         (=
@@ -8229,7 +8219,7 @@
           "    movdqu %xmm15, -5024(%rbp)\n    .seh_savexmm %xmm15, 0\n")
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view inline-tail)
+            inline-tail
             "movdqu -240(%rbp), %xmm15")
           1)
         (compiler_backend.compiler-backend-string-contains?
@@ -8237,7 +8227,7 @@
           "    leave\n    ret\n")
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view jump-tail)
+            jump-tail
             "movdqu -240(%rbp), %xmm15")
           1)
         (compiler_backend.compiler-backend-string-contains?
@@ -8245,7 +8235,7 @@
           "    leave\n    jmp _tl_xmm_target\n")
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view shared-tail)
+            shared-tail
             "movdqu -240(%rbp), %xmm15")
           1)
         (compiler_backend.compiler-backend-string-contains?
@@ -16103,11 +16093,7 @@ g:
       asm
       "    movsd %xmm2, -16(%rbp)\n")
     (compiler_backend.compiler-backend-string-contains? asm restore)
-    (=
-      (compiler_backend.compiler-backend-string-count
-        (owned_view.compiler-owned-shared-view asm)
-        "-128(%rbp)")
-      2)
+    (= (compiler_backend.compiler-backend-string-count asm "-128(%rbp)") 2)
     (not (compiler_backend.compiler-backend-string-contains? asm "-512(%rbp)"))))
 
 (define (compiler-backend-phi-xmm-stage-preserved-ok?) : bool
@@ -17378,11 +17364,7 @@ g:
     (match copied
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
-          (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              "%rax")
-            2)
+          (= (compiler_backend.compiler-backend-string-count asm "%rax") 2)
           (= (compiler_backend.compiler-backend-string-count asm "%rdx") 2))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
@@ -19874,7 +19856,7 @@ g:
               "leaq .Lf0_match_total_trap"))
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    .quad .Lf0_")
             6)
           (compiler_backend.compiler-backend-string-contains?
@@ -20544,14 +20526,14 @@ g:
                   (str_cat.str-cat "    .section .rodata\n" align label ":\n")]
                 (compiler_backend.compiler-backend-string-contains? asm needle))
               (=
-                (compiler_backend.compiler-backend-string-count
-                  (owned_view.compiler-owned-shared-view asm)
-                  (str_cat.str-cat label ":\n"))
+                (let
+                  [needle (str_cat.str-cat label ":\n")]
+                  (compiler_backend.compiler-backend-string-count asm needle))
                 1)
               (>=
-                (compiler_backend.compiler-backend-string-count
-                  (owned_view.compiler-owned-shared-view asm)
-                  (str_cat.str-cat load " " label "(%rip), "))
+                (let
+                  [needle (str_cat.str-cat load " " label "(%rip), ")]
+                  (compiler_backend.compiler-backend-string-count asm needle))
                 2)
               (not
                 (let
@@ -20598,9 +20580,10 @@ g:
               (and
                 (not (string.eq loop ""))
                 (=
-                  (compiler_backend.compiler-backend-string-count
-                    loop
-                    (compiler_backend.compiler-backend-avx2-i64-lane-id-label))
+                  (let
+                    [needle
+                      (compiler_backend.compiler-backend-avx2-i64-lane-id-label)]
+                    (compiler_backend.compiler-backend-string-count loop needle))
                   0)))]
           [(compiler_backend.ResultCompilerBackend.Err _) false])]
       [(compiler_lower.ResultCompilerLower.Err _) false])))
@@ -22729,41 +22712,23 @@ g:
         ".L_abort")]
     (and
       (compiler_backend.backend-and8
+        (= (compiler_backend.compiler-backend-string-count avx2 "vpcmpgtq") 2)
+        (= (compiler_backend.compiler-backend-string-count avx2 "vpmovmskb") 4)
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view avx2)
-            "vpcmpgtq")
-          2)
-        (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view avx2)
-            "vpmovmskb")
-          4)
-        (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view avx2)
+            avx2
             "    jne .L_abort\n")
           1)
-        (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view avx2)
-            "    testl ")
-          1)
+        (= (compiler_backend.compiler-backend-string-count avx2 "    testl ") 1)
         (not
           (compiler_backend.compiler-backend-string-contains? avx2 "    cmpq "))
         (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view avx512)
-            "vpcmpuq $6")
+          (compiler_backend.compiler-backend-string-count avx512 "vpcmpuq $6")
           2)
+        (= (compiler_backend.compiler-backend-string-count avx512 "kmovw") 2)
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view avx512)
-            "kmovw")
-          2)
-        (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view avx512)
+            avx512
             "    jne .L_abort\n")
           1))
       (= (compiler_backend.compiler-backend-string-count avx512 "    testl ") 1))))
@@ -22948,12 +22913,12 @@ g:
       (and
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "call _tl_side_effect")
           2)
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    vmovdqu -64(%rbp), %ymm14\n")
           2)
         (not
@@ -24708,32 +24673,14 @@ g:
       (and
         (compiler_backend.backend-and8
           (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              widen)
+            (compiler_backend.compiler-backend-string-count asm widen)
             (match elem-ty
               [(compiler_ast_types.AstType.U8) 9]
               [_ 8]))
-          (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              shift)
-            4)
-          (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              "vpackusdw")
-            2)
-          (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              "vpackuswb")
-            1)
-          (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              "vpermd")
-            1)
+          (= (compiler_backend.compiler-backend-string-count asm shift) 4)
+          (= (compiler_backend.compiler-backend-string-count asm "vpackusdw") 2)
+          (= (compiler_backend.compiler-backend-string-count asm "vpackuswb") 1)
+          (= (compiler_backend.compiler-backend-string-count asm "vpermd") 1)
           (let
             [needle
               (str_cat.str-cat
@@ -24749,30 +24696,24 @@ g:
                 ", %rsp\n")]
             (compiler_backend.compiler-backend-string-contains? asm needle))
           (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              "vpsrld $24")
+            (compiler_backend.compiler-backend-string-count asm "vpsrld $24")
             1))
         (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
-            "movl $50462976")
+          (compiler_backend.compiler-backend-string-count asm "movl $50462976")
           1)
         (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
-            "movl $117835012")
+          (compiler_backend.compiler-backend-string-count asm "movl $117835012")
           1)
         (if avx512
           (and
             (=
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "movl $185207048")
               1)
             (=
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "movl $252579084")
               1)
             (compiler_backend.compiler-backend-string-contains?
@@ -24784,12 +24725,12 @@ g:
           (and
             (=
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "movl $185207048")
               0)
             (=
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "movl $252579084")
               0)
             (compiler_backend.compiler-backend-string-contains?
@@ -24885,26 +24826,10 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.backend-and8
-          (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              (owned_view.compiler-owned-shared-view widen))
-            4)
-          (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              shift)
-            2)
-          (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              "vpackusdw")
-            1)
-          (=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              "vpermq")
-            1)
+          (= (compiler_backend.compiler-backend-string-count asm widen) 4)
+          (= (compiler_backend.compiler-backend-string-count asm shift) 2)
+          (= (compiler_backend.compiler-backend-string-count asm "vpackusdw") 1)
+          (= (compiler_backend.compiler-backend-string-count asm "vpermq") 1)
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    subq $128, %rsp\n")
@@ -25265,27 +25190,27 @@ g:
                   (compiler_backend.backend-and8
                     (=
                       (compiler_backend.compiler-backend-string-count
-                        (owned_view.compiler-owned-shared-view loop)
+                        loop
                         "    movq 0(")
                       0)
                     (=
                       (compiler_backend.compiler-backend-string-count
-                        (owned_view.compiler-owned-shared-view loop)
+                        loop
                         "    movq (%")
                       0)
                     (=
                       (compiler_backend.compiler-backend-string-count
-                        (owned_view.compiler-owned-shared-view loop)
+                        loop
                         "    vmovdqu (")
                       1)
                     (=
                       (compiler_backend.compiler-backend-string-count
-                        (owned_view.compiler-owned-shared-view loop)
+                        loop
                         "    vpaddq (")
                       0)
                     (=
                       (compiler_backend.compiler-backend-string-count
-                        (owned_view.compiler-owned-shared-view loop)
+                        loop
                         "    vmovdqu %ymm6")
                       1)
                     (compiler_backend.compiler-backend-string-contains?
@@ -25296,7 +25221,7 @@ g:
                       "foreach_tail")
                     (=
                       (compiler_backend.compiler-backend-string-count
-                        (owned_view.compiler-owned-shared-view loop)
+                        loop
                         "    vpaddq %ymm6, %ymm6, %ymm6")
                       1))
                   (not
@@ -26975,11 +26900,7 @@ g:
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (=
-      (compiler_backend.compiler-backend-string-count
-        (owned_view.compiler-owned-shared-view asm)
-        "    .globl ")
-      26)
+    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 26)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -26988,11 +26909,7 @@ g:
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (=
-      (compiler_backend.compiler-backend-string-count
-        (owned_view.compiler-owned-shared-view asm)
-        "    .globl ")
-      29)
+    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 29)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
@@ -27004,20 +26921,12 @@ g:
   [target : compiler_backend.CompilerBackendTarget]
   [asm : String]) : bool
   (and
-    (=
-      (compiler_backend.compiler-backend-string-count
-        (owned_view.compiler-owned-shared-view asm)
-        "    lock ")
-      14)
+    (= (compiler_backend.compiler-backend-string-count asm "    lock ") 14)
     (if (compiler_backend.compiler-backend-target-windows? target)
       (and
         ;; tl_array_zero reads the current arena once for its virgin-arena
         ;; zero-fill skip; the remaining reads are the allocator/region paths.
-        (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
-            "%gs:0x28")
-          23)
+        (= (compiler_backend.compiler-backend-string-count asm "%gs:0x28") 23)
         (=
           (compiler_backend.compiler-backend-string-count
             asm
@@ -27026,7 +26935,7 @@ g:
       (and
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "%fs:tl_current_arena@tpoff")
           21)
         (= (compiler_backend.compiler-backend-string-count asm "%gs:0x28") 0)))))
@@ -27099,22 +27008,20 @@ g:
       (compiler_backend.backend-and4
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $9, %rax\n    syscall\n")
           7)
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $11, %rax\n    syscall\n")
           5)
         (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
-            "    syscall\n")
+          (compiler_backend.compiler-backend-string-count asm "    syscall\n")
           16)
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq $60, %rax\n    movq $134, %rdi\n    syscall\n")
           3))
       (compiler_backend.compiler-backend-string-contains?
@@ -27164,23 +27071,23 @@ g:
         (and
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call VirtualAlloc\n")
             13)
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call GetLastError\n")
             13))
         (and
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call VirtualFree\n")
             12)
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call tl_windows_allocation_abort\n")
             13))
         (not
@@ -27190,7 +27097,7 @@ g:
         (and
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call WriteFile\n")
             2)
           (not
@@ -27267,12 +27174,12 @@ g:
         (and
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view windows)
+              windows
               "    call VirtualFree\n    movq %rsi, 40(%rsp)\n")
             1)
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view windows)
+              windows
               "    call VirtualFree\n    movq -48(%rbp), %rax\n    movq -40(%rbp), %r8\n    movq %rax, 40(%rsp)\n")
             2)
           (compiler_backend.compiler-backend-string-contains?
@@ -27962,7 +27869,7 @@ g:
       (and
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %r10\n")
           1)
         (compiler_backend.compiler-backend-string-contains?
@@ -28022,7 +27929,7 @@ g:
       (and
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %r10\n")
           1)
         (compiler_backend.compiler-backend-string-contains?
@@ -28213,7 +28120,7 @@ g:
       (and
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    movq -8(%rbp), %r10\n")
           1)
         (compiler_backend.compiler-backend-string-contains?
@@ -32817,11 +32724,7 @@ g:
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    jae .Ltest_cast_cast_float_u64_entry_v1_high\n")
-        (=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
-            convert)
-          2)
+        (= (compiler_backend.compiler-backend-string-count asm convert) 2)
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    btsq $63, ")
@@ -33451,7 +33354,7 @@ g:
         (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_alloc\n")
           0)
         (compiler_backend.compiler-backend-string-contains?
@@ -33488,9 +33391,7 @@ g:
             body
             "make_array_len_ok")
           (>=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view body)
-              "    cmpq ")
+            (compiler_backend.compiler-backend-string-count body "    cmpq ")
             2)
           (=
             (compiler_backend.compiler-backend-string-count body "    cmpl ")
@@ -33558,7 +33459,7 @@ g:
               "    movb $0xA5, %al\n")
             (>=
               (compiler_backend.compiler-backend-string-count
-                (owned_view.compiler-owned-shared-view asm)
+                asm
                 "    rep stosb\n")
               4))]
         [no-externs : bool
@@ -34386,7 +34287,7 @@ g:
             "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n")
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_f64_sign_bit:\n")
             1)
           (compiler_backend.compiler-backend-string-contains?
@@ -34517,7 +34418,7 @@ g:
             "    xorpd .L_tl_f32_sign_bit(%rip), %xmm2\n")
           (=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               ".L_tl_f32_sign_bit:\n")
             1)
           (compiler_backend.compiler-backend-string-contains?
@@ -41527,9 +41428,7 @@ g:
       (compiler_backend.backend-and8
         (or
           (>=
-            (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
-              ".globl _tl_f")
+            (compiler_backend.compiler-backend-string-count asm ".globl _tl_f")
             2)
           (and
             (compiler_backend.compiler-backend-string-contains?
@@ -41546,7 +41445,7 @@ g:
         (or
           (>=
             (compiler_backend.compiler-backend-string-count
-              (owned_view.compiler-owned-shared-view asm)
+              asm
               "    call _tl_f")
             2)
           (and
@@ -42319,7 +42218,7 @@ g:
       (compiler_backend.backend-and4
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_alloc\n")
           0)
         (compiler_backend.compiler-backend-string-contains? asm "    leaq -")
@@ -42337,7 +42236,7 @@ g:
       (compiler_backend.backend-and4
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_alloc\n")
           0)
         (compiler_backend.compiler-backend-string-contains? asm "    leaq -")
@@ -42381,7 +42280,7 @@ g:
       (compiler_backend.backend-and4
         (=
           (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
+            asm
             "    call tl_alloc\n")
           0)
         (compiler_backend.compiler-backend-string-contains? asm "main:\n")
@@ -42425,11 +42324,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and4
         (compiler_backend.compiler-backend-string-contains? asm "main:\n")
-        (>=
-          (compiler_backend.compiler-backend-string-count
-            (owned_view.compiler-owned-shared-view asm)
-            "    call ")
-          6)
+        (>= (compiler_backend.compiler-backend-string-count asm "    call ") 6)
         ;; sret ABI: aggregate args/returns pass by caller slot pointer
         ;; and inline construction is stack storage -- no arena allocation.
         (=

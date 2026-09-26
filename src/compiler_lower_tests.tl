@@ -3602,7 +3602,7 @@
 
 (define (lower-test-value-function-count
   [value : compiler_ir_types.CompilerIrValue]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (match value
     [(compiler_ir_types.CompilerIrValue.Function found)
       (if (string.eq (compiler_ir_types.compiler-ir-symbol-text found) name)
@@ -3612,16 +3612,14 @@
 
 (define (lower-test-call-args-function-count
   [args : compiler_ir_types.CompilerIrCallArgs]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (match args
     [(compiler_ir_types.CompilerIrCallArgs.Nil) 0]
     [(compiler_ir_types.CompilerIrCallArgs.One value)
       (lower-test-value-function-count value name)]
     [(compiler_ir_types.CompilerIrCallArgs.Two a b)
       (+
-        (lower-test-value-function-count
-          a
-          (owned_view.compiler-owned-shared-view name))
+        (lower-test-value-function-count a name)
         (lower-test-value-function-count b name))]
     [(compiler_ir_types.CompilerIrCallArgs.Array values)
       (lower-test-call-args-array-function-count values name 0)]
@@ -3630,19 +3628,19 @@
 
 (define (lower-test-call-args-array-function-count
   [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]
-  [name : String]
+  [name : (& name str)]
   [index : i64]) : i64
   (if (>= index (array-length values))
     0
     (+
       (lower-test-value-function-count
         (compiler_ir_types.compiler-ir-array-shared-view values index)
-        (owned_view.compiler-owned-shared-view name))
+        name)
       (lower-test-call-args-array-function-count values name (+ index 1)))))
 
 (define (lower-test-instr-return-function-count
   [instr : compiler_ir_types.CompilerIrInstr]
-  [function-name : String]) : i64
+  [function-name : (& function-name str)]) : i64
   (match instr
     [(compiler_ir_types.CompilerIrInstr.Return maybe-value)
       (match maybe-value
@@ -3653,7 +3651,7 @@
 
 (define (lower-test-instr-indirect-callee-function-count
   [instr : compiler_ir_types.CompilerIrInstr]
-  [function-name : String]) : i64
+  [function-name : (& function-name str)]) : i64
   (match instr
     [(compiler_ir_types.CompilerIrInstr.CallIndirect _ func _ _)
       (lower-test-value-function-count func function-name)]
@@ -3663,8 +3661,8 @@
 
 (define (lower-test-instr-call-arg-function-count
   [instr : compiler_ir_types.CompilerIrInstr]
-  [call-name : String]
-  [function-name : String]) : i64
+  [call-name : (& call-name str)]
+  [function-name : (& function-name str)]) : i64
   (match instr
     [(compiler_ir_types.CompilerIrInstr.Call _ found args _)
       (if (string.eq
@@ -3676,7 +3674,7 @@
 
 (define (lower-test-instr-tail-call-count
   [instr : compiler_ir_types.CompilerIrInstr]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (match instr
     [(compiler_ir_types.CompilerIrInstr.TailCall call-name _ _)
       (if (string.eq (compiler_ir_types.compiler-ir-symbol-text call-name) name)
@@ -4096,7 +4094,7 @@
 
 (define (lower-test-instr-store-global-count
   [instr : compiler_ir_types.CompilerIrInstr]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (match instr
     [(compiler_ir_types.CompilerIrInstr.Store store-name _ _)
       (if (string.eq
@@ -4108,7 +4106,7 @@
 
 (define (lower-test-instr-call-name?
   [instr : compiler_ir_types.CompilerIrInstr]
-  [name : String]) : bool
+  [name : (& name str)]) : bool
   (match instr
     [(compiler_ir_types.CompilerIrInstr.Call _ call-name _ _)
       (string.eq (compiler_ir_types.compiler-ir-symbol-text call-name) name)]
@@ -4318,8 +4316,8 @@
 
 (define (lower-test-instr-seq-call-before?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [first : String]
-  [second : String]) : bool
+  [first : (& first str)]
+  [second : (& second str)]) : bool
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
@@ -4335,13 +4333,11 @@
           (begin
             (if (lower-test-instr-call-name?
               (compiler_ir_types.compiler-ir-global-shared-view instr)
-              (compiler_ir_types.compiler-ir-global-shared-view second))
+              second)
               (begin
                 (set! result seen-first)
                 (set! done true))
-              (if (lower-test-instr-call-name?
-                instr
-                (compiler_ir_types.compiler-ir-global-shared-view first))
+              (if (lower-test-instr-call-name? instr first)
                 (set! seen-first true)
                 unit))
             (set! index (+ index 1)))))
@@ -4463,7 +4459,7 @@
 
 (define (lower-test-instr-seq-return-function-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [function-name : String]) : i64
+  [function-name : (& function-name str)]) : i64
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
@@ -4478,13 +4474,13 @@
               acc
               (lower-test-instr-return-function-count
                 (compiler_ir_types.compiler-ir-array-shared-view slots index)
-                (owned_view.compiler-owned-shared-view function-name))))
+                function-name)))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-indirect-callee-function-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [function-name : String]) : i64
+  [function-name : (& function-name str)]) : i64
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
@@ -4499,14 +4495,14 @@
               acc
               (lower-test-instr-indirect-callee-function-count
                 (compiler_ir_types.compiler-ir-array-shared-view slots index)
-                (owned_view.compiler-owned-shared-view function-name))))
+                function-name)))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-call-arg-function-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [call-name : String]
-  [function-name : String]) : i64
+  [call-name : (& call-name str)]
+  [function-name : (& function-name str)]) : i64
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
@@ -4521,14 +4517,14 @@
               acc
               (lower-test-instr-call-arg-function-count
                 (compiler_ir_types.compiler-ir-array-shared-view slots index)
-                (owned_view.compiler-owned-shared-view call-name)
-                (owned_view.compiler-owned-shared-view function-name))))
+                call-name
+                function-name)))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-tail-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
@@ -4543,7 +4539,7 @@
               acc
               (lower-test-instr-tail-call-count
                 (compiler_ir_types.compiler-ir-array-shared-view slots index)
-                (compiler_ir_types.compiler-ir-global-shared-view name))))
+                name)))
           (set! index (+ index 1))))
       acc)))
 
@@ -4920,7 +4916,7 @@
 
 (define (lower-test-instr-seq-store-global-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
@@ -4935,7 +4931,7 @@
               acc
               (lower-test-instr-store-global-count
                 (compiler_ir_types.compiler-ir-array-shared-view slots index)
-                (compiler_ir_types.compiler-ir-global-shared-view name))))
+                name)))
           (set! index (+ index 1))))
       acc)))
 
@@ -5112,17 +5108,14 @@
 
 (define (lower-test-blocks-call-before?
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [first : String]
-  [second : String]) : bool
+  [first : (& first str)]
+  [second : (& second str)]) : bool
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) false]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (if (lower-test-instr-seq-call-before?
-            instrs
-            (compiler_ir_types.compiler-ir-global-shared-view first)
-            (compiler_ir_types.compiler-ir-global-shared-view second))
+          (if (lower-test-instr-seq-call-before? instrs first second)
             true
             (lower-test-blocks-call-before? (deref rest) first second))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -5217,16 +5210,14 @@
 
 (define (lower-test-blocks-return-function-count
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [function-name : String]) : i64
+  [function-name : (& function-name str)]) : i64
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-return-function-count
-              instrs
-              (compiler_ir_types.compiler-ir-global-shared-view function-name))
+            (lower-test-instr-seq-return-function-count instrs function-name)
             (lower-test-blocks-return-function-count (deref rest) function-name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-return-function-count
@@ -5235,7 +5226,7 @@
 
 (define (lower-test-blocks-indirect-callee-function-count
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [function-name : String]) : i64
+  [function-name : (& function-name str)]) : i64
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
@@ -5244,7 +5235,7 @@
           (+
             (lower-test-instr-seq-indirect-callee-function-count
               instrs
-              (owned_view.compiler-owned-shared-view function-name))
+              function-name)
             (lower-test-blocks-indirect-callee-function-count
               (deref rest)
               function-name))])]
@@ -5255,8 +5246,8 @@
 
 (define (lower-test-blocks-call-arg-function-count
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [call-name : String]
-  [function-name : String]) : i64
+  [call-name : (& call-name str)]
+  [function-name : (& function-name str)]) : i64
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
@@ -5265,8 +5256,8 @@
           (+
             (lower-test-instr-seq-call-arg-function-count
               instrs
-              (owned_view.compiler-owned-shared-view call-name)
-              (owned_view.compiler-owned-shared-view function-name))
+              call-name
+              function-name)
             (lower-test-blocks-call-arg-function-count
               (deref rest)
               call-name
@@ -5279,16 +5270,14 @@
 
 (define (lower-test-blocks-tail-call-count
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-tail-call-count
-              instrs
-              (compiler_ir_types.compiler-ir-global-shared-view name))
+            (lower-test-instr-seq-tail-call-count instrs name)
             (lower-test-blocks-tail-call-count (deref rest) name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-tail-call-count
@@ -5582,16 +5571,14 @@
 
 (define (lower-test-blocks-store-global-count
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-store-global-count
-              instrs
-              (compiler_ir_types.compiler-ir-global-shared-view name))
+            (lower-test-instr-seq-store-global-count instrs name)
             (lower-test-blocks-store-global-count (deref rest) name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-store-global-count
@@ -5823,7 +5810,7 @@
 
 (define (lower-test-functions-tail-call-count
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (let
     [index : i64 0]
     [count : i64 0]
@@ -5836,11 +5823,7 @@
             [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set!
                 count
-                (+
-                  count
-                  (lower-test-blocks-tail-call-count
-                    blocks
-                    (compiler_ir_types.compiler-ir-global-shared-view name))))])
+                (+ count (lower-test-blocks-tail-call-count blocks name)))])
           (set! index (+ index 1))))
       count)))
 
@@ -5951,7 +5934,7 @@
 (define (lower-test-function-return-function-count
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
-  [function-name : String]) : i64
+  [function-name : (& function-name str)]) : i64
   (match (lower-test-function-seq-find funcs name)
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
@@ -5962,7 +5945,7 @@
 (define (lower-test-function-indirect-callee-function-count
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
-  [function-name : String]) : i64
+  [function-name : (& function-name str)]) : i64
   (match (lower-test-function-seq-find funcs name)
     [(LowerTestMaybeFunction.No) (- 0 1)]
     [(LowerTestMaybeFunction.Some func)
@@ -6084,7 +6067,7 @@
 
 (define (lower-test-instr-seq-distinct-arg-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [call-name : String]) : i64
+  [call-name : (& call-name str)]) : i64
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
@@ -6106,16 +6089,14 @@
 
 (define (lower-test-blocks-distinct-arg-call-count
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [call-name : String]) : i64
+  [call-name : (& call-name str)]) : i64
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-distinct-arg-call-count
-              instrs
-              (owned_view.compiler-owned-shared-view call-name))
+            (lower-test-instr-seq-distinct-arg-call-count instrs call-name)
             (lower-test-blocks-distinct-arg-call-count (deref rest) call-name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-distinct-arg-call-count
@@ -6376,7 +6357,7 @@
 
 (define (lower-test-dispatch-cache-word-at?
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [name : String]
+  [name : (& name str)]
   [index : i64]) : bool
   (if (>= index globals.len)
     false
@@ -6397,7 +6378,7 @@
 
 (define (lower-test-dispatch-cache-word?
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [name : String]) : bool
+  [name : (& name str)]) : bool
   (lower-test-dispatch-cache-word-at? globals name 0))
 
 (define (compiler-lower-defdispatch-thunk-shape-ok?) : bool
@@ -6415,9 +6396,7 @@
               "__tl_dispatch_variant_avx512_dot__dot-avx512"]
             [ok : bool true]
             (begin
-              (if (lower-test-dispatch-cache-word?
-                globals
-                (owned_view.compiler-owned-shared-view cache-name))
+              (if (lower-test-dispatch-cache-word? globals cache-name)
                 unit
                 (set! ok false))
               (if (lower-test-function-defined?
@@ -9724,7 +9703,7 @@
                 (lower-test-function-return-function-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "get-fn"
-                  (owned_view.compiler-owned-shared-view lambda-name))
+                  lambda-name)
                 1)
               (> (lower-test-function-binop-count functions lambda-name) 0)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -9751,7 +9730,7 @@
                 (lower-test-function-indirect-callee-function-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "main"
-                  (owned_view.compiler-owned-shared-view lambda-name))
+                  lambda-name)
                 1)
               (=
                 (lower-test-function-call-count functions "main" lambda-name)
@@ -12861,7 +12840,7 @@
 
 (define (compiler-lower-imported-spmd-selection-error-contains?
   [result : compiler_lower.ResultLowerImportedSpmdSpecialization]
-  [fragment : String]) : bool
+  [fragment : (& fragment str)]) : bool
   (match result
     [(compiler_lower.ResultLowerImportedSpmdSpecialization.Ok _) false]
     [(compiler_lower.ResultLowerImportedSpmdSpecialization.Err diag)
@@ -12869,7 +12848,7 @@
         [message : String
           (compiler_diagnostic.compiler-diagnostic-message
             (__tl-box-place diag))]
-        (string.contains (& message) (& fragment)))]))
+        (string.contains (& message) fragment))]))
 
 ;; Selection, generated linker-name canonicalization, source metadata, and
 ;; diagnostic spans all belong to the caller's compile job. A same-shaped
@@ -13183,8 +13162,7 @@
             0
             (compiler_ast_types.AstType.I64)
             (owned_view.compiler-owned-shared-view origin))
-          (owned_view.compiler-owned-shared-view
-            specialization-message-fragment))
+          specialization-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)

@@ -97,6 +97,8 @@
 
 (include-str-lzss payload-string "../stdlib/string.tl")
 
+(include-str-lzss payload-string-utf8 "../stdlib/string_utf8.tl")
+
 (include-str-lzss payload-str-cat "../stdlib/str_cat.tl")
 
 (include-str-lzss payload-str-cat-runtime "../stdlib/str_cat_runtime.tl")
@@ -233,6 +235,8 @@
       (compiler-embedded-stdlib-payload-copy payload-sync)]
     [(string.eq suffix "string.tl")
       (compiler-embedded-stdlib-payload-copy payload-string)]
+    [(string.eq suffix "string_utf8.tl")
+      (compiler-embedded-stdlib-payload-copy payload-string-utf8)]
     [(string.eq suffix "str_cat.tl")
       (compiler-embedded-stdlib-payload-copy payload-str-cat)]
     [(string.eq suffix "str_cat_runtime.tl")

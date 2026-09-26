@@ -255,6 +255,7 @@ set.tl
 sort.tl
 sync.tl
 string.tl
+string_utf8.tl
 string_caller_result.tl
 str_cat.tl
 str_cat_runtime.tl
@@ -308,6 +309,7 @@ stdlib/tests/format_precision_io.tl|42|printf:abc/   tr\n1.25/-0000.00\n|literal
 stdlib/tests/format_primitive_display.tl|42|-|-|-
 stdlib/tests/io_float_parse_exact.tl|42|-|-|-
 stdlib/tests/string_eq_lengths.tl|42|-|-|-
+stdlib/tests/string_utf8_api.tl|42|-|-|-
 stdlib/tests/http_head_codec.tl|42|-|-|-
 stdlib/tests/http_trailer.tl|42|-|-|-
 stdlib/tests/http_trailer_policy.tl|42|-|-|-

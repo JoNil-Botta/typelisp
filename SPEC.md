@@ -2540,6 +2540,14 @@ views. Borrowing a `String` place produces a `(& lifetime str)` view, and
 stdlib string helpers take borrowed-`str` inputs (for example `string-eq` and
 `substring` in `stdlib/string.tl`).
 
+UTF-8 validation is explicit: `stdlib.string_utf8.decode-at` decodes one
+Unicode scalar at a checked byte offset, and `validate` checks the complete
+input through that same decoder. Both borrow `str`, allocate no storage, and
+return structured failures without replacement. The exact error kinds and
+byte-offset contract are documented in [stdlib/README.md](stdlib/README.md).
+This does not change the byte-sized `char`, byte indexing, or arbitrary-byte
+`String`/`ByteBuf.to-string` contract.
+
 #### Source model
 
 - `String` is the owned text value type. It is immutable, move-only, and may

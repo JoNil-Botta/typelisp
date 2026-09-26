@@ -34,7 +34,7 @@
 
 (define compiler-build-git-hash : String
   (string.substring
-    (compiler-build-identity-global-shared-view compiler-build-git-hash-raw)
+    compiler-build-git-hash-raw
     0
     (compiler-build-identity-trim-length
       compiler-build-git-hash-raw

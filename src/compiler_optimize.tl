@@ -363,28 +363,6 @@
             unit))
         func)]))
 
-(define (compiler-opt-debug-observe-blocks
-  [type-segment-bases : i64]
-  [pass : String]
-  [name : i64]
-  [params : ir.CompilerIrParamSeq]
-  [ret-ty : ast.AstType]
-  [frame : i64]
-  [blocks : ir.CompilerIrBlockList]
-  [function-abi : ir.CompilerIrFunctionAbi]) : ir.CompilerIrBlockList
-  (begin
-    (compiler-opt-debug-observe-function
-      type-segment-bases
-      pass
-      (ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        (compiler-opt-global-shared-view blocks)
-        function-abi))
-    blocks))
-
 (defenum OptAggregatePointer
   (Pointer i64 i64))
 
@@ -926,6 +904,26 @@
             "|"
             name
             "\n"))))))
+
+;; Time `body` as the `phase` row of one function's arena escape.
+(defmacro (compiler-opt-profile-escape-stage
+  [phase : Expr]
+  [level : Expr]
+  [name : Expr]
+  [body : Expr]) : Expr
+  `(let
+    [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
+    [result ,body]
+    (begin
+      (cfg
+        compile-profile
+        (compiler-opt-profile-escape-finish
+          ,phase
+          ,level
+          (compiler-opt-global-shared-view ,name)
+          start-ms)
+        unit)
+      result)))
 
 (cfg
   compile-profile
@@ -12188,6 +12186,49 @@
           (opt-function-rewrite-unchanged original original-context)])
       (opt-function-rewrite-unchanged original original-context))))
 
+(define (opt-function-ctx-commit
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [plan : OptBlockRewriteResult]) : OptFunctionCtxResult
+  (opt-function-rewrite-ctx-result
+    (opt-function-rewrite-commit func context plan)))
+
+;; The loop passes' form: no candidate precheck, and the context is handed on
+;; without the changed flag.
+(defmacro (opt-loop-function-rewrite
+  [func : Expr]
+  [context : Expr]
+  [verified? : Expr]
+  [rewrite : Expr]) : Expr
+  `(opt-function-rewrite-ctx-result
+    (opt-branch-function-rewrite ,func ,context ,verified? true ,rewrite)))
+
+(define (opt-function-rewrite-ctx-result [result : OptFunctionRewriteResult]) : OptFunctionCtxResult
+  (match result
+    [(OptFunctionRewriteResult.Result next next-context _)
+      (OptFunctionCtxResult.Result next next-context)]))
+
+;; The commit for a pass that runs where no context is threaded: the rewrite is
+;; kept only when the verifier accepts it on its own.
+(define (opt-function-pass-commit
+  [func : ir.CompilerIrFunction]
+  [plan : OptBlockRewriteResult]) : OptFunctionPassResult
+  (match plan
+    [(OptBlockRewriteResult.Result blocks frame changed?)
+      (if (not changed?)
+        (OptFunctionPassResult.Result func false)
+        (let
+          [next : ir.CompilerIrFunction
+            (opt-function-with-frame-blocks
+              (compiler-opt-global-shared-view func)
+              frame
+              blocks)]
+          (match (opt-verify-function (compiler-opt-global-shared-view next))
+            [(ResultCompilerOptimizeVerify.Ok)
+              (OptFunctionPassResult.Result next true)]
+            [(ResultCompilerOptimizeVerify.Err _)
+              (OptFunctionPassResult.Result func false)])))]))
+
 (define (opt-cfg-context-all-blocks-reachable?
   [context : (& context OptCfgContext)]) : bool
   (let
@@ -15631,9 +15672,6 @@
 
 (define (opt-ssa-construct-materialized-with-context-result
   [fallback : ir.CompilerIrFunction]
-  [name : i64]
-  [params : ir.CompilerIrParamSeq]
-  [ret-ty : ast.AstType]
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
   [facts : OptSsaFacts]
@@ -15650,23 +15688,10 @@
             renamed
             outs
             sites)]
-        [next : ir.CompilerIrFunction
-          (ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            next-frame
-            (compiler-opt-global-shared-view next-blocks)
-            (ir.compiler-ir-function-abi
-              (compiler-opt-global-shared-view fallback)))]
-        [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-        (match (opt-verify-function-with-context
-          (compiler-opt-global-shared-view next)
-          next-context)
-          [(ResultCompilerOptimizeVerify.Ok)
-            (OptFunctionCtxResult.Result next next-context)]
-          [(ResultCompilerOptimizeVerify.Err _)
-            (OptFunctionCtxResult.Result fallback context)]))]))
+        (opt-function-ctx-commit
+          fallback
+          context
+          (OptBlockRewriteResult.Result next-blocks next-frame true)))]))
 
 ;; True when the entry block has an explicit CFG predecessor (e.g. the
 ;; tail-recursion-to-loop back edge jumps to the function entry block).
@@ -15819,9 +15844,7 @@
 
 (define (opt-ssa-construct-with-context-result
   [func : ir.CompilerIrFunction]
-  [name : i64]
   [params : ir.CompilerIrParamSeq]
-  [ret-ty : ast.AstType]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]
   [facts : OptSsaFacts]
@@ -15838,9 +15861,6 @@
       [(OptSsaPhiInsertState.State sites phi-next _ _ _)
         (opt-ssa-construct-materialized-with-context-result
           func
-          name
-          (compiler-opt-global-shared-view params)
-          ret-ty
           (compiler-opt-global-shared-view blocks)
           (compiler-opt-global-shared-view context)
           (compiler-opt-global-shared-view facts)
@@ -15863,7 +15883,7 @@
   [entry-context : OptCfgContext]
   [entry-context-valid? : bool]) : OptFunctionCtxResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks _)
+    [(ir.CompilerIrFunction.Function _ params _ frame blocks _)
       (let
         [context : OptCfgContext
           (if entry-context-valid?
@@ -15901,9 +15921,7 @@
               [else
                 (opt-ssa-construct-with-context-result
                   func
-                  name
                   params
-                  ret-ty
                   frame
                   blocks
                   facts
@@ -29058,112 +29076,81 @@
   [late? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+  ;; LICM may hoist into a synthesized preheader edge, so a rewrite gets one
+  ;; fresh context; nothing hoisted keeps the input context.
   ;; LICM-GDP: the data-slot kind follows the round (see
   ;; opt-licm-global-data-slot-on).
   (set! opt-licm-global-data-slot-on late?)
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
-            blocks
-            function-abi)
-          (let
-            ;; ALIAS-2: the name every `licm-refuse|` line is attributed to.
-            ;; Recorded through the trace guard, so an ordinary compile pays
-            ;; one boolean test per function.
-            [_refuse-name : unit (opt-licm-trace-function! name)]
-            [loops : OptNaturalLoopList
-              (opt-cfg-natural-loops-with-context
-                (compiler-opt-global-shared-view blocks)
-                (compiler-opt-global-shared-view context))]
-            (if (not
-              (opt-licm-loops-may-change?
-                (not (= global-cells.word-cell 0))
-                late?
-                (compiler-opt-global-shared-view loops)))
-              (OptFunctionCtxResult.Result func context)
-              (let
-                [sources : OptValueSources
-                  (opt-gvn-sources-blocks
-                    (compiler-opt-global-shared-view blocks)
-                    (opt-gvn-sources-params
-                      (compiler-opt-global-shared-view params)
-                      (opt-value-sources-new)))]
-                [types : OptSsaVarTypes
-                  (opt-licm-type-env-from-function
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params _ frame blocks _)
+      (opt-loop-function-rewrite
+        func
+        (compiler-opt-global-shared-view context)
+        verified?
+        (let
+          ;; ALIAS-2: the name every `licm-refuse|` line is attributed to.
+          ;; Recorded through the trace guard, so an ordinary compile pays
+          ;; one boolean test per function.
+          [_refuse-name : unit (opt-licm-trace-function! name)]
+          [loops : OptNaturalLoopList
+            (opt-cfg-natural-loops-with-context
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view context))]
+          (if (not
+            (opt-licm-loops-may-change?
+              (not (= global-cells.word-cell 0))
+              late?
+              (compiler-opt-global-shared-view loops)))
+            (OptBlockRewriteResult.Result blocks frame false)
+            (let
+              [sources : OptValueSources
+                (opt-gvn-sources-blocks
+                  (compiler-opt-global-shared-view blocks)
+                  (opt-gvn-sources-params
                     (compiler-opt-global-shared-view params)
-                    (compiler-opt-global-shared-view blocks))]
-                [provenance : OptLicmStoreState
-                  (opt-licm-provenance-state-from-function
-                    type-segment-bases
-                    (compiler-opt-global-shared-view params)
-                    types
-                    return-alias
-                    (compiler-opt-global-shared-view blocks))]
-                [deref-facts : OptLicmDerefFacts
-                  (opt-licm-deref-facts
-                    (compiler-opt-global-shared-view sources)
-                    (compiler-opt-global-shared-view global-cells)
-                    (compiler-opt-global-shared-view context.index)
-                    frame
-                    (compiler-opt-global-shared-view blocks))]
-                ;; Loop-scope global promotion mints fresh vars, so the pass
-                ;; carries the frame counter in a cell and writes the final
-                ;; value back into the rewritten function.
-                [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-                [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
-                (match (opt-licm-apply-loops
+                    (opt-value-sources-new)))]
+              [types : OptSsaVarTypes
+                (opt-licm-type-env-from-function
+                  (compiler-opt-global-shared-view params)
+                  (compiler-opt-global-shared-view blocks))]
+              [provenance : OptLicmStoreState
+                (opt-licm-provenance-state-from-function
                   type-segment-bases
-                  sources
+                  (compiler-opt-global-shared-view params)
                   types
-                  provenance
-                  direct-call-clean
-                  global-cells
-                  (&mut frame-cell)
-                  late?
-                  deref-facts
-                  (compiler-opt-global-shared-view context)
-                  (compiler-opt-global-shared-view loops)
-                  loops
-                  blocks)
-                  [(OptBlockListPassResult.Result hoisted-blocks licm-changed?)
-                    (if (not licm-changed?)
-                      ;; Nothing hoisted: the input context still describes the
-                      ;; unchanged CFG, so skip the context rebuild and the
-                      ;; post-pass verify entirely.
-                      (OptFunctionCtxResult.Result func context)
-                      (let
-                        [hoisted : ir.CompilerIrFunction
-                          (ir.CompilerIrFunction.Function
-                            name
-                            params
-                            ret-ty
-                            (array-ref frame-cell 0)
-                            (compiler-opt-global-shared-view hoisted-blocks)
-                            function-abi)]
-                        ;; LICM may hoist into a synthesized preheader edge, so build
-                        ;; one fresh context for the rewritten CFG, reuse it for the
-                        ;; post-pass verify, and hand it back for the next pass.
-                        [hoisted-context : OptCfgContext
-                          (opt-cfg-context-build hoisted-blocks)]
-                        (match (opt-verify-function-with-context
-                          (compiler-opt-global-shared-view hoisted)
-                          hoisted-context)
-                          [(ResultCompilerOptimizeVerify.Ok)
-                            (OptFunctionCtxResult.Result
-                              hoisted
-                              hoisted-context)]
-                          [(ResultCompilerOptimizeVerify.Err _)
-                            (OptFunctionCtxResult.Result func context)])))]))))])]
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]))
+                  return-alias
+                  (compiler-opt-global-shared-view blocks))]
+              [deref-facts : OptLicmDerefFacts
+                (opt-licm-deref-facts
+                  (compiler-opt-global-shared-view sources)
+                  (compiler-opt-global-shared-view global-cells)
+                  (compiler-opt-global-shared-view context.index)
+                  frame
+                  (compiler-opt-global-shared-view blocks))]
+              ;; Loop-scope global promotion mints fresh vars, so the pass
+              ;; carries the frame counter in a cell and writes the final
+              ;; value back into the rewritten function.
+              [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+              [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
+              (match (opt-licm-apply-loops
+                type-segment-bases
+                sources
+                types
+                provenance
+                direct-call-clean
+                global-cells
+                (&mut frame-cell)
+                late?
+                deref-facts
+                (compiler-opt-global-shared-view context)
+                (compiler-opt-global-shared-view loops)
+                loops
+                blocks)
+                [(OptBlockListPassResult.Result hoisted-blocks licm-changed?)
+                  (OptBlockRewriteResult.Result
+                    hoisted-blocks
+                    (array-ref frame-cell 0)
+                    licm-changed?)])))))]))
 
 (define (opt-licm-function-with-direct-call-clean
   [type-segment-bases : i64]
@@ -31194,67 +31181,42 @@
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params _ frame blocks _)
+      (opt-loop-function-rewrite
+        func
+        (compiler-opt-global-shared-view context)
+        verified?
+        (let
+          [loops : OptNaturalLoopList
+            (opt-cfg-natural-loops-with-context
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view context))]
+          (match (opt-licm-unswitch-loops
             blocks
-            function-abi)
-          (let
-            [loops : OptNaturalLoopList
-              (opt-cfg-natural-loops-with-context
-                (compiler-opt-global-shared-view blocks)
-                (compiler-opt-global-shared-view context))]
-            (match (opt-licm-unswitch-loops
-              blocks
-              context
-              (compiler-opt-global-shared-view loops)
-              loops
-              (compiler-opt-global-shared-view params)
-              frame)
-              [(OptUnrollResult.Result next next-frame changed)
-                (if (not changed)
-                  (OptFunctionCtxResult.Result func context)
-                  (let
-                    [_trace : unit
-                      (if (and
-                        compiler-opt-debug-trace-passes
-                        (not compiler-opt-debug-suppressed?))
-                        (io.print-error
-                          (str_cat.str-cat
-                            (str_cat.str-cat
-                              "licm-unswitch|"
-                              (ir.compiler-ir-symbol-text name))
-                            "|unswitched\n"))
-                        unit)]
-                    [simplified : ir.CompilerIrBlockList
-                      (opt-cfg-simplify-blocks next)]
-                    [rewritten : ir.CompilerIrFunction
-                      (ir.CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        next-frame
-                        (compiler-opt-global-shared-view simplified)
-                        function-abi)]
-                    [next-context : OptCfgContext
-                      (opt-cfg-context-build simplified)]
-                    (match (opt-verify-function-with-context
-                      (compiler-opt-global-shared-view rewritten)
-                      next-context)
-                      [(ResultCompilerOptimizeVerify.Ok)
-                        (OptFunctionCtxResult.Result rewritten next-context)]
-                      [(ResultCompilerOptimizeVerify.Err _)
-                        (OptFunctionCtxResult.Result func context)])))]))])]))
+            context
+            (compiler-opt-global-shared-view loops)
+            loops
+            (compiler-opt-global-shared-view params)
+            frame)
+            [(OptUnrollResult.Result next next-frame changed)
+              (if (not changed)
+                (OptBlockRewriteResult.Result next next-frame false)
+                (begin
+                  (if (and
+                    compiler-opt-debug-trace-passes
+                    (not compiler-opt-debug-suppressed?))
+                    (io.print-error
+                      (str_cat.str-cat
+                        (str_cat.str-cat
+                          "licm-unswitch|"
+                          (ir.compiler-ir-symbol-text name))
+                        "|unswitched\n"))
+                    unit)
+                  (OptBlockRewriteResult.Result
+                    (opt-cfg-simplify-blocks next)
+                    next-frame
+                    true)))])))]))
 
 ;; Run specialization only after the opt2 fixpoint. Besides avoiding repeated
 ;; cloning, this preserves the deliberately split false-path parameter copies:
@@ -33603,54 +33565,25 @@
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
-            blocks
-            function-abi)
-          (match (opt-induction-apply-loops
-            type-segment-bases
-            (__tl-project-field context index)
-            (opt-cfg-natural-loops-with-context
-              (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view context))
-            blocks
-            frame
-            false)
-            [(OptInductionApplyResult.Result next-blocks next-frame changed)
-              (if changed
-                (let
-                  [next : ir.CompilerIrFunction
-                    (ir.CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      next-frame
-                      (compiler-opt-global-shared-view next-blocks)
-                      function-abi)]
-                  ;; Induction cleanup can rewrite latch/exit edges, so build one
-                  ;; fresh context for the rewritten CFG, reuse it for the
-                  ;; post-pass verify, and hand it back for the next pass.
-                  [next-context : OptCfgContext
-                    (opt-cfg-context-build next-blocks)]
-                  (match (opt-verify-function-with-context
-                    (compiler-opt-global-shared-view next)
-                    next-context)
-                    [(ResultCompilerOptimizeVerify.Ok)
-                      (OptFunctionCtxResult.Result next next-context)]
-                    [(ResultCompilerOptimizeVerify.Err _)
-                      (OptFunctionCtxResult.Result func context)]))
-                (OptFunctionCtxResult.Result func context))])])]
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]))
+  ;; Induction cleanup can rewrite latch/exit edges, so a rewrite gets one
+  ;; fresh context.
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
+      (opt-loop-function-rewrite
+        func
+        (compiler-opt-global-shared-view context)
+        verified?
+        (match (opt-induction-apply-loops
+          type-segment-bases
+          (__tl-project-field context index)
+          (opt-cfg-natural-loops-with-context
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view context))
+          blocks
+          frame
+          false)
+          [(OptInductionApplyResult.Result next-blocks next-frame changed)
+            (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
 
 (define (opt-induction-function-with-context
   [type-segment-bases : i64]
@@ -39588,49 +39521,21 @@
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
-            blocks
-            function-abi)
-          (match (opt-flag-exit-blocks-fixed-result
-            (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view context)
-            frame
-            (+ 1 (ir.compiler-ir-block-list-count blocks))
-            false
-            true)
-            [(OptFlagExitPassResult.Result next-blocks next-frame changed)
-              (if (not changed)
-                (OptFunctionCtxResult.Result func context)
-                (let
-                  [next : ir.CompilerIrFunction
-                    (ir.CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      next-frame
-                      (compiler-opt-global-shared-view next-blocks)
-                      function-abi)]
-                  [next-context : OptCfgContext
-                    (opt-cfg-context-build next-blocks)]
-                  (match (opt-verify-function-with-context
-                    (compiler-opt-global-shared-view next)
-                    next-context)
-                    [(ResultCompilerOptimizeVerify.Ok)
-                      (OptFunctionCtxResult.Result next next-context)]
-                    [(ResultCompilerOptimizeVerify.Err _)
-                      (OptFunctionCtxResult.Result func context)])))])])]
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]))
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
+      (opt-loop-function-rewrite
+        func
+        (compiler-opt-global-shared-view context)
+        verified?
+        (match (opt-flag-exit-blocks-fixed-result
+          (compiler-opt-global-shared-view blocks)
+          (compiler-opt-global-shared-view context)
+          frame
+          (+ 1 (ir.compiler-ir-block-list-count blocks))
+          false
+          true)
+          [(OptFlagExitPassResult.Result next-blocks next-frame changed)
+            (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
 
 ;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
 ;; keeps the defensive entry verify.
@@ -40861,54 +40766,24 @@
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
-            blocks
-            function-abi)
-          (match (opt-lftr-apply-loops
-            type-segment-bases
-            (opt-cfg-natural-loops-with-context
-              (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view context))
-            blocks
-            frame
-            false)
-            [(OptLftrApplyResult.Result next-blocks next-frame changed)
-              (if (not changed)
-                (OptFunctionCtxResult.Result func context)
-                (let
-                  [next : ir.CompilerIrFunction
-                    (ir.CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      next-frame
-                      (compiler-opt-global-shared-view next-blocks)
-                      function-abi)]
-                  ;; The rewrite only edits instructions, but the deleted phi
-                  ;; changes the header's phi prefix, so build one fresh context
-                  ;; for the rewritten blocks, reuse it for the post-pass
-                  ;; verify, and hand it to the next pass.
-                  [next-context : OptCfgContext
-                    (opt-cfg-context-build next-blocks)]
-                  (match (opt-verify-function-with-context
-                    (compiler-opt-global-shared-view next)
-                    next-context)
-                    [(ResultCompilerOptimizeVerify.Ok)
-                      (OptFunctionCtxResult.Result next next-context)]
-                    [(ResultCompilerOptimizeVerify.Err _)
-                      (OptFunctionCtxResult.Result func context)])))])])]))
+  ;; The rewrite only edits instructions, but the deleted phi changes the
+  ;; header's phi prefix, so a rewrite gets one fresh context.
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
+      (opt-loop-function-rewrite
+        func
+        (compiler-opt-global-shared-view context)
+        verified?
+        (match (opt-lftr-apply-loops
+          type-segment-bases
+          (opt-cfg-natural-loops-with-context
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view context))
+          blocks
+          frame
+          false)
+          [(OptLftrApplyResult.Result next-blocks next-frame changed)
+            (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
 
 (define (opt-lftr-function
   [type-segment-bases : i64]
@@ -49463,47 +49338,19 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        blocks
-        function-abi)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
       (match (opt-cfg-straighten-forwarding-blocks blocks frame)
         [(OptBlockListPassResult.Result next-blocks changed)
-          (if (not changed)
-            (OptFunctionPassResult.Result
-              (compiler-opt-debug-observe-function
-                type-segment-bases
-                "cfg_straighten"
-                func)
-              false)
-            (let
-              [candidate : ir.CompilerIrFunction
-                (ir.CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  frame
-                  next-blocks
-                  function-abi)]
-              (match (opt-verify-function
-                (compiler-opt-global-shared-view candidate))
-                [(ResultCompilerOptimizeVerify.Ok)
-                  (OptFunctionPassResult.Result
-                    (compiler-opt-debug-observe-function
-                      type-segment-bases
-                      "cfg_straighten"
-                      candidate)
-                    true)]
-                [(ResultCompilerOptimizeVerify.Err _)
-                  (OptFunctionPassResult.Result
-                    (compiler-opt-debug-observe-function
-                      type-segment-bases
-                      "cfg_straighten"
-                      func)
-                    false)])))])]))
+          (match (opt-function-pass-commit
+            func
+            (OptBlockRewriteResult.Result next-blocks frame changed))
+            [(OptFunctionPassResult.Result next next-changed?)
+              (OptFunctionPassResult.Result
+                (compiler-opt-debug-observe-function
+                  type-segment-bases
+                  "cfg_straighten"
+                  next)
+                next-changed?)])])]))
 
 ;; --- sparse conditional constant propagation -------------------------------
 ;;
@@ -51919,13 +51766,7 @@
 
 (define (opt-switch-form-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        blocks
-        function-abi)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
       (if (not
         (opt-switch-blocks-have-compare?
           (compiler-opt-global-shared-view blocks)))
@@ -51946,25 +51787,14 @@
               (OptLabelSet.Nil))]
           (match rewrite
             [(OptSwitchRewriteResult.Result rewritten _ changed)
-              (if changed
-                (let
-                  [reachable : ir.CompilerIrBlockList
-                    (opt-cfg-reachable-block-order rewritten)]
-                  [next : ir.CompilerIrFunction
-                    (ir.CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      frame
-                      reachable
-                      function-abi)]
-                  (match (opt-verify-function
-                    (compiler-opt-global-shared-view next))
-                    [(ResultCompilerOptimizeVerify.Ok)
-                      (OptFunctionPassResult.Result next true)]
-                    [(ResultCompilerOptimizeVerify.Err _)
-                      (OptFunctionPassResult.Result func false)]))
-                (OptFunctionPassResult.Result func false))])))]))
+              (opt-function-pass-commit
+                func
+                (OptBlockRewriteResult.Result
+                  (if changed
+                    (opt-cfg-reachable-block-order rewritten)
+                    rewritten)
+                  frame
+                  changed))])))]))
 
 (define (opt-switch-form-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt-switch-form-function-pass (compiler-opt-global-shared-view func))
@@ -52995,13 +52825,7 @@
 
 (define (opt-bit-test-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        blocks
-        function-abi)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
       (if (not
         (opt-bit-test-blocks-have-candidate?
           (compiler-opt-global-shared-view blocks)
@@ -53027,26 +52851,17 @@
           [planned : i64 (opt-bit-test-plans-count plans)]
           (if (= planned 0)
             (OptFunctionPassResult.Result func false)
-            (let
-              [next : ir.CompilerIrFunction
-                (ir.CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  (+ frame (* planned (opt-bit-test-plan-vars)))
-                  (opt-cfg-reachable-block-order
-                    (opt-bit-test-rewrite-blocks
-                      (compiler-opt-global-shared-view blocks)
-                      blocks
-                      plans
-                      frame))
-                  function-abi)]
-              (match (opt-verify-function
-                (compiler-opt-global-shared-view next))
-                [(ResultCompilerOptimizeVerify.Ok)
-                  (OptFunctionPassResult.Result next true)]
-                [(ResultCompilerOptimizeVerify.Err _)
-                  (OptFunctionPassResult.Result func false)])))))]))
+            (opt-function-pass-commit
+              func
+              (OptBlockRewriteResult.Result
+                (opt-cfg-reachable-block-order
+                  (opt-bit-test-rewrite-blocks
+                    (compiler-opt-global-shared-view blocks)
+                    blocks
+                    plans
+                    frame))
+                (+ frame (* planned (opt-bit-test-plan-vars)))
+                true)))))]))
 
 (define (optimize-function-max-iterations) : i64
   2)
@@ -74624,34 +74439,26 @@
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
-          (let
-            [state : OptLoopCallRewriteState
-              (OptLoopCallRewriteState frame false)]
-            [rewritten : ir.CompilerIrBlockList
-              (opt-loop-call-rewrite-blocks
-                try-rewrite
-                (compiler-opt-global-shared-view blocks)
-                (compiler-opt-global-shared-view blocks)
-                (opt-cfg-entry-label blocks)
-                (&mut state))]
-            (match (opt-function-rewrite-commit
-              func
-              context
-              (OptBlockRewriteResult.Result
-                rewritten
-                state.next-frame
-                state.changed?))
-              [(OptFunctionRewriteResult.Result next next-context _)
-                (OptFunctionCtxResult.Result next next-context)]))])]
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]))
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
+      (opt-loop-function-rewrite
+        func
+        context
+        verified?
+        (let
+          [state : OptLoopCallRewriteState
+            (OptLoopCallRewriteState frame false)]
+          [rewritten : ir.CompilerIrBlockList
+            (opt-loop-call-rewrite-blocks
+              try-rewrite
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view blocks)
+              (opt-cfg-entry-label blocks)
+              (&mut state))]
+          (OptBlockRewriteResult.Result
+            rewritten
+            state.next-frame
+            state.changed?)))]))
 
 ;; Standalone driver for tests and ad-hoc runs.
 (define (opt-loop-call-function
@@ -79014,26 +78821,13 @@
                     (opt-cfg-entry-label blocks)
                     frame)
                     [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
-                      (if mb-changed
-                        (let
-                          [mb-next : ir.CompilerIrFunction
-                            (ir.CompilerIrFunction.Function
-                              name
-                              params
-                              ret-ty
-                              mb-frame
-                              (compiler-opt-global-shared-view mb-blocks)
-                              function-abi)]
-                          [mb-context : OptCfgContext
-                            (opt-cfg-context-build mb-blocks)]
-                          (match (opt-verify-function-with-context
-                            (compiler-opt-global-shared-view mb-next)
-                            mb-context)
-                            [(ResultCompilerOptimizeVerify.Ok)
-                              (OptFunctionCtxResult.Result mb-next mb-context)]
-                            [(ResultCompilerOptimizeVerify.Err _)
-                              (OptFunctionCtxResult.Result func context)]))
-                        (OptFunctionCtxResult.Result func context))])))]))])))
+                      (opt-function-ctx-commit
+                        func
+                        context
+                        (OptBlockRewriteResult.Result
+                          mb-blocks
+                          mb-frame
+                          mb-changed))])))]))])))
 
 (define (opt-unroll-function-verified-with-context-result
   [type-segment-bases : i64]
@@ -100627,63 +100421,30 @@
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
-            blocks
-            function-abi)
-          (match (opt-gep-offset-prepare-preheaders
-            type-segment-bases
-            (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view context)
-            frame
-            (+ 1 (ir.compiler-ir-block-list-count blocks))
-            false)
-            [(OptGepOffsetPreheaderResult.Result
-                staged-blocks
-                staged-context
-                preheaders-changed?)
-              (match (opt-gep-offset-blocks-result
-                type-segment-bases
-                staged-blocks
-                staged-context
-                frame)
-                [(OptGepOffsetPlanResult.Result next-blocks next-frame changed)
-                  (if (not (or changed preheaders-changed?))
-                    (OptFunctionCtxResult.Result func context)
-                    ;; A preheader synthesized for a loop that then failed a
-                    ;; gate would leave a jump-only block behind, so drop the
-                    ;; whole staging when nothing split.
-                    (if (not changed)
-                      (OptFunctionCtxResult.Result func context)
-                      (let
-                        [next : ir.CompilerIrFunction
-                          (ir.CompilerIrFunction.Function
-                            name
-                            params
-                            ret-ty
-                            next-frame
-                            (compiler-opt-global-shared-view next-blocks)
-                            function-abi)]
-                        [next-context : OptCfgContext
-                          (opt-cfg-context-build next-blocks)]
-                        (match (opt-verify-function-with-context
-                          (compiler-opt-global-shared-view next)
-                          next-context)
-                          [(ResultCompilerOptimizeVerify.Ok)
-                            (OptFunctionCtxResult.Result next next-context)]
-                          [(ResultCompilerOptimizeVerify.Err _)
-                            (OptFunctionCtxResult.Result func context)]))))])])])]
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]))
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
+      (opt-loop-function-rewrite
+        func
+        (compiler-opt-global-shared-view context)
+        verified?
+        (match (opt-gep-offset-prepare-preheaders
+          type-segment-bases
+          (compiler-opt-global-shared-view blocks)
+          (compiler-opt-global-shared-view context)
+          frame
+          (+ 1 (ir.compiler-ir-block-list-count blocks))
+          false)
+          [(OptGepOffsetPreheaderResult.Result staged-blocks staged-context _)
+            ;; A preheader synthesized for a loop that then failed a gate would
+            ;; leave a jump-only block behind, so the whole staging is dropped
+            ;; when nothing split.
+            (match (opt-gep-offset-blocks-result
+              type-segment-bases
+              staged-blocks
+              staged-context
+              frame)
+              [(OptGepOffsetPlanResult.Result next-blocks next-frame changed)
+                (OptBlockRewriteResult.Result next-blocks next-frame changed)])]))]))
 
 ;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
 ;; keeps the defensive entry verify.
@@ -105126,35 +104887,15 @@
 ;; rotation can be thrown away.
 (define (opt-uniform-phi-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        blocks
-        function-abi)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
       (if (not
         (opt-dead-phi-blocks-have-phi? (compiler-opt-global-shared-view blocks)))
         (OptFunctionPassResult.Result func false)
         (match (opt-uniform-phi-rounds blocks (opt-uniform-phi-round-max) false)
           [(OptBlockListPassResult.Result next folded)
-            (if (not folded)
-              (OptFunctionPassResult.Result func false)
-              (let
-                [candidate : ir.CompilerIrFunction
-                  (ir.CompilerIrFunction.Function
-                    name
-                    params
-                    ret-ty
-                    frame
-                    next
-                    function-abi)]
-                (match (opt-verify-function
-                  (compiler-opt-global-shared-view candidate))
-                  [(ResultCompilerOptimizeVerify.Ok)
-                    (OptFunctionPassResult.Result candidate true)]
-                  [(ResultCompilerOptimizeVerify.Err _)
-                    (OptFunctionPassResult.Result func false)])))]))]))
+            (opt-function-pass-commit
+              func
+              (OptBlockRewriteResult.Result next frame folded))]))]))
 
 ;; A rotation retires the header's top test, mints a landing block and clones
 ;; the guard into the preheader and the latch, so it never leaves both the block
@@ -107660,13 +107401,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        original
-        function-abi)
+    [(ir.CompilerIrFunction.Function _ _ _ frame original _)
       (let
         [blocks : ir.CompilerIrBlockList
           (ir.compiler-ir-block-list-compact
@@ -107717,21 +107452,12 @@
                             (set! read (+ read 1))))
                         (if (not changed)
                           (OptFunctionPassResult.Result func false)
-                          (let
-                            [next : ir.CompilerIrFunction
-                              (ir.CompilerIrFunction.Function
-                                name
-                                params
-                                ret-ty
-                                (array-ref frame-cell 0)
-                                (opt-cfg-simplify-blocks blocks)
-                                function-abi)]
-                            (match (opt-verify-function
-                              (compiler-opt-global-shared-view next))
-                              [(ResultCompilerOptimizeVerify.Ok)
-                                (OptFunctionPassResult.Result next true)]
-                              [(ResultCompilerOptimizeVerify.Err _)
-                                (OptFunctionPassResult.Result func false)])))))))))]
+                          (opt-function-pass-commit
+                            func
+                            (OptBlockRewriteResult.Result
+                              (opt-cfg-simplify-blocks blocks)
+                              (array-ref frame-cell 0)
+                              true)))))))))]
           [_ (OptFunctionPassResult.Result func false)]))]))
 
 (define (opt-if-convert-function
@@ -109600,90 +109326,66 @@
       (opt-ubound-blocks-have-candidate? (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-ubound-apply
-  [name : i64]
-  [params : ir.CompilerIrParamSeq]
-  [ret-ty : ast.AstType]
-  [frame : i64]
-  [blocks : ir.CompilerIrBlockList]
-  [function-abi : ir.CompilerIrFunctionAbi]
+  [func : ir.CompilerIrFunction]
   [site : OptUboundSite]
   [phi-count : i64]) : OptFunctionPassResult
-  (let
-    [lo-label : i64
-      (opt-ubound-fresh-label
-        (compiler-opt-global-shared-view blocks)
-        site.pre
-        "__ubound_lo"
-        0)]
-    [join-label : i64
-      (opt-ubound-fresh-label
-        (compiler-opt-global-shared-view blocks)
-        site.pre
-        "__ubound_join"
-        0)]
-    [chk-label : i64
-      (opt-ubound-fresh-label
-        (compiler-opt-global-shared-view blocks)
-        site.latch
-        "__ubound_exit"
-        0)]
-    [trap-label : i64
-      (opt-ubound-fresh-label
-        (compiler-opt-global-shared-view blocks)
-        site.latch
-        "__ubound_trap"
-        0)]
-    [seed-ok : i64
-      (opt-ubound-fresh-label
-        (compiler-opt-global-shared-view blocks)
-        site.pre
-        "__ubound_ok"
-        0)]
-    [next : ir.CompilerIrFunction
-      (ir.CompilerIrFunction.Function
-        name
-        (compiler-opt-global-shared-view params)
-        (compiler-opt-global-shared-view ret-ty)
-        (+ frame (opt-ubound-plan-vars))
-        (opt-cfg-reachable-block-order
-          (opt-ubound-rewrite-blocks
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
+      (let
+        [lo-label : i64
+          (opt-ubound-fresh-label
             (compiler-opt-global-shared-view blocks)
-            site
-            phi-count
-            lo-label
-            join-label
-            chk-label
-            trap-label
-            seed-ok
-            frame
-            (+ frame 1)
-            (+ frame 2)))
-        (compiler-opt-global-shared-view function-abi))]
-    (match (opt-verify-function (compiler-opt-global-shared-view next))
-      [(ResultCompilerOptimizeVerify.Ok)
-        (OptFunctionPassResult.Result next true)]
-      [(ResultCompilerOptimizeVerify.Err _)
-        (OptFunctionPassResult.Result
-          (ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
-            blocks
-            function-abi)
-          false)])))
+            site.pre
+            "__ubound_lo"
+            0)]
+        [join-label : i64
+          (opt-ubound-fresh-label
+            (compiler-opt-global-shared-view blocks)
+            site.pre
+            "__ubound_join"
+            0)]
+        [chk-label : i64
+          (opt-ubound-fresh-label
+            (compiler-opt-global-shared-view blocks)
+            site.latch
+            "__ubound_exit"
+            0)]
+        [trap-label : i64
+          (opt-ubound-fresh-label
+            (compiler-opt-global-shared-view blocks)
+            site.latch
+            "__ubound_trap"
+            0)]
+        [seed-ok : i64
+          (opt-ubound-fresh-label
+            (compiler-opt-global-shared-view blocks)
+            site.pre
+            "__ubound_ok"
+            0)]
+        (opt-function-pass-commit
+          func
+          (OptBlockRewriteResult.Result
+            (opt-cfg-reachable-block-order
+              (opt-ubound-rewrite-blocks
+                (compiler-opt-global-shared-view blocks)
+                site
+                phi-count
+                lo-label
+                join-label
+                chk-label
+                trap-label
+                seed-ok
+                frame
+                (+ frame 1)
+                (+ frame 2)))
+            (+ frame (opt-ubound-plan-vars))
+            true)))]))
 
 (define (opt-ubound-function-pass
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        blocks
-        function-abi)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
       (if (not
         (opt-ubound-blocks-have-candidate?
           (compiler-opt-global-shared-view blocks)))
@@ -109709,12 +109411,7 @@
                 [(OptMaybeBlock.No) (OptFunctionPassResult.Result func false)]
                 [(OptMaybeBlock.Some header-block)
                   (opt-ubound-apply
-                    name
-                    params
-                    ret-ty
-                    frame
-                    blocks
-                    function-abi
+                    func
                     site
                     (opt-unroll-phi-prefix-count
                       (opt-ubound-block-instrs header-block)
@@ -111572,69 +111269,38 @@
                   next-var
                   true)])])))))
 
-(defenum OptBgFunctionResult
-  (Result ir.CompilerIrFunction OptCfgContext bool))
-
 ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
 ;; Preheader synthesis is the only step that runs before the plan, so the
 ;; returned context is rebuilt exactly when the rewrite fired.
 (define (opt-bg-function-changed-result
   [context : OptCfgContext]
   [verified? : bool]
-  [func : ir.CompilerIrFunction]) : OptBgFunctionResult
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptBgFunctionResult.Result func context false)]
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
-            blocks
-            function-abi)
-          (if (not
-            (opt-bg-blocks-have-candidate?
-              (compiler-opt-global-shared-view blocks)))
-            (OptBgFunctionResult.Result func context false)
-            (match (opt-bg-prepare-preheaders
-              (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view context)
-              frame
-              (+ 1 (ir.compiler-ir-block-list-count blocks))
-              false)
-              [(OptBgPreheaderResult.Result staged staged-context _)
-                (match (opt-bg-blocks-result staged staged-context frame)
-                  [(OptBgBlocksResult.Result next-blocks next-frame changed)
-                    ;; A preheader synthesized for a loop that then failed a
-                    ;; gate would leave a jump-only block behind, so drop the
-                    ;; whole staging when nothing split.
-                    (if (not changed)
-                      (OptBgFunctionResult.Result func context false)
-                      (let
-                        [next : ir.CompilerIrFunction
-                          (ir.CompilerIrFunction.Function
-                            name
-                            params
-                            ret-ty
-                            next-frame
-                            (opt-cfg-reachable-block-order next-blocks)
-                            function-abi)]
-                        [next-context : OptCfgContext
-                          (opt-cfg-context-build
-                            (opt-function-blocks
-                              (compiler-opt-global-shared-view next)))]
-                        (match (opt-verify-function-with-context
-                          (compiler-opt-global-shared-view next)
-                          next-context)
-                          [(ResultCompilerOptimizeVerify.Ok)
-                            (OptBgFunctionResult.Result next next-context true)]
-                          [(ResultCompilerOptimizeVerify.Err _)
-                            (OptBgFunctionResult.Result func context false)])))])]))])]))
+  [func : ir.CompilerIrFunction]) : OptFunctionRewriteResult
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
+      (opt-branch-function-rewrite
+        func
+        (compiler-opt-global-shared-view context)
+        verified?
+        (opt-bg-blocks-have-candidate? (compiler-opt-global-shared-view blocks))
+        (match (opt-bg-prepare-preheaders
+          (compiler-opt-global-shared-view blocks)
+          (compiler-opt-global-shared-view context)
+          frame
+          (+ 1 (ir.compiler-ir-block-list-count blocks))
+          false)
+          [(OptBgPreheaderResult.Result staged staged-context _)
+            (match (opt-bg-blocks-result staged staged-context frame)
+              [(OptBgBlocksResult.Result next-blocks next-frame changed)
+                ;; A preheader synthesized for a loop that then failed a gate
+                ;; would leave a jump-only block behind, so the whole staging
+                ;; is dropped when nothing split.
+                (OptBlockRewriteResult.Result
+                  (if changed
+                    (opt-cfg-reachable-block-order next-blocks)
+                    next-blocks)
+                  next-frame
+                  changed)])]))]))
 
 ;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
 ;; keeps the defensive entry verify.
@@ -111644,7 +111310,7 @@
       (opt-function-blocks (compiler-opt-global-shared-view func)))
     false
     func)
-    [(OptBgFunctionResult.Result next _ changed)
+    [(OptFunctionRewriteResult.Result next _ changed)
       (OptFunctionPassResult.Result next changed)]))
 
 ;; The pass runs BELOW the pipeline fixpoint, from the escaping per-function
@@ -111682,7 +111348,7 @@
         (opt-function-blocks (compiler-opt-global-shared-view func)))
       true
       func)
-      [(OptBgFunctionResult.Result next _ changed)
+      [(OptFunctionRewriteResult.Result next _ changed)
         (OptFunctionPassResult.Result next changed)])))
 
 (define (opt-bg-function-fixed [func : ir.CompilerIrFunction] [remaining : i64]) : ir.CompilerIrFunction
@@ -111703,6 +111369,278 @@
     "bounds_group"
     (opt-bg-function-fixed func (opt-bg-function-rounds))))
 
+;; --- the per-function pass manager ------------------------------------------
+;;
+;; A pipeline threads one OptPassState from stage to stage: the function as the
+;; last stage left it, and a CFG context that is exact for the function's blocks
+;; while `ctx-valid?` holds. A stage runs inside `opt-stage`, which times it,
+;; shows its output to `--trace-passes`/`--dump-ir` and notes its
+;; `optimize.pass.*` compile-profile row, so a pipeline reads as its list of
+;; stages. A stage calls its pass on views of the state (`opt-pass-func` and
+;; friends) and hands the result back through one of the `opt-pass-with-*`
+;; updates, which take the state last so the pass has run before it moves.
+(defstruct OptPassState
+  (type-segment-bases i64)
+  (profile-state profile_state.CompilerProfileState)
+  (func ir.CompilerIrFunction)
+  (ctx OptCfgContext)
+  (ctx-valid? bool)
+  ;; Whether a stage reported a change since the state was made.
+  (changed? bool))
+
+;; The context a fresh state carries until a stage builds one. Nothing reads it
+;; while `ctx-valid?` is false.
+(define opt-pass-no-context : OptCfgContext
+  (init))
+
+(define (opt-pass-state
+  [type-segment-bases : i64]
+  [profile-state : profile_state.CompilerProfileState]
+  [func : ir.CompilerIrFunction]
+  [changed? : bool]) : OptPassState
+  (OptPassState
+    type-segment-bases
+    profile-state
+    func
+    (compiler-opt-global-shared-view opt-pass-no-context)
+    false
+    changed?))
+
+(defmacro (opt-pass-func [state : Expr]) : Expr
+  `(compiler-opt-global-shared-view (__tl-project-field ,state func)))
+
+(defmacro (opt-pass-ctx [state : Expr]) : Expr
+  `(compiler-opt-global-shared-view (__tl-project-field ,state ctx)))
+
+(defmacro (opt-pass-frame [state : Expr]) : Expr
+  `(opt-function-frame (opt-pass-func ,state)))
+
+(defmacro (opt-pass-blocks [state : Expr]) : Expr
+  `(opt-function-blocks (opt-pass-func ,state)))
+
+(defmacro (opt-pass-params [state : Expr]) : Expr
+  `(opt-function-params (opt-pass-func ,state)))
+
+;; The context a branch rewrite reads: the state's own while it is exact, else
+;; one built only when the pass has a candidate to look at.
+(defmacro (opt-pass-context [state : Expr] [candidate? : Expr]) : Expr
+  `(if (__tl-project-field ,state ctx-valid?)
+    (opt-pass-ctx ,state)
+    (if ,candidate?
+      (opt-cfg-context-build (opt-pass-blocks ,state))
+      (opt-cfg-context-empty))))
+
+;; Time the stage `next` computes, observe its output under `pass` and note its
+;; profile row.
+(defmacro (opt-stage [pass : Expr] [next : Expr]) : Expr
+  `(let
+    [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
+    [state : OptPassState ,next]
+    (opt-pass-noted (opt-pass-observed state ,pass) ,pass start-ms)))
+
+;; A stage whose output `--trace-passes`/`--dump-ir` do not show.
+(defmacro (opt-stage-unobserved [pass : Expr] [next : Expr]) : Expr
+  `(let
+    [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
+    [state : OptPassState ,next]
+    (opt-pass-noted state ,pass start-ms)))
+
+(define (opt-pass-observed [state : OptPassState] [pass : String]) : OptPassState
+  (begin
+    (compiler-opt-debug-observe-function
+      state.type-segment-bases
+      pass
+      (opt-pass-func state))
+    state))
+
+(define (opt-pass-noted
+  [state : OptPassState]
+  [_pass : String]
+  [_start-ms : i64]) : OptPassState
+  (begin
+    (compiler-opt-profile-pass-note
+      state.profile-state
+      _pass
+      (opt-function-name (opt-pass-func state))
+      _start-ms)
+    state))
+
+;; A rewrite that keeps the CFG: the context stays exact.
+(define (opt-pass-with-func
+  [func : ir.CompilerIrFunction]
+  [state : OptPassState]) : OptPassState
+  (OptPassState
+    state.type-segment-bases
+    state.profile-state
+    func
+    state.ctx
+    state.ctx-valid?
+    state.changed?))
+
+;; A rewrite that may change the CFG.
+(define (opt-pass-with-cfg-func
+  [func : ir.CompilerIrFunction]
+  [state : OptPassState]) : OptPassState
+  (OptPassState
+    state.type-segment-bases
+    state.profile-state
+    func
+    state.ctx
+    false
+    state.changed?))
+
+(define (opt-pass-with-frame-blocks
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [state : OptPassState]) : OptPassState
+  (opt-pass-with-func
+    (opt-function-with-frame-blocks (opt-pass-func state) frame blocks)
+    state))
+
+(define (opt-pass-with-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [state : OptPassState]) : OptPassState
+  (opt-pass-with-frame-blocks (opt-pass-frame state) blocks state))
+
+(define (opt-pass-with-block-result
+  [result : OptBlockListPassResult]
+  [state : OptPassState]) : OptPassState
+  (match result
+    [(OptBlockListPassResult.Result blocks changed?)
+      (opt-pass-with-changed changed? (opt-pass-with-blocks blocks state))]))
+
+(define (opt-pass-with-changed [changed? : bool] [state : OptPassState]) : OptPassState
+  (OptPassState
+    state.type-segment-bases
+    state.profile-state
+    state.func
+    state.ctx
+    state.ctx-valid?
+    (or state.changed? changed?)))
+
+(define (opt-pass-with-block-ctx
+  [result : OptBlockCtxResult]
+  [state : OptPassState]) : OptPassState
+  (match result
+    [(OptBlockCtxResult.Result blocks ctx valid?)
+      (OptPassState
+        state.type-segment-bases
+        state.profile-state
+        (opt-function-with-frame-blocks
+          (opt-pass-func state)
+          (opt-pass-frame state)
+          blocks)
+        ctx
+        valid?
+        state.changed?)]))
+
+(define (opt-pass-with-ctx-result
+  [result : OptFunctionCtxResult]
+  [state : OptPassState]) : OptPassState
+  (match result
+    [(OptFunctionCtxResult.Result func ctx)
+      (OptPassState
+        state.type-segment-bases
+        state.profile-state
+        func
+        ctx
+        true
+        state.changed?)]))
+
+;; A branch rewrite hands back its input context unchanged when it declines, so
+;; that context is exact only if the input's was.
+(define (opt-pass-with-rewrite
+  [result : OptFunctionRewriteResult]
+  [state : OptPassState]) : OptPassState
+  (match result
+    [(OptFunctionRewriteResult.Result func ctx changed?)
+      (OptPassState
+        state.type-segment-bases
+        state.profile-state
+        func
+        ctx
+        (or state.ctx-valid? changed?)
+        (or state.changed? changed?))]))
+
+(define (opt-pass-with-result
+  [result : OptFunctionPassResult]
+  [state : OptPassState]) : OptPassState
+  (match result
+    [(OptFunctionPassResult.Result func changed?)
+      (OptPassState
+        state.type-segment-bases
+        state.profile-state
+        func
+        state.ctx
+        (and state.ctx-valid? (not changed?))
+        (or state.changed? changed?))]))
+
+;; As `opt-pass-with-result`, rebuilding the context for a changed CFG.
+(define (opt-pass-with-result-context
+  [result : OptFunctionPassResult]
+  [state : OptPassState]) : OptPassState
+  (match result
+    [(OptFunctionPassResult.Result func changed?)
+      (if changed?
+        (OptPassState
+          state.type-segment-bases
+          state.profile-state
+          (compiler-opt-global-shared-view func)
+          (opt-cfg-context-build (opt-function-blocks func))
+          true
+          true)
+        (opt-pass-with-func func state))]))
+
+;; An instruction rewrite that leaves the CFG alone but replaces the blocks the
+;; context's dense array holds.
+(define (opt-pass-with-refreshed-func
+  [func : ir.CompilerIrFunction]
+  [state : OptPassState]) : OptPassState
+  (begin
+    (opt-cfg-index-refresh-blocks!
+      (compiler-opt-global-shared-view state.ctx.index)
+      (opt-function-blocks (compiler-opt-global-shared-view func)))
+    (opt-pass-with-func func state)))
+
+;; Rotation, with the speculative literal-edge normalization kept only if the
+;; exact mutable SIMD rewrite succeeds. Rotation exposes the mutable SPMD body
+;; before scalar SSA would split its gang counter into phis, so the dedicated
+;; exact-shape unroller runs here; its later pipeline position remains as a
+;; fallback for functions whose SSA construction is intentionally rejected.
+(define (opt-pass-rotation
+  [pools : ast.AstNodePoolContext]
+  [state : OptPassState]) : OptPassState
+  (let
+    [rotation : OptBlockCtxResult
+      (opt-loop-rotation-function-result
+        (compiler-opt-global-shared-view pools)
+        (opt-pass-func state))]
+    [simd : OptFunctionCtxResult
+      (match (opt-loop-rotation-normalized-function-result
+        pools
+        (opt-pass-func state))
+        [(OptBlockCtxResult.Result blocks ctx valid?)
+          (let
+            [rotated : ir.CompilerIrFunction
+              (opt-function-with-frame-blocks
+                (opt-pass-func state)
+                (opt-pass-frame state)
+                blocks)]
+            (if valid?
+              (opt-unroll-simd-function-with-context-result
+                state.type-segment-bases
+                ctx
+                rotated
+                true)
+              (OptFunctionCtxResult.Result rotated ctx)))])]
+    ;; A successful SIMD rewrite always allocates fresh destinations; rotation
+    ;; itself leaves the frame alone.
+    (if (match (compiler-opt-global-shared-view simd)
+      [(OptFunctionCtxResult.Result simd-func _)
+        (> (opt-function-frame simd-func) (opt-pass-frame state))])
+      (opt-pass-with-ctx-result simd state)
+      (opt-pass-with-block-ctx rotation state))))
+
 (define (optimize-function-once-with-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -111715,1823 +111653,815 @@
           summaries.profile-state))]
     ;; The round's input, observed so `--trace-passes`/`--dump-ir` show what
     ;; the first slot (fold) starts from.
-    (match (compiler-opt-debug-observe-function
-      type-segment-bases
-      "round_input"
-      func)
-      [(ir.CompilerIrFunction.Function
-          name
-          params
-          ret-ty
-          frame
-          blocks
-          function-abi)
-        ;; Fold first so SCCP can reuse local facts, then simplify the reachable
-        ;; CFG and eliminate dead pure assignments.
-        (let
-          ;; Substitute proven constant-global operands up front so the local
-          ;; folds below see literals: a mask global otherwise keeps its `and`
-          ;; alive into the loop cluster, pushing an otherwise-unrollable body
-          ;; past the unroll size gate (the opt_crc32 shape). Use positions
-          ;; are covered wholesale (BinOp/UnOp/Cast/Bitcast/Mov plus Store and
-          ;; StorePtr values and BoundsCheck operands -- see
-          ;; opt-const-divisor-rewrite-instr), so a literal global bound also
-          ;; constant-enables induction, bce_version, and unrolling below, and
-          ;; a descriptor-stored length global forwards as the SAME literal the
-          ;; compares see (mixed symbolic/literal state would defeat the
-          ;; ctor_fwd equality eliminations). The map is shared with the later
-          ;; divisor-targeted rewrite and empty in the common case, which
-          ;; makes this a length check per function.
-          [const-global-blocks : ir.CompilerIrBlockList
-            (opt-const-length-rewrite-summary-blocks
-              type-segment-bases
-              name
-              summaries
-              (opt-const-divisor-rewrite-summary-blocks summaries blocks))]
-          [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
-          [fold-result : OptBlockListPassResult
-            (optimize-block-list-for-function-pass
-              (profile_state.compiler-profile-state-shared-view
-                load-cse-profile)
-              (compiler-opt-global-shared-view pools)
-              type-segment-bases
-              frame
-              (compiler-opt-global-shared-view params)
-              const-global-blocks)]
-          [folded : ir.CompilerIrBlockList
-            (compiler-opt-debug-observe-blocks
-              type-segment-bases
-              "fold"
-              name
-              (compiler-opt-global-shared-view params)
-              (compiler-opt-global-shared-view ret-ty)
-              frame
-              (match (compiler-opt-global-shared-view fold-result)
-                [(OptBlockListPassResult.Result next _) next])
-              (compiler-opt-global-shared-view function-abi))]
-          [fold-changed : bool
-            (match fold-result
-              [(OptBlockListPassResult.Result _ changed) changed])]
-          [_p-fold : unit
-            (compiler-opt-profile-pass-note
-              summaries.profile-state
-              "fold"
-              name
-              _t-fold)]
-          [_t-affine : i64 (cfg compile-profile (profile.now-ms) 0)]
-          [affine-candidate? : bool
-            (opt-affine-blocks-have-candidate?
-              (compiler-opt-global-shared-view folded))]
-          [affine-input : ir.CompilerIrBlockList
-            (if (and affine-candidate? (not fold-changed))
-              (ir.compiler-ir-clone-block-list
-                (compiler-opt-global-shared-view pools)
-                (compiler-opt-global-shared-view folded))
-              folded)]
-          [affine : ir.CompilerIrBlockList
-            (compiler-opt-debug-observe-blocks
-              type-segment-bases
-              "affine"
-              name
-              (compiler-opt-global-shared-view params)
-              (compiler-opt-global-shared-view ret-ty)
-              frame
-              (if affine-candidate?
-                (opt-affine-fold-blocks frame affine-input)
-                folded)
-              (compiler-opt-global-shared-view function-abi))]
-          [_p-affine : unit
-            (compiler-opt-profile-pass-note
-              summaries.profile-state
-              "affine"
-              name
-              _t-affine)]
-          [loop-bce : ir.CompilerIrBlockList
-            (if summaries.enabled
-              (opt-loop-bce-blocks
+    [s : OptPassState
+      (opt-pass-observed
+        (opt-pass-state type-segment-bases summaries.profile-state func false)
+        "round_input")]
+    ;; Fold first so SCCP can reuse local facts, then simplify the reachable
+    ;; CFG and eliminate dead pure assignments.
+    ;;
+    ;; Substitute proven constant-global operands up front so the local
+    ;; folds below see literals: a mask global otherwise keeps its `and`
+    ;; alive into the loop cluster, pushing an otherwise-unrollable body
+    ;; past the unroll size gate (the opt_crc32 shape). Use positions
+    ;; are covered wholesale (BinOp/UnOp/Cast/Bitcast/Mov plus Store and
+    ;; StorePtr values and BoundsCheck operands -- see
+    ;; opt-const-divisor-rewrite-instr), so a literal global bound also
+    ;; constant-enables induction, bce_version, and unrolling below, and
+    ;; a descriptor-stored length global forwards as the SAME literal the
+    ;; compares see (mixed symbolic/literal state would defeat the
+    ;; ctor_fwd equality eliminations). The map is shared with the later
+    ;; divisor-targeted rewrite and empty in the common case, which
+    ;; makes this a length check per function.
+    [s
+      (opt-pass-with-blocks
+        (opt-const-length-rewrite-summary-blocks
+          type-segment-bases
+          (opt-function-name (opt-pass-func s))
+          summaries
+          (opt-const-divisor-rewrite-summary-blocks
+            summaries
+            (opt-pass-blocks s)))
+        s)]
+    [s
+      (opt-stage
+        "fold"
+        (opt-pass-with-block-result
+          (optimize-block-list-for-function-pass
+            (profile_state.compiler-profile-state-shared-view load-cse-profile)
+            (compiler-opt-global-shared-view pools)
+            type-segment-bases
+            (opt-pass-frame s)
+            (opt-pass-params s)
+            (opt-pass-blocks s))
+          s))]
+    ;; An unchanged fold hands back its input blocks, which the affine fold
+    ;; must not edit in place.
+    [s
+      (opt-stage
+        "affine"
+        (if (opt-affine-blocks-have-candidate? (opt-pass-blocks s))
+          (opt-pass-with-blocks
+            (opt-affine-fold-blocks
+              (opt-pass-frame s)
+              (if s.changed?
+                (opt-pass-blocks s)
+                (ir.compiler-ir-clone-block-list
+                  (compiler-opt-global-shared-view pools)
+                  (opt-pass-blocks s))))
+            s)
+          s))]
+    [s
+      (if summaries.enabled
+        (opt-pass-with-blocks
+          (opt-loop-bce-blocks
+            type-segment-bases
+            (compiler-opt-global-shared-view summaries)
+            (opt-pass-params s)
+            (opt-pass-blocks s))
+          s)
+        s)]
+    [s
+      (opt-stage
+        "ctor_fwd"
+        (opt-pass-with-blocks
+          (opt-ctor-fwd-function-blocks (opt-pass-frame s) (opt-pass-blocks s))
+          s))]
+    [s
+      (opt-stage
+        "stack_promote"
+        (opt-pass-with-cfg-func
+          (opt-aggregate-stack-promote-function
+            type-segment-bases
+            (opt-pass-func s))
+          s))]
+    ;; SROA-2: the word split runs on the post-promotion blocks and before
+    ;; rotation/`ssa`, so the scalar mem2reg below builds the phis the
+    ;; per-arm word stores need. It mints word vars, so every pass underneath
+    ;; reads ITS frame, not the promoted one.
+    [s
+      (opt-stage
+        "aggregate_split"
+        (opt-pass-with-cfg-func
+          (opt-aggregate-split-function type-segment-bases (opt-pass-func s))
+          s))]
+    [run-heavy? : bool
+      (<=
+        (ir.compiler-ir-block-list-count (opt-pass-blocks s))
+        (opt-heavy-pass-block-limit))]
+    ;; Dominator and natural-loop analyses use the integer CFG index. Their
+    ;; admission decisions are loop-local, so an unrelated block elsewhere in
+    ;; the enclosing function must not turn the loop pipeline off.
+    [s (opt-stage "rotation" (opt-pass-rotation pools s))]
+    ;; Register-value SSA construction feeds the verifier-gated dominator
+    ;; passes below. Unsupported cases fall back to the original function, so
+    ;; the optimization path remains safe.
+    [s
+      (opt-stage
+        "ssa"
+        (opt-pass-with-ctx-result
+          (opt-ssa-construct-function-from-context-and-representations-result
+            type-segment-bases
+            (compiler-opt-global-shared-view summaries.representations)
+            (opt-pass-func s)
+            (opt-pass-ctx s)
+            s.ctx-valid?)
+          s))]
+    [ssa : ir.CompilerIrFunction (opt-pass-func s)]
+    ;; Global-cell invariance runs on the SSA form so its entry-loaded vars are
+    ;; single-def and the rewritten descriptor geps/loads become ordinary
+    ;; SSA-fed instructions for GVN/LICM below (and invariant loop bounds for
+    ;; bce_version in the loop cluster). It only inserts entry-block Movs and
+    ;; rewrites operands in place, so the CFG -- and therefore the SSA context
+    ;; -- stays valid for the consumers underneath.
+    [s
+      (opt-stage
+        "global_cell"
+        (opt-pass-with-func
+          (opt-global-cell-function
+            (compiler-opt-global-shared-view summaries)
+            (opt-pure-call-dedupe-function
+              (__tl-project-field summaries call-memory)
+              (opt-pass-func s)))
+          s))]
+    ;; MF-5 (i) promotes repeated scalar global-cell reads to one materialized
+    ;; Mov, so this pass mints vars and hands back the frame every pass below
+    ;; must size its per-var arrays with.
+    [s
+      (opt-stage
+        "gvn"
+        (if run-heavy?
+          (match (opt-gvn-blocks-with-context-and-call-memory-result
+            load-cse-profile
+            type-segment-bases
+            (opt-pass-ctx s)
+            (opt-pass-params s)
+            summaries.call-memory
+            summaries.global-cell
+            (opt-pass-frame s)
+            (opt-pass-blocks s))
+            [(OptLoadGvnResult.Result blocks frame)
+              (opt-pass-with-frame-blocks frame blocks s)])
+          s))]
+    [gvn-frame : i64 (opt-pass-frame s)]
+    ;; Dominated bounds-check dedup rides the same context: it only deletes
+    ;; mid-block BoundsCheck instructions and REORDERS a constant-offset run's
+    ;; checks (plus the index arithmetic they read) inside one block, so the
+    ;; block set and therefore the CFG (and the SSA context) stay valid for
+    ;; sccp below. A decided branch has its CONDITION replaced by a bool
+    ;; literal and keeps both successor labels, so that holds for the branch
+    ;; fold too -- turning it into a `Jump` here is what would invalidate the
+    ;; context, which is why `opt-cfg-fold-branch` does it further down.
+    ;; VERIFIER-GATED like GVN: in a fallback (non-SSA) function a
+    ;; textually-single-def var inside a loop still changes value across
+    ;; iterations (loop-carried uses precede the redefinition), so "single
+    ;; source" only implies "single value" when the verifier proves every use
+    ;; is dominated by its definition. GVN preserves that property, so
+    ;; verifying the ssa function covers the gvn blocks consumed here.
+    ;;
+    ;; The range merge mints the two casts its unsigned compare reads, so
+    ;; everything below sizes its per-var arrays off THIS frame, not the one
+    ;; SSA construction left.
+    [s
+      (opt-stage
+        "bounds_dom"
+        (if (opt-verify-ok? (opt-verify-function-with-context ssa s.ctx))
+          (match (opt-bounds-dom-blocks-with-context-result
+            type-segment-bases
+            (opt-pass-ctx s)
+            (opt-pass-params s)
+            gvn-frame
+            (compiler-opt-global-shared-view summaries.global-cell.nonneg)
+            (opt-len-eq-use-build
+              (compiler-opt-global-shared-view summaries.global-cell.len-eq)
+              summaries.global-cell.len-eq-clean
+              (ir.compiler-ir-symbol-id (opt-function-name (opt-pass-func s)))
+              gvn-frame
+              (opt-pass-blocks s)
+              ;; GAP-1's facts are NOT read here; see opt-arg-global-final-sweep
+              ;; for why they belong below the fixpoint.
+              (opt_i64_i64_map.with-capacity 1)
+              (opt-pass-params s))
+            (opt-pass-blocks s))
+            [(OptBoundsDomResult.Result blocks frame)
+              (opt-pass-with-frame-blocks frame blocks s)])
+          s))]
+    [s
+      (opt-stage
+        "sccp"
+        (opt-pass-with-block-ctx
+          (opt-sccp-blocks-with-context-result-raw
+            type-segment-bases
+            (opt-pass-ctx s)
+            (opt-pass-params s)
+            (opt-pass-blocks s)
+            (opt-pass-frame s))
+          s))]
+    ;; Ahead of the bool-branch fuser on purpose: this pass turns a
+    ;; `[sentinel phi, compare, branch]` merge into the `[bool phi, branch]`
+    ;; shape the fuser was written for, so a site that reaches here as an
+    ;; integer join leaves the slot as a compare and branch adjacent to the
+    ;; load they read. It also wants sccp's constant substitution above it (a
+    ;; phi input that only became a literal there is one more edge it can
+    ;; decide) and the `cfg` stage below it, which retires the merge once the
+    ;; fuser has taken its last predecessor.
+    [s
+      (opt-stage
+        "phi_cmp_fold"
+        (opt-pass-with-rewrite
+          (opt-phi-cmp-fold-function-with-context-result
+            type-segment-bases
+            (opt-pass-context
+              s
+              (opt-phi-cmp-fold-blocks-have-candidate? (opt-pass-blocks s)))
+            false
+            (opt-pass-func s))
+          s))]
+    [s
+      (opt-stage
+        "bool_branch"
+        (opt-pass-with-rewrite
+          (opt-bool-branch-function-with-context-result
+            type-segment-bases
+            (opt-pass-context
+              s
+              (opt-bool-branch-blocks-have-candidate?
                 type-segment-bases
-                (compiler-opt-global-shared-view summaries)
-                (compiler-opt-global-shared-view params)
-                affine)
-              affine)]
-          [_t-ctor-fwd : i64 (cfg compile-profile (profile.now-ms) 0)]
-          [ctor-fwd : ir.CompilerIrBlockList
-            (compiler-opt-debug-observe-blocks
-              type-segment-bases
-              "ctor_fwd"
-              name
-              (compiler-opt-global-shared-view params)
-              (compiler-opt-global-shared-view ret-ty)
-              frame
-              (opt-ctor-fwd-function-blocks frame loop-bce)
-              (compiler-opt-global-shared-view function-abi))]
-          [_p-ctor-fwd : unit
-            (compiler-opt-profile-pass-note
-              summaries.profile-state
-              "ctor_fwd"
-              name
-              _t-ctor-fwd)]
-          [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
-          [promoted : ir.CompilerIrFunction
-            (compiler-opt-debug-observe-function
-              type-segment-bases
-              "stack_promote"
-              (opt-aggregate-stack-promote-function
+                (opt-pass-blocks s)))
+            false
+            (opt-pass-func s))
+          s))]
+    ;; Jump threading runs directly after the bool-branch fuser, which keeps
+    ;; first refusal on the shapes it already rewrites (all-constant merge
+    ;; phis, the compare/phi pair, materialized And trees) and leaves this pass
+    ;; the partially-constant merges and their forwarding chains. Its position
+    ;; is deliberate at both ends: SSA construction has already run, so the
+    ;; reaching constants arrive as phi inputs rather than stack traffic, and it
+    ;; is still upstream of `cfg`, `switch` and the whole loop cluster
+    ;; (preheaders / licm / induction / bce_version / unroll / lftr), so those
+    ;; passes admit and shape loops from the threaded CFG instead of one whose
+    ;; guard is still a materialized boolean, and rotation sees it from the
+    ;; next fixpoint iteration (`rotation` heads the iteration). The `cfg` stage
+    ;; immediately below is the unreachable-block cleanup that retires a merge
+    ;; which lost every predecessor (the pass also runs it between its own
+    ;; rounds).
+    [s
+      (opt-stage
+        "thread_branch"
+        (opt-pass-with-rewrite
+          (opt-thread-const-branch-function-with-context-result
+            type-segment-bases
+            (opt-pass-context
+              s
+              (opt-thread-const-branch-blocks-have-candidate?
                 type-segment-bases
-                (ir.CompilerIrFunction.Function
-                  name
-                  (compiler-opt-global-shared-view params)
-                  (compiler-opt-global-shared-view ret-ty)
-                  frame
-                  ctor-fwd
-                  function-abi)))]
-          [_p-promote : unit
-            (compiler-opt-profile-pass-note
-              summaries.profile-state
-              "stack_promote"
-              name
-              _t-promote)]
-          (match promoted
-            [(ir.CompilerIrFunction.Function
-                _
-                _
-                _
-                promote-frame
-                promote-blocks
-                function-abi)
-              (let
-                [_t-split : i64 (cfg compile-profile (profile.now-ms) 0)]
-                ;; SROA-2: the word split runs on the post-promotion blocks and
-                ;; before rotation/`ssa`, so the scalar mem2reg below builds the
-                ;; phis the per-arm word stores need. It mints word vars, so
-                ;; every pass underneath reads ITS frame, not the promoted one.
-                [split : ir.CompilerIrFunction
-                  (compiler-opt-debug-observe-function
-                    type-segment-bases
-                    "aggregate_split"
-                    (opt-aggregate-split-function
-                      type-segment-bases
-                      (ir.CompilerIrFunction.Function
-                        name
-                        (compiler-opt-global-shared-view params)
-                        (compiler-opt-global-shared-view ret-ty)
-                        promote-frame
-                        promote-blocks
-                        function-abi)))]
-                [_p-split : unit
-                  (compiler-opt-profile-pass-note
-                    summaries.profile-state
-                    "aggregate_split"
-                    name
-                    _t-split)]
-                (match split
-                  [(ir.CompilerIrFunction.Function
-                      _
-                      _
-                      _
-                      promoted-frame
-                      split-blocks
-                      function-abi)
-                    (let
-                      [run-heavy? : bool
-                        (<=
-                          (ir.compiler-ir-block-list-count
-                            (compiler-opt-global-shared-view split-blocks))
-                          (opt-heavy-pass-block-limit))]
-                      ;; Dominator and natural-loop analyses use the integer CFG
-                      ;; index. Their admission decisions are loop-local, so an
-                      ;; unrelated block elsewhere in the enclosing function
-                      ;; must not turn the loop pipeline off.
-                      [_t-rotation : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [rotation-result : OptBlockCtxResult
-                        (opt-loop-rotation-function-result
-                          (compiler-opt-global-shared-view pools)
-                          (ir.CompilerIrFunction.Function
-                            name
-                            (compiler-opt-global-shared-view params)
-                            (compiler-opt-global-shared-view ret-ty)
-                            promoted-frame
-                            (compiler-opt-global-shared-view split-blocks)
-                            (compiler-opt-global-shared-view function-abi)))]
-                      ;; Literal-edge normalization is speculative: keep it
-                      ;; only if the exact mutable SIMD rewrite succeeds.
-                      [simd-rotation-result : OptBlockCtxResult
-                        (opt-loop-rotation-normalized-function-result
-                          pools
-                          (ir.CompilerIrFunction.Function
-                            name
-                            (compiler-opt-global-shared-view params)
-                            (compiler-opt-global-shared-view ret-ty)
-                            promoted-frame
-                            split-blocks
-                            (compiler-opt-global-shared-view function-abi)))]
-                      [simd-rotated : ir.CompilerIrFunction
-                        (ir.CompilerIrFunction.Function
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          promoted-frame
-                          (match (compiler-opt-global-shared-view
-                            simd-rotation-result)
-                            [(OptBlockCtxResult.Result b _ _) b])
-                          (compiler-opt-global-shared-view function-abi))]
-                      [simd-rotation-context : OptCfgContext
-                        (match (compiler-opt-global-shared-view
-                          simd-rotation-result)
-                          [(OptBlockCtxResult.Result _ ctx _) ctx])]
-                      [simd-rotation-context-valid? : bool
-                        (match simd-rotation-result
-                          [(OptBlockCtxResult.Result _ _ valid) valid])]
-                      ;; Rotation exposes the mutable SPMD body before scalar
-                      ;; SSA would split its gang counter into phis. Run the
-                      ;; dedicated exact-shape unroller here; its later pipeline
-                      ;; position remains as a fallback for functions whose SSA
-                      ;; construction is intentionally rejected.
-                      [simd-result : OptFunctionCtxResult
-                        (if simd-rotation-context-valid?
-                          (opt-unroll-simd-function-with-context-result
-                            type-segment-bases
-                            simd-rotation-context
-                            simd-rotated
-                            true)
-                          (OptFunctionCtxResult.Result
-                            simd-rotated
-                            simd-rotation-context))]
-                      ;; A successful SIMD rewrite always allocates fresh
-                      ;; destinations; rotation itself leaves the frame alone.
-                      [simd-applied? : bool
-                        (match (compiler-opt-global-shared-view simd-result)
-                          [(OptFunctionCtxResult.Result simd-func _)
-                            (match simd-func
-                              [(ir.CompilerIrFunction.Function _ _ _ f _ _)
-                                (> f promoted-frame)])])]
-                      [rotated : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "rotation"
-                          (if simd-applied?
-                            (match (compiler-opt-global-shared-view simd-result)
-                              [(OptFunctionCtxResult.Result f _) f])
-                            (ir.CompilerIrFunction.Function
-                              name
-                              (compiler-opt-global-shared-view params)
-                              (compiler-opt-global-shared-view ret-ty)
-                              promoted-frame
-                              (match (compiler-opt-global-shared-view
-                                rotation-result)
-                                [(OptBlockCtxResult.Result b _ _) b])
-                              (compiler-opt-global-shared-view function-abi))))]
-                      [rotation-context : OptCfgContext
-                        (if simd-applied?
-                          (match simd-result
-                            [(OptFunctionCtxResult.Result _ ctx) ctx])
-                          (match (compiler-opt-global-shared-view
-                            rotation-result)
-                            [(OptBlockCtxResult.Result _ ctx _) ctx]))]
-                      [rotation-context-valid? : bool
-                        (if simd-applied?
-                          true
-                          (match rotation-result
-                            [(OptBlockCtxResult.Result _ _ valid) valid]))]
-                      [_p-rotation : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "rotation"
-                          name
-                          _t-rotation)]
-                      ;; Register-value SSA construction feeds the verifier-gated
-                      ;; dominator passes below. Unsupported cases fall back to the
-                      ;; original function, so the optimization path remains safe.
-                      [_t-ssa : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [ssa-result : OptFunctionCtxResult
-                        (opt-ssa-construct-function-from-context-and-representations-result
-                          type-segment-bases
-                          (compiler-opt-global-shared-view
-                            summaries.representations)
-                          rotated
-                          rotation-context
-                          rotation-context-valid?)]
-                      [ssa : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "ssa"
-                          (match (compiler-opt-global-shared-view ssa-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [ssa-context : OptCfgContext
-                        (match ssa-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-ssa : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "ssa"
-                          name
-                          _t-ssa)]
-                      ;; Global-cell invariance runs on the SSA form so its
-                      ;; entry-loaded vars are single-def and the rewritten
-                      ;; descriptor geps/loads become ordinary SSA-fed
-                      ;; instructions for GVN/LICM below (and invariant loop
-                      ;; bounds for bce_version in the loop cluster). It only
-                      ;; inserts entry-block Movs and rewrites operands in
-                      ;; place, so the CFG -- and therefore ssa-context --
-                      ;; stays valid for the consumers underneath.
-                      [_t-global-cell : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [global-cell : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "global_cell"
-                          (opt-global-cell-function
-                            (compiler-opt-global-shared-view summaries)
-                            (opt-pure-call-dedupe-function
-                              (__tl-project-field summaries call-memory)
-                              (compiler-opt-global-shared-view ssa))))]
-                      [_p-global-cell : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "global_cell"
-                          name
-                          _t-global-cell)]
-                      [ssa-frame : i64
-                        (opt-function-frame
-                          (compiler-opt-global-shared-view global-cell))]
-                      [ssa-blocks : ir.CompilerIrBlockList
-                        (opt-function-blocks global-cell)]
-                      [_t-gvn : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      ;; MF-5 (i) promotes repeated scalar global-cell reads to
-                      ;; one materialized Mov, so this pass mints vars and hands
-                      ;; back the frame every pass below must size its per-var
-                      ;; arrays with.
-                      [gvn-result : OptLoadGvnResult
-                        (if run-heavy?
-                          (opt-gvn-blocks-with-context-and-call-memory-result
-                            load-cse-profile
-                            type-segment-bases
-                            (compiler-opt-global-shared-view ssa-context)
-                            (compiler-opt-global-shared-view params)
-                            summaries.call-memory
-                            summaries.global-cell
-                            ssa-frame
-                            ssa-blocks)
-                          (OptLoadGvnResult.Result ssa-blocks ssa-frame))]
-                      [gvn-frame : i64
-                        (match (compiler-opt-global-shared-view gvn-result)
-                          [(OptLoadGvnResult.Result _ f) f])]
-                      [gvn : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "gvn"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          gvn-frame
-                          (match gvn-result
-                            [(OptLoadGvnResult.Result b _) b])
-                          (compiler-opt-global-shared-view function-abi))]
-                      [_p-gvn : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "gvn"
-                          name
-                          _t-gvn)]
-                      ;; Dominated bounds-check dedup rides the same context:
-                      ;; it only deletes mid-block BoundsCheck instructions and
-                      ;; REORDERS a constant-offset run's checks (plus the index
-                      ;; arithmetic they read) inside one block, so the block set
-                      ;; and therefore the CFG (and ssa-context) stay valid for
-                      ;; sccp below. A decided branch has its CONDITION replaced
-                      ;; by a bool literal and keeps both successor labels, so
-                      ;; that holds for the branch fold too -- turning it into a
-                      ;; `Jump` here is what would invalidate the context, which
-                      ;; is why `opt-cfg-fold-branch` does it further down.
-                      ;; VERIFIER-GATED like GVN: in a fallback (non-SSA)
-                      ;; function a textually-single-def var inside a loop
-                      ;; still changes value across iterations (loop-carried
-                      ;; uses precede the redefinition), so "single source"
-                      ;; only implies "single value" when the verifier proves
-                      ;; every use is dominated by its definition. GVN
-                      ;; preserves that property, so verifying the ssa
-                      ;; function covers the gvn blocks consumed here.
-                      [_t-bounds-dom : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [bounds-dom-result : OptBoundsDomResult
-                        (if (opt-verify-ok?
-                          (opt-verify-function-with-context ssa ssa-context))
-                          (opt-bounds-dom-blocks-with-context-result
-                            type-segment-bases
-                            (compiler-opt-global-shared-view ssa-context)
-                            (compiler-opt-global-shared-view params)
-                            gvn-frame
-                            (compiler-opt-global-shared-view
-                              summaries.global-cell.nonneg)
-                            (opt-len-eq-use-build
-                              (compiler-opt-global-shared-view
-                                summaries.global-cell.len-eq)
-                              summaries.global-cell.len-eq-clean
-                              (ir.compiler-ir-symbol-id name)
-                              gvn-frame
-                              (compiler-opt-global-shared-view gvn)
-                              ;; GAP-1's facts are NOT read here; see
-                              ;; opt-arg-global-final-sweep for why they belong
-                              ;; below the fixpoint.
-                              (opt_i64_i64_map.with-capacity 1)
-                              (compiler-opt-global-shared-view params))
-                            gvn)
-                          (OptBoundsDomResult.Result gvn gvn-frame))]
-                      ;; The range merge mints the two casts its unsigned
-                      ;; compare reads, so everything below sizes its per-var
-                      ;; arrays off THIS frame, not the one SSA construction
-                      ;; left.
-                      [bd-frame : i64
-                        (match (compiler-opt-global-shared-view
-                          bounds-dom-result)
-                          [(OptBoundsDomResult.Result _ f) f])]
-                      [bounds-dom : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "bounds_dom"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          (match bounds-dom-result
-                            [(OptBoundsDomResult.Result b _) b])
-                          (compiler-opt-global-shared-view function-abi))]
-                      [_p-bounds-dom : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "bounds_dom"
-                          name
-                          _t-bounds-dom)]
-                      [_t-sccp : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [sccp-result : OptBlockCtxResult
-                        (opt-sccp-blocks-with-context-result-raw
-                          type-segment-bases
-                          ssa-context
-                          (compiler-opt-global-shared-view params)
-                          bounds-dom
-                          bd-frame)]
-                      [sccp : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "sccp"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          (match (compiler-opt-global-shared-view sccp-result)
-                            [(OptBlockCtxResult.Result b _ _) b])
-                          (compiler-opt-global-shared-view function-abi))]
-                      [sccp-context : OptCfgContext
-                        (match (compiler-opt-global-shared-view sccp-result)
-                          [(OptBlockCtxResult.Result _ ctx _) ctx])]
-                      [sccp-context-valid : bool
-                        (match sccp-result
-                          [(OptBlockCtxResult.Result _ _ valid) valid])]
-                      [_p-sccp : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "sccp"
-                          name
-                          _t-sccp)]
-                      ;; Ahead of the bool-branch fuser on purpose: this pass
-                      ;; turns a `[sentinel phi, compare, branch]` merge into
-                      ;; the `[bool phi, branch]` shape the fuser was written
-                      ;; for, so a site that reaches here as an integer join
-                      ;; leaves the slot as a compare and branch adjacent to the
-                      ;; load they read. It also wants sccp's constant
-                      ;; substitution above it (a phi input that only became a
-                      ;; literal there is one more edge it can decide) and the
-                      ;; `cfg` stage below it, which retires the merge once the
-                      ;; fuser has taken its last predecessor.
-                      [_t-phi-cmp-fold : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [phi-cmp-fold-input : ir.CompilerIrFunction
-                        (ir.CompilerIrFunction.Function
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          (compiler-opt-global-shared-view sccp)
-                          (compiler-opt-global-shared-view function-abi))]
-                      [phi-cmp-fold-result : OptFunctionRewriteResult
-                        (opt-phi-cmp-fold-function-with-context-result
-                          type-segment-bases
-                          (if sccp-context-valid
-                            sccp-context
-                            (if (opt-phi-cmp-fold-blocks-have-candidate?
-                              (compiler-opt-global-shared-view sccp))
-                              (opt-cfg-context-build sccp)
-                              (opt-cfg-context-empty)))
-                          false
-                          phi-cmp-fold-input)]
-                      [phi-cmp-fold : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "phi_cmp_fold"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          (match (compiler-opt-global-shared-view
-                            phi-cmp-fold-result)
-                            [(OptFunctionRewriteResult.Result f _ _)
-                              (opt-function-blocks f)])
-                          (compiler-opt-global-shared-view function-abi))]
-                      [phi-cmp-fold-changed : bool
-                        (match (compiler-opt-global-shared-view
-                          phi-cmp-fold-result)
-                          [(OptFunctionRewriteResult.Result _ _ changed)
-                            changed])]
-                      [_p-phi-cmp-fold : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "phi_cmp_fold"
-                          name
-                          _t-phi-cmp-fold)]
-                      [_t-bool-branch : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [bool-branch-input : ir.CompilerIrFunction
-                        (ir.CompilerIrFunction.Function
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          (compiler-opt-global-shared-view phi-cmp-fold)
-                          (compiler-opt-global-shared-view function-abi))]
-                      [bool-branch-context : OptCfgContext
-                        (if (or sccp-context-valid phi-cmp-fold-changed)
-                          (match phi-cmp-fold-result
-                            [(OptFunctionRewriteResult.Result _ ctx _) ctx])
-                          (if (opt-bool-branch-blocks-have-candidate?
-                            type-segment-bases
-                            (compiler-opt-global-shared-view phi-cmp-fold))
-                            (opt-cfg-context-build phi-cmp-fold)
-                            (opt-cfg-context-empty)))]
-                      [bool-branch-result : OptFunctionRewriteResult
-                        (opt-bool-branch-function-with-context-result
-                          type-segment-bases
-                          bool-branch-context
-                          false
-                          bool-branch-input)]
-                      [bool-branch : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "bool_branch"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          (match (compiler-opt-global-shared-view
-                            bool-branch-result)
-                            [(OptFunctionRewriteResult.Result f _ _)
-                              (opt-function-blocks f)])
-                          (compiler-opt-global-shared-view function-abi))]
-                      [bool-branch-changed : bool
-                        (match (compiler-opt-global-shared-view
-                          bool-branch-result)
-                          [(OptFunctionRewriteResult.Result _ _ changed)
-                            changed])]
-                      [_p-bool-branch : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "bool_branch"
-                          name
-                          _t-bool-branch)]
-                      ;; Jump threading runs directly after the bool-branch
-                      ;; fuser, which keeps first refusal on the shapes it
-                      ;; already rewrites (all-constant merge phis, the
-                      ;; compare/phi pair, materialized And trees) and leaves
-                      ;; this pass the partially-constant merges and their
-                      ;; forwarding chains. Its position is deliberate at both
-                      ;; ends: SSA construction has already run, so the reaching
-                      ;; constants arrive as phi inputs rather than stack
-                      ;; traffic, and it is still upstream of `cfg`, `switch`
-                      ;; and the whole loop cluster (preheaders / licm /
-                      ;; induction / bce_version / unroll / lftr), so those
-                      ;; passes admit and shape loops from the threaded CFG
-                      ;; instead of one whose guard is still a materialized
-                      ;; boolean, and rotation sees it from the next fixpoint
-                      ;; iteration (`rotation` heads the iteration). The `cfg`
-                      ;; stage immediately below is the unreachable-block
-                      ;; cleanup that retires a merge which lost every
-                      ;; predecessor (the pass also runs it between its own
-                      ;; rounds).
-                      [_t-thread-branch : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [thread-branch-input : ir.CompilerIrFunction
-                        (ir.CompilerIrFunction.Function
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          (compiler-opt-global-shared-view bool-branch)
-                          (compiler-opt-global-shared-view function-abi))]
-                      [thread-branch-result : OptFunctionRewriteResult
-                        (opt-thread-const-branch-function-with-context-result
-                          type-segment-bases
-                          (if (or
-                            sccp-context-valid
-                            phi-cmp-fold-changed
-                            bool-branch-changed)
-                            (match bool-branch-result
-                              [(OptFunctionRewriteResult.Result _ ctx _) ctx])
-                            (if (opt-thread-const-branch-blocks-have-candidate?
-                              type-segment-bases
-                              (compiler-opt-global-shared-view bool-branch))
-                              (opt-cfg-context-build bool-branch)
-                              (opt-cfg-context-empty)))
-                          false
-                          thread-branch-input)]
-                      [thread-branch : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "thread_branch"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          (match (compiler-opt-global-shared-view
-                            thread-branch-result)
-                            [(OptFunctionRewriteResult.Result f _ _)
-                              (opt-function-blocks f)])
-                          (compiler-opt-global-shared-view function-abi))]
-                      [thread-branch-changed : bool
-                        (match (compiler-opt-global-shared-view
-                          thread-branch-result)
-                          [(OptFunctionRewriteResult.Result _ _ changed)
-                            changed])]
-                      [_p-thread-branch : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "thread_branch"
-                          name
-                          _t-thread-branch)]
-                      [_t-cfg2 : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      ;; The block merge closes the same stage: `phi_cmp_fold`
-                      ;; and the fuser above leave a merge holding one input and
-                      ;; the compare that reads it one block further on, and the
-                      ;; cleanup right above is what turns that phi into a mov.
-                      ;; Concatenating the run is what the backend's contiguous
-                      ;; `load ; cast ; compare ; branch` fold needs, and doing
-                      ;; it here -- rather than after `switch` and the loop
-                      ;; cluster -- means every one of those passes admits and
-                      ;; shapes the merged blocks.
-                      [cfg-result : OptBlockCtxResult
-                        (opt-cfg-merge-blocks-with-context-result
-                          gvn-frame
-                          (opt-cfg-simplify-blocks-with-context-result
-                            (OptBlockCtxResult.Result
-                              thread-branch
-                              (match thread-branch-result
-                                [(OptFunctionRewriteResult.Result _ ctx _) ctx])
-                              (or
-                                sccp-context-valid
-                                phi-cmp-fold-changed
-                                bool-branch-changed
-                                thread-branch-changed))))]
-                      [cfg : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "cfg"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          (match (compiler-opt-global-shared-view cfg-result)
-                            [(OptBlockCtxResult.Result b _ _) b])
-                          (compiler-opt-global-shared-view function-abi))]
-                      [cfg-context : OptCfgContext
-                        (match cfg-result
-                          [(OptBlockCtxResult.Result _ ctx _) ctx])]
-                      [_p-cfg2 : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "cfg"
-                          name
-                          _t-cfg2)]
-                      ;; Ahead of switch formation on purpose: a classifier
-                      ;; chain reaches here canonicalized (SCCP folded its
-                      ;; constant conditions, value numbering unified repeated
-                      ;; tests, cfg dropped the dead arms) and still spelled as
-                      ;; compare-and-branch links, which is the shape the bit
-                      ;; test recognizes. Any run the switch former would have
-                      ;; taken over is already covered by the mask, and the
-                      ;; links it leaves behind stay available to it.
-                      [_t-bit-test : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [bit-test-input : ir.CompilerIrFunction
-                        (ir.CompilerIrFunction.Function
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bd-frame
-                          cfg
-                          (compiler-opt-global-shared-view function-abi))]
-                      [bit-test-result : OptFunctionPassResult
-                        (if run-heavy?
-                          (opt-bit-test-function-pass bit-test-input)
-                          (OptFunctionPassResult.Result bit-test-input false))]
-                      [bit-tested : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "bit_test"
-                          (match (compiler-opt-global-shared-view
-                            bit-test-result)
-                            [(OptFunctionPassResult.Result f _) f]))]
-                      [bit-test-changed : bool
-                        (match bit-test-result
-                          [(OptFunctionPassResult.Result _ changed) changed])]
-                      [bit-test-blocks : ir.CompilerIrBlockList
-                        (opt-function-blocks
-                          (compiler-opt-global-shared-view bit-tested))]
-                      [bit-test-frame : i64 (opt-function-frame bit-tested)]
-                      [bit-test-context : OptCfgContext
-                        (if bit-test-changed
-                          (opt-cfg-context-build
-                            (compiler-opt-global-shared-view bit-test-blocks))
-                          cfg-context)]
-                      [_p-bit-test : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "bit_test"
-                          name
-                          _t-bit-test)]
-                      [_t-switch : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [switch-input : ir.CompilerIrFunction
-                        (ir.CompilerIrFunction.Function
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bit-test-frame
-                          bit-test-blocks
-                          (compiler-opt-global-shared-view function-abi))]
-                      [switch-result : OptFunctionPassResult
-                        (if run-heavy?
-                          (opt-switch-form-function-pass switch-input)
-                          (OptFunctionPassResult.Result switch-input false))]
-                      [switched : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "switch"
-                          (match (compiler-opt-global-shared-view switch-result)
-                            [(OptFunctionPassResult.Result f _) f]))]
-                      [switch-changed : bool
-                        (match switch-result
-                          [(OptFunctionPassResult.Result _ changed) changed])]
-                      [switch-blocks : ir.CompilerIrBlockList
-                        (opt-function-blocks switched)]
-                      [switch-context : OptCfgContext
-                        (if switch-changed
-                          (opt-cfg-context-build
-                            (compiler-opt-global-shared-view switch-blocks))
-                          bit-test-context)]
-                      [_p-switch : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "switch"
-                          name
-                          _t-switch)]
-                      [_t-preheaders : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      ;; Thread one OptCfgContext per block-state through
-                      ;; the preheaders -> rotate_ssa -> scratch_reset -> licm ->
-                      ;; induction -> unroll -> global_gvn chain.
-                      ;; Each pass's output blocks are fed verbatim to the next,
-                      ;; so the context the pass builds for its post-pass verify
-                      ;; is exactly what the next pass needs for its entry verify
-                      ;; and dominance queries -- no rebuild between passes. Each
-                      ;; pass that rewrites the CFG builds one fresh context for
-                      ;; its output; the no-op majority reuses its input context.
-                      ;;
-                      ;; Verification is consolidated at the cluster head: one
-                      ;; full verify of the switch-form output, threaded through
-                      ;; `verified?`, replaces each cluster pass's entry verify.
-                      ;; Every mutating pass still post-verifies its own rewrite
-                      ;; (falling back to its input on rejection), so a verified
-                      ;; input stays verified across the chain.
-                      [loop-cluster-verified? : bool
-                        (opt-verify-ok?
-                          (opt-verify-function-with-context
-                            (ir.CompilerIrFunction.Function
-                              name
-                              (compiler-opt-global-shared-view params)
-                              (compiler-opt-global-shared-view ret-ty)
-                              bit-test-frame
-                              (compiler-opt-global-shared-view switch-blocks)
-                              (compiler-opt-global-shared-view function-abi))
-                            switch-context))]
-                      [preheaders-result : OptFunctionCtxResult
-                        (let
-                          [preheaders-input : ir.CompilerIrFunction
-                            (ir.CompilerIrFunction.Function
-                              name
-                              (compiler-opt-global-shared-view params)
-                              (compiler-opt-global-shared-view ret-ty)
-                              bit-test-frame
-                              switch-blocks
-                              (compiler-opt-global-shared-view function-abi))]
-                          (opt-loop-preheaders-function-with-context-result
-                            switch-context
-                            loop-cluster-verified?
-                            preheaders-input))]
-                      [preheaders : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "preheaders"
-                          (match (compiler-opt-global-shared-view
-                            preheaders-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [preheaders-context : OptCfgContext
-                        (match preheaders-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-preheaders : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "preheaders"
-                          name
-                          _t-preheaders)]
-                      [_t-rotate-ssa : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [rotate-ssa-result : OptFunctionCtxResult
-                        (opt-rotate-ssa-function-with-context-result
-                          preheaders-context
-                          loop-cluster-verified?
-                          preheaders)]
-                      [rotate-ssa : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "rotate_ssa"
-                          (match (compiler-opt-global-shared-view
-                            rotate-ssa-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [rotate-ssa-context : OptCfgContext
-                        (match rotate-ssa-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-rotate-ssa : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "rotate_ssa"
-                          name
-                          _t-rotate-ssa)]
-                      [_t-scratch-reset : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [scratch-reset-result : OptFunctionCtxResult
-                        (opt-scratch-reset-function-with-context-result
-                          type-segment-bases
-                          rotate-ssa-context
-                          loop-cluster-verified?
-                          rotate-ssa)]
-                      [scratch-reset : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "scratch_reset"
-                          (match (compiler-opt-global-shared-view
-                            scratch-reset-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [scratch-reset-context : OptCfgContext
-                        (match scratch-reset-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-scratch-reset : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "scratch_reset"
-                          name
-                          _t-scratch-reset)]
-                      ;; Retire dead phi webs before the loop passes read them:
-                      ;; a dead phi cycle reads its loop-defined input like any
-                      ;; other reader, and both `flag_exit` and `bce_version`
-                      ;; reject a loop whose defs are read outside it. DCE at
-                      ;; the tail of the same round retires the chains the
-                      ;; removed phis were the last readers of.
-                      [_t-dead-phi : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [dead-phi : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "dead_phi"
-                          (opt-dead-phi-function scratch-reset))]
-                      ;; Dropping phis leaves every label and every edge in
-                      ;; place, so `scratch_reset`'s topology context is still
-                      ;; exact -- but its dense block array holds the block
-                      ;; VALUES this pass just replaced, so refresh that array
-                      ;; before handing the context on.
-                      [_dead-phi-refresh : unit
-                        (opt-cfg-index-refresh-blocks!
-                          (compiler-opt-global-shared-view
-                            (__tl-project-field scratch-reset-context index))
-                          (opt-function-blocks
-                            (compiler-opt-global-shared-view dead-phi)))]
-                      [dead-phi-context : OptCfgContext scratch-reset-context]
-                      [_p-dead-phi : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "dead_phi"
-                          name
-                          _t-dead-phi)]
-                      [_t-licm : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [licm-result : OptFunctionCtxResult
-                        (opt-licm-function-with-context-result-and-direct-call-clean
-                          type-segment-bases
-                          dead-phi-context
-                          loop-cluster-verified?
-                          (compiler-opt-global-shared-view
-                            summaries.direct-call-clean)
-                          (compiler-opt-global-shared-view
-                            summaries.return-alias)
-                          (compiler-opt-global-shared-view
-                            summaries.global-cell)
-                          false
-                          dead-phi)]
-                      [licm-owned : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "licm"
-                          (match (compiler-opt-global-shared-view licm-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [licm-context : OptCfgContext
-                        (match licm-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      ;; The lowerer's checked moves into owned places arrive as
-                      ;; `store_owned`; everything below LICM reads them as the
-                      ;; ordinary `store_ptr` they are.
-                      [licm : ir.CompilerIrFunction
-                        (opt-store-owned-erase-function licm-owned)]
-                      [_licm-erased-refresh : unit
-                        (opt-cfg-index-refresh-blocks!
-                          (compiler-opt-global-shared-view
-                            (__tl-project-field licm-context index))
-                          (opt-function-blocks
-                            (compiler-opt-global-shared-view licm)))]
-                      [_p-licm : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "licm"
-                          name
-                          _t-licm)]
-                      ;; Run successor sinking while block-local address recipes
-                      ;; are still explicit. Induction strength reduction below
-                      ;; may replace the retained header address with a pointer
-                      ;; phi, but the fresh arm clone remains an ordinary bounded
-                      ;; rematerialization chain.
-                      [pre-induction-sink-result : OptFunctionCtxResult
-                        (opt-successor-sink-function-with-context-result
-                          type-segment-bases
-                          licm-context
-                          licm)]
-                      [pre-induction-sink : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "pre_induction_sink"
-                          (match (compiler-opt-global-shared-view
-                            pre-induction-sink-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [pre-induction-sink-context : OptCfgContext
-                        (match pre-induction-sink-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_t-induction : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [induction-result : OptFunctionCtxResult
-                        (opt-induction-function-with-context-result
-                          type-segment-bases
-                          pre-induction-sink-context
-                          loop-cluster-verified?
-                          pre-induction-sink)]
-                      [induction : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "induction"
-                          (match (compiler-opt-global-shared-view
-                            induction-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [induction-context : OptCfgContext
-                        (match induction-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-induction : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "induction"
-                          name
-                          _t-induction)]
-                      ;; Monotone-flag loop-exit conversion runs on induction's
-                      ;; output and ahead of versioning: the loop it hands the
-                      ;; versioner has lost its flag test and its clearing arm,
-                      ;; so the clone the versioner has to fit inside
-                      ;; `opt-bce-mb-instr-max` is strictly smaller.
-                      [_t-flag-exit : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [flag-exit-result : OptFunctionCtxResult
-                        (opt-flag-exit-function-with-context-result
-                          induction-context
-                          loop-cluster-verified?
-                          induction)]
-                      [flag-exit : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "flag_exit"
-                          (match (compiler-opt-global-shared-view
-                            flag-exit-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [flag-exit-context : OptCfgContext
-                        (match flag-exit-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-flag-exit : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "flag_exit"
-                          name
-                          _t-flag-exit)]
-                      ;; Bounds-check loop versioning runs on induction's
-                      ;; output so its check-free fast clone reaches the
-                      ;; unroller INSIDE the same pipeline iteration (a
-                      ;; lowered while loop rotates in iteration 1 and only
-                      ;; reaches canonical shape at the fixpoint cap).
-                      [_t-bce-version : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [bce-version-result : OptFunctionCtxResult
-                        (opt-bce-version-function-with-context-result
-                          type-segment-bases
-                          (compiler-opt-global-shared-view
-                            summaries.direct-call-clean)
-                          (compiler-opt-global-shared-view
-                            summaries.global-cell.len-eq)
-                          flag-exit-context
-                          loop-cluster-verified?
-                          flag-exit)]
-                      [bce-version : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "bce_version"
-                          (match (compiler-opt-global-shared-view
-                            bce-version-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [bce-version-context : OptCfgContext
-                        (match bce-version-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      ;; P-B's late slot: the versioner has had every loop now,
-                      ;; so the length-equality relation is read inside loop
-                      ;; bodies too (see opt-len-eq-late-sweep).
-                      [late-le : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "bounds_dom_le"
-                          (opt-len-eq-late-sweep
-                            type-segment-bases
-                            (compiler-opt-global-shared-view
-                              summaries.global-cell.len-eq)
-                            summaries.global-cell.len-eq-clean
-                            (compiler-opt-global-shared-view
-                              summaries.global-cell.nonneg)
-                            ;; GAP-1's facts are NOT read here either: this
-                            ;; slot is late within ONE round, and another round
-                            ;; may still version a loop.
-                            (opt_i64_i64_map.with-capacity 1)
-                            (compiler-opt-global-shared-view
-                              bce-version-context)
-                            bce-version))]
-                      [_p-bce-version : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "bce_version"
-                          name
-                          _t-bce-version)]
-                      ;; Constant fills become one tl_mem_fill8 call BEFORE the
-                      ;; unroller sees them: unrolling a fill spends an 11-
-                      ;; instruction version guard and a 4-per-slot remainder to
-                      ;; reach 1.19 instructions per slot, while the runtime
-                      ;; helper's `rep stosq` is 1.0 flat with neither. Running
-                      ;; here also means the rewrite reads the versioner's own
-                      ;; freshly built `__bce_guard`, which is what licenses
-                      ;; dropping the loop (see the pass header).
-                      [_t-fill-call : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [fill-call-result : OptFunctionCtxResult
-                        (opt-fill-call-function-with-context-result
-                          bce-version-context
-                          loop-cluster-verified?
-                          late-le)]
-                      [fill-call : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "fill_call"
-                          (match (compiler-opt-global-shared-view
-                            fill-call-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [fill-call-context : OptCfgContext
-                        (match fill-call-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-fill-call : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "fill_call"
-                          name
-                          _t-fill-call)]
-                      ;; Element copies become one tl_mem_copy_fwd (bytes) or
-                      ;; tl_mem_copy8_fwd (i64/u64 slots) call, and for the same
-                      ;; reason fills do: it has to happen BEFORE the unroller,
-                      ;; both because the unrolled body is what costs 3.5
-                      ;; instructions per byte (x2 tier) or 2.75 per word (K=4
-                      ;; word-merge tier) and because the rewrite reads the
-                      ;; versioner's own freshly built `__bce_guard` for its
-                      ;; trip-count fact (see the pass header).
-                      [_t-copy-call : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [copy-call-result : OptFunctionCtxResult
-                        (opt-copy-call-function-with-context-result
-                          fill-call-context
-                          loop-cluster-verified?
-                          fill-call)]
-                      [copy-call : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "copy_call"
-                          (match (compiler-opt-global-shared-view
-                            copy-call-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [copy-call-context : OptCfgContext
-                        (match copy-call-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-copy-call : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "copy_call"
-                          name
-                          _t-copy-call)]
-                      ;; Canonical counted-loop unrolling (x4) runs on
-                      ;; the versioned blocks. A successful rewrite
-                      ;; versions at most one loop per pipeline iteration and
-                      ;; rebuilds the context for the new CFG, so the stages
-                      ;; below keep valid dominance facts.
-                      [_t-unroll : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [unroll-result : OptFunctionCtxResult
-                        (opt-unroll-function-with-context-result
-                          type-segment-bases
-                          copy-call-context
-                          loop-cluster-verified?
-                          copy-call)]
-                      [unrolled : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "unroll"
-                          (match (compiler-opt-global-shared-view unroll-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [unroll-context : OptCfgContext
-                        (match unroll-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-unroll : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "unroll"
-                          name
-                          _t-unroll)]
-                      ;; Byte-compose load combining runs immediately after the
-                      ;; unroller: a constant-trip loop unrolled THIS iteration
-                      ;; exposes its straight-line compose here, and the round's
-                      ;; DCE below removes the dead byte loads/casts/shifts. The
-                      ;; pass only rewrites instructions in place (no CFG or
-                      ;; frame change), so the unroll context stays valid.
-                      [_t-load-combine : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [load-combine : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "load_combine"
-                          (match unrolled
-                            [(ir.CompilerIrFunction.Function
-                                _name
-                                _params
-                                _ret-ty
-                                unrolled-frame
-                                unrolled-blocks
-                                function-abi)
-                              (ir.CompilerIrFunction.Function
-                                name
-                                (compiler-opt-global-shared-view params)
-                                (compiler-opt-global-shared-view ret-ty)
-                                unrolled-frame
-                                (opt-load-combine-blocks
-                                  unrolled-frame
-                                  unrolled-blocks)
-                                function-abi)]))]
-                      [_p-load-combine : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "load_combine"
-                          name
-                          _t-load-combine)]
-                      ;; Linear-function test replacement runs here, after
-                      ;; bce_version and unroll: both key their rewrites on the
-                      ;; counter phi this pass retires, so it has to see their
-                      ;; output rather than take their input away. The retired
-                      ;; form is handed straight to affine-fold/GVN below.
-                      [_t-lftr : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [lftr-result : OptFunctionCtxResult
-                        (opt-lftr-function-with-context-result
-                          type-segment-bases
-                          unroll-context
-                          loop-cluster-verified?
-                          load-combine)]
-                      [lftr : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "lftr"
-                          (match (compiler-opt-global-shared-view lftr-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [lftr-context : OptCfgContext
-                        (match lftr-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-lftr : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "lftr"
-                          name
-                          _t-lftr)]
-                      ;; LFTR materializes an end pointer in an inner loop's
-                      ;; preheader after the ordinary LICM run. Give that fresh
-                      ;; invariant (and any induction-created address recipe)
-                      ;; one motion opportunity in the same pipeline iteration;
-                      ;; otherwise an enclosing repetition loop recomputes it
-                      ;; forever because the fixpoint rebuilds the LFTR shape
-                      ;; after each earlier LICM run.
-                      [_t-post-lftr-licm : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [post-lftr-licm-result : OptFunctionCtxResult
-                        (opt-licm-function-with-context-result-and-direct-call-clean
-                          type-segment-bases
-                          lftr-context
-                          loop-cluster-verified?
-                          summaries.direct-call-clean
-                          summaries.return-alias
-                          summaries.global-cell
-                          true
-                          lftr)]
-                      [post-lftr-licm : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "post_lftr_licm"
-                          (match (compiler-opt-global-shared-view
-                            post-lftr-licm-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [post-lftr-licm-context : OptCfgContext
-                        (match post-lftr-licm-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-post-lftr-licm : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "post_lftr_licm"
-                          name
-                          _t-post-lftr-licm)]
-                      ;; Invariant-offset Gep splitting. Two orderings pin it
-                      ;; here. It has to follow bce_version, because only the
-                      ;; fast clone drops the BoundsCheck that keeps the
-                      ;; `invariant + counter` Add multi-use, and a split that
-                      ;; leaves the Add live costs an instruction instead of
-                      ;; saving one. It also has to follow the post-LFTR LICM,
-                      ;; which is what lifts a versioned clone's descriptor data
-                      ;; load into its preheader: until that runs the array base
-                      ;; is still defined INSIDE the body, so the address is not
-                      ;; yet recognizable as base-plus-invariant.
-                      [_t-gep-offset : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [gep-offset-result : OptFunctionCtxResult
-                        (opt-gep-offset-function-with-context-result
-                          type-segment-bases
-                          post-lftr-licm-context
-                          loop-cluster-verified?
-                          post-lftr-licm)]
-                      [gep-offset : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "gep_offset"
-                          (match (compiler-opt-global-shared-view
-                            gep-offset-result)
-                            [(OptFunctionCtxResult.Result f _) f]))]
-                      [gep-offset-context : OptCfgContext
-                        (match gep-offset-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [_p-gep-offset : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "gep_offset"
-                          name
-                          _t-gep-offset)]
-                      [unroll-frame : i64
-                        (opt-function-frame
-                          (compiler-opt-global-shared-view gep-offset))]
-                      ;; Affine chain folding must see the unroller's output
-                      ;; INSIDE the same pipeline iteration: a lowered while
-                      ;; loop spends iteration 1 on SSA+rotation and unrolls in
-                      ;; iteration 2 (the fixpoint cap), so the fold-position
-                      ;; run above never sees the fresh copies. The pass only
-                      ;; rewrites instructions in place (no CFG change), so the
-                      ;; post-LFTR LICM context stays valid below.
-                      [unroll-blocks : ir.CompilerIrBlockList
-                        (opt-affine-fold-blocks
-                          (opt-function-frame
-                            (compiler-opt-global-shared-view gep-offset))
-                          (opt-function-blocks gep-offset))]
-                      ;; Cross-block global value numbering + copy propagation
-                      ;; runs after local GVN/SCCP/CFG/LICM cleanup, on
-                      ;; the post-stack-promotion frame so its slots stay
-                      ;; consistent with the promoted blocks. It reuses the
-                      ;; context the post-LFTR LICM handed back: affine folding
-                      ;; only rewrites instructions, so that pass's output
-                      ;; blocks preserve the same CFG.
-                      ;; Its entry verify rides the loop-cluster verification:
-                      ;; every pass in between post-verifies its own rewrite
-                      ;; (falling back to its verified input), so a verified
-                      ;; cluster input arrives here still verified.
-                      [_t-global : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [global : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "global_gvn"
-                          (if run-heavy?
-                            (opt-global-value-number-function-with-context
-                              type-segment-bases
-                              (compiler-opt-global-shared-view
-                                gep-offset-context)
-                              loop-cluster-verified?
-                              (ir.CompilerIrFunction.Function
-                                name
-                                (compiler-opt-global-shared-view params)
-                                (compiler-opt-global-shared-view ret-ty)
-                                unroll-frame
-                                unroll-blocks
-                                (compiler-opt-global-shared-view function-abi)))
-                            (ir.CompilerIrFunction.Function
-                              name
-                              (compiler-opt-global-shared-view params)
-                              (compiler-opt-global-shared-view ret-ty)
-                              unroll-frame
-                              unroll-blocks
-                              (compiler-opt-global-shared-view function-abi))))]
-                      [_p-global : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "global_gvn"
-                          name
-                          _t-global)]
-                      [global-blocks : ir.CompilerIrBlockList
-                        (opt-function-blocks global)]
-                      ;; Substitute proven constant-global divisors with
-                      ;; their literals before divrem-safety, so the literal
-                      ;; divisor both enables the backend magic-multiply path and
-                      ;; lets divrem-safety drop the zero/overflow guards. This
-                      ;; only rewrites operand values, leaving the CFG
-                      ;; structure intact, so the post-LFTR LICM context stays
-                      ;; valid for the divrem-safety pass below.
-                      [const-div-blocks : ir.CompilerIrBlockList
-                        (opt-const-divisor-rewrite-summary-blocks
-                          summaries
-                          global-blocks)]
-                      [_t-divrem-safety : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [divrem-safe : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "divrem_safety"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          unroll-frame
-                          (if run-heavy?
-                            (opt-divrem-safety-blocks-with-context
-                              type-segment-bases
-                              summaries.representations
-                              gep-offset-context
-                              (compiler-opt-global-shared-view params)
-                              const-div-blocks)
-                            const-div-blocks)
-                          (compiler-opt-global-shared-view function-abi))]
-                      [_p-divrem-safety : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "divrem_safety"
-                          name
-                          _t-divrem-safety)]
-                      [_t-bit-length : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [bit-length-blocks : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "bit_length"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          unroll-frame
-                          (if run-heavy?
-                            (opt-bit-length-idiom-blocks
-                              unroll-frame
-                              divrem-safe)
-                            divrem-safe)
-                          (compiler-opt-global-shared-view function-abi))]
-                      [_p-bit-length : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "bit_length"
-                          name
-                          _t-bit-length)]
-                      ;; Split multi-use Geps into per-use single-use Geps so
-                      ;; the backend's indexed-memory fusion fires on every
-                      ;; Load/StorePtr (the quicksort swap shape). DCE then
-                      ;; drops the now-unused original Gep defs.
-                      [_t-gep-split : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [gep-split : ir.CompilerIrFunction
-                        (if run-heavy?
-                          (opt-gep-split-function
-                            type-segment-bases
-                            (ir.CompilerIrFunction.Function
-                              name
-                              (compiler-opt-global-shared-view params)
-                              (compiler-opt-global-shared-view ret-ty)
-                              unroll-frame
-                              bit-length-blocks
-                              (compiler-opt-global-shared-view function-abi)))
-                          (ir.CompilerIrFunction.Function
-                            name
-                            (compiler-opt-global-shared-view params)
-                            (compiler-opt-global-shared-view ret-ty)
-                            unroll-frame
-                            bit-length-blocks
-                            (compiler-opt-global-shared-view function-abi)))]
-                      [_p-gep-split : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "gep_split"
-                          name
-                          _t-gep-split)]
-                      ;; Second rotation round. `flag_exit` is what makes a
-                      ;; guarded compare loop rotatable at all: it retires the
-                      ;; monotone flag's re-test and folds every outside reader
-                      ;; of a loop-carried value to a literal, leaving a
-                      ;; single-test header whose phis have no reader outside
-                      ;; the loop -- exactly the shape `rotate_ssa` accepts, and
-                      ;; the one it already rotates when the flag never escapes
-                      ;; (`it-map-insert-from`). The rotation stage cannot see
-                      ;; that shape: it sits six passes ABOVE `flag_exit`, a
-                      ;; lowered `while` keeps its flag live at a non-phi reader
-                      ;; through pipeline iteration 1 (flag_exit's C4) so the
-                      ;; conversion lands on iteration 2, and
-                      ;; `optimize-function-max-iterations` is 2 -- the
-                      ;; rotatable shape is produced strictly after the last
-                      ;; upstream chance to rotate it. Both clones of
-                      ;; `benchmarks/intern_table`'s `it-slice-eq?` byte compare
-                      ;; stayed top-tested for exactly that reason and paid an
-                      ;; unconditional back-edge `jmp` on every byte.
-                      ;;
-                      ;; Placed below `global_gvn`, and that is not incidental.
-                      ;; Rotation duplicates the header guard into the preheader
-                      ;; with the phi's INIT value substituted, so a counted
-                      ;; loop starting at zero clones `lt 0, n` -- which is
-                      ;; textually the trip-count test `bce_version` already
-                      ;; built for its own `__bce_guard`. Run above GVN, the
-                      ;; clones CSE into that one compare, its three branch
-                      ;; users stop being single-use, and the backend has to
-                      ;; materialize the bool (`cmp`/`setl`/`movzbq`, then a
-                      ;; `test` per site) instead of folding each into a
-                      ;; `cmp`/`jcc`. Measured on `it-slice-eq?` that cost five
-                      ;; instructions per call and ate a third of the rotation's
-                      ;; win, and it regressed cfg_domloops and lex_source
-                      ;; outright. Below GVN each clone stays single-use and
-                      ;; fuses. Nothing downstream needs the top-tested shape:
-                      ;; `cmp_sink` and `successor_sink` are block-local,
-                      ;; `bool_branch_late` builds its own context, and the
-                      ;; trailing dce/fold/cfg retire the landing block.
-                      ;; The pass is unchanged and still verifier-gated; a loop
-                      ;; the upstream stage already rotated has no unconditional
-                      ;; back edge left, so `opt-loop-rotation-edge-compatible?`
-                      ;; makes this round a no-op on it.
-                      ;; GS-1's rotation enabler, fused with the rotation it
-                      ;; exists for. `flag_exit` ran six passes up in THIS round
-                      ;; and left the monotone flag it retired behind as a header
-                      ;; phi carrying the same constant on both edges. The
-                      ;; round's `cfg` pass -- the only owner of the uniform-phi
-                      ;; fold -- ran before `flag_exit`, and
-                      ;; `optimize-function-max-iterations` is 2, so nothing
-                      ;; below it ever folds that phi; `rotate_ssa` counts it as
-                      ;; a loop-carried value whose readers it has to place and
-                      ;; refuses the loop. Substituting it lets
-                      ;; `benchmarks/gvn_table`'s `gvn-table-invalidate-var`
-                      ;; rotate, which is what gives `guard_sink` below a depth-0
-                      ;; landing block for the descriptor derivations LICM had
-                      ;; lifted to the entry block.
-                      ;;
-                      ;; The substitution is SPECULATIVE and is thrown away when
-                      ;; no rotation followed. Kept unconditionally it is a
-                      ;; different function under the inliner's measured plan:
-                      ;; `benchmarks/intern_table`'s `it-slice-eq?` stopped being
-                      ;; absorbed into `it-bench` and reappeared as a 137-line
-                      ;; out-of-line callee costing 165,426,156 Ir (+31,754,258
-                      ;; on the row) for a rotation it was already getting.
-                      [_t-rotate-ssa-late : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [rotate-ssa-late : ir.CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          type-segment-bases
-                          "rotate_ssa"
-                          (if run-heavy?
-                            (opt-uniform-phi-rotate-gated gep-split)
-                            gep-split))]
-                      [_p-rotate-ssa-late : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "rotate_ssa"
-                          name
-                          _t-rotate-ssa-late)]
-                      [gep-split-frame : i64
-                        (opt-function-frame
-                          (compiler-opt-global-shared-view rotate-ssa-late))]
-                      [gep-split-blocks : ir.CompilerIrBlockList
-                        (opt-function-blocks rotate-ssa-late)]
-                      [_t-cmp-sink : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      ;; Sink loop-closing compares next to their branches so
-                      ;; the backend's compare+branch fusion fires past the
-                      ;; flag-safe pointer-increment Gep (the counted-fill
-                      ;; shape's setl/movzbq/test/jne becomes cmp;jcc).
-                      [cmp-sink : ir.CompilerIrBlockList
-                        (opt-cmp-sink-blocks gep-split-blocks)]
-                      [_p-cmp-sink : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "cmp_sink"
-                          name
-                          _t-cmp-sink)]
-                      [_t-successor-sink : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      ;; The context this returns is valid for its OWN output
-                      ;; blocks and the pass builds it either way, so the
-                      ;; guard-first sink below reads it instead of building a
-                      ;; second identical one.
-                      [successor-sink-result : OptFunctionCtxResult
-                        (if run-heavy?
-                          (opt-successor-sink-function-with-context-result
-                            type-segment-bases
-                            (opt-cfg-context-build
-                              (compiler-opt-global-shared-view cmp-sink))
-                            (ir.CompilerIrFunction.Function
-                              name
-                              (compiler-opt-global-shared-view params)
-                              (compiler-opt-global-shared-view ret-ty)
-                              gep-split-frame
-                              cmp-sink
-                              (compiler-opt-global-shared-view function-abi)))
-                          (OptFunctionCtxResult.Result
-                            (ir.CompilerIrFunction.Function
-                              name
-                              (compiler-opt-global-shared-view params)
-                              (compiler-opt-global-shared-view ret-ty)
-                              gep-split-frame
-                              cmp-sink
-                              (compiler-opt-global-shared-view function-abi))
-                            (opt-cfg-context-empty)))]
-                      [successor-sink-function : ir.CompilerIrFunction
-                        (match (compiler-opt-global-shared-view
-                          successor-sink-result)
-                          [(OptFunctionCtxResult.Result f _) f])]
-                      [successor-sink-context : OptCfgContext
-                        (match successor-sink-result
-                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
-                      [successor-sink : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "successor_sink"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          (opt-function-frame
-                            (compiler-opt-global-shared-view
-                              successor-sink-function))
-                          (opt-function-blocks
-                            (compiler-opt-global-shared-view
-                              successor-sink-function))
-                          (compiler-opt-global-shared-view function-abi))]
-                      [successor-sink-frame : i64
-                        (opt-function-frame successor-sink-function)]
-                      [_p-successor-sink : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "successor_sink"
-                          name
-                          _t-successor-sink)]
-                      ;; GS-1's guard-first dominator sink. Its slot is pinned
-                      ;; between here and `bool_branch_late`, for four reasons.
-                      ;; It has to be BELOW every pass that reshapes the CFG in
-                      ;; this round -- `bce_version`, `unroll`, `gep_split` and
-                      ;; the late `rotate_ssa` -- because it reads a dominator
-                      ;; tree and a loop nesting, and the landing block the late
-                      ;; rotation mints is exactly the depth-0 target it sinks a
-                      ;; loop's invariant derivations into. It has to be BELOW
-                      ;; `global_gvn`, or the value numbering re-hoists a moved
-                      ;; read to the dominating position it just left. It has to
-                      ;; be ABOVE the round's
-                      ;; `dce`, so an instruction this pass leaves behind dead
-                      ;; is retired in the same round rather than surviving to
-                      ;; the allocator. And it has to be ABOVE `load_sink`,
-                      ;; whose whole job is the gep/load adjacency the backend's
-                      ;; memory-operand fold requires: running below it would
-                      ;; separate pairs it had just made adjacent.
-                      [_t-guard-sink : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [guard-sink-function : ir.CompilerIrFunction
-                        (if run-heavy?
-                          (match (opt-guard-sink-function-with-context-result
-                            (compiler-opt-global-shared-view
-                              summaries.global-cell)
-                            successor-sink-context
-                            (ir.CompilerIrFunction.Function
-                              name
-                              (compiler-opt-global-shared-view params)
-                              (compiler-opt-global-shared-view ret-ty)
-                              successor-sink-frame
-                              successor-sink
-                              (compiler-opt-global-shared-view function-abi)))
-                            [(OptFunctionCtxResult.Result f _) f])
-                          (ir.CompilerIrFunction.Function
-                            name
-                            (compiler-opt-global-shared-view params)
-                            (compiler-opt-global-shared-view ret-ty)
-                            successor-sink-frame
-                            successor-sink
-                            (compiler-opt-global-shared-view function-abi)))]
-                      [guard-sink : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "guard_sink"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          (opt-function-frame
-                            (compiler-opt-global-shared-view
-                              guard-sink-function))
-                          (opt-function-blocks
-                            (compiler-opt-global-shared-view
-                              guard-sink-function))
-                          (compiler-opt-global-shared-view function-abi))]
-                      [guard-sink-frame : i64
-                        (opt-function-frame guard-sink-function)]
-                      [_p-guard-sink : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "guard_sink"
-                          name
-                          _t-guard-sink)]
-                      ;; BCE versioning runs after the early bool-branch pass
-                      ;; and may be the final CFG rewrite at the two-iteration
-                      ;; fixpoint cap. Lower its materialized And guards here,
-                      ;; after the passes that consume a single condition value
-                      ;; and before DCE/regalloc. The shared helper retains its
-                      ;; clone + verify rollback boundary.
-                      [_t-bool-branch-late : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [bool-branch-late-input : ir.CompilerIrFunction
-                        (ir.CompilerIrFunction.Function
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          guard-sink-frame
-                          (compiler-opt-global-shared-view guard-sink)
-                          (compiler-opt-global-shared-view function-abi))]
-                      [bool-branch-late-function : ir.CompilerIrFunction
-                        (if run-heavy?
-                          (match (opt-bool-branch-chain-function-with-context-result
-                            type-segment-bases
-                            (if (opt-bool-branch-chain-blocks-have-candidate?
-                              (compiler-opt-global-shared-view guard-sink))
-                              (opt-cfg-context-build guard-sink)
-                              (opt-cfg-context-empty))
-                            false
-                            bool-branch-late-input)
-                            [(OptFunctionRewriteResult.Result f _ _) f])
-                          bool-branch-late-input)]
-                      [bool-branch-late : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "bool_branch_late"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          (opt-function-frame
-                            (compiler-opt-global-shared-view
-                              bool-branch-late-function))
-                          (opt-function-blocks
-                            (compiler-opt-global-shared-view
-                              bool-branch-late-function))
-                          (compiler-opt-global-shared-view function-abi))]
-                      [bool-branch-late-frame : i64
-                        (opt-function-frame bool-branch-late-function)]
-                      [_p-bool-branch-late : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "bool_branch_late"
-                          name
-                          _t-bool-branch-late)]
-                      ;; Below every loop pass on purpose: it consumes a loop
-                      ;; the versioner and the dominating-comparison fold have
-                      ;; both already refused, and it reads the ROTATED shape
-                      ;; (preheader jump, latch compare) that rotation and LICM
-                      ;; leave behind. The `dce` below retires nothing it needs;
-                      ;; the latch compare is retyped in place, not replaced.
-                      [_t-ubound : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [ubound-input : ir.CompilerIrFunction
-                        (ir.CompilerIrFunction.Function
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          bool-branch-late-frame
-                          bool-branch-late
-                          (compiler-opt-global-shared-view function-abi))]
-                      [ubound-function : ir.CompilerIrFunction
-                        (match (if run-heavy?
-                          (opt-ubound-function-pass
-                            type-segment-bases
-                            ubound-input)
-                          (OptFunctionPassResult.Result ubound-input false))
-                          [(OptFunctionPassResult.Result f _) f])]
-                      [ubound : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "ubound"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          (opt-function-frame
-                            (compiler-opt-global-shared-view ubound-function))
-                          (opt-function-blocks
-                            (compiler-opt-global-shared-view ubound-function))
-                          (compiler-opt-global-shared-view function-abi))]
-                      [ubound-frame : i64 (opt-function-frame ubound-function)]
-                      [_p-ubound : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "ubound"
-                          name
-                          _t-ubound)]
-                      ;; The compare/branch fusion pass that used to sit here
-                      ;; now runs BELOW the whole pipeline fixpoint
-                      ;; (`opt-cmp-dup-final-pass`). Its copies exist only to be
-                      ;; adjacent to their branch, and this position is inside
-                      ;; the body `optimize-function-fixed-pass-with-summaries`
-                      ;; feeds back into another full iteration, whose `gvn`
-                      ;; folds them back onto one var and leaves the copy behind
-                      ;; as dead code -- which then reads as an impure link to
-                      ;; the classifier-chain pass and truncated
-                      ;; `benchmarks/lex_source`'s symbol-class bitmask by three
-                      ;; links (+2.09%).
-                      [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [dced : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "dce"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          ubound-frame
-                          (opt-dce-block-list-array-fixpoint
-                            ubound-frame
-                            ubound
-                            8)
-                          (compiler-opt-global-shared-view function-abi))]
-                      [_p-dce : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "dce"
-                          name
-                          _t-dce)]
-                      ;; Pure scheduling, and last on purpose: it exists only
-                      ;; to satisfy the backend's ADJACENCY requirement for the
-                      ;; gep-load memory-operand folds, so nothing may run
-                      ;; below it that could separate a pair again. Running it
-                      ;; under `dce` also means the use tally it needs sees no
-                      ;; dead readers, so a load whose only surviving consumer
-                      ;; is the fold's BinOp is recognised as single-use.
-                      [_t-load-sink : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [load-sink : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "load_sink"
-                          name
-                          (compiler-opt-global-shared-view params)
-                          (compiler-opt-global-shared-view ret-ty)
-                          ubound-frame
-                          (opt-load-sink-blocks ubound-frame dced)
-                          (compiler-opt-global-shared-view function-abi))]
-                      [_p-load-sink : unit
-                        (compiler-opt-profile-pass-note
-                          summaries.profile-state
-                          "load_sink"
-                          name
-                          _t-load-sink)]
-                      (ir.CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        ubound-frame
-                        load-sink
-                        function-abi))]))]))])))
+                (opt-pass-blocks s)))
+            false
+            (opt-pass-func s))
+          s))]
+    ;; The block merge closes the same stage: `phi_cmp_fold` and the fuser
+    ;; above leave a merge holding one input and the compare that reads it one
+    ;; block further on, and the cleanup right above is what turns that phi
+    ;; into a mov. Concatenating the run is what the backend's contiguous
+    ;; `load ; cast ; compare ; branch` fold needs, and doing it here -- rather
+    ;; than after `switch` and the loop cluster -- means every one of those
+    ;; passes admits and shapes the merged blocks.
+    [s
+      (opt-stage
+        "cfg"
+        (opt-pass-with-block-ctx
+          (opt-cfg-merge-blocks-with-context-result
+            gvn-frame
+            (opt-cfg-simplify-blocks-with-context-result
+              (OptBlockCtxResult.Result
+                (opt-pass-blocks s)
+                (opt-pass-ctx s)
+                s.ctx-valid?)))
+          s))]
+    ;; Ahead of switch formation on purpose: a classifier chain reaches here
+    ;; canonicalized (SCCP folded its constant conditions, value numbering
+    ;; unified repeated tests, cfg dropped the dead arms) and still spelled as
+    ;; compare-and-branch links, which is the shape the bit test recognizes.
+    ;; Any run the switch former would have taken over is already covered by
+    ;; the mask, and the links it leaves behind stay available to it.
+    [s
+      (opt-stage
+        "bit_test"
+        (if run-heavy?
+          (opt-pass-with-result-context
+            (opt-bit-test-function-pass (opt-pass-func s))
+            s)
+          s))]
+    [s
+      (opt-stage
+        "switch"
+        (if run-heavy?
+          (opt-pass-with-result-context
+            (opt-switch-form-function-pass (opt-pass-func s))
+            s)
+          s))]
+    ;; Thread one OptCfgContext per block-state through the preheaders ->
+    ;; rotate_ssa -> scratch_reset -> licm -> induction -> unroll -> global_gvn
+    ;; chain. Each pass's output blocks are fed verbatim to the next, so the
+    ;; context the pass builds for its post-pass verify is exactly what the
+    ;; next pass needs for its entry verify and dominance queries -- no rebuild
+    ;; between passes. Each pass that rewrites the CFG builds one fresh context
+    ;; for its output; the no-op majority reuses its input context.
+    ;;
+    ;; Verification is consolidated at the cluster head: one full verify of the
+    ;; switch-form output, threaded through `verified?`, replaces each cluster
+    ;; pass's entry verify. Every mutating pass still post-verifies its own
+    ;; rewrite (falling back to its input on rejection), so a verified input
+    ;; stays verified across the chain.
+    [verified? : bool
+      (opt-verify-ok?
+        (opt-verify-function-with-context (opt-pass-func s) s.ctx))]
+    [s
+      (opt-stage
+        "preheaders"
+        (opt-pass-with-ctx-result
+          (opt-loop-preheaders-function-with-context-result
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    [s
+      (opt-stage
+        "rotate_ssa"
+        (opt-pass-with-ctx-result
+          (opt-rotate-ssa-function-with-context-result
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    [s
+      (opt-stage
+        "scratch_reset"
+        (opt-pass-with-ctx-result
+          (opt-scratch-reset-function-with-context-result
+            type-segment-bases
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    ;; Retire dead phi webs before the loop passes read them: a dead phi cycle
+    ;; reads its loop-defined input like any other reader, and both `flag_exit`
+    ;; and `bce_version` reject a loop whose defs are read outside it. DCE at
+    ;; the tail of the same round retires the chains the removed phis were the
+    ;; last readers of. Dropping phis leaves every label and every edge in
+    ;; place, so `scratch_reset`'s topology context is still exact.
+    [s
+      (opt-stage
+        "dead_phi"
+        (opt-pass-with-refreshed-func
+          (opt-dead-phi-function (opt-pass-func s))
+          s))]
+    [licm-start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
+    [s
+      (opt-pass-observed
+        (opt-pass-with-ctx-result
+          (opt-licm-function-with-context-result-and-direct-call-clean
+            type-segment-bases
+            (opt-pass-ctx s)
+            verified?
+            (compiler-opt-global-shared-view summaries.direct-call-clean)
+            (compiler-opt-global-shared-view summaries.return-alias)
+            (compiler-opt-global-shared-view summaries.global-cell)
+            false
+            (opt-pass-func s))
+          s)
+        "licm")]
+    ;; The lowerer's checked moves into owned places arrive as `store_owned`;
+    ;; everything below LICM reads them as the ordinary `store_ptr` they are.
+    [s
+      (opt-pass-noted
+        (opt-pass-with-refreshed-func
+          (opt-store-owned-erase-function (opt-pass-func s))
+          s)
+        "licm"
+        licm-start-ms)]
+    ;; Run successor sinking while block-local address recipes are still
+    ;; explicit. Induction strength reduction below may replace the retained
+    ;; header address with a pointer phi, but the fresh arm clone remains an
+    ;; ordinary bounded rematerialization chain.
+    [s
+      (opt-pass-observed
+        (opt-pass-with-ctx-result
+          (opt-successor-sink-function-with-context-result
+            type-segment-bases
+            (opt-pass-ctx s)
+            (opt-pass-func s))
+          s)
+        "pre_induction_sink")]
+    [s
+      (opt-stage
+        "induction"
+        (opt-pass-with-ctx-result
+          (opt-induction-function-with-context-result
+            type-segment-bases
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    ;; Monotone-flag loop-exit conversion runs on induction's output and ahead
+    ;; of versioning: the loop it hands the versioner has lost its flag test
+    ;; and its clearing arm, so the clone the versioner has to fit inside
+    ;; `opt-bce-mb-instr-max` is strictly smaller.
+    [s
+      (opt-stage
+        "flag_exit"
+        (opt-pass-with-ctx-result
+          (opt-flag-exit-function-with-context-result
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    ;; Bounds-check loop versioning runs on induction's output so its
+    ;; check-free fast clone reaches the unroller INSIDE the same pipeline
+    ;; iteration (a lowered while loop rotates in iteration 1 and only reaches
+    ;; canonical shape at the fixpoint cap).
+    [bce-version-start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
+    [s
+      (opt-pass-observed
+        (opt-pass-with-ctx-result
+          (opt-bce-version-function-with-context-result
+            type-segment-bases
+            (compiler-opt-global-shared-view summaries.direct-call-clean)
+            (compiler-opt-global-shared-view summaries.global-cell.len-eq)
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s)
+        "bce_version")]
+    ;; P-B's late slot: the versioner has had every loop now, so the
+    ;; length-equality relation is read inside loop bodies too (see
+    ;; opt-len-eq-late-sweep).
+    [s
+      (opt-pass-noted
+        (opt-pass-observed
+          (opt-pass-with-func
+            (opt-len-eq-late-sweep
+              type-segment-bases
+              (compiler-opt-global-shared-view summaries.global-cell.len-eq)
+              summaries.global-cell.len-eq-clean
+              (compiler-opt-global-shared-view summaries.global-cell.nonneg)
+              ;; GAP-1's facts are NOT read here either: this slot is late
+              ;; within ONE round, and another round may still version a loop.
+              (opt_i64_i64_map.with-capacity 1)
+              (opt-pass-ctx s)
+              (opt-pass-func s))
+            s)
+          "bounds_dom_le")
+        "bce_version"
+        bce-version-start-ms)]
+    ;; Constant fills become one tl_mem_fill8 call BEFORE the unroller sees
+    ;; them: unrolling a fill spends an 11-instruction version guard and a
+    ;; 4-per-slot remainder to reach 1.19 instructions per slot, while the
+    ;; runtime helper's `rep stosq` is 1.0 flat with neither. Running here
+    ;; also means the rewrite reads the versioner's own freshly built
+    ;; `__bce_guard`, which is what licenses dropping the loop (see the pass
+    ;; header).
+    [s
+      (opt-stage
+        "fill_call"
+        (opt-pass-with-ctx-result
+          (opt-fill-call-function-with-context-result
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    ;; Element copies become one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd
+    ;; (i64/u64 slots) call, and for the same reason fills do: it has to happen
+    ;; BEFORE the unroller, both because the unrolled body is what costs 3.5
+    ;; instructions per byte (x2 tier) or 2.75 per word (K=4 word-merge tier)
+    ;; and because the rewrite reads the versioner's own freshly built
+    ;; `__bce_guard` for its trip-count fact (see the pass header).
+    [s
+      (opt-stage
+        "copy_call"
+        (opt-pass-with-ctx-result
+          (opt-copy-call-function-with-context-result
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    ;; Canonical counted-loop unrolling (x4) runs on the versioned blocks. A
+    ;; successful rewrite versions at most one loop per pipeline iteration and
+    ;; rebuilds the context for the new CFG, so the stages below keep valid
+    ;; dominance facts.
+    [s
+      (opt-stage
+        "unroll"
+        (opt-pass-with-ctx-result
+          (opt-unroll-function-with-context-result
+            type-segment-bases
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    ;; Byte-compose load combining runs immediately after the unroller: a
+    ;; constant-trip loop unrolled THIS iteration exposes its straight-line
+    ;; compose here, and the round's DCE below removes the dead byte
+    ;; loads/casts/shifts. The pass only rewrites instructions in place (no CFG
+    ;; or frame change), so the unroll context stays valid.
+    [s
+      (opt-stage
+        "load_combine"
+        (opt-pass-with-blocks
+          (opt-load-combine-blocks (opt-pass-frame s) (opt-pass-blocks s))
+          s))]
+    ;; Linear-function test replacement runs here, after bce_version and
+    ;; unroll: both key their rewrites on the counter phi this pass retires, so
+    ;; it has to see their output rather than take their input away. The
+    ;; retired form is handed straight to affine-fold/GVN below.
+    [s
+      (opt-stage
+        "lftr"
+        (opt-pass-with-ctx-result
+          (opt-lftr-function-with-context-result
+            type-segment-bases
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    ;; LFTR materializes an end pointer in an inner loop's preheader after the
+    ;; ordinary LICM run. Give that fresh invariant (and any induction-created
+    ;; address recipe) one motion opportunity in the same pipeline iteration;
+    ;; otherwise an enclosing repetition loop recomputes it forever because the
+    ;; fixpoint rebuilds the LFTR shape after each earlier LICM run.
+    [s
+      (opt-stage
+        "post_lftr_licm"
+        (opt-pass-with-ctx-result
+          (opt-licm-function-with-context-result-and-direct-call-clean
+            type-segment-bases
+            (opt-pass-ctx s)
+            verified?
+            (compiler-opt-global-shared-view summaries.direct-call-clean)
+            (compiler-opt-global-shared-view summaries.return-alias)
+            (compiler-opt-global-shared-view summaries.global-cell)
+            true
+            (opt-pass-func s))
+          s))]
+    ;; Invariant-offset Gep splitting. Two orderings pin it here. It has to
+    ;; follow bce_version, because only the fast clone drops the BoundsCheck
+    ;; that keeps the `invariant + counter` Add multi-use, and a split that
+    ;; leaves the Add live costs an instruction instead of saving one. It also
+    ;; has to follow the post-LFTR LICM, which is what lifts a versioned
+    ;; clone's descriptor data load into its preheader: until that runs the
+    ;; array base is still defined INSIDE the body, so the address is not yet
+    ;; recognizable as base-plus-invariant.
+    [s
+      (opt-stage
+        "gep_offset"
+        (opt-pass-with-ctx-result
+          (opt-gep-offset-function-with-context-result
+            type-segment-bases
+            (opt-pass-ctx s)
+            verified?
+            (opt-pass-func s))
+          s))]
+    ;; Affine chain folding must see the unroller's output INSIDE the same
+    ;; pipeline iteration: a lowered while loop spends iteration 1 on
+    ;; SSA+rotation and unrolls in iteration 2 (the fixpoint cap), so the
+    ;; fold-position run above never sees the fresh copies. The pass only
+    ;; rewrites instructions in place (no CFG change), so the post-LFTR LICM
+    ;; context stays valid below.
+    [s
+      (opt-pass-with-blocks
+        (opt-affine-fold-blocks (opt-pass-frame s) (opt-pass-blocks s))
+        s)]
+    ;; Cross-block global value numbering + copy propagation runs after local
+    ;; GVN/SCCP/CFG/LICM cleanup, on the post-stack-promotion frame so its
+    ;; slots stay consistent with the promoted blocks. It reuses the context
+    ;; the post-LFTR LICM handed back: affine folding only rewrites
+    ;; instructions, so that pass's output blocks preserve the same CFG. Its
+    ;; entry verify rides the loop-cluster verification: every pass in between
+    ;; post-verifies its own rewrite (falling back to its verified input), so a
+    ;; verified cluster input arrives here still verified.
+    [s
+      (opt-stage
+        "global_gvn"
+        (if run-heavy?
+          (opt-pass-with-func
+            (opt-global-value-number-function-with-context
+              type-segment-bases
+              (opt-pass-ctx s)
+              verified?
+              (opt-pass-func s))
+            s)
+          s))]
+    ;; Substitute proven constant-global divisors with their literals before
+    ;; divrem-safety, so the literal divisor both enables the backend
+    ;; magic-multiply path and lets divrem-safety drop the zero/overflow
+    ;; guards. This only rewrites operand values, leaving the CFG structure
+    ;; intact, so the post-LFTR LICM context stays valid for the divrem-safety
+    ;; pass below.
+    [s
+      (opt-pass-with-blocks
+        (opt-const-divisor-rewrite-summary-blocks summaries (opt-pass-blocks s))
+        s)]
+    [s
+      (opt-stage
+        "divrem_safety"
+        (if run-heavy?
+          (opt-pass-with-blocks
+            (opt-divrem-safety-blocks-with-context
+              type-segment-bases
+              summaries.representations
+              (opt-pass-ctx s)
+              (opt-pass-params s)
+              (opt-pass-blocks s))
+            s)
+          s))]
+    [s
+      (opt-stage
+        "bit_length"
+        (if run-heavy?
+          (opt-pass-with-blocks
+            (opt-bit-length-idiom-blocks (opt-pass-frame s) (opt-pass-blocks s))
+            s)
+          s))]
+    ;; Split multi-use Geps into per-use single-use Geps so the backend's
+    ;; indexed-memory fusion fires on every Load/StorePtr (the quicksort swap
+    ;; shape). DCE then drops the now-unused original Gep defs.
+    [s
+      (opt-stage-unobserved
+        "gep_split"
+        (if run-heavy?
+          (opt-pass-with-cfg-func
+            (opt-gep-split-function type-segment-bases (opt-pass-func s))
+            s)
+          s))]
+    ;; Second rotation round. `flag_exit` is what makes a guarded compare loop
+    ;; rotatable at all: it retires the monotone flag's re-test and folds every
+    ;; outside reader of a loop-carried value to a literal, leaving a
+    ;; single-test header whose phis have no reader outside the loop -- exactly
+    ;; the shape `rotate_ssa` accepts, and the one it already rotates when the
+    ;; flag never escapes (`it-map-insert-from`). The rotation stage cannot see
+    ;; that shape: it sits six passes ABOVE `flag_exit`, a lowered `while`
+    ;; keeps its flag live at a non-phi reader through pipeline iteration 1
+    ;; (flag_exit's C4) so the conversion lands on iteration 2, and
+    ;; `optimize-function-max-iterations` is 2 -- the rotatable shape is
+    ;; produced strictly after the last upstream chance to rotate it. Both
+    ;; clones of `benchmarks/intern_table`'s `it-slice-eq?` byte compare stayed
+    ;; top-tested for exactly that reason and paid an unconditional back-edge
+    ;; `jmp` on every byte.
+    ;;
+    ;; Placed below `global_gvn`, and that is not incidental. Rotation
+    ;; duplicates the header guard into the preheader with the phi's INIT value
+    ;; substituted, so a counted loop starting at zero clones `lt 0, n` --
+    ;; which is textually the trip-count test `bce_version` already built for
+    ;; its own `__bce_guard`. Run above GVN, the clones CSE into that one
+    ;; compare, its three branch users stop being single-use, and the backend
+    ;; has to materialize the bool (`cmp`/`setl`/`movzbq`, then a `test` per
+    ;; site) instead of folding each into a `cmp`/`jcc`. Measured on
+    ;; `it-slice-eq?` that cost five instructions per call and ate a third of
+    ;; the rotation's win, and it regressed cfg_domloops and lex_source
+    ;; outright. Below GVN each clone stays single-use and fuses. Nothing
+    ;; downstream needs the top-tested shape: `cmp_sink` and `successor_sink`
+    ;; are block-local, `bool_branch_late` builds its own context, and the
+    ;; trailing dce/fold/cfg retire the landing block. The pass is unchanged
+    ;; and still verifier-gated; a loop the upstream stage already rotated has
+    ;; no unconditional back edge left, so `opt-loop-rotation-edge-compatible?`
+    ;; makes this round a no-op on it.
+    ;;
+    ;; GS-1's rotation enabler, fused with the rotation it exists for.
+    ;; `flag_exit` ran six passes up in THIS round and left the monotone flag
+    ;; it retired behind as a header phi carrying the same constant on both
+    ;; edges. The round's `cfg` pass -- the only owner of the uniform-phi fold
+    ;; -- ran before `flag_exit`, and `optimize-function-max-iterations` is 2,
+    ;; so nothing below it ever folds that phi; `rotate_ssa` counts it as a
+    ;; loop-carried value whose readers it has to place and refuses the loop.
+    ;; Substituting it lets `benchmarks/gvn_table`'s `gvn-table-invalidate-var`
+    ;; rotate, which is what gives `guard_sink` below a depth-0 landing block
+    ;; for the descriptor derivations LICM had lifted to the entry block.
+    ;;
+    ;; The substitution is SPECULATIVE and is thrown away when no rotation
+    ;; followed. Kept unconditionally it is a different function under the
+    ;; inliner's measured plan: `benchmarks/intern_table`'s `it-slice-eq?`
+    ;; stopped being absorbed into `it-bench` and reappeared as a 137-line
+    ;; out-of-line callee costing 165,426,156 Ir (+31,754,258 on the row) for
+    ;; a rotation it was already getting.
+    [s
+      (opt-stage
+        "rotate_ssa"
+        (if run-heavy?
+          (opt-pass-with-cfg-func
+            (opt-uniform-phi-rotate-gated (opt-pass-func s))
+            s)
+          s))]
+    ;; Sink loop-closing compares next to their branches so the backend's
+    ;; compare+branch fusion fires past the flag-safe pointer-increment Gep
+    ;; (the counted-fill shape's setl/movzbq/test/jne becomes cmp;jcc).
+    [s
+      (opt-stage-unobserved
+        "cmp_sink"
+        (opt-pass-with-blocks (opt-cmp-sink-blocks (opt-pass-blocks s)) s))]
+    ;; The context this returns is valid for its OWN output blocks and the pass
+    ;; builds it either way, so the guard-first sink below reads it instead of
+    ;; building a second identical one.
+    [s
+      (opt-stage
+        "successor_sink"
+        (opt-pass-with-ctx-result
+          (if run-heavy?
+            (opt-successor-sink-function-with-context-result
+              type-segment-bases
+              (opt-cfg-context-build (opt-pass-blocks s))
+              (opt-pass-func s))
+            (OptFunctionCtxResult.Result
+              (opt-pass-func s)
+              (opt-cfg-context-empty)))
+          s))]
+    ;; GS-1's guard-first dominator sink. Its slot is pinned between here and
+    ;; `bool_branch_late`, for four reasons. It has to be BELOW every pass that
+    ;; reshapes the CFG in this round -- `bce_version`, `unroll`, `gep_split`
+    ;; and the late `rotate_ssa` -- because it reads a dominator tree and a
+    ;; loop nesting, and the landing block the late rotation mints is exactly
+    ;; the depth-0 target it sinks a loop's invariant derivations into. It has
+    ;; to be BELOW `global_gvn`, or the value numbering re-hoists a moved read
+    ;; to the dominating position it just left. It has to be ABOVE the round's
+    ;; `dce`, so an instruction this pass leaves behind dead is retired in the
+    ;; same round rather than surviving to the allocator. And it has to be
+    ;; ABOVE `load_sink`, whose whole job is the gep/load adjacency the
+    ;; backend's memory-operand fold requires: running below it would separate
+    ;; pairs it had just made adjacent.
+    [s
+      (opt-stage
+        "guard_sink"
+        (if run-heavy?
+          (opt-pass-with-cfg-func
+            (match (opt-guard-sink-function-with-context-result
+              (compiler-opt-global-shared-view summaries.global-cell)
+              (opt-pass-ctx s)
+              (opt-pass-func s))
+              [(OptFunctionCtxResult.Result f _) f])
+            s)
+          s))]
+    ;; BCE versioning runs after the early bool-branch pass and may be the
+    ;; final CFG rewrite at the two-iteration fixpoint cap. Lower its
+    ;; materialized And guards here, after the passes that consume a single
+    ;; condition value and before DCE/regalloc. The shared helper retains its
+    ;; clone + verify rollback boundary.
+    [s
+      (opt-stage
+        "bool_branch_late"
+        (if run-heavy?
+          (opt-pass-with-rewrite
+            (opt-bool-branch-chain-function-with-context-result
+              type-segment-bases
+              (if (opt-bool-branch-chain-blocks-have-candidate?
+                (opt-pass-blocks s))
+                (opt-cfg-context-build (opt-pass-blocks s))
+                (opt-cfg-context-empty))
+              false
+              (opt-pass-func s))
+            s)
+          s))]
+    ;; Below every loop pass on purpose: it consumes a loop the versioner and
+    ;; the dominating-comparison fold have both already refused, and it reads
+    ;; the ROTATED shape (preheader jump, latch compare) that rotation and LICM
+    ;; leave behind. The `dce` below retires nothing it needs; the latch
+    ;; compare is retyped in place, not replaced.
+    [s
+      (opt-stage
+        "ubound"
+        (if run-heavy?
+          (opt-pass-with-result
+            (opt-ubound-function-pass type-segment-bases (opt-pass-func s))
+            s)
+          s))]
+    ;; The compare/branch fusion pass that used to sit here now runs BELOW the
+    ;; whole pipeline fixpoint (`opt-cmp-dup-final-pass`). Its copies exist
+    ;; only to be adjacent to their branch, and this position is inside the
+    ;; body `optimize-function-fixed-pass-with-summaries` feeds back into
+    ;; another full iteration, whose `gvn` folds them back onto one var and
+    ;; leaves the copy behind as dead code -- which then reads as an impure
+    ;; link to the classifier-chain pass and truncated
+    ;; `benchmarks/lex_source`'s symbol-class bitmask by three links (+2.09%).
+    [s
+      (opt-stage
+        "dce"
+        (opt-pass-with-blocks
+          (opt-dce-block-list-array-fixpoint
+            (opt-pass-frame s)
+            (opt-pass-blocks s)
+            8)
+          s))]
+    ;; Pure scheduling, and last on purpose: it exists only to satisfy the
+    ;; backend's ADJACENCY requirement for the gep-load memory-operand folds,
+    ;; so nothing may run below it that could separate a pair again. Running it
+    ;; under `dce` also means the use tally it needs sees no dead readers, so a
+    ;; load whose only surviving consumer is the fold's BinOp is recognised as
+    ;; single-use.
+    [s
+      (opt-stage
+        "load_sink"
+        (opt-pass-with-blocks
+          (opt-load-sink-blocks (opt-pass-frame s) (opt-pass-blocks s))
+          s))]
+    s.func))
 
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
@@ -113544,125 +112474,59 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : OptLevel1PreDceResult
-  (match func
-    [(ir.CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        blocks
-        function-abi)
-      (let
-        [load-cse-profile : profile_state.CompilerProfileMetrics
-          (profile_state.compiler-profile-state-metrics
-            (profile_state.compiler-profile-state-shared-view
-              summaries.profile-state))]
-        [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [folded : ir.CompilerIrBlockList
-          (compiler-opt-debug-observe-blocks
+  (let
+    [load-cse-profile : profile_state.CompilerProfileMetrics
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-shared-view
+          summaries.profile-state))]
+    [s : OptPassState
+      (opt-pass-state type-segment-bases summaries.profile-state func false)]
+    [s
+      (opt-stage
+        "fold"
+        (opt-pass-with-blocks
+          (optimize-block-list-for-function
+            load-cse-profile
+            pools
             type-segment-bases
-            "fold"
-            name
-            (compiler-opt-global-shared-view params)
-            (compiler-opt-global-shared-view ret-ty)
-            frame
-            (optimize-block-list-for-function
-              load-cse-profile
-              pools
-              type-segment-bases
-              frame
-              (compiler-opt-global-shared-view params)
-              blocks)
-            (compiler-opt-global-shared-view function-abi))]
-        [_p-fold : unit
-          (compiler-opt-profile-pass-note
-            summaries.profile-state
-            "fold"
-            name
-            _t-fold)]
-        [loop-bce : ir.CompilerIrBlockList
-          (if summaries.enabled
-            (opt-loop-bce-blocks
-              type-segment-bases
-              (compiler-opt-global-shared-view summaries)
-              (compiler-opt-global-shared-view params)
-              folded)
-            folded)]
-        [_t-ctor-fwd : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [ctor-fwd : ir.CompilerIrBlockList
-          (compiler-opt-debug-observe-blocks
+            (opt-pass-frame s)
+            (opt-pass-params s)
+            (opt-pass-blocks s))
+          s))]
+    [s
+      (if summaries.enabled
+        (opt-pass-with-blocks
+          (opt-loop-bce-blocks
             type-segment-bases
-            "ctor_fwd"
-            name
-            (compiler-opt-global-shared-view params)
-            (compiler-opt-global-shared-view ret-ty)
-            frame
-            (opt-ctor-fwd-function-blocks frame loop-bce)
-            (compiler-opt-global-shared-view function-abi))]
-        [_p-ctor-fwd : unit
-          (compiler-opt-profile-pass-note
-            summaries.profile-state
-            "ctor_fwd"
-            name
-            _t-ctor-fwd)]
-        [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [promoted : ir.CompilerIrFunction
-          (compiler-opt-debug-observe-function
+            (compiler-opt-global-shared-view summaries)
+            (opt-pass-params s)
+            (opt-pass-blocks s))
+          s)
+        s)]
+    [s
+      (opt-stage
+        "ctor_fwd"
+        (opt-pass-with-blocks
+          (opt-ctor-fwd-function-blocks (opt-pass-frame s) (opt-pass-blocks s))
+          s))]
+    [s
+      (opt-stage
+        "stack_promote"
+        (opt-pass-with-cfg-func
+          (opt-aggregate-stack-promote-function
             type-segment-bases
-            "stack_promote"
-            (opt-aggregate-stack-promote-function
-              type-segment-bases
-              (ir.CompilerIrFunction.Function
-                name
-                (compiler-opt-global-shared-view params)
-                (compiler-opt-global-shared-view ret-ty)
-                frame
-                ctor-fwd
-                function-abi)))]
-        [_p-promote : unit
-          (compiler-opt-profile-pass-note
-            summaries.profile-state
-            "stack_promote"
-            name
-            _t-promote)]
-        (match promoted
-          [(ir.CompilerIrFunction.Function
-              _
-              _
-              _
-              promoted-frame
-              promoted-blocks
-              function-abi)
-            (let
-              [_t-cfg : i64 (cfg compile-profile (profile.now-ms) 0)]
-              [used : (__tl_dyn-array i64) (opt-used-array-new promoted-frame)]
-              [cfg : ir.CompilerIrBlockList
-                (compiler-opt-debug-observe-blocks
-                  type-segment-bases
-                  "cfg"
-                  name
-                  (compiler-opt-global-shared-view params)
-                  (compiler-opt-global-shared-view ret-ty)
-                  promoted-frame
-                  (opt-cfg-simplify-blocks-in-place
-                    promoted-blocks
-                    (compiler-opt-global-shared-view used))
-                  (compiler-opt-global-shared-view function-abi))]
-              [_p-cfg : unit
-                (compiler-opt-profile-pass-note
-                  summaries.profile-state
-                  "cfg"
-                  name
-                  _t-cfg)]
-              (OptLevel1PreDceResult.Result
-                (ir.CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  promoted-frame
-                  cfg
-                  function-abi)
-                used))]))]))
+            (opt-pass-func s))
+          s))]
+    [used : (__tl_dyn-array i64) (opt-used-array-new (opt-pass-frame s))]
+    [s
+      (opt-stage
+        "cfg"
+        (opt-pass-with-blocks
+          (opt-cfg-simplify-blocks-in-place
+            (opt-pass-blocks s)
+            (compiler-opt-global-shared-view used))
+          s))]
+    (OptLevel1PreDceResult.Result s.func used)))
 
 (define (optimize-function-once-level2-with-summaries
   [pools : ast.AstNodePoolContext]
@@ -113675,39 +112539,20 @@
     func
     (compiler-opt-global-shared-view summaries))
     [(OptLevel1PreDceResult.Result pre-dce used)
-      (match pre-dce
-        [(ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
-            blocks
-            function-abi)
-          (let
-            [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
-            [dced : ir.CompilerIrBlockList
-              (compiler-opt-debug-observe-blocks
-                type-segment-bases
-                "dce"
-                name
-                (compiler-opt-global-shared-view params)
-                (compiler-opt-global-shared-view ret-ty)
-                frame
-                (opt-dce-block-list-array-in-place used blocks)
-                (compiler-opt-global-shared-view function-abi))]
-            [_p-dce : unit
-              (compiler-opt-profile-pass-note
-                summaries.profile-state
-                "dce"
-                name
-                _t-dce)]
-            (ir.CompilerIrFunction.Function
-              name
-              params
-              ret-ty
-              frame
-              dced
-              function-abi))])]))
+      (let
+        [s : OptPassState
+          (opt-pass-state
+            type-segment-bases
+            summaries.profile-state
+            pre-dce
+            false)]
+        [s
+          (opt-stage
+            "dce"
+            (opt-pass-with-blocks
+              (opt-dce-block-list-array-in-place used (opt-pass-blocks s))
+              s))]
+        s.func)]))
 
 (define (optimize-function-pass-with-summaries
   [pools : ast.AstNodePoolContext]
@@ -114721,115 +113566,104 @@
             next
             func)
           changed))
-      (match (optimize-function-fixed-pass-with-summaries
-        pools
-        type-segment-bases
-        func
-        (optimize-function-max-iterations)
-        (compiler-opt-global-shared-view summaries))
-        [(OptFunctionPassResult.Result fixed fixed-changed)
-          (match (opt-if-convert-final-pass
+      (let
+        [s : OptPassState
+          (match (optimize-function-fixed-pass-with-summaries
+            pools
             type-segment-bases
-            ;; IT-2 rides the same below-the-fixpoint slot, immediately below
-            ;; GAP-1's sweep: that sweep is the last thing that can still
-            ;; decide a guard conjunct outright, so reading the guard shapes
-            ;; after it is what keeps the all-or-nothing chain test honest.
-            ;; Everything below -- if-conversion, unswitching, straightening,
-            ;; jump threading -- is what turns the `true` literals this leaves
-            ;; behind into retired edges, and `cmp_dup` runs last of all, so a
-            ;; retired branch never gets a compare copy minted for it.
-            (opt-guard-dedup-final-sweep
-              type-segment-bases
-              summaries
-              (opt-arg-global-final-sweep
+            func
+            (optimize-function-max-iterations)
+            (compiler-opt-global-shared-view summaries))
+            [(OptFunctionPassResult.Result fixed changed?)
+              (opt-pass-state
                 type-segment-bases
-                (compiler-opt-global-shared-view summaries)
-                fixed)))
-            [(OptFunctionPassResult.Result final if-convert-changed)
-              (let
-                [unswitched : ir.CompilerIrFunction
-                  (compiler-opt-debug-observe-function
-                    type-segment-bases
-                    "licm_unswitch"
-                    (opt-licm-unswitch-final
-                      type-segment-bases
-                      (compiler-opt-global-shared-view final)))]
-                ;; A wide power-of-two global multiply becomes a shift only
-                ;; here, after every pass that treats a shift as a possible
-                ;; abort (opt-const-global-mul-shift-final).
-                [counted : ir.CompilerIrFunction
-                  (compiler-opt-debug-observe-function
-                    type-segment-bases
-                    "mul_shift"
-                    (opt-const-global-mul-shift-final
-                      summaries.const-divisors
-                      unswitched))]
-                [unswitch-changed : bool
-                  (not
-                    (opt-function-eq
-                      type-segment-bases
-                      final
-                      (compiler-opt-global-shared-view counted)))]
-                ;; Last CFG pass in the pipeline on purpose: the arm blocks
-                ;; this removes are lowering artifacts, but versioning,
-                ;; unrolling and unswitching all clone blocks after the last CFG
-                ;; cleanup, so running anywhere earlier would leave their copies
-                ;; behind. Only compare/branch fusion runs below it, and that
-                ;; moves instructions inside blocks, never blocks.
-                (match (opt-cfg-straighten-final-pass
+                summaries.profile-state
+                fixed
+                changed?)])]
+        ;; IT-2 rides the same below-the-fixpoint slot, immediately below
+        ;; GAP-1's sweep: that sweep is the last thing that can still decide a
+        ;; guard conjunct outright, so reading the guard shapes after it is what
+        ;; keeps the all-or-nothing chain test honest. Everything below --
+        ;; if-conversion, unswitching, straightening, jump threading -- is what
+        ;; turns the `true` literals this leaves behind into retired edges, and
+        ;; `cmp_dup` runs last of all, so a retired branch never gets a compare
+        ;; copy minted for it.
+        [s
+          (opt-pass-with-result
+            (opt-if-convert-final-pass
+              type-segment-bases
+              (opt-guard-dedup-final-sweep
+                type-segment-bases
+                summaries
+                (opt-arg-global-final-sweep
                   type-segment-bases
-                  counted)
-                  [(OptFunctionPassResult.Result
-                      straightened
-                      straighten-changed)
-                    (match (opt-thread-const-branch-final-pass
-                      type-segment-bases
-                      straightened)
-                      [(OptFunctionPassResult.Result
-                          threaded-raw
-                          thread-raw-changed)
-                        ;; ST-2: the threader retargets a jump-only arm's own
-                        ;; jump (its phi inputs decided the tree), so an arm
-                        ;; that fell through before it no longer does and
-                        ;; costs a taken `jmp` on the path around it. Once
-                        ;; more, below it.
-                        (match (opt-cfg-straighten-below-threader-pass
-                          type-segment-bases
-                          threaded-raw)
-                          [(OptFunctionPassResult.Result
-                              threaded
-                              restraighten-changed)
-                            (let
-                              [thread-changed : bool
-                                (or thread-raw-changed restraighten-changed)]
-                              (match (opt-cmp-dup-final-pass
-                                type-segment-bases
-                                threaded)
-                                [(OptFunctionPassResult.Result
-                                    fused
-                                    cmp-dup-changed)
-                                  ;; DCE-LATE closes the list: the passes above it
-                                  ;; are the only ones that run below the pipeline's
-                                  ;; own `dce`, and it neither moves an instruction
-                                  ;; inside a block nor merges blocks, so the
-                                  ;; adjacency `cmp_dup` and `load_sink` established
-                                  ;; survives it.
-                                  (match (opt-dce-late-final-pass
-                                    type-segment-bases
-                                    fused)
-                                    [(OptFunctionPassResult.Result
-                                        swept
-                                        dce-late-changed)
-                                      (OptFunctionPassResult.Result
-                                        swept
-                                        (or
-                                          fixed-changed
-                                          if-convert-changed
-                                          unswitch-changed
-                                          straighten-changed
-                                          thread-changed
-                                          cmp-dup-changed
-                                          dce-late-changed))])]))])])]))])]))))
+                  (compiler-opt-global-shared-view summaries)
+                  (opt-pass-func s))))
+            s)]
+        [if-converted : ir.CompilerIrFunction (opt-pass-func s)]
+        [s
+          (opt-pass-observed
+            (opt-pass-with-cfg-func
+              (opt-licm-unswitch-final type-segment-bases (opt-pass-func s))
+              s)
+            "licm_unswitch")]
+        ;; A wide power-of-two global multiply becomes a shift only here, after
+        ;; every pass that treats a shift as a possible abort
+        ;; (opt-const-global-mul-shift-final).
+        [s
+          (opt-pass-observed
+            (opt-pass-with-func
+              (opt-const-global-mul-shift-final
+                summaries.const-divisors
+                (opt-pass-func s))
+              s)
+            "mul_shift")]
+        [s
+          (opt-pass-with-changed
+            (not
+              (opt-function-eq
+                type-segment-bases
+                if-converted
+                (opt-pass-func s)))
+            s)]
+        ;; Last CFG pass in the pipeline on purpose: the arm blocks this removes
+        ;; are lowering artifacts, but versioning, unrolling and unswitching all
+        ;; clone blocks after the last CFG cleanup, so running anywhere earlier
+        ;; would leave their copies behind. Only compare/branch fusion runs below
+        ;; it, and that moves instructions inside blocks, never blocks.
+        [s
+          (opt-pass-with-result
+            (opt-cfg-straighten-final-pass type-segment-bases (opt-pass-func s))
+            s)]
+        [s
+          (opt-pass-with-result
+            (opt-thread-const-branch-final-pass
+              type-segment-bases
+              (opt-pass-func s))
+            s)]
+        ;; ST-2: the threader retargets a jump-only arm's own jump (its phi
+        ;; inputs decided the tree), so an arm that fell through before it no
+        ;; longer does and costs a taken `jmp` on the path around it. Once more,
+        ;; below it.
+        [s
+          (opt-pass-with-result
+            (opt-cfg-straighten-below-threader-pass
+              type-segment-bases
+              (opt-pass-func s))
+            s)]
+        [s
+          (opt-pass-with-result
+            (opt-cmp-dup-final-pass type-segment-bases (opt-pass-func s))
+            s)]
+        ;; DCE-LATE closes the list: the passes above it are the only ones that
+        ;; run below the pipeline's own `dce`, and it neither moves an
+        ;; instruction inside a block nor merges blocks, so the adjacency
+        ;; `cmp_dup` and `load_sink` established survives it.
+        [s
+          (opt-pass-with-result
+            (opt-dce-late-final-pass type-segment-bases (opt-pass-func s))
+            s)]
+        (OptFunctionPassResult.Result s.func s.changed?)))))
 
 (define (optimize-function-with-level-and-summaries
   [pools : ast.AstNodePoolContext]
@@ -114926,42 +113760,24 @@
   [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionSeq
   (if (= level 0)
     funcs
-    (if (= level 1)
-      (let
-        [scratch : arena.Arena (arena.make)]
-        [result : ir.CompilerIrFunctionSeq
-          (optimize-function-seq-level1-escaping-with-summaries
-            pools
-            type-segment-bases
-            funcs
-            (arena.raw-handle scratch)
-            summaries)]
-        (begin
-          (allocation_profile.compiler-allocation-profile-control!
-            2
-            "optimize"
-            "optimizer-scratch"
-            (arena.raw-handle scratch))
-          (arena.destroy-safe! scratch)
-          result))
-      (let
-        [scratch : arena.Arena (arena.make)]
-        [result : ir.CompilerIrFunctionSeq
-          (optimize-function-seq-escaping-with-summaries
-            pools
-            type-segment-bases
-            funcs
-            level
-            (arena.raw-handle scratch)
-            summaries)]
-        (begin
-          (allocation_profile.compiler-allocation-profile-control!
-            2
-            "optimize"
-            "optimizer-scratch"
-            (arena.raw-handle scratch))
-          (arena.destroy-safe! scratch)
-          result)))))
+    (let
+      [scratch : arena.Arena (arena.make)]
+      [result : ir.CompilerIrFunctionSeq
+        (optimize-function-seq-escaping-with-summaries
+          pools
+          type-segment-bases
+          funcs
+          level
+          (arena.raw-handle scratch)
+          summaries)]
+      (begin
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "optimize"
+          "optimizer-scratch"
+          (arena.raw-handle scratch))
+        (arena.destroy-safe! scratch)
+        result))))
 
 (define (optimize-function-level1-escaping-with-summaries
   [pools : ast.AstNodePoolContext]
@@ -114982,22 +113798,15 @@
         (arena.tl_arena_set scratch))
       (let
         [mark : i64 (arena.tl_region_mark)]
-        [_t-body : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [pre-dce-result : OptLevel1PreDceResult
+        (match (compiler-opt-profile-escape-stage
+          "body"
+          1
+          _profile-name
           (optimize-function-once-level2-pre-dce-with-summaries
             (compiler-opt-global-shared-view pools)
             type-segment-bases
             func
-            summaries)]
-        [_profile-body : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-escape-finish
-              "body"
-              1
-              (compiler-opt-global-shared-view _profile-name)
-              _t-body))]
-        (match pre-dce-result
+            summaries))
           [(OptLevel1PreDceResult.Result pre-dce used)
             (match pre-dce
               [(ir.CompilerIrFunction.Function
@@ -115008,98 +113817,43 @@
                   blocks
                   function-abi)
                 (let
-                  [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
-                  (begin
-                    (unsafe
-                      (arena.tl_arena_set enclosing))
-                    (let
-                      [escaped-blocks : ir.CompilerIrBlockList
-                        (opt-dce-block-list-array-escape
-                          (compiler-opt-global-shared-view pools)
-                          used
-                          blocks)]
-                      [escaped : ir.CompilerIrFunction
-                        (ir.CompilerIrFunction.Function
-                          (ir.compiler-ir-symbol-clone name)
-                          (ir.compiler-ir-clone-param-seq
-                            (compiler-opt-global-shared-view pools)
-                            params)
-                          (ir.compiler-ir-clone-type
-                            (compiler-opt-global-shared-view pools)
-                            ret-ty)
-                          frame
-                          escaped-blocks
-                          (ir.compiler-ir-clone-function-abi pools function-abi))]
-                      [_profile-dce : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-escape-finish
-                            "dce_escape"
-                            1
-                            (compiler-opt-global-shared-view _profile-name)
-                            _t-dce))]
-                      [_t-restore : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [_restore : unit
+                  [escaped : ir.CompilerIrFunction
+                    (compiler-opt-profile-escape-stage
+                      "dce_escape"
+                      1
+                      _profile-name
+                      (begin
                         (unsafe
-                          (arena.tl_arena_set scratch)
-                          (arena.tl_region_reset mark)
-                          (arena.tl_arena_set enclosing))]
-                      [_profile-restore : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-escape-finish
-                            "restore"
-                            1
-                            _profile-name
-                            _t-restore))]
-                      escaped)))])])))))
-
-(define (optimize-function-seq-level1-escaping-with-summaries
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [funcs : ir.CompilerIrFunctionSeq]
-  [scratch : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionSeq
-  (let
-    [index : i64 0]
-    [builder : ir.CompilerIrFunctionBuilder
-      (ir.compiler-ir-function-builder-with-capacity funcs.len)]
-    (begin
-      (while (< index funcs.len)
-        (let
-          [func : ir.CompilerIrFunction
-            (compiler-opt-global-array-element-shared-view funcs.slots index)]
-          [_start : unit
-            (cfg
-              compile-profile
-              (compiler-opt-profile-detail-start
-                (compiler-opt-global-shared-view summaries.profile-state)))]
-          [optimized : ir.CompilerIrFunction
-            (optimize-function-level1-escaping-with-summaries
-              (compiler-opt-global-shared-view pools)
-              type-segment-bases
-              (compiler-opt-global-shared-view func)
-              scratch
-              (compiler-opt-global-shared-view summaries))]
-          [_report : unit
-            (cfg
-              compile-profile
-              (compiler-opt-scratch-region-report-function-escaping
-                type-segment-bases
-                (compiler-opt-global-shared-view optimized)
-                scratch))]
-          [_finish : unit
-            (cfg
-              compile-profile
-              (compiler-opt-profile-detail-finish
-                summaries.profile-state
-                "function"
-                (compiler-opt-profile-function-name func)))]
-          (begin
-            (ir.compiler-ir-function-builder-push! (&mut builder) optimized)
-            (set! index (+ index 1)))))
-      (ir.compiler-ir-function-builder-to-seq builder))))
+                          (arena.tl_arena_set enclosing))
+                        (let
+                          [escaped-blocks : ir.CompilerIrBlockList
+                            (opt-dce-block-list-array-escape
+                              (compiler-opt-global-shared-view pools)
+                              used
+                              blocks)]
+                          (ir.CompilerIrFunction.Function
+                            (ir.compiler-ir-symbol-clone name)
+                            (ir.compiler-ir-clone-param-seq
+                              (compiler-opt-global-shared-view pools)
+                              params)
+                            (ir.compiler-ir-clone-type
+                              (compiler-opt-global-shared-view pools)
+                              ret-ty)
+                            frame
+                            escaped-blocks
+                            (ir.compiler-ir-clone-function-abi
+                              pools
+                              function-abi)))))]
+                  [_restore : unit
+                    (compiler-opt-profile-escape-stage
+                      "restore"
+                      1
+                      _profile-name
+                      (unsafe
+                        (arena.tl_arena_set scratch)
+                        (arena.tl_region_reset mark)
+                        (arena.tl_arena_set enclosing)))]
+                  escaped)])])))))
 
 (define (optimize-function-seq-escaping-with-summaries
   [pools : ast.AstNodePoolContext]
@@ -115123,13 +113877,20 @@
               (compiler-opt-profile-detail-start
                 (compiler-opt-global-shared-view summaries.profile-state)))]
           [optimized : ir.CompilerIrFunction
-            (optimize-function-escaping-with-summaries
-              (compiler-opt-global-shared-view pools)
-              type-segment-bases
-              (compiler-opt-global-shared-view func)
-              level
-              scratch
-              (compiler-opt-global-shared-view summaries))]
+            (if (= level 1)
+              (optimize-function-level1-escaping-with-summaries
+                (compiler-opt-global-shared-view pools)
+                type-segment-bases
+                (compiler-opt-global-shared-view func)
+                scratch
+                (compiler-opt-global-shared-view summaries))
+              (optimize-function-escaping-with-summaries
+                (compiler-opt-global-shared-view pools)
+                type-segment-bases
+                (compiler-opt-global-shared-view func)
+                level
+                scratch
+                (compiler-opt-global-shared-view summaries)))]
           [_report : unit
             (cfg
               compile-profile
@@ -115174,79 +113935,52 @@
         (arena.tl_arena_set scratch))
       (let
         [mark : i64 (arena.tl_region_mark)]
-        [_t-body : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [body-result : OptFunctionPassResult
+        (match (compiler-opt-profile-escape-stage
+          "body"
+          level
+          _profile-name
           (optimize-function-with-level-and-summaries-pass
             (compiler-opt-global-shared-view pools)
             type-segment-bases
             func
             level
-            summaries)]
-        [_profile-body : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-escape-finish
-              "body"
-              level
-              (compiler-opt-global-shared-view _profile-name)
-              _t-body))]
-        (match body-result
+            summaries))
           [(OptFunctionPassResult.Result body-optimized _)
             (let
-              [_t-bounds-group : i64 (cfg compile-profile (profile.now-ms) 0)]
               [body : ir.CompilerIrFunction
-                (if (>= level 2)
-                  (opt-mul-latency-function
-                    (opt-bg-function type-segment-bases body-optimized))
-                  body-optimized)]
-              [_profile-bounds-group : unit
-                (cfg
-                  compile-profile
-                  (compiler-opt-profile-escape-finish
-                    "bounds_group"
-                    level
-                    (compiler-opt-global-shared-view _profile-name)
-                    _t-bounds-group))]
-              [_t-compact : i64 (cfg compile-profile (profile.now-ms) 0)]
+                (compiler-opt-profile-escape-stage
+                  "bounds_group"
+                  level
+                  _profile-name
+                  (if (>= level 2)
+                    (opt-mul-latency-function
+                      (opt-bg-function type-segment-bases body-optimized))
+                    body-optimized))]
               [optimized : ir.CompilerIrFunction
-                (ir.compiler-ir-function-compact-blocks body)]
-              [_profile-compact : unit
-                (cfg
-                  compile-profile
-                  (compiler-opt-profile-escape-finish
-                    "compact"
-                    level
-                    (compiler-opt-global-shared-view _profile-name)
-                    _t-compact))]
+                (compiler-opt-profile-escape-stage
+                  "compact"
+                  level
+                  _profile-name
+                  (ir.compiler-ir-function-compact-blocks body))]
               (begin
                 (unsafe
                   (arena.tl_arena_set enclosing))
                 (let
-                  [_t-clone : i64 (cfg compile-profile (profile.now-ms) 0)]
                   [escaped : ir.CompilerIrFunction
-                    (ir.compiler-ir-clone-function pools optimized)]
-                  [_profile-clone : unit
-                    (cfg
-                      compile-profile
-                      (compiler-opt-profile-escape-finish
-                        "clone"
-                        level
-                        (compiler-opt-global-shared-view _profile-name)
-                        _t-clone))]
-                  [_t-restore : i64 (cfg compile-profile (profile.now-ms) 0)]
+                    (compiler-opt-profile-escape-stage
+                      "clone"
+                      level
+                      _profile-name
+                      (ir.compiler-ir-clone-function pools optimized))]
                   [_restore : unit
-                    (unsafe
-                      (arena.tl_arena_set scratch)
-                      (arena.tl_region_reset mark)
-                      (arena.tl_arena_set enclosing))]
-                  [_profile-restore : unit
-                    (cfg
-                      compile-profile
-                      (compiler-opt-profile-escape-finish
-                        "restore"
-                        level
-                        _profile-name
-                        _t-restore))]
+                    (compiler-opt-profile-escape-stage
+                      "restore"
+                      level
+                      _profile-name
+                      (unsafe
+                        (arena.tl_arena_set scratch)
+                        (arena.tl_region_reset mark)
+                        (arena.tl_arena_set enclosing)))]
                   escaped)))])))))
 
 (defenum OptMaybeFunction
@@ -142733,6 +141467,28 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ frame _ _) frame]))
 
+(define (opt-function-name [func : ir.CompilerIrFunction]) : i64
+  (match func
+    [(ir.CompilerIrFunction.Function name _ _ _ _ _) name]))
+
+(define (opt-function-params [func : ir.CompilerIrFunction]) : ir.CompilerIrParamSeq
+  (match func
+    [(ir.CompilerIrFunction.Function _ params _ _ _ _) params]))
+
+(define (opt-function-with-frame-blocks
+  [func : ir.CompilerIrFunction]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty _ _ function-abi)
+      (ir.CompilerIrFunction.Function
+        name
+        params
+        ret-ty
+        frame
+        blocks
+        function-abi)]))
+
 ;; --- noalias / alias fact model ---------------------------------------------
 ;;
 ;; Optimizer-internal alias facts for IR temporaries. This section models facts
@@ -144525,50 +143281,22 @@
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            frame
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks _)
+      (opt-loop-function-rewrite
+        func
+        (compiler-opt-global-shared-view context)
+        verified?
+        (match (opt-scratch-reset-apply-loops
+          type-segment-bases
+          (compiler-opt-global-shared-view context)
+          (compiler-opt-global-shared-view blocks)
+          frame
+          (opt-cfg-natural-loops-with-context
             blocks
-            function-abi)
-          (match (opt-scratch-reset-apply-loops
-            type-segment-bases
-            (compiler-opt-global-shared-view context)
-            (compiler-opt-global-shared-view blocks)
-            frame
-            (opt-cfg-natural-loops-with-context
-              blocks
-              (compiler-opt-global-shared-view context)))
-            [(OptScratchResetApplyResult.Result next-blocks next-frame changed)
-              (if changed
-                (let
-                  [next : ir.CompilerIrFunction
-                    (ir.CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      next-frame
-                      (compiler-opt-global-shared-view next-blocks)
-                      function-abi)]
-                  [next-context : OptCfgContext
-                    (opt-cfg-context-build next-blocks)]
-                  (match (opt-verify-function-with-context
-                    (compiler-opt-global-shared-view next)
-                    next-context)
-                    [(ResultCompilerOptimizeVerify.Ok)
-                      (OptFunctionCtxResult.Result next next-context)]
-                    [(ResultCompilerOptimizeVerify.Err _)
-                      (OptFunctionCtxResult.Result func context)]))
-                (OptFunctionCtxResult.Result func context))])])]
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]))
+            (compiler-opt-global-shared-view context)))
+          [(OptScratchResetApplyResult.Result next-blocks next-frame changed)
+            (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
 
 (define (opt-scratch-reset-function-unchecked-rewrite
   [type-segment-bases : i64]

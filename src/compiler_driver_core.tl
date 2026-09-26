@@ -2878,17 +2878,14 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
         (compiler_optimize.OptimizeRequest
           pools
           opt-level
-          (owned_view.compiler-owned-shared-view profile-state)
+          profile-state
           true
           (compiler-driver-representation-index-for-backend
             pools
@@ -2981,17 +2978,14 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
         (compiler_optimize.OptimizeRequest
           pools
           opt-level
-          (owned_view.compiler-owned-shared-view profile-state)
+          profile-state
           true
           (compiler-driver-representation-index-for-backend
             pools
@@ -3097,17 +3091,14 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
         (compiler_optimize.OptimizeRequest
           pools
           opt-level
-          (owned_view.compiler-owned-shared-view profile-state)
+          profile-state
           true
           (compiler-driver-representation-index-for-backend
             pools
@@ -3259,17 +3250,14 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
         (compiler_optimize.OptimizeRequest
           pools
           opt-level
-          (owned_view.compiler-owned-shared-view profile-state)
+          profile-state
           true
           (compiler-driver-representation-index-for-backend
             pools
@@ -3465,17 +3453,14 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
         (compiler_optimize.OptimizeRequest
           pools
           opt-level
-          (owned_view.compiler-owned-shared-view profile-state)
+          profile-state
           true
           (compiler-driver-representation-index-for-backend
             pools

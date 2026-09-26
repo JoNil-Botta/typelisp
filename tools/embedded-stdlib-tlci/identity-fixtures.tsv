@@ -85,6 +85,7 @@ stdlib.io/print-format	2	variadic	expr	tests/integration/tlci_native_format_scan
 stdlib.json/json-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/json-array-element-shared-view	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/json-box-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/checked-live-prefix-length	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/encode-bool	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/decode-bool	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/encode-int	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

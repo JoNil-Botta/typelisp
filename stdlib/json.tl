@@ -17,6 +17,7 @@
 ;# (define sample : String (json.stringify (json.JsonBool true)))
 ;# ```
 (import stdlib.comptime)
+(import stdlib.checked_size)
 (import stdlib.format)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -63,6 +64,8 @@
   (JsonValue Json))
 
 ;: Immutable contiguous JSON array elements in source order.
+;: Safe sequence APIs require `0 <= len <= array-length slots`; corrupt public
+;: values abort with status 134 and `json: invalid sequence length`.
 (defstruct JsonSeq
   (slots (__tl_dyn-array Json))
   (len i64))
@@ -73,12 +76,23 @@
   (value Json))
 
 ;: Immutable contiguous JSON object members in source order.
+;: The same checked live-prefix invariant applies as for `JsonSeq`.
 (defstruct JsonMemberSeq
   (slots (__tl_dyn-array JsonMember))
   (len i64))
 
 (import (vector.vector Json core) as jvec)
 (import (vector.vector JsonMember core) as jmvec)
+
+;: Validate a live prefix before deriving a count, loop bound or storage access.
+;: Both operands are evaluated once; expansion adds no raw access or allocation.
+(defmacro (checked-live-prefix-length [length : Expr] [capacity : Expr]) : i64
+  `(let
+    [__json_length : i64 ,length]
+    [__json_capacity : i64 ,capacity]
+    (if (or (< __json_length 0) (> __json_length __json_capacity))
+      (stdlib.checked_size.size-abort "json: invalid sequence length\n")
+      __json_length)))
 
 ;: Return the empty JSON array element sequence.
 (define (list-empty) : JsonSeq
@@ -87,8 +101,12 @@
 ;: Return `items` with `head` prepended, copied into a right-sized array.
 (define (list-cons [head : Json] [items : JsonSeq]) : JsonSeq
   (let
-    [n : i64 items.len]
-    [slots : (__tl_dyn-array Json) (__tl_make-array Json (+ n 1))]
+    [n : i64 (stdlib.json.list-count-ref (& items))]
+    [count : i64
+      (checked_size.elements
+        (checked_size.add n 1)
+        (comptime (size-of (type Json))))]
+    [slots : (__tl_dyn-array Json) (__tl_make-array Json count)]
     [i : i64 0]
     (begin
       (set! (array-ref slots 0) head)
@@ -96,7 +114,7 @@
         (begin
           (set! (array-ref slots (+ i 1)) (array-ref items.slots i))
           (set! i (+ i 1))))
-      (JsonSeq slots (+ n 1)))))
+      (JsonSeq slots count))))
 
 ;: Return the empty JSON object member sequence.
 (define (member-list-empty) : JsonMemberSeq
@@ -105,8 +123,12 @@
 ;: Return `items` with `key`/`value` prepended into a right-sized array.
 (define (member-cons [key : String] [value : Json] [items : JsonMemberSeq]) : JsonMemberSeq
   (let
-    [n : i64 items.len]
-    [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember (+ n 1))]
+    [n : i64 (stdlib.json.member-list-count-ref (& items))]
+    [count : i64
+      (checked_size.elements
+        (checked_size.add n 1)
+        (comptime (size-of (type JsonMember))))]
+    [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember count)]
     [i : i64 0]
     (begin
       (set! (array-ref slots 0) (JsonMember key value))
@@ -114,12 +136,15 @@
         (begin
           (set! (array-ref slots (+ i 1)) (array-ref items.slots i))
           (set! i (+ i 1))))
-      (JsonMemberSeq slots (+ n 1)))))
+      (JsonMemberSeq slots count))))
 
 ;: Convert an internal JSON element builder into the public sequence model.
 (define (vec-to-list [items : jvec.Vec]) : JsonSeq
   (let
-    [n : i64 (jvec.len (& items))]
+    [n : i64
+      (stdlib.json.checked-live-prefix-length
+        (jvec.len (& items))
+        (jvec.capacity (& items)))]
     [slots : (__tl_dyn-array Json) (__tl_make-array Json n)]
     [i : i64 0]
     (begin
@@ -132,7 +157,10 @@
 ;: Convert an internal JSON member builder into the public sequence model.
 (define (member-vec-to-list [items : jmvec.Vec]) : JsonMemberSeq
   (let
-    [n : i64 (jmvec.len (& items))]
+    [n : i64
+      (stdlib.json.checked-live-prefix-length
+        (jmvec.len (& items))
+        (jmvec.capacity (& items)))]
     [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember n)]
     [i : i64 0]
     (begin
@@ -312,10 +340,13 @@
               (set! ok false)))
           ok)))))
 
+;; A validated prefix fits the existing allocation of the same element type.
+;; Copies/reversal/rest only shrink that range; loop increments and n-1-i stay
+;; within it. Cons/concat separately check their larger count and byte product.
 ;: Return `items` in reverse order.
 (define (list-reverse [items : JsonSeq]) : JsonSeq
   (let
-    [n : i64 items.len]
+    [n : i64 (stdlib.json.list-count-ref (& items))]
     [slots : (__tl_dyn-array Json) (__tl_make-array Json n)]
     [i : i64 0]
     (begin
@@ -328,7 +359,7 @@
 ;: Return object `items` in reverse order.
 (define (member-list-reverse [items : JsonMemberSeq]) : JsonMemberSeq
   (let
-    [n : i64 items.len]
+    [n : i64 (stdlib.json.member-list-count-ref (& items))]
     [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember n)]
     [i : i64 0]
     (begin
@@ -340,30 +371,34 @@
 
 ;: Return the number of elements in a JSON array sequence.
 (define (list-count [items : JsonSeq]) : i64
-  items.len)
+  (stdlib.json.list-count-ref (& items)))
 
 ;: Return the number of elements through a borrowed JSON array sequence.
 (define (list-count-ref [items : (& items JsonSeq)]) : i64
-  items.len)
+  (stdlib.json.checked-live-prefix-length items.len (array-length items.slots)))
 
 ;: Look up an array element by zero-based index.
 (define (list-get-index [items : JsonSeq] [index : i64]) : JsonLookup
-  (if (or (< index 0) (>= index items.len))
-    JsonMissing
-    (JsonFound (json-array-element-shared-view items.slots index))))
+  (let
+    [n : i64 (stdlib.json.list-count-ref (& items))]
+    (if (or (< index 0) (>= index n))
+      JsonMissing
+      (JsonFound (json-array-element-shared-view items.slots index)))))
 
 ;; Return an owned element for generated decoders that must move the lookup
 ;; result out of a boxed sequence.
 ;: Look up and copy an array element for an ownership-taking decoder.
 (define (list-get-index-owned [items : (& items JsonSeq)] [index : i64]) : JsonLookup
-  (if (or (< index 0) (>= index items.len))
-    JsonMissing
-    (JsonFound (clone (array-ref items.slots index)))))
+  (let
+    [n : i64 (stdlib.json.list-count-ref items)]
+    (if (or (< index 0) (>= index n))
+      JsonMissing
+      (JsonFound (clone (array-ref items.slots index))))))
 
 ;: Return `items` without its first element.
 (define (list-rest [items : JsonSeq]) : JsonSeq
   (let
-    [n : i64 items.len]
+    [n : i64 (stdlib.json.list-count-ref (& items))]
     [count : i64
       (if (< n 1)
         0
@@ -380,9 +415,13 @@
 ;: Return the elements of `left` followed by the elements of `right`.
 (define (list-concat [left : JsonSeq] [right : JsonSeq]) : JsonSeq
   (let
-    [ln : i64 left.len]
-    [rn : i64 right.len]
-    [slots : (__tl_dyn-array Json) (__tl_make-array Json (+ ln rn))]
+    [ln : i64 (stdlib.json.list-count-ref (& left))]
+    [rn : i64 (stdlib.json.list-count-ref (& right))]
+    [count : i64
+      (checked_size.elements
+        (checked_size.add ln rn)
+        (comptime (size-of (type Json))))]
+    [slots : (__tl_dyn-array Json) (__tl_make-array Json count)]
     [i : i64 0]
     (begin
       (while (< i ln)
@@ -394,29 +433,32 @@
         (begin
           (set! (array-ref slots (+ ln i)) (array-ref right.slots i))
           (set! i (+ i 1))))
-      (JsonSeq slots (+ ln rn)))))
+      (JsonSeq slots count))))
 
 ;: Return the number of key/value entries in a JSON object member sequence.
 (define (member-list-count [items : JsonMemberSeq]) : i64
-  items.len)
+  (stdlib.json.member-list-count-ref (& items)))
+
+;: Return the validated live count through a borrowed object member sequence.
+(define (member-list-count-ref [items : (& items JsonMemberSeq)]) : i64
+  (stdlib.json.checked-live-prefix-length items.len (array-length items.slots)))
 
 ;: Look up borrowed `key` in an object member sequence.
 (define (member-list-get [items : JsonMemberSeq] [key : (& key str)]) : JsonLookup
   (let
-    [n : i64 items.len]
+    [n : i64 (stdlib.json.member-list-count-ref (& items))]
     [i : i64 0]
-    [found : JsonLookup JsonMissing]
     (begin
       (while (< i n)
         (let
           [member : JsonMember (json-array-element-shared-view items.slots i)]
           [item-key : String member.key]
-          (if (string.eq (& item-key) key)
-            (begin
-              (set! found (JsonFound member.value))
-              (set! i n))
+          (begin
+            (when
+              (string.eq (& item-key) key)
+              (return (JsonFound member.value)))
             (set! i (+ i 1)))))
-      found)))
+      JsonMissing)))
 
 ;: Compare two owned strings with only safe character indexing.
 (define (string-eq-safe? [left : String] [right : String]) : bool
@@ -440,7 +482,7 @@
 ;: Look up owned `key` in an object member sequence without unsafe helpers.
 (define (member-list-get-owned [items : JsonMemberSeq] [key : String]) : JsonLookup
   (let
-    [n : i64 items.len]
+    [n : i64 (stdlib.json.member-list-count-ref (& items))]
     [i : i64 0]
     [found : JsonLookup JsonMissing]
     (begin
@@ -461,7 +503,7 @@
   [items : (& items JsonMemberSeq)]
   [key : (& key str)]) : JsonLookup
   (let
-    [n : i64 items.len]
+    [n : i64 (stdlib.json.member-list-count-ref items)]
     [i : i64 0]
     [found : JsonLookup JsonMissing]
     (begin
@@ -603,7 +645,7 @@
 ;: Append serialized array elements to `buf`.
 (define (stringify-list-into [items : JsonSeq] [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [n : i64 items.len]
+    [n : i64 (stdlib.json.list-count-ref (& items))]
     [i : i64 0]
     [out : text_buf.TextBuf buf]
     (begin
@@ -625,14 +667,16 @@
 ;:
 ;: The returned comma-separated string is allocated in the active arena.
 (define (stringify-list [items : JsonSeq]) : String
-  (text_buf.render (stdlib.json.stringify-list-into items (text_buf.empty))))
+  (begin
+    (stdlib.json.list-count-ref (& items))
+    (text_buf.render (stdlib.json.stringify-list-into items (text_buf.empty)))))
 
 ;: Append serialized object members to `buf`.
 (define (stringify-members-into
   [items : JsonMemberSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [n : i64 items.len]
+    [n : i64 (stdlib.json.member-list-count-ref (& items))]
     [i : i64 0]
     [out : text_buf.TextBuf buf]
     (begin
@@ -660,7 +704,10 @@
 ;:
 ;: The returned comma-separated member string is allocated in the active arena.
 (define (stringify-members [items : JsonMemberSeq]) : String
-  (text_buf.render (stdlib.json.stringify-members-into items (text_buf.empty))))
+  (begin
+    (stdlib.json.member-list-count-ref (& items))
+    (text_buf.render
+      (stdlib.json.stringify-members-into items (text_buf.empty)))))
 
 ;: Serialize a JSON value to canonical compact JSON text.
 ;:
@@ -1331,7 +1378,11 @@
 
 ;: `stdlib.serialize` hook for finishing an object value.
 (defmacro (object-finish [fields : comptime.Expr]) : Value
-  `(stdlib.json.JsonValue (stdlib.json.JsonObject (box ,fields))))
+  `(let
+    [__json_fields : stdlib.json.JsonMemberSeq ,fields]
+    (begin
+      (stdlib.json.member-list-count-ref (& __json_fields))
+      (stdlib.json.JsonValue (stdlib.json.JsonObject (box __json_fields))))))
 
 ;: `stdlib.serialize` hook for validating the decode input shape.
 (defmacro (expect-object
@@ -1341,7 +1392,11 @@
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
-        [(stdlib.json.JsonObject _) unit]
+        [(stdlib.json.JsonObject __json_members)
+          (begin
+            (stdlib.json.member-list-count-ref
+              (& (__tl-box-place __json_members)))
+            unit)]
         [_ (return (,err-ctor "json: expected object"))])]))
 
 ;: `stdlib.serialize` hook for looking up one decoded object field.
@@ -1370,7 +1425,11 @@
 
 ;: `stdlib.serialize` hook for finishing a sequence value.
 (defmacro (sequence-finish [items : comptime.Expr]) : Value
-  `(stdlib.json.JsonValue (stdlib.json.JsonArray (box ,items))))
+  `(let
+    [__json_items : stdlib.json.JsonSeq ,items]
+    (begin
+      (stdlib.json.list-count-ref (& __json_items))
+      (stdlib.json.JsonValue (stdlib.json.JsonArray (box __json_items))))))
 
 ;: `stdlib.serialize` hook for reading a sequence length.
 (defmacro (sequence-length [value : comptime.Expr] [err-ctor : comptime.Expr]) : i64

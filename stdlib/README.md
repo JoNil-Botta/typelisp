@@ -168,6 +168,11 @@ Vec bang place macros as available yet.
   public function prefix, capacity policy, checked fallback, and optional
   `len`/`empty?`/`append-from` surface explicit while sharing copy, doubling
   growth, and push mechanics. Import it with `(import stdlib.dense_list)`.
+- `checked_size.tl`: import-free non-negative size arithmetic. `add` rejects
+  negative operands and signed-i64 sum overflow; `elements` validates the
+  count/element-byte product and returns the count, including zero-sized
+  elements. Failures abort with status 134 and `size: arithmetic overflow`.
+  Collection callers still validate their own live-prefix and ownership rules.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
   `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,
@@ -540,6 +545,13 @@ Vec bang place macros as available yet.
   structs, arrays, tuples, and supported enum payloads:
   instantiate with `(import (serialize.serialize json Person) as person_json)`
   to get `to-json` / `from-json` aliases alongside generic `encode` / `decode`.
+  `JsonSeq` and `JsonMemberSeq` require `0 <= len <= array-length slots`.
+  Safe counts, lookup, copying, rendering and serialization hooks validate this
+  live prefix without copying it; spare slots are ignored. Corrupt public
+  representations abort with status 134 and `json: invalid sequence length`.
+  Cons/concat check the new element count and byte size before allocation;
+  size overflow aborts with `size: arithmetic overflow`. Duplicate keys retain
+  source order and lookup returns the first matching live member.
   Import it with `(import stdlib.json)`.
 - `math.tl`: pure scalar math helpers with no runtime imports or platform
   externs: absolute value for `i64`, `f64`, and `f32`; min, max, clamp, and

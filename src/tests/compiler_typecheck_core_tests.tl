@@ -566,35 +566,6 @@
         [(tc_core.TcAggLayoutCacheSlot.Empty) true]
         [(tc_core.TcAggLayoutCacheSlot.Full _ _) false]))))
 
-(define (tc-prefix-snapshot-cache-hit-count-value) : i64
-  (tc_core.tc-prefix-snapshot-cache-hit-count-for-state
-    tc_core.tc-prefix-snapshot-serial-test-cache-state))
-
-(define (tc-prefix-snapshot-cache-store-count-value) : i64
-  (tc_core.tc-prefix-snapshot-cache-store-count-for-state
-    tc_core.tc-prefix-snapshot-serial-test-cache-state))
-
-(define (tc-prefix-snapshot-cache-stats-line [label : String]) : String
-  (tc_core.tc-prefix-snapshot-cache-stats-line-for-state
-    tc_core.tc-prefix-snapshot-serial-test-cache-state
-    label))
-
-(define (tc-prefix-snapshot-cache-note-hit!) : unit
-  (tc_core.tc-prefix-snapshot-cache-note-hit-for-state!
-    tc_core.tc-prefix-snapshot-serial-test-cache-state))
-
-(define (tc-prefix-snapshot-cache-note-miss!) : unit
-  (tc_core.tc-prefix-snapshot-cache-note-miss-for-state!
-    tc_core.tc-prefix-snapshot-serial-test-cache-state))
-
-(define (tc-prefix-snapshot-cache-note-store!) : unit
-  (tc_core.tc-prefix-snapshot-cache-note-store-for-state!
-    tc_core.tc-prefix-snapshot-serial-test-cache-state))
-
-(define (tc-prefix-snapshot-cache-stats-reset!) : unit
-  (tc_core.tc-prefix-snapshot-cache-stats-reset-for-state!
-    tc_core.tc-prefix-snapshot-serial-test-cache-state))
-
 (test
   tc-context-expression-pool-isolation
   (let
@@ -679,46 +650,6 @@
       (= (ast.ast-node-pool-len) installed-len))
       unit
       (io.panic "typecheck: context expression pool isolation failed"))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-entry-index
-    [entries : (& entries tc_core.CompilerTcMacroProfileEntries)]
-    [macro-id : i64]
-    [arity : i64]) : i64
-    (match (tc_i64_i64_map.get
-      (& entries.index)
-      (tc_core.compiler-tc-macro-profile-key-id macro-id arity))
-      [(tc_i64_i64_map.LookupFound entry-index) entry-index]
-      [(tc_i64_i64_map.LookupMissing) -1])))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-count) : i64
-    tc_core.compiler-tc-macro-profile-entries.len))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-active?) : bool
-    tc_core.compiler-tc-macro-profile-active))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-current-entry-index
-    [macro-id : i64]
-    [arity : i64]) : i64
-    (compiler-tc-macro-profile-entry-index
-      (& tc_core.compiler-tc-macro-profile-entries)
-      macro-id
-      arity)))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-current-entry [index : i64]) : tc_core.CompilerTcMacroProfileEntry
-    (clone
-      (array-ref
-        (__tl-project-field tc_core.compiler-tc-macro-profile-entries slots)
-        index))))
 
 (cfg
   test
@@ -9068,7 +8999,7 @@
                 (tc-macro-walk-field state-a macro-decl-generation-arena)
                 decl-arena-a-next)
               (=
-                (tc_core.tc-macro-walk-field
+                (tc-macro-walk-field
                   state-a
                   macro-decl-generation-retired-arena)
                 0))]
@@ -9087,7 +9018,7 @@
                 (tc-macro-walk-field state-a macro-splice-generation-arena)
                 splice-arena-a-third)
               (=
-                (tc_core.tc-macro-walk-field
+                (tc-macro-walk-field
                   state-a
                   macro-splice-generation-retired-arena)
                 splice-arena-a-next))]
@@ -9370,7 +9301,7 @@
       (begin
         (tc-macro-walk-set! left macro-expand-stdlib-tlci-module-ids left-ids)
         (tc-macro-walk-set! right macro-expand-stdlib-tlci-module-ids right-ids)
-        (tc_core.tc-macro-walk-set!
+        (tc-macro-walk-set!
           right
           macro-expand-stdlib-tlci-module-ids
           (sym_i64_env.sym-i64-empty))

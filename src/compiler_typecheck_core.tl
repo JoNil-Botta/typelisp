@@ -4292,10 +4292,39 @@
   (tc-prefix-snapshot-cache-clear-for-state!
     tc-prefix-snapshot-serial-test-cache-state))
 
+(define (tc-prefix-snapshot-cache-hit-count-value) : i64
+  (tc-prefix-snapshot-cache-hit-count-for-state
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-store-count-value) : i64
+  (tc-prefix-snapshot-cache-store-count-for-state
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-stats-line [label : String]) : String
+  (tc-prefix-snapshot-cache-stats-line-for-state
+    tc-prefix-snapshot-serial-test-cache-state
+    label))
+
 (define (tc-prefix-snapshot-cache-print-stats [label : String]) : unit
   (tc-prefix-snapshot-cache-print-stats-for-state
     tc-prefix-snapshot-serial-test-cache-state
     label))
+
+(define (tc-prefix-snapshot-cache-note-hit!) : unit
+  (tc-prefix-snapshot-cache-note-hit-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-note-miss!) : unit
+  (tc-prefix-snapshot-cache-note-miss-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-note-store!) : unit
+  (tc-prefix-snapshot-cache-note-store-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-stats-reset!) : unit
+  (tc-prefix-snapshot-cache-stats-reset-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
 
 (define (tc-context-with-module-id
   [ctx : TcContext]
@@ -7207,6 +7236,46 @@
           "|"
           (compiler-tc-macro-profile-detail macro-name arity calls)
           "\n")))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-entry-index
+    [entries : (& entries CompilerTcMacroProfileEntries)]
+    [macro-id : i64]
+    [arity : i64]) : i64
+    (match (tc_i64_i64_map.get
+      (& entries.index)
+      (compiler-tc-macro-profile-key-id macro-id arity))
+      [(tc_i64_i64_map.LookupFound entry-index) entry-index]
+      [(tc_i64_i64_map.LookupMissing) -1])))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-count) : i64
+    compiler-tc-macro-profile-entries.len))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-active?) : bool
+    compiler-tc-macro-profile-active))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-current-entry-index
+    [macro-id : i64]
+    [arity : i64]) : i64
+    (compiler-tc-macro-profile-entry-index
+      (& compiler-tc-macro-profile-entries)
+      macro-id
+      arity)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-current-entry [index : i64]) : CompilerTcMacroProfileEntry
+    (clone
+      (array-ref
+        (__tl-project-field compiler-tc-macro-profile-entries slots)
+        index))))
 
 (cfg
   compile-profile

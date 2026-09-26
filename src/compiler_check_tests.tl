@@ -69,24 +69,15 @@
           (cdiag.compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))
 
-(define (compiler-check-near-miss-fix-source) : String
-  "(define (render-value [value : i64]) : i64
-  value)
-
-(define (main) : i64
-  (render-vaule 42))")
-
-(define (compiler-check-near-miss-fixed-source) : String
-  "(define (render-value [value : i64]) : i64
-  value)
-
-(define (main) : i64
-  (render-value 42))")
-
 (define (compiler-check-near-miss-fix-ok?) : bool
   (let
     [path : String "tests/near_miss_fix.tl"]
-    [source : String (compiler-check-near-miss-fix-source)]
+    [source : String
+      "(define (render-value [value : i64]) : i64
+  value)
+
+(define (main) : i64
+  (render-vaule 42))"]
     (match (compiler-check-source
       (tc_core.tc-global-shared-view path)
       (tc_core.tc-global-shared-view source))
@@ -136,7 +127,11 @@
                         (and
                           (string.eq
                             updated
-                            (compiler-check-near-miss-fixed-source))
+                            "(define (render-value [value : i64]) : i64
+  value)
+
+(define (main) : i64
+  (render-value 42))")
                           (compiler-check-source-ok? path updated))]
                       [cdiag.CompilerDiagnosticNoString false])))))))])))
 
@@ -849,12 +844,6 @@
     [(ast.AstType.I64) 42]
     [_ 0]))")
 
-(define (compiler-check-export-source) : String
-  "(defstruct Pair (left i64))
-(defenum Maybe (Present i64))
-(define answer : i64 42)
-(define (main) : i64 answer)")
-
 (define (compiler-check-direct-source [path : String] [source : String]) : check_core.ResultCompilerCheck
   (begin
     (check_core.compiler-check-reset-pools!)
@@ -888,20 +877,6 @@
     [(check_core.ResultCompilerCheck.Ok _ _) true]
     [(check_core.ResultCompilerCheck.Err _ _) false]))
 
-(define (compiler-check-qualified-export-cache-exported-source) : String
-  "(module a)
-(define x : i64 1)
-(module b)
-(import a)
-(define (main) : i64 a.x)")
-
-(define (compiler-check-qualified-export-cache-private-source) : String
-  "(module a)
-(define x : i64 1)
-(module b)
-(import a)
-(define (main) : i64 a.x)")
-
 ;; The implicit core prelude and compiler-private dynamic-buffer forms compose
 ;; without any compatibility-module import.
 (define (compiler-check-implicit-core-prelude-source) : String
@@ -918,56 +893,6 @@
       (+
         (__tl_array-length items)
         (+ (array-ref items 0) (array-ref items 1))))))")
-
-(define (compiler-check-runtime-stdlib-boundary-io-source) : String
-  "(import stdlib.io)
-(import stdlib.byte_buf)
-(define (main [path : String]) : i64
-  (let
-    [data : byte_buf.ByteBuf (io.read-file (clone path))]
-    (begin
-      (io.print-format \"{}\" \"\")
-      (io.flush-stdout)
-      (+ (byte_buf.len (& data))
-         (unsafe (io.file-open-status path 0))))))")
-
-(define (compiler-check-runtime-stdlib-boundary-env-source) : String
-  "(import stdlib.env)
-(import stdlib.string)
-(define (main [name : String]) : i64
-  (+ (if (env.var-exists? name) 1 0)
-     (+ (string.string-length (env.var-value name))
-        (string.string-length (env.path-separator)))))")
-
-(define (compiler-check-runtime-stdlib-boundary-fs-source) : String
-  "(import stdlib.fs)
-(import stdlib.string)
-(define (main [path : String]) : i64
-  (+ (fs.process-id)
-     (+ (fs.current-dir-status)
-        (+ (string.string-length (fs.current-dir))
-           (fs.file-size-status path)))))")
-
-(define (compiler-check-runtime-stdlib-boundary-profile-source) : String
-  "(import stdlib.profile)
-(define (main) : i64
-  (begin
-    (profile.alloc-reset-peak)
-    (+ (profile.now-ms)
-       (+ (profile.alloc-total)
-          (+ (profile.alloc-live) (profile.alloc-peak))))))")
-
-(define (compiler-check-private-dynamic-buffer-vector-source) : String
-  "(import stdlib.vector)
-(import (vector.vector String) as svec)
-(import (vector.vector i64) as i64vec)
-(define (main) : i64
-  (let
-    [items : i64vec.Vec (i64vec.with-capacity 2)]
-    (begin
-      (i64vec.push-ref! (&mut items) 41)
-      (i64vec.push-ref! (&mut items) 1)
-      (i64vec.len (& items)))))")
 
 ;; Private dynamic-buffer parser coverage remains separate from public fixed
 ;; arrays and generated vectors.
@@ -1073,7 +998,10 @@
 (define (compiler-check-export-ok?) : bool
   (match (compiler-check-source
     "src/export_entry.tl"
-    (compiler-check-export-source))
+    "(defstruct Pair (left i64))
+(defenum Maybe (Present i64))
+(define answer : i64 42)
+(define (main) : i64 answer)")
     [(check_core.ResultCompilerCheck.Ok summary _)
       (> (tc_api.compiler-typecheck-summary-score summary) 0)]
     [(check_core.ResultCompilerCheck.Err _ _) false]))
@@ -1082,12 +1010,20 @@
   (and
     (compiler-check-direct-source-ok?
       "tests/qualified_export_cache_exported.tl"
-      (compiler-check-qualified-export-cache-exported-source))
+      "(module a)
+(define x : i64 1)
+(module b)
+(import a)
+(define (main) : i64 a.x)")
     ;; There is no export list: values are reachable across modules through the
     ;; module symbol table, so this previously-private access type-checks.
     (compiler-check-direct-source-ok?
       "tests/qualified_export_cache_private.tl"
-      (compiler-check-qualified-export-cache-private-source))))
+      "(module a)
+(define x : i64 1)
+(module b)
+(import a)
+(define (main) : i64 a.x)")))
 
 (define (compiler-check-virtual-error-ok?) : bool
   (match (compiler-check-source
@@ -1111,45 +1047,41 @@
           false))]))
 
 (define (compiler-check-runtime-stdlib-boundary-no-import-ok?) : bool
-  (let
-    [ok : bool true]
-    (begin
-      (if (compiler-check-source-error-ok?
-        "tests/runtime_boundary_no_tl"
-        "(define (main) : i64 (begin (flush-stdout) 0))"
-        "typecheck: unbound name flush-stdout")
-        unit
-        (set! ok false))
-      (if (compiler-check-source-error-ok?
-        "tests/runtime_boundary_no_file.tl"
-        "(define (main [path : String]) : String (io.read-file path))"
-        "typecheck: unknown qualified name io.read-file; import the module or use a visible dotted module alias")
-        unit
-        (set! ok false))
-      (if (compiler-check-source-error-ok?
-        "tests/runtime_boundary_no_env.tl"
-        "(define (main [name : String]) : String (var-value name))"
-        "typecheck: unbound name var-value")
-        unit
-        (set! ok false))
-      (if (compiler-check-source-error-ok?
-        "tests/runtime_boundary_no_fs.tl"
-        "(define (main) : String (current-dir))"
-        "typecheck: unbound name current-dir")
-        unit
-        (set! ok false))
-      (if (compiler-check-source-error-ok?
-        "tests/runtime_boundary_no_profile.tl"
-        "(define (main) : i64 (profile-now-ms))"
-        "typecheck: unbound name profile-now-ms")
-        unit
-        (set! ok false))
-      ok)))
+  (and
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_tl"
+      "(define (main) : i64 (begin (flush-stdout) 0))"
+      "typecheck: unbound name flush-stdout")
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_file.tl"
+      "(define (main [path : String]) : String (io.read-file path))"
+      "typecheck: unknown qualified name io.read-file; import the module or use a visible dotted module alias")
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_env.tl"
+      "(define (main [name : String]) : String (var-value name))"
+      "typecheck: unbound name var-value")
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_fs.tl"
+      "(define (main) : String (current-dir))"
+      "typecheck: unbound name current-dir")
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_profile.tl"
+      "(define (main) : i64 (profile-now-ms))"
+      "typecheck: unbound name profile-now-ms")))
 
 (define (compiler-check-private-dynamic-buffer-vector-ok?) : bool
   (compiler-check-source-ok?
     "tests/private_dynamic_buffer_vector.tl"
-    (compiler-check-private-dynamic-buffer-vector-source)))
+    "(import stdlib.vector)
+(import (vector.vector String) as svec)
+(import (vector.vector i64) as i64vec)
+(define (main) : i64
+  (let
+    [items : i64vec.Vec (i64vec.with-capacity 2)]
+    (begin
+      (i64vec.push-ref! (&mut items) 41)
+      (i64vec.push-ref! (&mut items) 1)
+      (i64vec.len (& items)))))"))
 
 (define (compiler-check-private-dynamic-buffer-accepted-ok?) : bool
   (compiler-check-source-ok?
@@ -1257,25 +1189,51 @@
     (unless
       (compiler-check-source-ok?
         "tests/runtime_boundary_tl"
-        (compiler-check-runtime-stdlib-boundary-io-source))
+        "(import stdlib.io)
+(import stdlib.byte_buf)
+(define (main [path : String]) : i64
+  (let
+    [data : byte_buf.ByteBuf (io.read-file (clone path))]
+    (begin
+      (io.print-format \"{}\" \"\")
+      (io.flush-stdout)
+      (+ (byte_buf.len (& data))
+         (unsafe (io.file-open-status path 0))))))")
       (return
         (io.panic "compiler-check: runtime stdlib io boundary smoke mismatch")))
     (unless
       (compiler-check-source-ok?
         "tests/runtime_boundary_env.tl"
-        (compiler-check-runtime-stdlib-boundary-env-source))
+        "(import stdlib.env)
+(import stdlib.string)
+(define (main [name : String]) : i64
+  (+ (if (env.var-exists? name) 1 0)
+     (+ (string.string-length (env.var-value name))
+        (string.string-length (env.path-separator)))))")
       (return
         (io.panic "compiler-check: runtime stdlib env boundary smoke mismatch")))
     (unless
       (compiler-check-source-ok?
         "tests/runtime_boundary_fs.tl"
-        (compiler-check-runtime-stdlib-boundary-fs-source))
+        "(import stdlib.fs)
+(import stdlib.string)
+(define (main [path : String]) : i64
+  (+ (fs.process-id)
+     (+ (fs.current-dir-status)
+        (+ (string.string-length (fs.current-dir))
+           (fs.file-size-status path)))))")
       (return
         (io.panic "compiler-check: runtime stdlib fs boundary smoke mismatch")))
     (unless
       (compiler-check-source-ok?
         "tests/runtime_boundary_profile.tl"
-        (compiler-check-runtime-stdlib-boundary-profile-source))
+        "(import stdlib.profile)
+(define (main) : i64
+  (begin
+    (profile.alloc-reset-peak)
+    (+ (profile.now-ms)
+       (+ (profile.alloc-total)
+          (+ (profile.alloc-live) (profile.alloc-peak))))))")
       (return
         (io.panic
           "compiler-check: runtime stdlib profile boundary smoke mismatch")))

@@ -423,32 +423,12 @@
               (compiler-specialize-decl-list-defines? rest name))]
           [_ (compiler-specialize-decl-list-defines? rest name)]))]))
 
-(define (compiler-specialize-type-param-source) : String
-  "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64)
+(define (compiler-specialize-type-param-ok?) : bool
+  (match (parser.parse-ast-source
+    "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64)
   (__tl_make-array T n))
 (define (main) : (__tl_dyn-array i64)
   (alloc (type i64) 4))")
-
-(define (compiler-specialize-runtime-type-use-source) : String
-  "(define (bad [comptime T : type] [n : i64]) : i64 T)
-(define (main) : i64 (bad (type i64) 4))")
-
-(define (compiler-specialize-template-shadow-source) : String
-  "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
-(define (use-shadow [scale : (-> i64 i64)]) : i64 (scale 7))")
-
-(define (compiler-specialize-template-shadow-sibling-source) : String
-  "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
-(define (main) : i64
-  (+ (let [scale : i64 3] scale) (scale 2 7)))")
-
-(define (compiler-specialize-type-shadow-source) : String
-  "(define (pick [comptime T : type] [x : i64]) : i64
-  (let [T : i64 x] T))
-(define (main) : i64 (pick (type i64) 7))")
-
-(define (compiler-specialize-type-param-ok?) : bool
-  (match (parser.parse-ast-source (compiler-specialize-type-param-source))
     [(parser.ResultAstProgram.Ok program)
       (match (spec.compiler-specialize-program program)
         [(spec.ResultSpecProgram.Ok specialized)
@@ -469,7 +449,9 @@
     [(parser.ResultAstProgram.Err _) false]))
 
 (define (compiler-specialize-runtime-type-use-rejected?) : bool
-  (match (parser.parse-ast-source (compiler-specialize-runtime-type-use-source))
+  (match (parser.parse-ast-source
+    "(define (bad [comptime T : type] [n : i64]) : i64 T)
+(define (main) : i64 (bad (type i64) 4))")
     [(parser.ResultAstProgram.Ok program)
       (match (spec.compiler-specialize-program program)
         [(spec.ResultSpecProgram.Ok _) false]
@@ -477,7 +459,9 @@
     [(parser.ResultAstProgram.Err _) false]))
 
 (define (compiler-specialize-template-shadow-ok?) : bool
-  (match (parser.parse-ast-source (compiler-specialize-template-shadow-source))
+  (match (parser.parse-ast-source
+    "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
+(define (use-shadow [scale : (-> i64 i64)]) : i64 (scale 7))")
     [(parser.ResultAstProgram.Ok program)
       (match (spec.compiler-specialize-program program)
         [(spec.ResultSpecProgram.Ok _) true]
@@ -486,7 +470,9 @@
 
 (define (compiler-specialize-template-shadow-sibling-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-specialize-template-shadow-sibling-source))
+    "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
+(define (main) : i64
+  (+ (let [scale : i64 3] scale) (scale 2 7)))")
     [(parser.ResultAstProgram.Ok program)
       (match (spec.compiler-specialize-program program)
         [(spec.ResultSpecProgram.Ok specialized)
@@ -732,7 +718,10 @@
           cbi.compiler-builtin-id-fix-second)))))
 
 (define (compiler-specialize-type-shadow-ok?) : bool
-  (match (parser.parse-ast-source (compiler-specialize-type-shadow-source))
+  (match (parser.parse-ast-source
+    "(define (pick [comptime T : type] [x : i64]) : i64
+  (let [T : i64 x] T))
+(define (main) : i64 (pick (type i64) 7))")
     [(parser.ResultAstProgram.Ok program)
       (match (spec.compiler-specialize-program program)
         [(spec.ResultSpecProgram.Ok specialized)
@@ -1243,14 +1232,11 @@
         (spec.spec-type-subst-type type-subs cbi.compiler-builtin-id-fix-U)
         (ast.AstType.Bool)))))
 
-(define (compiler-specialize-reflection-string-param-source) : String
-  "(defstruct Point (x i64))
-(define (tag-helper [comptime key : String] [x : i64]) : i64 x)
-(define (main) : i64 (tag-helper (type-key (type Point)) 7))")
-
 (define (compiler-specialize-reflection-string-param-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-specialize-reflection-string-param-source))
+    "(defstruct Point (x i64))
+(define (tag-helper [comptime key : String] [x : i64]) : i64 x)
+(define (main) : i64 (tag-helper (type-key (type Point)) 7))")
     [(parser.ResultAstProgram.Ok program)
       (let
         [pools-before : ast.AstNodePoolContext
@@ -1278,18 +1264,6 @@
                         "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none"))])))]
           [(spec.ResultSpecProgram.Err _) false]))]
     [(parser.ResultAstProgram.Err _) false]))
-
-(define (compiler-generated-decl-reuse-source) : String
-  "(defstruct Box_String (value String))
-(defstruct Box_String (value String))")
-
-(define (compiler-generated-decl-function-reuse-source) : String
-  "(define (make-box-string [value : String]) : String value)
-(define (make-box-string [value : String]) : String value)")
-
-(define (compiler-generated-decl-incompatible-source) : String
-  "(defstruct Box_String (value String))
-(defstruct Box_String (value i64))")
 
 (define (compiler-generated-decl-expected-string-key) : String
   (spec.gen-full-key
@@ -1352,7 +1326,8 @@
 
 (define (compiler-generated-decl-reuse-program) : parser.ResultAstProgram
   (compiler-generated-decl-pair
-    (compiler-generated-decl-reuse-source)
+    "(defstruct Box_String (value String))
+(defstruct Box_String (value String))"
     0
     "sample-family"
     "Box_String"
@@ -1362,7 +1337,8 @@
 
 (define (compiler-generated-decl-function-reuse-program) : parser.ResultAstProgram
   (compiler-generated-decl-pair
-    (compiler-generated-decl-function-reuse-source)
+    "(define (make-box-string [value : String]) : String value)
+(define (make-box-string [value : String]) : String value)"
     0
     "function-family"
     "make-box-string"
@@ -1372,7 +1348,8 @@
 
 (define (compiler-generated-decl-incompatible-program) : parser.ResultAstProgram
   (compiler-generated-decl-pair
-    (compiler-generated-decl-incompatible-source)
+    "(defstruct Box_String (value String))
+(defstruct Box_String (value i64))"
     0
     "sample-family"
     "Box_String"

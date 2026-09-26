@@ -279,14 +279,6 @@
 
 (cfg
   test
-  (define (sort-test-assert-owned-string-eq
-    [actual : String]
-    [expected : String]
-    [message : String]) : unit
-    (test.assert-string-eq (& actual) (& expected) message)))
-
-(cfg
-  test
   (define (sort-test-make-i64-vec1 [a : i64]) : i64v.Vec
     (let
       [v : i64v.Vec (i64v.new)]
@@ -390,7 +382,7 @@
   (define (sort-test-assert-string-vec1 [v : strv.Vec] [a : String]) : unit
     (begin
       (test.assert-i64-eq (strv.len (& v)) 1 "string vec1 len")
-      (sort-test-assert-owned-string-eq
+      (test.assert-owned-string-eq
         (strv.get (& v) 0 "missing")
         a
         "string vec1 0"))))
@@ -405,19 +397,19 @@
     [d : String]) : unit
     (begin
       (test.assert-i64-eq (strv.len (& v)) 4 "string vec4 len")
-      (sort-test-assert-owned-string-eq
+      (test.assert-owned-string-eq
         (strv.get (& v) 0 "missing")
         a
         "string vec4 0")
-      (sort-test-assert-owned-string-eq
+      (test.assert-owned-string-eq
         (strv.get (& v) 1 "missing")
         b
         "string vec4 1")
-      (sort-test-assert-owned-string-eq
+      (test.assert-owned-string-eq
         (strv.get (& v) 2 "missing")
         c
         "string vec4 2")
-      (sort-test-assert-owned-string-eq
+      (test.assert-owned-string-eq
         (strv.get (& v) 3 "missing")
         d
         "string vec4 3"))))
@@ -588,35 +580,35 @@
         (strv.push-ref! (&mut items) "a31")
         (strsort.sort! (&mut items) sort-test-first-char-less?)
         (test.assert-i64-eq (strv.len (& items)) 32 "merge stability len")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 0 "missing")
           "a1"
           "merge stability a first")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 7 "missing")
           "a15"
           "merge stability a left run")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 8 "missing")
           "a17"
           "merge stability a right run")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 15 "missing")
           "a31"
           "merge stability a last")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 16 "missing")
           "b0"
           "merge stability b first")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 23 "missing")
           "b14"
           "merge stability b left run")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 24 "missing")
           "b16"
           "merge stability b right run")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 31 "missing")
           "b30"
           "merge stability b last")))))
@@ -641,11 +633,11 @@
         (test.assert-true
           (< sort-test-comparison-count 8192)
           "large sort comparison count stays subquadratic")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 0 "missing")
           "a"
           "large comparator sort first")
-        (sort-test-assert-owned-string-eq
+        (test.assert-owned-string-eq
           (strv.get (& items) 511 "missing")
           "b"
           "large comparator sort last")))))
@@ -679,20 +671,13 @@
 
 (cfg
   test
-  (define (sort-test-main) : i64
-    (begin
-      (sort-test-assert-i64-sort-cases)
-      (sort-test-assert-large-i64-sort)
-      (sort-test-assert-string-less-cases)
-      (sort-test-assert-string-sort-cases)
-      (sort-test-assert-string-sort-stable)
-      (sort-test-assert-merge-sort-stable)
-      (sort-test-assert-comparison-growth)
-      (sort-test-assert-aggregate-merge-stable)
-      42)))
-
-(cfg
-  test
   (test
     sort-api
-    (test.assert-i64-eq (sort-test-main) 42 "sort-api fixture result")))
+    (sort-test-assert-i64-sort-cases)
+    (sort-test-assert-large-i64-sort)
+    (sort-test-assert-string-less-cases)
+    (sort-test-assert-string-sort-cases)
+    (sort-test-assert-string-sort-stable)
+    (sort-test-assert-merge-sort-stable)
+    (sort-test-assert-comparison-growth)
+    (sort-test-assert-aggregate-merge-stable)))

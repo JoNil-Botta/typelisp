@@ -11,8 +11,10 @@
 (import compiler_load as load)
 (import compiler_ast_types as ast)
 (import compiler_typecheck_core as tc_core)
+(import compiler_typecheck_core_tests as core_tests)
 (import compiler_intern as ci)
 (import compiler_specialize as spec)
+(import compiler_specialize_tests as spec_tests)
 (import compiler_parse_core as parser)
 (import compiler_diagnostic as cdiag)
 (import compiler_owned_view as owned_view)
@@ -171,8 +173,8 @@
 ;; nodes, lengths, active reader bases, and interner counters remain untouched.
 (define (driver-state-specialize-parse-program [incompatible? : bool]) : parser.ResultAstProgram
   (if incompatible?
-    (spec.compiler-generated-decl-incompatible-program)
-    (spec.compiler-generated-decl-reuse-program)))
+    (spec_tests.compiler-generated-decl-incompatible-program)
+    (spec_tests.compiler-generated-decl-reuse-program)))
 
 (define (driver-state-specialize-result-ok?
   [result : spec.ResultSpecProgramWithPaths]) : bool
@@ -246,7 +248,7 @@
             [(parser.ResultAstProgram.Ok serial-program)
               (let
                 [serial-result : spec.ResultSpecProgramWithPaths
-                  (spec.compiler-specialize-program-with-paths-and-pools
+                  (spec_tests.compiler-specialize-program-with-paths-and-pools
                     serial-program
                     (owned_view.compiler-owned-shared-view paths)
                     "specialize-smoke.tl"
@@ -452,7 +454,7 @@
           (driver-state-smoke-installed-ok? a)
           (driver-state-smoke-expr-token-ok?)
           (driver-state-smoke-type-elision-token-ok?)
-          (tc_core.tc-body-state-isolation-self-test)
+          (core_tests.tc-body-state-isolation-self-test)
           (driver-state-specialize-ab-case-ok? false)
           (driver-state-specialize-ab-case-ok? true))
           0

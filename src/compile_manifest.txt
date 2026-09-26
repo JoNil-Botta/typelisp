@@ -165,9 +165,6 @@ end
 case|selfhost_compiler_symbols|src/compiler_symbols.tl|assembly|skip|direct
 end
 
-case|selfhost_compiler_typecheck|src/compiler_typecheck.tl|assembly|skip|direct
-end
-
 case|selfhost_compiler_typecheck_core|src/compiler_typecheck_core.tl|assembly|skip|direct
 end
 

@@ -1,9 +1,10 @@
-;; compiler_typecheck.tl - Self-tests for the compiler typechecker API.
+;; compiler_typecheck_tests.tl - Self-tests for the compiler typechecker API.
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import compiler_typecheck_api as tc_api)
 (import compiler_typecheck_core as tc_core)
+(import compiler_typecheck_core_tests as core_tests)
 (import compiler_load as load)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as cdiag)
@@ -27,13 +28,13 @@
 ;; transient arena active at the lookup that happened to initialize it. The
 ;; inlay collector is job-owned and is covered by its explicit isolation test.
 (define (compiler-typecheck-lazy-table-storage-ok?) : bool
-  (tc_core.tc-lazy-table-storage-ok?))
+  (core_tests.tc-lazy-table-storage-ok?))
 
 (define (compiler-typecheck-inlay-hint-state-isolation-ok?) : bool
-  (tc_core.tc-inlay-hint-state-isolation-ok?))
+  (core_tests.tc-inlay-hint-state-isolation-ok?))
 
 (define (compiler-typecheck-inlay-hint-serial-adapters-ok?) : bool
-  (tc_core.tc-inlay-hint-serial-adapters-ok?))
+  (core_tests.tc-inlay-hint-serial-adapters-ok?))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (str_cat.str-cat
@@ -331,10 +332,10 @@
         "target/tc_prefix_entry_b.tl")
         unit
         (set! ok false))
-      (if (> (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
+      (if (> (core_tests.tc-prefix-snapshot-cache-hit-count-value) 0)
         unit
         (set! ok false))
-      (if (> (tc_core.tc-prefix-snapshot-cache-store-count-value) 0)
+      (if (> (core_tests.tc-prefix-snapshot-cache-store-count-value) 0)
         unit
         (set! ok false))
       (load.compiler-load-session-cache-disable-for-test!)
@@ -345,19 +346,19 @@
 (define (compiler-typecheck-prefix-cache-stats-smoke-ok?) : bool
   (begin
     (tc_core.tc-prefix-snapshot-cache-clear!)
-    (tc_core.tc-prefix-snapshot-cache-note-hit!)
-    (tc_core.tc-prefix-snapshot-cache-note-miss!)
-    (tc_core.tc-prefix-snapshot-cache-note-store!)
+    (core_tests.tc-prefix-snapshot-cache-note-hit!)
+    (core_tests.tc-prefix-snapshot-cache-note-miss!)
+    (core_tests.tc-prefix-snapshot-cache-note-store!)
     (let
-      [line : String (tc_core.tc-prefix-snapshot-cache-stats-line "smoke")]
+      [line : String (core_tests.tc-prefix-snapshot-cache-stats-line "smoke")]
       (begin
-        (tc_core.tc-prefix-snapshot-cache-stats-reset!)
+        (core_tests.tc-prefix-snapshot-cache-stats-reset!)
         (and
           (string.eq
             line
             "typecheck-prefix-cache|smoke|hits=1|misses=1|stores=1|lookups=2|hit-rate-per-mille=500")
           (string.eq
-            (tc_core.tc-prefix-snapshot-cache-stats-line "reset")
+            (core_tests.tc-prefix-snapshot-cache-stats-line "reset")
             "typecheck-prefix-cache|reset|hits=0|misses=0|stores=0|lookups=0|hit-rate-per-mille=0"))))))
 
 (define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
@@ -1484,19 +1485,19 @@
                                       (tc_core.tc-global-shared-view packet))
                                     8)
                                   (=
-                                    (tc_core.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-repr-c-layout-field-offset
                                       (tc_core.tc-repr-c-layout-fields
                                         (tc_core.tc-global-shared-view packet))
                                       "tag")
                                     0)
                                   (=
-                                    (tc_core.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-repr-c-layout-field-offset
                                       (tc_core.tc-repr-c-layout-fields
                                         (tc_core.tc-global-shared-view packet))
                                       "count")
                                     8)
                                   (=
-                                    (tc_core.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-repr-c-layout-field-offset
                                       (tc_core.tc-repr-c-layout-fields packet)
                                       "flag")
                                     16)
@@ -1509,13 +1510,13 @@
                                       (tc_core.tc-global-shared-view outer))
                                     4)
                                   (=
-                                    (tc_core.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-repr-c-layout-field-offset
                                       (tc_core.tc-repr-c-layout-fields
                                         (tc_core.tc-global-shared-view outer))
                                       "inner")
                                     4)
                                   (=
-                                    (tc_core.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-repr-c-layout-field-offset
                                       (tc_core.tc-repr-c-layout-fields outer)
                                       "tail")
                                     12)
@@ -1533,19 +1534,19 @@
                                       (__tl-project-field wide-fields slots))
                                     12)
                                   (=
-                                    (tc_core.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-repr-c-layout-field-offset
                                       (tc_core.tc-global-shared-view
                                         wide-fields)
                                       "f0")
                                     0)
                                   (=
-                                    (tc_core.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-repr-c-layout-field-offset
                                       (tc_core.tc-global-shared-view
                                         wide-fields)
                                       "f8")
                                     24)
                                   (=
-                                    (tc_core.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-repr-c-layout-field-offset
                                       wide-fields
                                       "f11")
                                     42)))]
@@ -1589,19 +1590,19 @@
                             (tc_core.tc-global-shared-view layout))
                           8)
                         (=
-                          (tc_core.tc-repr-c-layout-field-offset
+                          (core_tests.tc-repr-c-layout-field-offset
                             (tc_core.tc-repr-c-layout-fields
                               (tc_core.tc-global-shared-view layout))
                             "x")
                           0)
                         (=
-                          (tc_core.tc-repr-c-layout-field-offset
+                          (core_tests.tc-repr-c-layout-field-offset
                             (tc_core.tc-repr-c-layout-fields
                               (tc_core.tc-global-shared-view layout))
                             "y")
                           4)
                         (=
-                          (tc_core.tc-repr-c-layout-field-offset
+                          (core_tests.tc-repr-c-layout-field-offset
                             (tc_core.tc-repr-c-layout-fields layout)
                             "tag")
                           8))]
@@ -1722,25 +1723,25 @@
                             (tc_core.tc-global-shared-view layout))
                           8)
                         (=
-                          (tc_core.tc-repr-c-layout-field-offset
+                          (core_tests.tc-repr-c-layout-field-offset
                             (tc_core.tc-repr-c-layout-fields
                               (tc_core.tc-global-shared-view layout))
                             "lead")
                           0)
                         (=
-                          (tc_core.tc-repr-c-layout-field-offset
+                          (core_tests.tc-repr-c-layout-field-offset
                             (tc_core.tc-repr-c-layout-fields
                               (tc_core.tc-global-shared-view layout))
                             "point")
                           8)
                         (=
-                          (tc_core.tc-repr-c-layout-field-offset
+                          (core_tests.tc-repr-c-layout-field-offset
                             (tc_core.tc-repr-c-layout-fields
                               (tc_core.tc-global-shared-view layout))
                             "tag")
                           24)
                         (=
-                          (tc_core.tc-repr-c-layout-field-offset
+                          (core_tests.tc-repr-c-layout-field-offset
                             (tc_core.tc-repr-c-layout-fields layout)
                             "tail")
                           40))]
@@ -1954,7 +1955,7 @@
                   (tc_core.tc-agg-layout-cache-state-data state)
                   agg-layout-cache))
               tc_core.tc-agg-layout-cache-capacity)
-            (not (tc_core.tc-agg-layout-cache-slot-empty-for-state? state 0))
+            (not (core_tests.tc-agg-layout-cache-slot-empty-for-state? state 0))
             (= home after-fields)
             (= home after-payloads)
             (= home after-variants)
@@ -1977,7 +1978,7 @@
                   (tc_core.tc-agg-layout-cache-state-data state)
                   agg-layout-cache))
               tc_core.tc-agg-layout-cache-capacity)
-            (tc_core.tc-agg-layout-cache-slot-empty-for-state? state 0)
+            (core_tests.tc-agg-layout-cache-slot-empty-for-state? state 0)
             (=
               (arena.raw-handle
                 (__tl-project-field
@@ -2049,8 +2050,8 @@
         (> storage-a 0)
         (> storage-b 0)
         (not (= storage-a storage-b))
-        (not (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-a 0))
-        (not (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-b 0))
+        (not (core_tests.tc-agg-layout-cache-slot-empty-for-state? state-a 0))
+        (not (core_tests.tc-agg-layout-cache-slot-empty-for-state? state-b 0))
         (= (compiler-typecheck-inline-field-id-at fields-a 0) 1101)
         (= (compiler-typecheck-inline-field-id-at fields-b 0) 2202)
         (=
@@ -2068,8 +2069,9 @@
       (let
         [b-after-a-destroy? : bool
           (and
-            (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-a 0)
-            (not (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-b 0))
+            (core_tests.tc-agg-layout-cache-slot-empty-for-state? state-a 0)
+            (not
+              (core_tests.tc-agg-layout-cache-slot-empty-for-state? state-b 0))
             (=
               (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state
                 state-b)
@@ -2101,8 +2103,10 @@
               (and
                 (> reused-storage-a 0)
                 (not
-                  (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-a 0))
-                (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-b 0)
+                  (core_tests.tc-agg-layout-cache-slot-empty-for-state?
+                    state-a
+                    0))
+                (core_tests.tc-agg-layout-cache-slot-empty-for-state? state-b 0)
                 (= (compiler-typecheck-inline-field-id-at reused-a 0) 3303))]
             (begin
               (tc_core.tc-agg-layout-cache-storage-reset-for-state! state-a)
@@ -2110,7 +2114,7 @@
                 initially-isolated?
                 b-after-a-destroy?
                 a-after-b-destroy?
-                (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-a 0)
+                (core_tests.tc-agg-layout-cache-slot-empty-for-state? state-a 0)
                 (=
                   (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state
                     state-a)
@@ -2243,21 +2247,21 @@
                             unit
                             (set! ok false))
                           (if (=
-                            (tc_core.tc-inline-aggregate-layout-variant-size-id
+                            (core_tests.tc-inline-aggregate-layout-variant-size-id
                               (tc_core.tc-global-shared-view layout)
                               empty-id)
                             8)
                             unit
                             (set! ok false))
                           (if (=
-                            (tc_core.tc-inline-aggregate-layout-variant-size-id
+                            (core_tests.tc-inline-aggregate-layout-variant-size-id
                               (tc_core.tc-global-shared-view layout)
                               byte-id)
                             16)
                             unit
                             (set! ok false))
                           (if (=
-                            (tc_core.tc-inline-aggregate-layout-variant-size-id
+                            (core_tests.tc-inline-aggregate-layout-variant-size-id
                               (tc_core.tc-global-shared-view layout)
                               wide-id)
                             24)
@@ -10199,13 +10203,13 @@
       unit
       (io.panic "typecheck: intern qualified metadata tests failed"))
     (cbi.compiler-builtin-initialize-for-parse!)
-    (if (tc_core.tc-type-env-segmented-snapshot-smoke?)
+    (if (core_tests.tc-type-env-segmented-snapshot-smoke?)
       unit
       (io.panic "typecheck: segmented type env snapshot smoke mismatch"))
-    (if (tc_core.tc-type-env-local-cache-smoke?)
+    (if (core_tests.tc-type-env-local-cache-smoke?)
       unit
       (io.panic "typecheck: local type env cache smoke mismatch"))
-    (if (tc_core.tc-spmd-env-box-smoke?)
+    (if (core_tests.tc-spmd-env-box-smoke?)
       unit
       (io.panic "typecheck: boxed spmd env smoke mismatch"))
     (if (compiler-typecheck-macro-hygiene-env-snapshots-ok?)
@@ -12028,7 +12032,7 @@
         (tc_core.tc-global-shared-view cross-store-facts))]
     [cross-store-order-ok : bool
       (tc_core.tc-move-path-eq?
-        (tc_core.tc-moved-path-fact-path
+        (core_tests.tc-moved-path-fact-path
           (tc_core.tc-moved-path-facts-head cross-store-facts))
         growth0)]
     [cross-store-removed : tc_core.TcMovedSet
@@ -12092,7 +12096,7 @@
       (= (tc_core.tc-moved-len (tc_core.tc-moved-empty)) 0)
       (= (tc_core.tc-moved-len dupe) 1)
       (= (tc_core.tc-moved-len (tc_core.tc-global-shared-view two)) 2)
-      (>= (tc_core.tc-moved-capacity two) 8)
+      (>= (core_tests.tc-moved-capacity two) 8)
       (not (tc_core.tc-moved-contains? removed alpha-id))
       origin-whole-ok
       origin-clone-ok

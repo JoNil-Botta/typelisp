@@ -154,7 +154,7 @@ The compiler is written in TypeLisp under [`src/`](src). Key modules:
 
 - `src/lexer.tl` — tokenizes source code
 - `src/compiler_parse_core.tl` — builds the AST from tokens
-- `src/compiler_typecheck.tl` — type inference and checking
+- `src/compiler_typecheck_core.tl` — type inference and checking
 - `src/compiler_lower.tl` — lowering to the 3-address IR
 - `src/compiler_optimize.tl` — IR optimization passes
 - `src/compiler_backend.tl` — x86_64 code generation

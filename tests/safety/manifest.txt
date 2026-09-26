@@ -168,6 +168,9 @@ qualified_string_append_alias_reject|check-fail|tests/safety/qualified_string_ap
 qualified_string_concat_full_path_reject|check-fail|tests/safety/qualified_string_concat_full_path_reject.tl|-|typecheck: unbound name stdlib.string.string-concat
 qualified_string_eq_unexported_reject|check-fail|tests/safety/qualified_string_eq_unexported_reject.tl|-|typecheck: unbound name string.string-eq
 qualified_string_helpers_check_ok|check-ok|tests/safety/qualified_string_helpers_check_ok.tl|-|-
+bare_string_concat_unimported_reject|check-fail|tests/safety/bare_string_concat_unimported_reject.tl|-|typecheck: unbound name string-concat
+bare_string_eq_unimported_reject|check-fail|tests/safety/bare_string_eq_unimported_reject.tl|-|typecheck: unbound name string-eq
+bare_string_eq_question_unimported_reject|check-fail|tests/safety/bare_string_eq_question_unimported_reject.tl|-|typecheck: unbound name string=?
 io_print_template_literal_reject|check-fail|tests/safety/io_print_template_literal_reject.tl|-|format: template must be a string literal
 removed_io_print_string_reject|check-fail|tests/safety/removed_io_print_string_reject.tl|-|typecheck: unbound name io.print-string
 removed_io_print_str_reject|check-fail|tests/safety/removed_io_print_str_reject.tl|-|typecheck: unbound name io.print-str

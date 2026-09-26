@@ -30291,69 +30291,6 @@
           (opt-licm-unswitch-clone-label shape.body-labels shape.header)))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
-(define (opt-licm-unswitch-extend-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [body-labels : OptLabelSet]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-27903-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-27903-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-27903-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-27903-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-27903-3.value]
-        [label : i64 phi-input-at-27903-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-27903-3.slots
-            (+ phi-inputs-at-27903-3.start 1)
-            (- phi-inputs-at-27903-3.len 1))]
-        [tail : ir.CompilerIrPhiInputSeq
-          (opt-licm-unswitch-extend-phi-inputs
-            rest
-            body-labels
-            (compiler-opt-global-shared-view remap))]
-        (if (opt-label-contains body-labels label)
-          (ir.compiler-ir-phi-input-seq-prepend
-            (compiler-opt-global-shared-view value)
-            label
-            (ir.compiler-ir-phi-input-seq-prepend
-              (opt-unroll-subst-value remap value)
-              (opt-licm-unswitch-clone-label body-labels label)
-              tail))
-          (ir.compiler-ir-phi-input-seq-prepend value label tail))))))
-
-(define (opt-licm-unswitch-extend-exit-instrs
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [body-labels : OptLabelSet]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [cursor : i64 index]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
-    (begin
-      (while (< cursor count)
-        (begin
-          (ir.compiler-ir-instr-builder-push!
-            (&mut builder)
-            (match (ir.compiler-ir-instr-seq-ref instrs cursor)
-              [(ir.CompilerIrInstr.Phi dst inputs ty)
-                (ir.CompilerIrInstr.Phi
-                  dst
-                  (opt-licm-unswitch-extend-phi-inputs
-                    inputs
-                    body-labels
-                    (compiler-opt-global-shared-view remap))
-                  ty)]
-              [_ (ir.compiler-ir-instr-seq-ref instrs cursor)]))
-          (set! cursor (+ cursor 1))))
-      (ir.compiler-ir-instr-builder-to-seq builder))))
-
 (define (opt-licm-unswitch-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
   [shape : OptLicmUnswitchShape]
@@ -30408,11 +30345,13 @@
                 (ir.compiler-ir-block-cons
                   (ir.CompilerIrBlock.Block
                     label
-                    (opt-licm-unswitch-extend-exit-instrs
+                    (opt-clone-extend-exit-instrs
                       instrs
                       0
-                      shape.body-labels
-                      remap))
+                      remap
+                      (OptCloneLabels.Body
+                        shape.body-labels
+                        (opt-licm-unswitch-suffix))))
                   tail)]))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-unswitch-rewrite-blocks
@@ -70575,7 +70514,10 @@
   ;; ALL): a BoundsCheck continuation label, which the backend re-emits at the
   ;; check and the clone must not define twice. FROM becomes TO: a header phi's
   ;; preheader input, which now comes from the guard.
-  (Region OptLabelSet OptLabelSet String i64 i64))
+  (Region OptLabelSet OptLabelSet String i64 i64)
+  ;; Only FROM is renamed, to TO: a one-block region whose clone is named
+  ;; already.
+  (Edge i64 i64))
 
 (define (opt-clone-suffixed [label : i64] [suffix : String]) : i64
   (ir.compiler-ir-label
@@ -70605,7 +70547,11 @@
             (opt-label-contains body label)
             (not (opt-label-contains all label)))
           (opt-clone-suffixed label suffix)]
-        [else label])]))
+        [else label])]
+    [(OptCloneLabels.Edge from to)
+      (if (= label from)
+        to
+        label)]))
 
 ;; One region instruction with its uses substituted and its labels renamed. Its
 ;; defs are kept.
@@ -70638,6 +70584,75 @@
     (if (< dst 0)
       cloned
       (ir.compiler-ir-instr-with-dst cloned (opt-bce-mb-remap-dst remap dst)))))
+
+;; SSA repair at a cloned region's exits: a phi outside the region that reads a
+;; value on an edge out of it now also has the clone's copy of that edge. Each
+;; such input is followed by the clone's input, which reads the remapped value
+;; on the renamed edge.
+(define (opt-clone-extend-exit-phi-inputs
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [labels : OptCloneLabels]) : ir.CompilerIrPhiInputSeq
+  (if (<= inputs.len 0)
+    (ir.compiler-ir-phi-input-seq-empty)
+    (let
+      [input : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (compiler-opt-global-shared-view inputs)
+          0)]
+      [tail : ir.CompilerIrPhiInputSeq
+        (opt-clone-extend-exit-phi-inputs
+          (ir.CompilerIrPhiInputSeq
+            inputs.slots
+            (+ inputs.start 1)
+            (- inputs.len 1))
+          (compiler-opt-global-shared-view remap)
+          (compiler-opt-global-shared-view labels))]
+      [cloned : i64
+        (opt-region-clone-label
+          (compiler-opt-global-shared-view remap)
+          labels
+          input.label)]
+      (if (= cloned input.label)
+        (ir.compiler-ir-phi-input-seq-prepend input.value input.label tail)
+        (ir.compiler-ir-phi-input-seq-prepend
+          (compiler-opt-global-shared-view input.value)
+          input.label
+          (ir.compiler-ir-phi-input-seq-prepend
+            (opt-unroll-subst-value remap input.value)
+            cloned
+            tail))))))
+
+(define (opt-clone-extend-exit-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [labels : OptCloneLabels]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [next : i64 index]
+    (begin
+      (while (< next count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs next)]
+          (begin
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (match (compiler-opt-global-shared-view instr)
+                [(ir.CompilerIrInstr.Phi dst inputs ty)
+                  (ir.CompilerIrInstr.Phi
+                    dst
+                    (opt-clone-extend-exit-phi-inputs
+                      inputs
+                      (compiler-opt-global-shared-view remap)
+                      (compiler-opt-global-shared-view labels))
+                    ty)]
+                [_ instr]))
+            (set! next (+ next 1)))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 ;; Clone one whitelisted body instruction: substitute uses through the remap
 ;; first (a pre-SSA body may redefine a var it reads), then allocate a fresh dst
@@ -83540,78 +83555,6 @@
             (set! next (+ next 1)))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
-;; Extend the exit block's phis: every input carried on the loop edge gains a
-;; parallel input carrying the fast clone's remapped value.
-(define (opt-bce-version-extend-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [loop-label : i64]
-  [fast-label : i64]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-79958-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-79958-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-79958-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-79958-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-79958-3.value]
-        [label : i64 phi-input-at-79958-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-79958-3.slots
-            (+ phi-inputs-at-79958-3.start 1)
-            (- phi-inputs-at-79958-3.len 1))]
-        [tail : ir.CompilerIrPhiInputSeq
-          (opt-bce-version-extend-phi-inputs
-            rest
-            loop-label
-            fast-label
-            (compiler-opt-global-shared-view remap))]
-        (if (= label loop-label)
-          (ir.compiler-ir-phi-input-seq-prepend
-            (compiler-opt-global-shared-view value)
-            label
-            (ir.compiler-ir-phi-input-seq-prepend
-              (opt-unroll-subst-value remap value)
-              fast-label
-              tail))
-          (ir.compiler-ir-phi-input-seq-prepend value label tail))))))
-
-(define (opt-bce-version-extend-exit-instrs
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [loop-label : i64]
-  [fast-label : i64]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
-    [next : i64 index]
-    (begin
-      (while (< next count)
-        (let
-          [instr : ir.CompilerIrInstr
-            (ir.compiler-ir-instr-seq-ref instrs next)]
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (match (compiler-opt-global-shared-view instr)
-                [(ir.CompilerIrInstr.Phi dst inputs ty)
-                  (ir.CompilerIrInstr.Phi
-                    dst
-                    (opt-bce-version-extend-phi-inputs
-                      inputs
-                      loop-label
-                      fast-label
-                      (compiler-opt-global-shared-view remap))
-                    ty)]
-                [_ instr]))
-            (set! next (+ next 1)))))
-      (ir.compiler-ir-instr-builder-to-seq builder))))
-
 (define (opt-bce-version-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
   [pred-label : i64]
@@ -83658,12 +83601,11 @@
                   [(= label exit-label)
                     (ir.CompilerIrBlock.Block
                       label
-                      (opt-bce-version-extend-exit-instrs
+                      (opt-clone-extend-exit-instrs
                         instrs
                         0
-                        loop-label
-                        fast-label
-                        remap))]
+                        remap
+                        (OptCloneLabels.Edge loop-label fast-label)))]
                   [else block])
                 tail)))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -93030,76 +92972,6 @@
         facts
         keep)]))
 
-;; --- rewrite --------------------------------------------------------------------
-;; Extend outside phis: every input carried on a loop edge gains a parallel
-;; input carrying the fast clone's remapped value on the fast edge.
-(define (opt-bce-mb-extend-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [body-labels : OptLabelSet]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-89807-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-89807-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-89807-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-89807-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-89807-3.value]
-        [label : i64 phi-input-at-89807-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-89807-3.slots
-            (+ phi-inputs-at-89807-3.start 1)
-            (- phi-inputs-at-89807-3.len 1))]
-        [tail : ir.CompilerIrPhiInputSeq
-          (opt-bce-mb-extend-phi-inputs
-            rest
-            body-labels
-            (compiler-opt-global-shared-view remap))]
-        (if (opt-label-contains body-labels label)
-          (ir.compiler-ir-phi-input-seq-prepend
-            (compiler-opt-global-shared-view value)
-            label
-            (ir.compiler-ir-phi-input-seq-prepend
-              (opt-unroll-subst-value remap value)
-              (ir.compiler-ir-label
-                (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast"))
-              tail))
-          (ir.compiler-ir-phi-input-seq-prepend value label tail))))))
-
-(define (opt-bce-mb-extend-exit-instrs
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [body-labels : OptLabelSet]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
-    [next : i64 index]
-    (begin
-      (while (< next count)
-        (let
-          [instr : ir.CompilerIrInstr
-            (ir.compiler-ir-instr-seq-ref instrs next)]
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (match (compiler-opt-global-shared-view instr)
-                [(ir.CompilerIrInstr.Phi dst inputs ty)
-                  (ir.CompilerIrInstr.Phi
-                    dst
-                    (opt-bce-mb-extend-phi-inputs
-                      inputs
-                      body-labels
-                      (compiler-opt-global-shared-view remap))
-                    ty)]
-                [_ instr]))
-            (set! next (+ next 1)))))
-      (ir.compiler-ir-instr-builder-to-seq builder))))
-
 (define (opt-bce-mb-blocks-cons-onto
   [fast-blocks : ir.CompilerIrBlockList]
   [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
@@ -93170,11 +93042,11 @@
                 (ir.compiler-ir-block-cons
                   (ir.CompilerIrBlock.Block
                     label
-                    (opt-bce-mb-extend-exit-instrs
+                    (opt-clone-extend-exit-instrs
                       instrs
                       0
-                      shape.body-labels
-                      remap))
+                      remap
+                      (OptCloneLabels.Body shape.body-labels "__bce_fast")))
                   tail)]))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-rewrite-blocks
@@ -96582,76 +96454,6 @@
             (set! next (+ next 1)))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
-(define (opt-unroll-mb-extend-exit-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [latch : i64]
-  [clone-latch : i64]
-  [remap1 : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-92741-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-92741-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-92741-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-92741-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-92741-3.value]
-        [label : i64 phi-input-at-92741-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-92741-3.slots
-            (+ phi-inputs-at-92741-3.start 1)
-            (- phi-inputs-at-92741-3.len 1))]
-        [tail : ir.CompilerIrPhiInputSeq
-          (opt-unroll-mb-extend-exit-phi-inputs
-            rest
-            latch
-            clone-latch
-            (compiler-opt-global-shared-view remap1))]
-        (if (= label latch)
-          (ir.compiler-ir-phi-input-seq-prepend
-            (compiler-opt-global-shared-view value)
-            label
-            (ir.compiler-ir-phi-input-seq-prepend
-              (opt-unroll-subst-value remap1 value)
-              clone-latch
-              tail))
-          (ir.compiler-ir-phi-input-seq-prepend value label tail))))))
-
-(define (opt-unroll-mb-extend-exit-instrs
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [latch : i64]
-  [clone-latch : i64]
-  [remap1 : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
-    [next : i64 index]
-    (begin
-      (while (< next count)
-        (let
-          [instr : ir.CompilerIrInstr
-            (ir.compiler-ir-instr-seq-ref instrs next)]
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (match (compiler-opt-global-shared-view instr)
-                [(ir.CompilerIrInstr.Phi dst inputs ty)
-                  (ir.CompilerIrInstr.Phi
-                    dst
-                    (opt-unroll-mb-extend-exit-phi-inputs
-                      inputs
-                      latch
-                      clone-latch
-                      (compiler-opt-global-shared-view remap1))
-                    ty)]
-                [_ instr]))
-            (set! next (+ next 1)))))
-      (ir.compiler-ir-instr-builder-to-seq builder))))
-
 (define (opt-unroll-mb-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
   [shape : OptUnrollMbShape]
@@ -96714,12 +96516,13 @@
                 (ir.compiler-ir-block-cons
                   (ir.CompilerIrBlock.Block
                     label
-                    (opt-unroll-mb-extend-exit-instrs
+                    (opt-clone-extend-exit-instrs
                       instrs
                       0
-                      shape.latch
-                      (opt-unroll-mb-label shape.body-labels shape.latch 1)
-                      remap1))
+                      remap1
+                      (OptCloneLabels.Edge
+                        shape.latch
+                        (opt-unroll-mb-label shape.body-labels shape.latch 1))))
                   tail)]))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-unroll-mb-rewrite-blocks

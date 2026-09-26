@@ -1215,52 +1215,6 @@
         [(git_object.ResultGitAdvertisedRef.Ok advert) advert.has-symref]
         [_ false]))))
 
-(define (git-object-self-test) : i64
-  (begin
-    (git-object-test-require
-      (git-object-test-ids-and-preimages?)
-      "git object: ID/preimage fixture mismatch")
-    (git-object-test-require
-      (git-object-test-refs?)
-      "git object: ref fixture mismatch")
-    (git-object-test-require
-      (git-object-test-commit?)
-      "git object: commit fixture mismatch")
-    (git-object-test-require
-      (git-object-test-tree?)
-      "git object: tree fixture mismatch")
-    (git-object-test-require
-      (git-object-test-tag?)
-      "git object: tag fixture mismatch")
-    (git-object-test-require
-      (git-object-test-resolve?)
-      "git object: resolution fixture mismatch")
-    (git-object-test-require
-      (git-object-test-sha256-resolve?)
-      "git object: SHA-256 resolution fixture mismatch")
-    (git-object-test-require
-      (git-object-test-cycle-and-limits?)
-      "git object: peel bounds fixture mismatch")
-    (git-object-test-require
-      (git-object-test-boundaries?)
-      "git object: decoder bounds fixture mismatch")
-    (git-object-test-require
-      (git-object-test-opaque-and-parent-bytes?)
-      "git object: parent/message byte fixture mismatch")
-    (git-object-test-require
-      (git-object-test-header-prefixes?)
-      "git object: header truncation fixture mismatch")
-    (git-object-test-require
-      (git-object-test-deterministic-invalid-bytes?)
-      "git object: deterministic malformed corpus mismatch")
-    (git-object-test-require
-      (git-object-test-header-order?)
-      "git object: header order fixture mismatch")
-    (git-object-test-require
-      (git-object-test-symref-targets?)
-      "git object: symref target fixture mismatch")
-    42))
-
 (test
   git-object-identities
   (git-object-test-require

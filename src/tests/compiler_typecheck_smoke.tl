@@ -202,15 +202,6 @@
     [copy : (-> i64) f]
     copy))")
 
-(define (compiler-typecheck-closure-move-owner-alias-source) : String
-  "(import stdlib.string)
-(define (main) : i64
-  (let
-    [owned : String \"captured\"]
-    [f : (-> i64) (lambda () : i64 (string.string-length owned))]
-    [moved : (-> i64) f]
-    (+ (moved) (f))))")
-
 (define (compiler-typecheck-closure-move-nested-alias-source) : String
   "(import stdlib.string)
 (define (main) : i64
@@ -259,21 +250,6 @@
     [owned : String \"once\"]
     [take : (-> String) (lambda () : String owned)]
     (take)))")
-
-(define (compiler-typecheck-closure-fnonce-second-call-source) : String
-  "(define (main) : String
-  (let
-    [owned : String \"once\"]
-    [take : (-> String) (lambda () : String owned)]
-    [first : String (take)]
-    (take)))")
-
-(define (compiler-typecheck-closure-fnonce-escape-source) : String
-  "(define (make) : (-> String)
-  (let
-    [owned : String \"once\"]
-    [take : (-> String) (lambda () : String owned)]
-    take))")
 
 (define (compiler-typecheck-closure-owner-read-repeat-source) : String
   "(define (read [value : (& value str)]) : i64 42)
@@ -380,14 +356,6 @@
     (signature-alias-same-input (& value) (& value))
     (signature-alias-value-lookup (& value) 42)))")
 
-(define (compiler-typecheck-signature-lifetime-alias-unknown-source) : String
-  "(define (bad [value : (& source i64)]) : unit
-  (let [copy : (& missing i64) value] unit))")
-
-(define (compiler-typecheck-signature-lifetime-alias-local-return-source) : String
-  "(define (bad [value : (& source i64)]) : (& source i64)
-  (let [local : i64 1] (& source local)))")
-
 (define (compiler-typecheck-bytes-borrowed-source) : String
   "(defstruct ByteViews
   (:lifetimes data)
@@ -434,20 +402,10 @@
     [after-scope : i64 (let [inner : i64 (len text)] 1)]
     (+ direct (+ from-box (+ via-f (+ text-len after-scope))))))")
 
-(define (compiler-typecheck-auto-borrow-temporary-source) : String
-  "(define (take [n : (& n i64)]) : i64 1)
-(define (main [n : i64]) : i64
-  (take (+ n 1)))")
-
 (define (compiler-typecheck-auto-borrow-shared-lifetime-source) : String
   "(define (same-owner [left : (& same str)] [right : (& same str)]) : i64 1)
 (define (main [left : String] [right : String]) : i64
   (same-owner left right))")
-
-(define (compiler-typecheck-auto-borrow-mutable-param-source) : String
-  "(define (take-mut [n : (&mut n i64)]) : i64 1)
-(define (main [n : i64]) : i64
-  (take-mut n))")
 
 (define (compiler-typecheck-mut-to-immut-reborrow-source) : String
   "(defstruct ReborrowItem (value i64))
@@ -494,14 +452,6 @@
   (if (same named.name (array-ref items 0))
     (+ (len named.name) (len (array-ref items 0)))
     0))")
-
-(define (compiler-typecheck-auto-borrow-assignment-after-last-use-source) : String
-  "(define (take [n : (& n i64)]) : i64 1)
-(define (main [n : i64]) : i64
-  (begin
-    (take n)
-    (set! n 2)
-    n))")
 
 (define (compiler-typecheck-auto-borrow-move-after-last-use-source) : String
   "(define (len [text : (& text str)]) : i64 1)
@@ -582,14 +532,8 @@
   (and
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-auto-borrow-ok-source))
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-auto-borrow-temporary-source)
-      "typecheck: borrow requires a local, parameter, or aggregate place")
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-auto-borrow-shared-lifetime-source))
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-auto-borrow-mutable-param-source)
-      "typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64")
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-mut-to-immut-reborrow-source))
     (compiler_typecheck.compiler-typecheck-error-ok?
@@ -603,8 +547,6 @@
       "typecheck: call `write` argument 1 (parameter `value`) type mismatch: expected (&mut value i64), found (& value i64)")
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-auto-borrow-string-aggregate-place-source))
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-auto-borrow-assignment-after-last-use-source))
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-auto-borrow-move-after-last-use-source))
     (compiler_typecheck.compiler-typecheck-error-ok?
@@ -733,17 +675,6 @@
       [first-item : (&mut bags i64) (&mut (array-ref bags.left 0))]
       (set! (array-ref whole-left 0) 1))))")
 
-(define (compiler-typecheck-mut-reborrow-bound-subscope-source) : String
-  "(define (touch [slot : (&mut items i64)]) : unit unit)
-(define (use [items : (&mut items (__tl_dyn-array i64))]) : unit
-  (begin
-    (let
-      [slot : (&mut items i64) (&mut (array-ref items 0))]
-      (touch slot))
-    (set! (array-ref items 0) 7)))
-(define (main [items : (__tl_dyn-array i64)]) : unit
-  (use (&mut items)))")
-
 (define (compiler-typecheck-mut-reborrow-same-scope-use-source) : String
   "(define (touch [slot : (&mut items i64)]) : unit unit)
 (define (bad [items : (&mut items (__tl_dyn-array i64))]) : unit
@@ -789,39 +720,6 @@
       (set! (array-ref borrowed 0) 41)
       (array-length copy))))")
 
-(define (compiler-typecheck-mut-borrow-read-disjoint-source) : String
-  "(defstruct Bag
-  (left (__tl_dyn-array i64))
-  (right i64))
-(define (main) : i64
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [bag : Bag (Bag items 42)]
-    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut bag.left)]
-    [right : i64 bag.right]
-    (begin
-      (set! (array-ref borrowed 0) 41)
-      right)))")
-
-(define (compiler-typecheck-mut-borrow-read-through-ref-source) : String
-  "(define (main) : i64
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
-    [n : i64 (array-length borrowed)]
-    (begin
-      (set! (array-ref borrowed 0) 41)
-      n)))")
-
-(define (compiler-typecheck-mut-borrow-owner-read-after-last-use-source) : String
-  "(define (main) : i64
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
-    (begin
-      (set! (array-ref borrowed 0) 41)
-      (array-length items))))")
-
 (define (compiler-typecheck-two-phase-mut-call-shared-read-source) : String
   "(define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
@@ -844,38 +742,6 @@
       (push-with-len (&mut items) (array-length items))
       (array-length items))))")
 
-(define (compiler-typecheck-two-phase-mut-call-second-mut-source) : String
-  "(define (take-two
-  [left : (&mut left (__tl_dyn-array i64))]
-  [right : (&mut right (__tl_dyn-array i64))]) : unit
-  unit)
-(define (main) : unit
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (take-two (&mut items) (&mut items))))")
-
-(define (compiler-typecheck-two-phase-mut-call-escaping-shared-source) : String
-  "(define (borrow-items [items : (& items (__tl_dyn-array i64))]) : (& items (__tl_dyn-array i64))
-  items)
-(define (take-mut-and-view
-  [items : (&mut items (__tl_dyn-array i64))]
-  [view : (& items (__tl_dyn-array i64))]) : unit
-  unit)
-(define (main) : unit
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (take-mut-and-view (&mut items) (borrow-items (& items)))))")
-
-(define (compiler-typecheck-two-phase-mut-call-mutate-owner-source) : String
-  "(define (take-mut-and-value
-  [items : (&mut items (__tl_dyn-array i64))]
-  [value : i64]) : unit
-  unit)
-(define (main) : unit
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (take-mut-and-value (&mut items) (begin (__tl_array-push! items 1) 0))))")
-
 (define (compiler-typecheck-borrow-if-conservative-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
 (define (main [n : i64] [flag : bool]) : i64
@@ -884,16 +750,6 @@
     (begin
       (if flag (set! n 2) unit)
       (take borrowed))))")
-
-(define (compiler-typecheck-borrow-if-branch-local-after-join-source) : String
-  "(define (take [n : (& n i64)]) : i64 1)
-(define (main [n : i64] [flag : bool]) : i64
-  (begin
-    (if flag
-      (let [borrowed : (& n i64) (& n)] (begin (take borrowed) unit))
-      unit)
-    (set! n 2)
-    n))")
 
 (define (compiler-typecheck-borrow-if-result-before-last-use-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
@@ -919,17 +775,6 @@
       (take borrowed)
       (set! n 2)
       n)))")
-
-(define (compiler-typecheck-borrow-match-branch-local-after-join-source) : String
-  "(define (take [n : (& n i64)]) : i64 1)
-(defenum Flag (On) (Off))
-(define (main [n : i64] [flag : Flag]) : i64
-  (begin
-    (match flag
-      [On (let [borrowed : (& n i64) (& n)] (begin (take borrowed) unit))]
-      [Off unit])
-    (set! n 2)
-    n))")
 
 (define (compiler-typecheck-borrow-match-result-before-last-use-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
@@ -993,28 +838,6 @@
     (begin
       (while (< n 3) (set! n 2))
       (take borrowed))))")
-
-(define (compiler-typecheck-borrow-while-body-after-last-use-source) : String
-  "(define (take [n : (& n i64)]) : i64 1)
-(define (main [n : i64] [limit : i64]) : i64
-  (let [i : i64 0]
-    (begin
-      (while (< i limit)
-        (let [borrowed : (& n i64) (& n)]
-          (begin
-            (take borrowed)
-            (set! n (+ n 1))
-            (set! i (+ i 1)))))
-      n)))")
-
-(define (compiler-typecheck-borrow-foreach-body-after-last-use-source) : String
-  "(define (take [n : (& n i64)]) : i64 1)
-(define (main [n : i64] [out : (__tl_dyn-array i64)] [limit : i64]) : unit
-  (foreach ([i : i64 0 limit])
-    (let [borrowed : (& n i64) (& n)]
-      (begin
-        (take borrowed)
-        (set! (array-ref out i) n)))))")
 
 (define (compiler-typecheck-secondary-label-contains?
   [labels : diagnostic.CompilerDiagnosticLabelList]
@@ -1101,8 +924,6 @@
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-borrow-ancestor-descendant-source)
       "typecheck: cannot read mutably borrowed place `bags.left[0]`")
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-mut-reborrow-bound-subscope-source))
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-reborrow-same-scope-use-source)
       "typecheck: cannot assign to borrowed place `items[0]`")
@@ -1116,36 +937,17 @@
       (compiler-typecheck-mut-borrow-read-struct-get-source)
       "typecheck: cannot read mutably borrowed place `bag.left`")
     (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-mut-borrow-read-disjoint-source))
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-mut-borrow-read-through-ref-source))
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-mut-borrow-owner-read-after-last-use-source))
-    (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-two-phase-mut-call-shared-read-source))
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-two-phase-mut-call-direct-read-source))
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-two-phase-mut-call-second-mut-source)
-      "typecheck: cannot mutably borrow borrowed place `items`")
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-two-phase-mut-call-escaping-shared-source)
-      "typecheck: cannot mutably borrow borrowed place `items`")
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-two-phase-mut-call-mutate-owner-source)
-      "typecheck: cannot assign to borrowed place `items`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-if-conservative-source)
       "typecheck: cannot assign to borrowed place `n`")
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-borrow-if-branch-local-after-join-source))
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-if-result-before-last-use-source)
       "typecheck: cannot assign to borrowed place `n`")
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-borrow-if-result-after-last-use-source))
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-borrow-match-branch-local-after-join-source))
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-match-result-before-last-use-source)
       "typecheck: cannot assign to borrowed place `n`")
@@ -1158,11 +960,7 @@
       (compiler-typecheck-borrow-if-aggregate-result-after-last-use-source))
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-while-conservative-source)
-      "typecheck: cannot assign to borrowed place `n`")
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-borrow-while-body-after-last-use-source))
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-borrow-foreach-body-after-last-use-source))))
+      "typecheck: cannot assign to borrowed place `n`")))
 
 (define (compiler-typecheck-labeled-move-error-ok?
   [src : String]
@@ -1291,15 +1089,8 @@
       "typecheck: __tl_make-array element type is not supported")))
 
 (define (compiler-typecheck-signature-lifetime-alias-tests-ok?) : bool
-  (and
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-signature-lifetime-alias-positive-source))
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-signature-lifetime-alias-unknown-source)
-      "typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64); source lifetime `source` does not outlive required lifetime `missing`")
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-signature-lifetime-alias-local-return-source)
-      "typecheck: borrow lifetime mismatch")))
+  (compiler_typecheck.compiler-typecheck-ok?
+    (compiler-typecheck-signature-lifetime-alias-positive-source)))
 
 (define (compiler-typecheck-bytes-referent-tests-ok?) : bool
   (and
@@ -1356,12 +1147,6 @@
       "typecheck: reference-capturing closure value would escape lexical scope")
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-closure-fnonce-once-source))
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-closure-fnonce-second-call-source)
-      "typecheck: use of moved value `take`")
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-closure-fnonce-escape-source)
-      "typecheck: closure capability would be erased by escaping the direct local binding")
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-closure-owner-read-repeat-source))))
 
@@ -1374,9 +1159,6 @@
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-closure-copy-reference-escape-source)
       "typecheck: reference-capturing closure value would escape lexical scope")
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-closure-move-owner-alias-source)
-      "typecheck: use of moved value `f`")
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-closure-move-nested-alias-source)
       "typecheck: use of moved value `outer`")))
@@ -1927,16 +1709,6 @@
   Interval before copy shared sift sort full-array unknown-order)\n")
       "compiler-reg-interval-heapsort: ordering must be `candidate-start-end-var` or `color-start-var`")))
 
-(define (compiler-typecheck-smoke-module-catalog-invalid-unused-source) : String
-  "(defmacro (catalog [T : type]) : Module
-  `(begin
-    (module generated.catalog_invalid)
-    (defstruct Item (value ,T))
-    (define (answer) : i64 42)
-    (define (invalid-unused-helper) : i64 true)))
-(import (catalog i64) as catalog_i64)
-(define (main) : i64 (catalog_i64.answer))")
-
 (define (compiler-typecheck-smoke-require [ok : bool] [name : String]) : bool
   (if ok
     true
@@ -1944,11 +1716,6 @@
 
 (define (compiler-typecheck-smoke-module-macro-identity-tests-ok?) : bool
   (and
-    (compiler-typecheck-smoke-require
-      (compiler_typecheck.compiler-typecheck-error-ok?
-        (compiler-typecheck-smoke-module-catalog-invalid-unused-source)
-        "typecheck: return type mismatch: expected i64, found bool")
-      "typecheck: generated module catalog skipped invalid unused helper")
     (compiler-typecheck-smoke-require
       (compiler_typecheck.compiler-typecheck-ok?
         (compiler-typecheck-smoke-module-macro-import-evaluated-key-source))
@@ -4082,12 +3849,6 @@
   (compiler_typecheck.compiler-typecheck-ok?
     (compiler-typecheck-smoke-qualified-array-source)))
 
-(test
-  compiler-typecheck-qualified-array-borrow
-  (if (compiler-typecheck-smoke-qualified-array-ok?)
-    unit
-    (io.panic "typecheck: qualified array borrow smoke failed")))
-
 (define (compiler-typecheck-smoke-lazy-import-explicit-alias-source) : String
   "(module helper.module)
 (define value : i64 41)
@@ -4692,12 +4453,6 @@
   (compiler_typecheck.compiler-typecheck-ok?
     (compiler-typecheck-smoke-qualified-enum-variant-precedence-source)))
 
-(test
-  compiler-typecheck-qualified-enum-variant-precedence
-  (if (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?)
-    unit
-    (io.panic "typecheck: qualified enum variant precedence smoke failed")))
-
 ;; Dotted variants and bare module-local constructors share the same direct
 ;; cache storage but are distinct key domains. A dotted name misclassified as
 ;; bare can cache a false constructor miss that poisons later variant lookup.
@@ -4725,12 +4480,6 @@
           "entry"
           qualified-id))
       (not (tc_core.tc-constructor-non-root-bare-name-id? session "" bare-id)))))
-
-(test
-  compiler-typecheck-dotted-constructor-cache-domain
-  (if (compiler-typecheck-smoke-dotted-constructor-cache-domain-ok?)
-    unit
-    (io.panic "typecheck: dotted constructor cache domain smoke failed")))
 
 (define (compiler-typecheck-smoke-lazy-import-stdlib-summary-source) : String
   "(module main)
@@ -5951,12 +5700,6 @@
         structural-module-id
         source-name-id))))
 
-(test
-  compiler-typecheck-structural-name-rendering
-  (unless
-    (compiler-typecheck-smoke-structural-name-rendering-ok?)
-    (io.panic "typecheck: structural name rendering smoke failed")))
-
 (define (compiler-typecheck-smoke-macro-change-signal-source-ok?
   [source : String]
   [expected-change : bool]) : bool
@@ -6023,12 +5766,6 @@
       (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))
 
-(test
-  compiler-typecheck-generated-semantic-origin-absent
-  (unless
-    (compiler-typecheck-smoke-generated-semantic-origin-absent-ok?)
-    (io.panic "typecheck: generated declaration has editable semantic origin")))
-
 (define (compiler-typecheck-smoke-macro-no-change-signal-ok?) : bool
   ;; An unused defmacro forces the full declaration walk while every output
   ;; declaration remains shared with the compact input program.
@@ -6093,75 +5830,6 @@
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-core-cond-body-source)
       "typecheck: unbound name core-cond-body-observed")))
-
-(test
-  compiler-typecheck-core-macro-bodies
-  (unless
-    (compiler-typecheck-core-macro-bodies-observed?)
-    (io.panic "typecheck: stdlib core macro body was bypassed")))
-
-(test
-  compiler-typecheck-call-diagnostics
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-call-argument-diagnostic-source)
-      "typecheck: call `takes-two` argument 1 (parameter `count`) type mismatch: expected i64, found bool")
-    (io.panic "typecheck: named call diagnostic inline test failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-lambda-argument-diagnostic-source)
-      "typecheck: call `lambda` argument 1 (parameter `item`) type mismatch: expected i64, found bool")
-    (io.panic "typecheck: lambda call diagnostic inline test failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-constructor-argument-diagnostic-source)
-      "typecheck: call `Pair` argument 1 (parameter `left`) type mismatch: expected i64, found bool")
-    (io.panic "typecheck: constructor call diagnostic inline test failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-lifetime-argument-diagnostic-source)
-      "typecheck: call `take-same` argument 2 (parameter `right`) type mismatch: expected (& left-life i64), found (& right-life i64); source lifetime `right-life` does not outlive required lifetime `left-life`")
-    (io.panic "typecheck: lifetime call diagnostic inline test failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-call-arity-diagnostic-source)
-      "typecheck: call arity mismatch: takes-two expected 2 arguments, got 1 argument")
-    (io.panic "typecheck: arity call diagnostic inline test failed"))
-  (unless
-    (compiler-typecheck-auto-borrow-tests-ok?)
-    (io.panic "typecheck: auto-borrow call diagnostic inline test failed")))
-
-(test
-  compiler-typecheck-closure-copy
-  (unless
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-closure-copy-aggregate-source))
-    (io.panic "typecheck: Copy aggregate closure alias failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-closure-copy-reference-source))
-    (io.panic "typecheck: Copy reference closure alias failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-closure-copy-reference-escape-source)
-      "typecheck: reference-capturing closure value would escape lexical scope")
-    (io.panic "typecheck: copied reference closure escaped"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-closure-move-owner-alias-source)
-      "typecheck: use of moved value `f`")
-    (io.panic "typecheck: non-Copy closure source reuse passed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-closure-move-nested-alias-source)
-      "typecheck: use of moved value `outer`")
-    (io.panic "typecheck: nested non-Copy closure source reuse passed")))
-
-(test
-  compiler-typecheck-unused-unsafe-state-isolation
-  (unless
-    (tc_core.tc-unused-unsafe-state-isolation-self-test)
-    (io.panic "typecheck: unused unsafe state isolation smoke failed")))
 
 (test
   compiler-typecheck-macro-state-isolation

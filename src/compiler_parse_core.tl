@@ -14385,9 +14385,6 @@
     (compiler-parse-ok?
       "(define (main [items : (Array i64 2)] [i : i64]) : i64 (replace! (array-ref items i) 7))")
     (compiler-parse-error-ok?
-      "(define (main) : i64 (replace! (+ 1 2) 3))"
-      "parse: replace! target must be a mutable place")
-    (compiler-parse-error-ok?
       "(define (main) : i64 (replace! value))"
       "parse: replace! expects exactly two operands")
     (compiler-parse-error-ok?

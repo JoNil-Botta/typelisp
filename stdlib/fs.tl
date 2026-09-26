@@ -2465,38 +2465,29 @@
 
 (cfg
   test
-  (define (fs-test-path-join-many-main) : i64
-    (begin
-      (test.assert-owned-string-eq (path-join-many) "" "path-join-many zero")
-      (test.assert-owned-string-eq
-        (path-join-many "solo")
-        "solo"
-        "path-join-many one")
-      (test.assert-owned-string-eq
-        (path-join-many "left path" "right file")
-        (str_cat.str-cat "left path" (path-separator) "right file")
-        "path-join-many two")
-      (test.assert-owned-string-eq
-        (path-join-many "left" "middle" "right")
-        (fs-path-join-many-api-expected3 "left" "middle" "right")
-        "path-join-many three")
-      (test.assert-owned-string-eq
-        (path-join-many "left" "middle" "right" "leaf")
-        (fs-path-join-many-api-expected4 "left" "middle" "right" "leaf")
-        "path-join-many four")
-      (test.assert-owned-string-eq
-        (path-join-many "left/" "/right" "leaf")
-        (str_cat.str-cat "left/right" (path-separator) "leaf")
-        "path-join-many duplicate separator")
-      42)))
-
-(cfg
-  test
   (test
     fs-path-join-many-api
-    (if (= (fs-test-path-join-many-main) 42)
-      unit
-      (fs-test-fail "fs-path-join-many-api did not return 42"))))
+    (test.assert-owned-string-eq (path-join-many) "" "path-join-many zero")
+    (test.assert-owned-string-eq
+      (path-join-many "solo")
+      "solo"
+      "path-join-many one")
+    (test.assert-owned-string-eq
+      (path-join-many "left path" "right file")
+      (str_cat.str-cat "left path" (path-separator) "right file")
+      "path-join-many two")
+    (test.assert-owned-string-eq
+      (path-join-many "left" "middle" "right")
+      (fs-path-join-many-api-expected3 "left" "middle" "right")
+      "path-join-many three")
+    (test.assert-owned-string-eq
+      (path-join-many "left" "middle" "right" "leaf")
+      (fs-path-join-many-api-expected4 "left" "middle" "right" "leaf")
+      "path-join-many four")
+    (test.assert-owned-string-eq
+      (path-join-many "left/" "/right" "leaf")
+      (str_cat.str-cat "left/right" (path-separator) "leaf")
+      "path-join-many duplicate separator")))
 
 (cfg
   test

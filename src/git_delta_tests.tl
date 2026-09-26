@@ -842,30 +842,6 @@
         (git-delta-test-resolve-error?
           (git_delta.git-delta-resolve (& entries) (& tables) (& limits)))))))
 
-(define (git-delta-self-test-ok?) : bool
-  (and
-    (git-delta-test-varints?)
-    (git-delta-test-ofs?)
-    (git-delta-test-copy-combinations?)
-    (git-delta-test-apply-errors?)
-    (git-delta-test-malformed-corpus?)
-    (git-delta-test-mixed-resolver?)
-    (git-delta-test-forward-ref?)
-    (git-delta-test-cycle-rejected?)
-    (git-delta-test-missing-ref-rejected?)
-    (git-delta-test-ambiguous-ref-rejected?)
-    (git-delta-test-invalid-ofs-rejected?)
-    (git-delta-test-type-mismatch-rejected?)
-    (git-delta-test-depth-rejected?)
-    (git-delta-test-fanout-budget-error? 1 100 100)
-    (git-delta-test-fanout-budget-error? 100 1 100)
-    (git-delta-test-fanout-budget-error? 100 100 1)))
-
-(define (git-delta-self-test) : i64
-  (if (git-delta-self-test-ok?)
-    42
-    (io.panic "git delta: self-test mismatch")))
-
 (define (git-delta-test-require [ok : bool] [message : String]) : unit
   (if ok
     unit

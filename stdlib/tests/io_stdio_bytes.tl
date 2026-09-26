@@ -3,12 +3,6 @@
 (import stdlib.str_cat)
 (import stdlib.test)
 
-(define (assert-owned-string-eq
-  [actual : String]
-  [expected : String]
-  [message : String]) : unit
-  (test.assert-string-eq (& actual) (& expected) message))
-
 (define (assert-stdin-read
   [read : io.StdinRead]
   [expected-text : String]
@@ -18,7 +12,7 @@
     [eof : bool (io.stdin-read-eof? (& read))]
     [text : String (byte_buf.to-string (io.stdin-read-buffer read))]
     (begin
-      (assert-owned-string-eq
+      (test.assert-owned-string-eq
         text
         expected-text
         (str_cat.str-cat message " text"))

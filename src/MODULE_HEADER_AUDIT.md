@@ -36,11 +36,11 @@ The 84 fixture lines occur in:
 - `src/compiler_load.tl`
 - `src/compiler_lower_tests.tl`
 - `src/compiler_symbols.tl`
-- `src/compiler_typecheck.tl`
 - `src/tests/compiler_load_lazy_smoke.tl`
 - `src/tests/compiler_lower_smoke.tl`
 - `src/tests/compiler_typecheck_reverse_mixed_smoke.tl`
 - `src/tests/compiler_typecheck_smoke.tl`
+- `src/tests/compiler_typecheck_tests.tl`
 - `tests/inline/compiler_lower_body_index_cache.tl`
 
 They cover multi-module programs, duplicate declarations, canonical and

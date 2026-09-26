@@ -267,7 +267,7 @@ Current examples include:
 - `compiler-parse-error-tests-ok?` and `compiler-parse-smoke` in
   `compiler_parse_core.tl`
 - `compiler-symbols-self-test` in `compiler_symbols.tl`
-- `compiler-typecheck-self-test` in `compiler_typecheck.tl`
+- `compiler-typecheck-self-test` in `tests/compiler_typecheck_tests.tl`
 - `compiler-regalloc-self-test` and `compiler-backend-self-test`
 - `compiler-optimize-self-test` plus the pass-specific optimizer self-tests
 

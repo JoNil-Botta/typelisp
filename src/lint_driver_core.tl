@@ -571,6 +571,9 @@
     (selfhost-lint-path-suffix? path "src/tests/compiler_ir_types_smoke.tl")
     (selfhost-lint-path-suffix?
       path
+      "src/tests/compiler_typecheck_core_tests.tl")
+    (selfhost-lint-path-suffix?
+      path
       "src/tests/compiler_typecheck_list_storage_unit.tl")
     (selfhost-lint-path-suffix? path "src/tlci_loader.tl")
     (selfhost-lint-path-suffix? path "stdlib/arena.tl")

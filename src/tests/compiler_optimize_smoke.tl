@@ -1,29 +1,17 @@
-;; compiler_optimize_smoke.tl - Runnable smoke for compiler_optimize.tl
-;; (constant folding, dead-code elimination, common subexpression elimination,
-;; copy propagation, strength reduction, typed constant/cast folding, CFG
-;; simplification, bounds-check elimination, CFG/dominance/SSA verification,
-;; opt-level policy, fixed-point iteration, self-tail-recursion lowering,
-;; sparse conditional constant propagation, aggregate stack promotion, global
-;; value numbering/cross-block copy propagation, and conservative
-;; loop-invariant code motion).
-;;
-;; Folds constant arithmetic and typed scalar operations into `Mov` literals,
-;; reduces safe algebraic identities, eliminates an unused pure temporary,
-;; eliminates a repeated pure expression, propagates block-local copies, removes
-;; duplicate proven bounds checks, simplifies constant control flow, validates
-;; CFG/dominance/SSA/natural-loop utility invariants, stack-promotes safe local
-;; aggregate storage, selects optimization policies by level, reruns the pass
-;; pipeline to a fixed point, and removes dominated repeated scalar expressions
-;; across blocks, hoists safe scalar loop invariants into preheaders, and
-;; reduces simple induction-derived loop offsets/addresses, eliminates local
-;; redundant loads when alias facts prove no barrier intervened, reports
-;; implicit scratch-region candidates/blockers, and validates
-;; unused call-graph/SCC infrastructure for the next inliner phases; returns 42
-;; only when every self-test passes.
+;; compiler_optimize_smoke.tl - Inline tests for compiler_optimize.tl: the
+;; `(test ...)` forms that run the self-tests of compiler_optimize_tests.tl, and
+;; smoke-local fixtures (constant folding, dead-code elimination, common
+;; subexpression elimination, copy propagation, strength reduction, typed
+;; constant/cast folding, CFG simplification, bounds-check elimination,
+;; CFG/dominance/SSA verification, opt-level policy, fixed-point iteration,
+;; self-tail-recursion lowering, sparse conditional constant propagation,
+;; aggregate stack promotion, global value numbering, loop-invariant code
+;; motion, induction variables, scratch regions and the call graph).
 (import stdlib.str_cat_runtime as str_cat)
-(import compiler_optimize_tests)
+(import compiler_optimize_tests as ot)
 (import compiler_optimize as opt)
 (import compiler_ir_types as ir)
+(import compiler_ir_text as irt)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
@@ -32,7 +20,7 @@
 (define (smoke-cfg-index-test-block [label : i64] [value : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     label
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.Return
         (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 value))))))
 
@@ -176,13 +164,11 @@
             (ir.compiler-ir-label-none))])]))
 
 (define (opt-switch-test-params) : ir.CompilerIrParamSeq
-  (ir.compiler-ir-param-seq-prepend
-    (ir.CompilerIrParam.Param "tag" (ast.AstType.I64) 0)
-    (ir.compiler-ir-param-seq-empty)))
+  (irt.params "tag=%0:i64"))
 
 (define (opt-switch-test-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
-    (compiler_optimize_tests.opt-test-symbol "switch_form")
+    (ot.opt-test-symbol "switch_form")
     (opt-switch-test-params)
     (ast.AstType.I64)
     16
@@ -197,7 +183,7 @@
   [next-label : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     label
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         eq-var
         ir.CompilerIrBinOp.Eq
@@ -217,7 +203,7 @@
   [next-label : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     label
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         eq-var
         ir.CompilerIrBinOp.Eq
@@ -238,7 +224,7 @@
   [next-label : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     label
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         eq-var
         ir.CompilerIrBinOp.Eq
@@ -253,7 +239,7 @@
 (define (opt-switch-test-return-block [label : i64] [value : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     label
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.Return
         (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 value))))))
 
@@ -267,7 +253,7 @@
   [next-label : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     label
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.Mov 9 (ir.CompilerIrValue.Var 0) (ast.AstType.I64))
       (ir.CompilerIrInstr.BinOp
         eq-var
@@ -458,7 +444,7 @@
 (define (opt-switch-test-jump-block [label : i64] [target : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     label
-    (compiler_optimize_tests.opt-test-instrs (ir.CompilerIrInstr.Jump target))))
+    (ot.opt-test-instrs (ir.CompilerIrInstr.Jump target))))
 
 ;; Four compares, an empty forwarding block, then `after` more compares whose
 ;; tags run from `resume`. The forwarding block is what an inlined classifier
@@ -556,19 +542,10 @@
                 (ir.compiler-ir-label "body"))
               (ir.compiler-ir-block-cons
                 (if phi-body?
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "body")
-                    (compiler_optimize_tests.opt-test-instrs
-                      (ir.CompilerIrInstr.Phi
-                        12
-                        (ir.compiler-ir-phi-input-seq-prepend
-                          (ir.CompilerIrValue.I64 12)
-                          (ir.compiler-ir-label "forward")
-                          (ir.compiler-ir-phi-input-seq-empty))
-                        (ast.AstType.I64))
-                      (ir.CompilerIrInstr.Return
-                        (ir.CompilerIrMaybeValue.Some
-                          (ir.CompilerIrValue.Var 12)))))
+                  (irt.block
+                    "body:
+                       %12 = phi [12, forward] : i64
+                       return %12")
                   (opt-switch-test-return-block
                     (ir.compiler-ir-label "body")
                     12))
@@ -820,7 +797,7 @@
   [next-label : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     label
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.Mov 9 (ir.CompilerIrValue.Var 0) (ast.AstType.I64))
       (ir.CompilerIrInstr.Branch
         (ir.CompilerIrValue.Var 0)
@@ -878,7 +855,7 @@
   [next-label : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     label
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         eq-var
         ir.CompilerIrBinOp.Eq
@@ -896,20 +873,11 @@
 ;; head prefix's Mov to one logical index var.
 (define (opt-switch-test-copy-head-blocks [default-label : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler_optimize_tests.opt-test-instrs
-        (ir.CompilerIrInstr.Mov 9 (ir.CompilerIrValue.Var 0) (ast.AstType.I64))
-        (ir.CompilerIrInstr.BinOp
-          1
-          ir.CompilerIrBinOp.Eq
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 0)
-          (ast.AstType.I64))
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var 1)
-          (ir.compiler-ir-label "case0")
-          (ir.compiler-ir-label "cmp1"))))
+    (irt.block
+      "entry:
+         %9 = mov %0 : i64
+         %1 = eq %0, 0 : i64
+         branch %1, case0, cmp1")
     (ir.compiler-ir-block-cons
       (opt-switch-test-return-block (ir.compiler-ir-label "case0") 10)
       (ir.compiler-ir-block-cons
@@ -1318,17 +1286,15 @@
               (opt.compiler-opt-global-shared-view dense-blocks))
             (ir.compiler-ir-label "fallback")))
         4]
-      [(compiler_optimize_tests.opt-block-list-has-label?
+      [(ot.opt-block-list-has-label?
           (opt.compiler-opt-global-shared-view dense-blocks)
           (ir.compiler-ir-label "cmp1"))
         5]
-      [(compiler_optimize_tests.opt-block-list-has-label?
+      [(ot.opt-block-list-has-label?
           (opt.compiler-opt-global-shared-view dense-blocks)
           (ir.compiler-ir-label "cmp2"))
         6]
-      [(compiler_optimize_tests.opt-block-list-has-label?
-          dense-blocks
-          (ir.compiler-ir-label "cmp3"))
+      [(ot.opt-block-list-has-label? dense-blocks (ir.compiler-ir-label "cmp3"))
         7]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function dense))) 8]
       [(not (= (opt-count-switch-blocks (opt.opt-function-blocks short)) 0)) 9]
@@ -1397,11 +1363,11 @@
             (ir.compiler-ir-label "fallback")))
         18]
       [(not (opt-switch-test-block-starts-with-mov? prefix-entry)) 19]
-      [(compiler_optimize_tests.opt-block-list-has-label?
+      [(ot.opt-block-list-has-label?
           (opt.compiler-opt-global-shared-view prefix-blocks)
           (ir.compiler-ir-label "cmp1"))
         20]
-      [(compiler_optimize_tests.opt-block-list-has-label?
+      [(ot.opt-block-list-has-label?
           prefix-blocks
           (ir.compiler-ir-label "cmp2"))
         21]
@@ -1484,10 +1450,7 @@
       [(not
           (= (opt-switch-test-block-tail-default total-entry) total-final-label))
         39]
-      [(compiler_optimize_tests.opt-block-list-has-label?
-          total-blocks
-          total-trap-label)
-        40]
+      [(ot.opt-block-list-has-label? total-blocks total-trap-label) 40]
       [(not
           (=
             (opt-count-switch-blocks
@@ -1538,10 +1501,7 @@
             (opt-switch-test-block-tail-default spoofed-entry)
             total-final-label))
         55]
-      [(compiler_optimize_tests.opt-block-list-has-label?
-          spoofed-blocks
-          total-trap-label)
-        56]
+      [(ot.opt-block-list-has-label? spoofed-blocks total-trap-label) 56]
       ;; An explicit proof alone is not enough to drop the range check: a gapped
       ;; chain routes its gaps to the fall-through, so the proof's "fall-through
       ;; IS the final variant" reading no longer holds. The chain still forms a
@@ -1568,7 +1528,7 @@
             (opt-switch-test-block-tail-default marked-sparse-entry)
             marked-sparse-final-label))
         66]
-      [(compiler_optimize_tests.opt-block-list-has-label?
+      [(ot.opt-block-list-has-label?
           marked-sparse-late-blocks
           (ir.compiler-ir-label "match_total_trap__entry"))
         51]
@@ -1685,13 +1645,11 @@
             5
             (opt-switch-test-arm-label 5)))
         82]
-      [(compiler_optimize_tests.opt-block-list-has-label?
+      [(ot.opt-block-list-has-label?
           (opt.compiler-opt-global-shared-view hop-blocks)
           (ir.compiler-ir-label "hop"))
         83]
-      [(compiler_optimize_tests.opt-block-list-has-label?
-          hop-blocks
-          (ir.compiler-ir-label "cmp4"))
+      [(ot.opt-block-list-has-label? hop-blocks (ir.compiler-ir-label "cmp4"))
         84]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function hop))) 85]
       ;; Idempotence: the fused head is a Switch, not a compare, so a second
@@ -1718,7 +1676,7 @@
             (ir.compiler-ir-label "hop")))
         88]
       [(not
-          (compiler_optimize_tests.opt-block-list-has-label?
+          (ot.opt-block-list-has-label?
             hop-fallback-blocks
             (ir.compiler-ir-label "hop")))
         89]
@@ -1743,7 +1701,7 @@
             (ir.compiler-ir-label "hop")))
         93]
       [(not
-          (compiler_optimize_tests.opt-block-list-has-label?
+          (ot.opt-block-list-has-label?
             hop-shared-blocks
             (ir.compiler-ir-label "hop")))
         94]
@@ -1767,7 +1725,7 @@
             (ir.compiler-ir-label "cmp4")))
         98]
       [(not
-          (compiler_optimize_tests.opt-block-list-has-label?
+          (ot.opt-block-list-has-label?
             repeat-tag-blocks
             (ir.compiler-ir-label "cmp4")))
         99]
@@ -1786,7 +1744,7 @@
             2
             (ir.compiler-ir-label "body")))
         102]
-      [(compiler_optimize_tests.opt-block-list-has-label?
+      [(ot.opt-block-list-has-label?
           forwarded-arm-blocks
           (ir.compiler-ir-label "forward"))
         103]
@@ -1806,7 +1764,7 @@
             (ir.compiler-ir-label "forward")))
         106]
       [(not
-          (compiler_optimize_tests.opt-block-list-has-label?
+          (ot.opt-block-list-has-label?
             forwarded-phi-arm-blocks
             (ir.compiler-ir-label "forward")))
         107]
@@ -1888,49 +1846,23 @@
   (smoke-cast-dst-var-types-from? instrs 0 dst src from-ty to-ty))
 
 (define (smoke-noop-int-cast-mov-instrs) : ir.CompilerIrInstrSeq
-  (compiler_optimize_tests.opt-test-instrs
-    (ir.CompilerIrInstr.Cast
-      50
-      (ir.CompilerIrValue.Var 10)
-      (ast.AstType.U8)
-      (ast.AstType.Char))
-    (ir.CompilerIrInstr.Cast
-      51
-      (ir.CompilerIrValue.Var 11)
-      (ast.AstType.U16)
-      (ast.AstType.U8))
-    (ir.CompilerIrInstr.Cast
-      52
-      (ir.CompilerIrValue.Var 12)
-      (ast.AstType.U16)
-      (ast.AstType.Char))
-    (ir.CompilerIrInstr.Cast
-      53
-      (ir.CompilerIrValue.Var 13)
-      (ast.AstType.U8)
-      (ast.AstType.I64))
-    (ir.CompilerIrInstr.Cast
-      54
-      (ir.CompilerIrValue.Var 14)
-      (ast.AstType.I16)
-      (ast.AstType.U32))
-    (ir.CompilerIrInstr.Cast
-      55
-      (ir.CompilerIrValue.Var 15)
-      (ast.AstType.I64)
-      (ast.AstType.U64))))
+  (irt.instrs
+    "%50 = cast %10 : u8 to char
+     %51 = cast %11 : u16 to u8
+     %52 = cast %12 : u16 to char
+     %53 = cast %13 : u8 to i64
+     %54 = cast %14 : i16 to u32
+     %55 = cast %15 : i64 to u64"))
 
 (define (smoke-noop-int-cast-mov-self-test) : i64
   (let
     [rewritten : ir.CompilerIrInstrSeq
-      (compiler_optimize_tests.opt-test-fold-instrs
+      (ot.opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptConstEnv.Nil)
         (smoke-noop-int-cast-mov-instrs))]
     (begin
-      (unless
-        (= (compiler_optimize_tests.opt-count-cast-instr-seq rewritten) 3)
-        (return 1))
+      (unless (= (ot.opt-count-cast-instr-seq rewritten) 3) (return 1))
       (unless
         (smoke-mov-dst-var-type?
           (opt.compiler-opt-global-shared-view rewritten)
@@ -1972,7 +1904,7 @@
   [index : ir.CompilerIrValue]
   [label : i64]
   [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (compiler_optimize_tests.opt-test-instrs-with-tail
+  (ot.opt-test-instrs-with-tail
     tail
     (ir.CompilerIrInstr.Gep ptr-var object offset slot-ty)
     (ir.CompilerIrInstr.Load
@@ -2023,7 +1955,7 @@
     (ast.AstType.I64)
     (ir.CompilerIrValue.Var 0)
     (ir.compiler-ir-label "bounds_ok.0")
-    (compiler_optimize_tests.opt-test-instrs-with-tail
+    (ot.opt-test-instrs-with-tail
       (smoke-bounds-object-length-check-fragment
         20
         21
@@ -2034,11 +1966,7 @@
         (ir.CompilerIrValue.Var 0)
         (ir.compiler-ir-label "bounds_ok.1")
         (ir.compiler-ir-instr-seq-empty))
-      (ir.CompilerIrInstr.Call
-        30
-        (compiler_optimize_tests.opt-test-symbol "touch")
-        (ir.CompilerIrCallArgs.Nil)
-        (ast.AstType.Unit)))))
+      (irt.instr "%30 = call touch() : unit"))))
 
 ;; Element-store survival: a `StorePtr` whose target is the object's tracked
 ;; length-slot pointer (var 10) changes the length and must clear the facts (the
@@ -2055,7 +1983,7 @@
     (ast.AstType.I64)
     (ir.CompilerIrValue.Var 0)
     (ir.compiler-ir-label "bounds_ok.0")
-    (compiler_optimize_tests.opt-test-instrs-with-tail
+    (ot.opt-test-instrs-with-tail
       (smoke-bounds-object-length-check-fragment
         20
         21
@@ -2074,7 +2002,7 @@
 (define (smoke-object-bounds-self-test) : i64
   (let
     [object-array : ir.CompilerIrInstrSeq
-      (compiler_optimize_tests.opt-test-bounds-instrs
+      (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Empty)
@@ -2083,7 +2011,7 @@
           (ir.CompilerIrValue.I64 1)
           (ast.AstType.I64)))]
     [object-string : ir.CompilerIrInstrSeq
-      (compiler_optimize_tests.opt-test-bounds-instrs
+      (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Empty)
@@ -2092,7 +2020,7 @@
           (ir.CompilerIrValue.I64 8)
           (ast.AstType.U8)))]
     [object-mismatch : ir.CompilerIrInstrSeq
-      (compiler_optimize_tests.opt-test-bounds-instrs
+      (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Empty)
@@ -2101,107 +2029,74 @@
           (ir.CompilerIrValue.I64 1)
           (ast.AstType.I64)))]
     [object-call : ir.CompilerIrInstrSeq
-      (compiler_optimize_tests.opt-test-bounds-instrs
+      (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Empty)
         (smoke-bounds-object-call-barrier))]
     [object-store : ir.CompilerIrInstrSeq
-      (compiler_optimize_tests.opt-test-bounds-instrs
+      (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Empty)
         (smoke-bounds-object-store-barrier (ir.CompilerIrValue.Var 10)))]
     [object-element-store : ir.CompilerIrInstrSeq
-      (compiler_optimize_tests.opt-test-bounds-instrs
+      (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Empty)
         (smoke-bounds-object-store-barrier (ir.CompilerIrValue.Var 99)))]
     (cond
-      [(not
-          (= (compiler_optimize_tests.opt-count-bounds-instrs object-array) 1))
-        1]
-      [(not
-          (= (compiler_optimize_tests.opt-count-bounds-instrs object-string) 1))
-        2]
-      [(not
-          (=
-            (compiler_optimize_tests.opt-count-bounds-instrs object-mismatch)
-            2))
-        3]
-      [(not (= (compiler_optimize_tests.opt-count-bounds-instrs object-call) 2))
-        4]
-      [(not
-          (= (compiler_optimize_tests.opt-count-bounds-instrs object-store) 2))
-        5]
-      [(not
-          (=
-            (compiler_optimize_tests.opt-count-bounds-instrs
-              object-element-store)
-            1))
-        6]
+      [(not (= (ot.opt-count-bounds-instrs object-array) 1)) 1]
+      [(not (= (ot.opt-count-bounds-instrs object-string) 1)) 2]
+      [(not (= (ot.opt-count-bounds-instrs object-mismatch) 2)) 3]
+      [(not (= (ot.opt-count-bounds-instrs object-call) 2)) 4]
+      [(not (= (ot.opt-count-bounds-instrs object-store) 2)) 5]
+      [(not (= (ot.opt-count-bounds-instrs object-element-store) 1)) 6]
       [else 42])))
 
 (define (smoke-range-bce-entry [with-nonnegative : bool]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (compiler_optimize_tests.opt-test-instrs-with-tail
+    (ot.opt-test-instrs-with-tail
       (if with-nonnegative
-        (compiler_optimize_tests.opt-test-instrs
-          (ir.CompilerIrInstr.BinOp
-            14
-            (ir.CompilerIrBinOp.Ge)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 0)
-            (ast.AstType.Bool))
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var 14)
-            (ir.compiler-ir-label "lt")
-            (ir.compiler-ir-label "exit")))
-        (compiler_optimize_tests.opt-test-instrs
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "lt"))))
-      (ir.CompilerIrInstr.Gep
-        3
-        (ir.CompilerIrValue.Var 2)
-        (ir.CompilerIrValue.I64 1)
-        (ast.AstType.I64))
+        (irt.instrs "%14 = ge %0, 0 : bool
+           branch %14, lt, exit")
+        (irt.instrs "jump lt"))
+      (irt.instr "%3 = gep %2, 1 : i64")
       (ir.CompilerIrInstr.Load 1 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
       (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 0) (ast.AstType.I64)))))
 
 (define (smoke-range-bce-lt [op : ir.CompilerIrBinOp] [length-var : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "lt")
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         15
         op
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var length-var)
         (ast.AstType.Bool))
-      (ir.CompilerIrInstr.Branch
-        (ir.CompilerIrValue.Var 15)
-        (ir.compiler-ir-label "body")
-        (ir.compiler-ir-label "exit")))))
+      (irt.instr "branch %15, body, exit"))))
 
 (define (smoke-range-bce-body) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
-    (compiler_optimize_tests.opt-loop-bce-string-test-ref-instrs
+    (ot.opt-loop-bce-string-test-ref-instrs
       2
       30
-      (compiler_optimize_tests.opt-test-instrs
+      (ot.opt-test-instrs
         (ir.CompilerIrInstr.Return
           (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 37)))))))
 
 (define (smoke-range-bce-redefined-body) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
-    (compiler_optimize_tests.opt-test-instrs-with-tail
-      (compiler_optimize_tests.opt-loop-bce-string-test-ref-instrs
+    (ot.opt-test-instrs-with-tail
+      (ot.opt-loop-bce-string-test-ref-instrs
         2
         30
-        (compiler_optimize_tests.opt-test-instrs
+        (ot.opt-test-instrs
           (ir.CompilerIrInstr.Return
             (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 37)))))
       (ir.CompilerIrInstr.Mov
@@ -2220,7 +2115,7 @@
       (ir.compiler-ir-block-cons
         (smoke-range-bce-body)
         (ir.compiler-ir-block-cons
-          (compiler_optimize_tests.opt-loop-bce-test-exit)
+          (ot.opt-loop-bce-test-exit)
           (ir.CompilerIrBlockList.Nil))))))
 
 (define (smoke-range-bce-redefined-blocks) : ir.CompilerIrBlockList
@@ -2231,7 +2126,7 @@
       (ir.compiler-ir-block-cons
         (smoke-range-bce-redefined-body)
         (ir.compiler-ir-block-cons
-          (compiler_optimize_tests.opt-loop-bce-test-exit)
+          (ot.opt-loop-bce-test-exit)
           (ir.CompilerIrBlockList.Nil))))))
 
 (define (smoke-range-bce-count
@@ -2239,30 +2134,22 @@
   [op : ir.CompilerIrBinOp]
   [length-var : i64]) : i64
   (let
-    [symbols : compiler_optimize_tests.OptLoopBceTestSymbols
-      (compiler_optimize_tests.opt-loop-bce-test-symbols)]
+    [symbols : ot.OptLoopBceTestSymbols (ot.opt-loop-bce-test-symbols)]
     (opt.opt-count-bounds-blocks
       (opt.opt-loop-bce-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (compiler_optimize_tests.opt-loop-bce-test-summaries
-          symbols
-          false
-          false)
-        (compiler_optimize_tests.opt-loop-bce-string-test-params)
+        (ot.opt-loop-bce-test-summaries symbols false false)
+        (ot.opt-loop-bce-string-test-params)
         (smoke-range-bce-blocks with-nonnegative op length-var)))))
 
 (define (smoke-range-bce-redefined-count) : i64
   (let
-    [symbols : compiler_optimize_tests.OptLoopBceTestSymbols
-      (compiler_optimize_tests.opt-loop-bce-test-symbols)]
+    [symbols : ot.OptLoopBceTestSymbols (ot.opt-loop-bce-test-symbols)]
     (opt.opt-count-bounds-blocks
       (opt.opt-loop-bce-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (compiler_optimize_tests.opt-loop-bce-test-summaries
-          symbols
-          false
-          false)
-        (compiler_optimize_tests.opt-loop-bce-string-test-params)
+        (ot.opt-loop-bce-test-summaries symbols false false)
+        (ot.opt-loop-bce-string-test-params)
         (smoke-range-bce-redefined-blocks)))))
 
 (define (smoke-range-bce-self-test) : i64
@@ -2283,25 +2170,14 @@
       [else 42])))
 
 (define (smoke-ssa-iv-bce-params) : ir.CompilerIrParamSeq
-  (ir.compiler-ir-param-seq-prepend
-    (ir.CompilerIrParam.Param "text" (ast.AstType.String) 2)
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "other" (ast.AstType.String) 20)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "start" (ast.AstType.I64) 30)
-        (ir.compiler-ir-param-seq-empty)))))
+  (irt.params "text=%2:String, other=%20:String, start=%30:i64"))
 
 (define (smoke-ssa-iv-bce-entry) : ir.CompilerIrBlock
-  (ir.CompilerIrBlock.Block
-    (ir.compiler-ir-label "entry")
-    (compiler_optimize_tests.opt-test-instrs
-      (ir.CompilerIrInstr.Gep
-        3
-        (ir.CompilerIrValue.Var 2)
-        (ir.CompilerIrValue.I64 1)
-        (ast.AstType.I64))
-      (ir.CompilerIrInstr.Load 1 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
-      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header")))))
+  (irt.block
+    "entry:
+       %3 = gep %2, 1 : i64
+       %1 = load %3 : i64
+       jump header"))
 
 (define (smoke-ssa-iv-bce-header
   [start : ir.CompilerIrValue]
@@ -2310,7 +2186,7 @@
   [upper-var : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "header")
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.Phi
         0
         (ir.compiler-ir-phi-input-seq-prepend
@@ -2327,13 +2203,10 @@
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var upper-var)
         (ast.AstType.Bool))
-      (ir.CompilerIrInstr.Branch
-        (ir.CompilerIrValue.Var 4)
-        (ir.compiler-ir-label "body")
-        (ir.compiler-ir-label "exit")))))
+      (irt.instr "branch %4, body, exit"))))
 
 (define (smoke-ssa-iv-bce-body
-  [symbols : compiler_optimize_tests.OptLoopBceTestSymbols]
+  [symbols : ot.OptLoopBceTestSymbols]
   [object-var : i64]
   [step : i64]
   [next-var : i64]
@@ -2343,10 +2216,10 @@
     (ir.compiler-ir-label "body")
     (let
       [tail : ir.CompilerIrInstrSeq
-        (compiler_optimize_tests.opt-loop-bce-string-test-ref-instrs
+        (ot.opt-loop-bce-string-test-ref-instrs
           object-var
           40
-          (compiler_optimize_tests.opt-test-instrs
+          (ot.opt-test-instrs
             (ir.CompilerIrInstr.BinOp
               next-var
               (ir.CompilerIrBinOp.Add)
@@ -2356,7 +2229,7 @@
             (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))]
       [after-call : ir.CompilerIrInstrSeq
         (if with-call
-          (compiler_optimize_tests.opt-test-instrs-with-tail
+          (ot.opt-test-instrs-with-tail
             tail
             (ir.CompilerIrInstr.Call
               80
@@ -2365,16 +2238,13 @@
               (ast.AstType.Unit)))
           tail)]
       (if redefine-index
-        (compiler_optimize_tests.opt-test-instrs-with-tail
+        (ot.opt-test-instrs-with-tail
           after-call
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 (- 0 1))
-            (ast.AstType.I64)))
+          (irt.instr "%0 = mov -1 : i64"))
         after-call))))
 
 (define (smoke-ssa-iv-bce-blocks
-  [symbols : compiler_optimize_tests.OptLoopBceTestSymbols]
+  [symbols : ot.OptLoopBceTestSymbols]
   [start : ir.CompilerIrValue]
   [step : i64]
   [op : ir.CompilerIrBinOp]
@@ -2397,7 +2267,7 @@
             with-call
             redefine-index)
           (ir.compiler-ir-block-cons
-            (compiler_optimize_tests.opt-loop-bce-test-exit)
+            (ot.opt-loop-bce-test-exit)
             (ir.CompilerIrBlockList.Nil)))))))
 
 (define (smoke-ssa-iv-bce-count
@@ -2409,15 +2279,11 @@
   [with-call : bool]
   [redefine-index : bool]) : i64
   (let
-    [symbols : compiler_optimize_tests.OptLoopBceTestSymbols
-      (compiler_optimize_tests.opt-loop-bce-test-symbols)]
+    [symbols : ot.OptLoopBceTestSymbols (ot.opt-loop-bce-test-symbols)]
     (opt.opt-count-bounds-blocks
       (opt.opt-loop-bce-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (compiler_optimize_tests.opt-loop-bce-test-summaries
-          symbols
-          false
-          false)
+        (ot.opt-loop-bce-test-summaries symbols false false)
         (smoke-ssa-iv-bce-params)
         (smoke-ssa-iv-bce-blocks
           symbols
@@ -2529,11 +2395,7 @@
 ;; materialized comparison fact when the same literal bound proves it directly;
 ;; every nonliteral/backedge input still has to be discharged on its own edge.
 (define (smoke-rotated-bce-params) : ir.CompilerIrParamSeq
-  (ir.compiler-ir-param-seq-prepend
-    (ir.CompilerIrParam.Param "backing-length" (ast.AstType.I64) 4)
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "other-length" (ast.AstType.I64) 5)
-      (ir.compiler-ir-param-seq-empty))))
+  (irt.params "backing-length=%4:i64, other-length=%5:i64"))
 
 (define (smoke-rotated-bce-entry
   [start : ir.CompilerIrValue]
@@ -2541,19 +2403,16 @@
   [op : ir.CompilerIrBinOp]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.BinOp 1 op start bound (ast.AstType.I64))
-      (ir.CompilerIrInstr.Branch
-        (ir.CompilerIrValue.Var 1)
-        (ir.compiler-ir-label "body")
-        (ir.compiler-ir-label "exit")))))
+      (irt.instr "branch %1, body, exit"))))
 
 (define (smoke-rotated-bce-body
   [start : ir.CompilerIrValue]
   [check-bound : ir.CompilerIrValue]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.Phi
         0
         (ir.compiler-ir-phi-input-seq-prepend
@@ -2576,13 +2435,8 @@
   [both-edges-enter : bool]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "latch")
-    (compiler_optimize_tests.opt-test-instrs
-      (ir.CompilerIrInstr.BinOp
-        2
-        (ir.CompilerIrBinOp.Add)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 1)
-        (ast.AstType.I64))
+    (ot.opt-test-instrs
+      (irt.instr "%2 = add %0, 1 : i64")
       (ir.CompilerIrInstr.BinOp
         3
         op
@@ -2612,7 +2466,7 @@
       (ir.compiler-ir-block-cons
         (smoke-rotated-bce-latch guard-bound op both-edges-enter)
         (ir.compiler-ir-block-cons
-          (compiler_optimize_tests.opt-loop-bce-test-exit)
+          (ot.opt-loop-bce-test-exit)
           (ir.CompilerIrBlockList.Nil))))))
 
 (define (smoke-rotated-bce-count
@@ -2711,36 +2565,26 @@
 (define (smoke-nonlength-guard-header [op : ir.CompilerIrBinOp]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "header")
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         43
         op
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 40)
         (ast.AstType.Bool))
-      (ir.CompilerIrInstr.Branch
-        (ir.CompilerIrValue.Var 43)
-        (ir.compiler-ir-label "body")
-        (ir.compiler-ir-label "exit")))))
+      (irt.instr "branch %43, body, exit"))))
 
 (define (smoke-nonlength-guard-body [object-var : i64] [redefine-bound : bool]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
     (let
       [tail : ir.CompilerIrInstrSeq
-        (compiler_optimize_tests.opt-loop-bce-string-test-ref-instrs
+        (ot.opt-loop-bce-string-test-ref-instrs
           object-var
           50
-          (compiler_optimize_tests.opt-test-instrs
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 57)))))]
+          (irt.instrs "return %57"))]
       (if redefine-bound
-        (compiler_optimize_tests.opt-test-instrs-with-tail
-          tail
-          (ir.CompilerIrInstr.Mov
-            40
-            (ir.CompilerIrValue.I64 0)
-            (ast.AstType.I64)))
+        (ot.opt-test-instrs-with-tail tail (irt.instr "%40 = mov 0 : i64"))
         tail))))
 
 (define (smoke-nonlength-guard-blocks
@@ -2749,16 +2593,15 @@
   [object-var : i64]
   [redefine-bound : bool]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (compiler_optimize_tests.opt-loop-bce-string-test-transitive-entry)
+    (ot.opt-loop-bce-string-test-transitive-entry)
     (ir.compiler-ir-block-cons
-      (compiler_optimize_tests.opt-loop-bce-string-test-transitive-upper
-        with-upper)
+      (ot.opt-loop-bce-string-test-transitive-upper with-upper)
       (ir.compiler-ir-block-cons
         (smoke-nonlength-guard-header op)
         (ir.compiler-ir-block-cons
           (smoke-nonlength-guard-body object-var redefine-bound)
           (ir.compiler-ir-block-cons
-            (compiler_optimize_tests.opt-loop-bce-test-exit)
+            (ot.opt-loop-bce-test-exit)
             (ir.CompilerIrBlockList.Nil)))))))
 
 (define (smoke-nonlength-guard-count
@@ -2767,11 +2610,10 @@
   [object-var : i64]
   [redefine-bound : bool]) : i64
   (let
-    [symbols : compiler_optimize_tests.OptLoopBceTestSymbols
-      (compiler_optimize_tests.opt-loop-bce-test-symbols)]
-    (compiler_optimize_tests.opt-loop-bce-string-test-count
+    [symbols : ot.OptLoopBceTestSymbols (ot.opt-loop-bce-test-symbols)]
+    (ot.opt-loop-bce-string-test-count
       (smoke-nonlength-guard-blocks with-upper op object-var redefine-bound)
-      (compiler_optimize_tests.opt-loop-bce-test-summaries symbols false false))))
+      (ot.opt-loop-bce-test-summaries symbols false false))))
 
 (define (smoke-nonlength-guard-bce-self-test) : i64
   (let
@@ -2798,7 +2640,7 @@
   [index-var : i64]
   [base : i64]
   [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (compiler_optimize_tests.opt-test-instrs-with-tail
+  (ot.opt-test-instrs-with-tail
     tail
     (ir.CompilerIrInstr.Gep
       base
@@ -2845,26 +2687,12 @@
 (define (smoke-additive-entry [with-nonnegative : bool] [upper-offset : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (compiler_optimize_tests.opt-test-instrs-with-tail
+    (ot.opt-test-instrs-with-tail
       (if with-nonnegative
-        (compiler_optimize_tests.opt-test-instrs
-          (ir.CompilerIrInstr.BinOp
-            42
-            (ir.CompilerIrBinOp.Ge)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 0)
-            (ast.AstType.Bool))
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var 42)
-            (ir.compiler-ir-label "header")
-            (ir.compiler-ir-label "exit")))
-        (compiler_optimize_tests.opt-test-instrs
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
-      (ir.CompilerIrInstr.Gep
-        3
-        (ir.CompilerIrValue.Var 2)
-        (ir.CompilerIrValue.I64 1)
-        (ast.AstType.I64))
+        (irt.instrs "%42 = ge %0, 0 : bool
+           branch %42, header, exit")
+        (irt.instrs "jump header"))
+      (irt.instr "%3 = gep %2, 1 : i64")
       (ir.CompilerIrInstr.Load 1 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
       (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 0) (ast.AstType.I64))
       (ir.CompilerIrInstr.BinOp
@@ -2877,31 +2705,22 @@
 (define (smoke-additive-header [op : ir.CompilerIrBinOp] [upper-var : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "header")
-    (compiler_optimize_tests.opt-test-instrs
+    (ot.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         43
         op
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var upper-var)
         (ast.AstType.Bool))
-      (ir.CompilerIrInstr.Branch
-        (ir.CompilerIrValue.Var 43)
-        (ir.compiler-ir-label "body")
-        (ir.compiler-ir-label "exit")))))
+      (irt.instr "branch %43, body, exit"))))
 
 (define (smoke-additive-body [offset : i64] [redefine-index : bool]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
     (let
       [tail : ir.CompilerIrInstrSeq
-        (compiler_optimize_tests.opt-test-instrs-with-tail
-          (smoke-additive-ref-index-instrs
-            2
-            50
-            60
-            (compiler_optimize_tests.opt-test-instrs
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 67)))))
+        (ot.opt-test-instrs-with-tail
+          (smoke-additive-ref-index-instrs 2 50 60 (irt.instrs "return %67"))
           (ir.CompilerIrInstr.BinOp
             50
             (ir.CompilerIrBinOp.Add)
@@ -2909,12 +2728,7 @@
             (ir.CompilerIrValue.I64 offset)
             (ast.AstType.I64)))]
       (if redefine-index
-        (compiler_optimize_tests.opt-test-instrs-with-tail
-          tail
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 (- 0 1))
-            (ast.AstType.I64)))
+        (ot.opt-test-instrs-with-tail tail (irt.instr "%0 = mov -1 : i64"))
         tail))))
 
 (define (smoke-additive-blocks
@@ -2931,7 +2745,7 @@
       (ir.compiler-ir-block-cons
         (smoke-additive-body offset redefine-index)
         (ir.compiler-ir-block-cons
-          (compiler_optimize_tests.opt-loop-bce-test-exit)
+          (ot.opt-loop-bce-test-exit)
           (ir.CompilerIrBlockList.Nil))))))
 
 (define (smoke-additive-count
@@ -2942,9 +2756,8 @@
   [upper-var : i64]
   [redefine-index : bool]) : i64
   (let
-    [symbols : compiler_optimize_tests.OptLoopBceTestSymbols
-      (compiler_optimize_tests.opt-loop-bce-test-symbols)]
-    (compiler_optimize_tests.opt-loop-bce-string-test-count
+    [symbols : ot.OptLoopBceTestSymbols (ot.opt-loop-bce-test-symbols)]
+    (ot.opt-loop-bce-string-test-count
       (smoke-additive-blocks
         offset
         upper-offset
@@ -2952,66 +2765,29 @@
         op
         upper-var
         redefine-index)
-      (compiler_optimize_tests.opt-loop-bce-test-summaries symbols false false))))
+      (ot.opt-loop-bce-test-summaries symbols false false))))
 
 (define (smoke-additive-wrap-risk-entry) : ir.CompilerIrBlock
-  (ir.CompilerIrBlock.Block
-    (ir.compiler-ir-label "entry")
-    (compiler_optimize_tests.opt-test-instrs
-      (ir.CompilerIrInstr.Call
-        1
-        (compiler_optimize_tests.opt-test-symbol "unknown_len")
-        (ir.CompilerIrCallArgs.Nil)
-        (ast.AstType.I64))
-      (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 0) (ast.AstType.I64))
-      (ir.CompilerIrInstr.BinOp
-        40
-        (ir.CompilerIrBinOp.Sub)
-        (ir.CompilerIrValue.Var 1)
-        (ir.CompilerIrValue.I64 1)
-        (ast.AstType.I64))
-      (ir.CompilerIrInstr.BinOp
-        42
-        (ir.CompilerIrBinOp.Ge)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 0)
-        (ast.AstType.Bool))
-      (ir.CompilerIrInstr.Branch
-        (ir.CompilerIrValue.Var 42)
-        (ir.compiler-ir-label "header")
-        (ir.compiler-ir-label "exit")))))
+  (irt.block
+    "entry:
+       %1 = call unknown_len() : i64
+       %0 = mov 0 : i64
+       %40 = sub %1, 1 : i64
+       %42 = ge %0, 0 : bool
+       branch %42, header, exit"))
 
 (define (smoke-additive-wrap-risk-header) : ir.CompilerIrBlock
-  (ir.CompilerIrBlock.Block
-    (ir.compiler-ir-label "header")
-    (compiler_optimize_tests.opt-test-instrs
-      (ir.CompilerIrInstr.BinOp
-        43
-        (ir.CompilerIrBinOp.Lt)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 40)
-        (ast.AstType.Bool))
-      (ir.CompilerIrInstr.Branch
-        (ir.CompilerIrValue.Var 43)
-        (ir.compiler-ir-label "body")
-        (ir.compiler-ir-label "exit")))))
+  (irt.block
+    "header:
+       %43 = lt %0, %40 : bool
+       branch %43, body, exit"))
 
 (define (smoke-additive-wrap-risk-body) : ir.CompilerIrBlock
-  (ir.CompilerIrBlock.Block
-    (ir.compiler-ir-label "body")
-    (compiler_optimize_tests.opt-test-instrs
-      (ir.CompilerIrInstr.BinOp
-        50
-        (ir.CompilerIrBinOp.Add)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 1)
-        (ast.AstType.I64))
-      (ir.CompilerIrInstr.BoundsCheck
-        (ir.CompilerIrValue.Var 50)
-        (ir.CompilerIrValue.Var 1)
-        (ir.compiler-ir-label "bounds_ok"))
-      (ir.CompilerIrInstr.Return
-        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 50))))))
+  (irt.block
+    "body:
+       %50 = add %0, 1 : i64
+       bounds_check %50, %1 message \"bounds_ok\"
+       return %50"))
 
 (define (smoke-additive-wrap-risk-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
@@ -3021,13 +2797,12 @@
       (ir.compiler-ir-block-cons
         (smoke-additive-wrap-risk-body)
         (ir.compiler-ir-block-cons
-          (compiler_optimize_tests.opt-loop-bce-test-exit)
+          (ot.opt-loop-bce-test-exit)
           (ir.CompilerIrBlockList.Nil))))))
 
 (define (smoke-additive-bce-self-test) : i64
   (let
-    [symbols : compiler_optimize_tests.OptLoopBceTestSymbols
-      (compiler_optimize_tests.opt-loop-bce-test-symbols)]
+    [symbols : ot.OptLoopBceTestSymbols (ot.opt-loop-bce-test-symbols)]
     [plus1 : i64
       (smoke-additive-count 1 1 true (ir.CompilerIrBinOp.Lt) 40 false)]
     [plus3 : i64
@@ -3037,12 +2812,9 @@
     [missing-slack : i64
       (smoke-additive-count 1 1 true (ir.CompilerIrBinOp.Lt) 1 false)]
     [wrap-risk : i64
-      (compiler_optimize_tests.opt-loop-bce-test-count
+      (ot.opt-loop-bce-test-count
         (smoke-additive-wrap-risk-blocks)
-        (compiler_optimize_tests.opt-loop-bce-test-summaries
-          symbols
-          false
-          false))]
+        (ot.opt-loop-bce-test-summaries symbols false false))]
     [negative-offset : i64
       (smoke-additive-count (- 0 1) 0 true (ir.CompilerIrBinOp.Lt) 1 false)]
     [redefined-index : i64
@@ -3066,20 +2838,12 @@
 (define (smoke-heavy-pass-large-jump-block [index : i64] [next : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (smoke-heavy-pass-large-label index)
-    (compiler_optimize_tests.opt-test-instrs (ir.CompilerIrInstr.Jump next))))
+    (ot.opt-test-instrs (ir.CompilerIrInstr.Jump next))))
 
 (define (smoke-heavy-pass-large-exit-block) : ir.CompilerIrBlock
-  (ir.CompilerIrBlock.Block
-    (ir.compiler-ir-label "exit")
-    (compiler_optimize_tests.opt-test-instrs
-      (ir.CompilerIrInstr.BinOp
-        3
-        (ir.CompilerIrBinOp.Add)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        (ast.AstType.I64))
-      (ir.CompilerIrInstr.Return
-        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3))))))
+  (irt.block "exit:
+       %3 = add %0, %1 : i64
+       return %3"))
 
 (define (smoke-heavy-pass-large-tail-blocks [index : i64] [last : i64]) : ir.CompilerIrBlockList
   (if (> index last)
@@ -3096,22 +2860,15 @@
 
 (define (smoke-heavy-pass-large-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler_optimize_tests.opt-test-instrs
-        (ir.CompilerIrInstr.BinOp
-          2
-          (ir.CompilerIrBinOp.Add)
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 1)
-          (ast.AstType.I64))
-        (ir.CompilerIrInstr.Jump (smoke-heavy-pass-large-label 1))))
+    (irt.block "entry:
+         %2 = add %0, %1 : i64
+         jump b1")
     (smoke-heavy-pass-large-tail-blocks 1 1024)))
 
 (define (smoke-heavy-pass-large-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
-    (compiler_optimize_tests.opt-test-symbol "heavy_pass_large")
-    (compiler_optimize_tests.opt-gvn-test-params)
+    (ot.opt-test-symbol "heavy_pass_large")
+    (ot.opt-gvn-test-params)
     (ast.AstType.I64)
     4
     (smoke-heavy-pass-large-blocks)
@@ -3140,10 +2897,7 @@
         (return 2))
       (match optimized
         [(ir.CompilerIrFunction.Function _ _ _ _ optimized-blocks _)
-          (if (=
-            (compiler_optimize_tests.opt-gvn-count-binops-blocks
-              optimized-blocks)
-            1)
+          (if (= (ot.opt-gvn-count-binops-blocks optimized-blocks) 1)
             42
             3)]))))
 
@@ -3155,11 +2909,11 @@
       (let
         [bound-arg-1
           (ir.compiler-ir-function-seq-prepend
-            (compiler_optimize_tests.opt-test-function-named
+            (ot.opt-test-function-named
               (string.copy qualified)
               (ir.compiler-ir-instr-seq-empty))
             (ir.compiler-ir-function-seq-prepend
-              (compiler_optimize_tests.opt-test-function-named
+              (ot.opt-test-function-named
                 (string.copy plain)
                 (ir.compiler-ir-instr-seq-empty))
               (ir.compiler-ir-function-seq-empty)))]
@@ -3192,352 +2946,8 @@
 
 (define (smoke-optimizer-named-failure-message-ok?) : bool
   (string.eq
-    (compiler_optimize_tests.compiler-optimize-self-test-failure-message
-      "copy propagation"
-      7
-      42)
+    (ot.compiler-optimize-self-test-failure-message "copy propagation" 7 42)
     "optimizer self-test failed: copy propagation (expected 42, got 7)"))
-
-(define (smoke-optimizer-core-self-tests) : i64
-  (begin
-    (compiler_optimize_tests.compiler-optimize-self-test-require!
-      "named failure message renderer"
-      (smoke-optimizer-named-failure-message-ok?))
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-self-test"
-      (compiler_optimize_tests.compiler-optimize-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dense-storage-self-test"
-      (compiler_optimize_tests.compiler-optimize-dense-storage-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-typed-fold-self-test"
-      (compiler_optimize_tests.compiler-optimize-typed-fold-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-noop-int-cast-mov-self-test"
-      (smoke-noop-int-cast-mov-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-strength-self-test"
-      (compiler_optimize_tests.compiler-optimize-strength-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dce-self-test"
-      (compiler_optimize_tests.compiler-optimize-dce-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dce-mem-self-test"
-      (compiler_optimize_tests.compiler-optimize-dce-mem-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-divrem-safety-self-test"
-      (compiler_optimize_tests.compiler-optimize-divrem-safety-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bit-length-self-test"
-      (compiler_optimize_tests.compiler-optimize-bit-length-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-const-divisor-self-test"
-      (compiler_optimize_tests.compiler-optimize-const-divisor-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-cse-self-test"
-      (compiler_optimize_tests.compiler-optimize-cse-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-copy-self-test"
-      (compiler_optimize_tests.compiler-optimize-copy-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bounds-self-test"
-      (compiler_optimize_tests.compiler-optimize-bounds-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bounds-dom-self-test"
-      (compiler_optimize_tests.compiler-optimize-bounds-dom-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bounds-dom-slice-word-self-test"
-      (compiler_optimize_tests.compiler-optimize-bounds-dom-slice-word-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bounds-run-self-test"
-      (compiler_optimize_tests.compiler-optimize-bounds-run-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-range-merge-self-test"
-      (compiler_optimize_tests.compiler-optimize-range-merge-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-nonneg-globals-self-test"
-      (compiler_optimize_tests.compiler-optimize-nonneg-globals-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dom-cmp-rule-a-self-test"
-      (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dom-cmp-rule-a-cfg-self-test"
-      (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-cfg-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dom-cmp-phi-carried-self-test"
-      (compiler_optimize_tests.compiler-optimize-dom-cmp-phi-carried-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dom-cmp-branch-fold-self-test"
-      (compiler_optimize_tests.compiler-optimize-dom-cmp-branch-fold-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-object-bounds-self-test"
-      (smoke-object-bounds-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-range-bce-self-test"
-      (smoke-range-bce-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-ssa-iv-bce-self-test"
-      (smoke-ssa-iv-bce-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-rotated-literal-bce-self-test"
-      (smoke-rotated-literal-bce-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-nonlength-guard-bce-self-test"
-      (smoke-nonlength-guard-bce-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-additive-bce-self-test"
-      (smoke-additive-bce-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-sccp-self-test"
-      (compiler_optimize_tests.compiler-optimize-sccp-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-addr-taken-forwarding-self-test"
-      (compiler_optimize_tests.compiler-optimize-addr-taken-forwarding-self-test)
-      42)
-    42))
-
-(define (smoke-optimizer-loop-self-tests) : i64
-  (begin
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-global-value-number-self-test"
-      (compiler_optimize_tests.compiler-optimize-global-value-number-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-load-gvn-substitution-self-test"
-      (compiler_optimize_tests.compiler-optimize-load-gvn-substitution-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-wide-literal-operand-self-test"
-      (compiler_optimize_tests.compiler-optimize-wide-literal-operand-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-cfg-self-test"
-      (compiler_optimize_tests.compiler-optimize-cfg-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-uniform-phi-self-test"
-      (compiler_optimize_tests.compiler-optimize-uniform-phi-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-switch-form-self-test"
-      (compiler-optimize-switch-form-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-natural-loop-self-test"
-      (compiler_optimize_tests.compiler-optimize-natural-loop-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-preheader-synthesis-self-test"
-      (compiler_optimize_tests.compiler-optimize-preheader-synthesis-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-shape-clause-order-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-shape-clause-order-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-masked-capacity-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-masked-capacity-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-guard-price-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-guard-price-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-loop-rotation-self-test"
-      (compiler_optimize_tests.compiler-optimize-loop-rotation-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-rotate-ssa-self-test"
-      (compiler_optimize_tests.compiler-optimize-rotate-ssa-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-profitability-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-profitability-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-simd-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-simd-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-word-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-word-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-local-slot-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-local-slot-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-global-mod-ref-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-global-mod-ref-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-global-cell-call-mod-ref-self-test"
-      (compiler_optimize_tests.compiler-optimize-global-cell-call-mod-ref-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-cfg-straighten-below-threader-self-test"
-      (compiler_optimize_tests.compiler-optimize-cfg-straighten-below-threader-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-unswitch-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-unswitch-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-unswitch-chain-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-unswitch-chain-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-unswitch-general-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-unswitch-general-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-predicate-hoist-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-predicate-hoist-self-test)
-      42)
-    (cfg
-      test
-      (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-        "compiler-optimize-licm-checked-root-self-test"
-        (compiler_optimize_tests.compiler-optimize-licm-checked-root-self-test)
-        42)
-      unit)
-    (compiler_optimize_tests.compiler-optimize-self-test-require!
-      "compiler-optimize-call-memory-dense-scan-self-test"
-      (compiler_optimize_tests.compiler-optimize-call-memory-dense-scan-self-test))
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-call-memory-frame-roots-self-test"
-      (compiler_optimize_tests.compiler-optimize-call-memory-frame-roots-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-frame-call-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-frame-call-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-induction-self-test"
-      (compiler_optimize_tests.compiler-optimize-induction-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-induction-add-inv-self-test"
-      (compiler_optimize_tests.compiler-optimize-induction-add-inv-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-lftr-self-test"
-      (compiler_optimize_tests.compiler-optimize-lftr-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-lftr-sum-self-test"
-      (compiler_optimize_tests.compiler-optimize-lftr-sum-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-inline-converted-leaf-self-test"
-      (compiler_optimize_tests.compiler-optimize-inline-converted-leaf-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-unroll-self-test"
-      (compiler_optimize_tests.compiler-optimize-unroll-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-unroll-load-store-self-test"
-      (compiler_optimize_tests.compiler-optimize-unroll-load-store-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-unroll-descending-self-test"
-      (compiler_optimize_tests.compiler-optimize-unroll-descending-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-unroll-mb-self-test"
-      (compiler_optimize_tests.compiler-optimize-unroll-mb-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-affine-env-reference-self-test"
-      (compiler_optimize_tests.compiler-optimize-affine-env-reference-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-affine-env-boundary-self-test"
-      (compiler_optimize_tests.compiler-optimize-affine-env-boundary-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-affine-storage-integration-self-test"
-      (compiler_optimize_tests.compiler-optimize-affine-storage-integration-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-affine-self-test"
-      (compiler_optimize_tests.compiler-optimize-affine-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-affine-pipeline-self-test"
-      (compiler_optimize_tests.compiler-optimize-affine-pipeline-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-ssa-preexisting-phi-self-test"
-      (compiler_optimize_tests.compiler-optimize-ssa-preexisting-phi-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-multi-exit-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-multi-exit-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-licm-element-bound-self-test"
-      (compiler_optimize_tests.compiler-optimize-licm-element-bound-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-mask-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-mask-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-pipeline-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-pipeline-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-ssa-self-test"
-      (compiler_optimize_tests.compiler-optimize-ssa-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-ssa-fixed-handle-self-test"
-      (compiler_optimize_tests.compiler-optimize-ssa-fixed-handle-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-level-self-test"
-      (compiler_optimize_tests.compiler-optimize-level-self-test)
-      42)
-    42))
 
 (define (smoke-inline-phi-header [latch-label : i64]) : ir.CompilerIrInstr
   (ir.CompilerIrInstr.Phi
@@ -3564,7 +2974,7 @@
     (ast.AstType.I64)))
 
 (define (smoke-inline-phi-caller-with-call
-  [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]
+  [symbols : ot.OptInlineMultiTestSymbols]
   [call : ir.CompilerIrInstr]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     symbols.main
@@ -3572,54 +2982,30 @@
     (ast.AstType.I64)
     3
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler_optimize_tests.opt-test-instrs
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
+      (irt.block "entry:
+           jump header")
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "header")
-          (compiler_optimize_tests.opt-test-instrs
-            (smoke-inline-phi-header (ir.compiler-ir-label "latch"))
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Bool true)
-              (ir.compiler-ir-label "latch")
-              (ir.compiler-ir-label "exit"))))
+        (irt.block
+          "header:
+             %1 = phi [0, entry], [%0, latch] : i64
+             branch true, latch, exit")
         (ir.compiler-ir-block-cons
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "latch")
-            (compiler_optimize_tests.opt-test-instrs
-              call
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool true)
-                (ir.compiler-ir-label "header")
-                (ir.compiler-ir-label "exit"))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "exit")
-              (compiler_optimize_tests.opt-test-instrs
-                (smoke-inline-phi-exit (ir.compiler-ir-label "latch"))
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))))
-            ir.CompilerIrBlockList.Nil))))
+            (ot.opt-test-instrs call (irt.instr "branch true, header, exit")))
+          (irt.blocks
+            "exit:
+               %2 = phi [%1, header], [%0, latch] : i64
+               return %2"))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (smoke-inline-phi-params) : ir.CompilerIrParamSeq
-  (ir.compiler-ir-param-seq-prepend
-    (ir.CompilerIrParam.Param "a" (ast.AstType.I64) 0)
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "b" (ast.AstType.I64) 1)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "c" (ast.AstType.I64) 2)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "d" (ast.AstType.I64) 3)
-          (ir.compiler-ir-param-seq-empty))))))
+  (irt.params "a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64"))
 
 (define (smoke-inline-phi-callee-mov) : ir.CompilerIrInstr
   (ir.CompilerIrInstr.Mov 4 (ir.CompilerIrValue.I64 7) (ast.AstType.I64)))
 
-(define (smoke-inline-phi-callee
-  [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
+(define (smoke-inline-phi-callee [symbols : ot.OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     symbols.inline-branch
     (smoke-inline-phi-params)
@@ -3628,20 +3014,14 @@
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (compiler_optimize_tests.opt-test-instrs
+        (ot.opt-test-instrs
           (smoke-inline-phi-callee-mov)
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "exit")
-          (compiler_optimize_tests.opt-test-instrs
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))
-        ir.CompilerIrBlockList.Nil))
+      (irt.blocks "exit:
+           return %4"))
     ir.CompilerIrFunctionAbi.Ordinary))
 
-(define (smoke-inline-phi-call
-  [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]) : ir.CompilerIrInstr
+(define (smoke-inline-phi-call [symbols : ot.OptInlineMultiTestSymbols]) : ir.CompilerIrInstr
   (let
     [values : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue 4)]
@@ -3656,12 +3036,10 @@
         (ir.CompilerIrCallArgs.Array values)
         (ast.AstType.I64)))))
 
-(define (smoke-inline-phi-caller
-  [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
+(define (smoke-inline-phi-caller [symbols : ot.OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (smoke-inline-phi-caller-with-call symbols (smoke-inline-phi-call symbols)))
 
-(define (smoke-inline-phi-functions
-  [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
+(define (smoke-inline-phi-functions [symbols : ot.OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
     (smoke-inline-phi-caller symbols)
     (ir.compiler-ir-function-seq-prepend
@@ -3680,8 +3058,8 @@
             [(ir.CompilerIrInstr.Phi _ inputs _)
               (if (opt.opt-phi-input-seq-eq
                 inputs
-                (match (smoke-inline-phi-header
-                  (ir.compiler-ir-label "inl.latch.0.cont"))
+                (match (irt.instr
+                  "%1 = phi [0, entry], [%0, inl.latch.0.cont] : i64")
                   [(ir.CompilerIrInstr.Phi _ expected _) expected]
                   [_ (ir.compiler-ir-phi-input-seq-empty)]))
                 (match (opt.opt-cfg-find-block
@@ -3695,8 +3073,8 @@
                           [(ir.CompilerIrInstr.Phi _ exit-inputs _)
                             (opt.opt-phi-input-seq-eq
                               exit-inputs
-                              (match (smoke-inline-phi-exit
-                                (ir.compiler-ir-label "inl.latch.0.cont"))
+                              (match (irt.instr
+                                "%2 = phi [%1, header], [%0, inl.latch.0.cont] : i64")
                                 [(ir.CompilerIrInstr.Phi _ expected _) expected]
                                 [_ (ir.compiler-ir-phi-input-seq-empty)]))]
                           [_ false])])])
@@ -3705,10 +3083,9 @@
 
 (define (smoke-inline-phi-positive-code) : i64
   (let
-    [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols
-      (compiler_optimize_tests.opt-inline-multi-test-symbols)]
+    [symbols : ot.OptInlineMultiTestSymbols (ot.opt-inline-multi-test-symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (compiler_optimize_tests.opt-test-inline-program-functions
+      (ot.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (smoke-inline-phi-functions symbols)
         2)]
@@ -3719,7 +3096,7 @@
           (cond
             [(not
                 (=
-                  (compiler_optimize_tests.opt-count-direct-call-name-blocks
+                  (ot.opt-count-direct-call-name-blocks
                     (opt.compiler-opt-global-shared-view blocks)
                     "inline_branch")
                   0))
@@ -3732,10 +3109,10 @@
               (+ 20 (ir.compiler-ir-block-list-count blocks))]
             [(not
                 (=
-                  (compiler_optimize_tests.opt-count-phi-blocks
+                  (ot.opt-count-phi-blocks
                     (opt.compiler-opt-global-shared-view blocks))
                   2))
-              (+ 40 (compiler_optimize_tests.opt-count-phi-blocks blocks))]
+              (+ 40 (ot.opt-count-phi-blocks blocks))]
             [(not
                 (smoke-inline-phi-loop-repaired?
                   (opt.compiler-opt-global-shared-view blocks)))
@@ -3746,30 +3123,28 @@
 
 (define (smoke-inline-phi-spans?) : bool
   (let
-    [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols
-      (compiler_optimize_tests.opt-inline-multi-test-symbols)]
+    [symbols : ot.OptInlineMultiTestSymbols (ot.opt-inline-multi-test-symbols)]
     [call : ir.CompilerIrInstr (smoke-inline-phi-call symbols)]
     [header-phi : ir.CompilerIrInstr
       (smoke-inline-phi-header (ir.compiler-ir-label "latch"))]
     [exit-phi : ir.CompilerIrInstr
       (smoke-inline-phi-exit (ir.compiler-ir-label "latch"))]
     [main-symbol : ir.CompilerIrSymbolId
-      (ir.compiler-ir-symbol-typed-id
-        (compiler_optimize_tests.opt-test-symbol "main"))]
+      (ir.compiler-ir-symbol-typed-id (ot.opt-test-symbol "main"))]
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr
         (ir.compiler-source-spans-insert-instr
           (ir.compiler-source-spans-insert-instr
-            (compiler_optimize_tests.opt-spans-base)
+            (ot.opt-spans-base)
             main-symbol
             call
-            (compiler_optimize_tests.opt-test-span 161 31))
+            (ot.opt-test-span 161 31))
           main-symbol
           header-phi
-          (compiler_optimize_tests.opt-test-span 162 33))
+          (ot.opt-test-span 162 33))
         main-symbol
         exit-phi
-        (compiler_optimize_tests.opt-test-span 163 35))]
+        (ot.opt-test-span 163 35))]
     [result-mov : ir.CompilerIrInstr
       (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))]
     [repaired-header : ir.CompilerIrInstr
@@ -3788,28 +3163,28 @@
               [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
               (and
                 (=
-                  (compiler_optimize_tests.opt-count-direct-call-name-blocks
+                  (ot.opt-count-direct-call-name-blocks
                     (opt.compiler-opt-global-shared-view blocks)
                     "inline_branch")
                   0)
                 (smoke-inline-phi-loop-repaired?
                   (opt.compiler-opt-global-shared-view blocks))
                 (opt.opt-inline-structure-ok? blocks)
-                (compiler_optimize_tests.opt-span-lookup-ok?
+                (ot.opt-span-lookup-ok?
                   (opt.compiler-opt-global-shared-view optimized-spans)
-                  (compiler_optimize_tests.opt-test-symbol "main")
+                  (ot.opt-test-symbol "main")
                   result-mov
                   161
                   31)
-                (compiler_optimize_tests.opt-span-lookup-ok?
+                (ot.opt-span-lookup-ok?
                   (opt.compiler-opt-global-shared-view optimized-spans)
-                  (compiler_optimize_tests.opt-test-symbol "main")
+                  (ot.opt-test-symbol "main")
                   repaired-header
                   162
                   33)
-                (compiler_optimize_tests.opt-span-lookup-ok?
+                (ot.opt-span-lookup-ok?
                   optimized-spans
-                  (compiler_optimize_tests.opt-test-symbol "main")
+                  (ot.opt-test-symbol "main")
                   repaired-exit
                   163
                   35)))]
@@ -3817,11 +3192,10 @@
 
 (define (smoke-inline-phi-refusal?) : bool
   (let
-    [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols
-      (compiler_optimize_tests.opt-inline-multi-test-symbols)]
+    [symbols : ot.OptInlineMultiTestSymbols (ot.opt-inline-multi-test-symbols)]
     [caller : ir.CompilerIrFunction (smoke-inline-phi-caller symbols)]
     [optimized : ir.CompilerIrFunctionSeq
-      (compiler_optimize_tests.opt-test-inline-program-functions
+      (ot.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           (opt.compiler-opt-global-shared-view caller)
@@ -3842,8 +3216,7 @@
 ;; refuses the body; the tier moves it because nothing else references it.
 (define (smoke-inline-phi-nonleaf-cost?) : bool
   (let
-    [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols
-      (compiler_optimize_tests.opt-inline-multi-test-symbols)]
+    [symbols : ot.OptInlineMultiTestSymbols (ot.opt-inline-multi-test-symbols)]
     [caller : ir.CompilerIrFunction
       (smoke-inline-phi-caller-with-call
         symbols
@@ -3853,12 +3226,12 @@
           ir.CompilerIrCallArgs.Nil
           (ast.AstType.I64)))]
     [optimized : ir.CompilerIrFunctionSeq
-      (compiler_optimize_tests.opt-test-inline-program-functions
+      (ot.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
           caller
           (ir.compiler-ir-function-seq-prepend
-            (compiler_optimize_tests.opt-inline-nonleaf-callee symbols)
+            (ot.opt-inline-nonleaf-callee symbols)
             (ir.compiler-ir-function-seq-empty)))
         2)]
     (match (opt.opt-function-seq-find optimized "main")
@@ -3867,12 +3240,12 @@
           [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
           (and
             (=
-              (compiler_optimize_tests.opt-count-direct-call-name-blocks
+              (ot.opt-count-direct-call-name-blocks
                 (ir.compiler-ir-global-shared-view blocks)
                 "inline_nonleaf")
               0)
             (=
-              (compiler_optimize_tests.opt-count-direct-call-name-blocks
+              (ot.opt-count-direct-call-name-blocks
                 (ir.compiler-ir-global-shared-view blocks)
                 "external_helper")
               1)
@@ -3894,70 +3267,37 @@
 ;; positive existing-value diamond and the two most important refusal rules
 ;; (arm-local computation and a multiply-used And result).
 (define (smoke-c27-params) : ir.CompilerIrParamSeq
-  (ir.compiler-ir-param-seq-prepend
-    (ir.CompilerIrParam.Param "cond" (ast.AstType.Bool) 0)
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 1)
-      (ir.compiler-ir-param-seq-empty))))
+  (irt.params "cond=%0:bool, x=%1:i64"))
 
 (define (smoke-c27-if-convert-function [computed-arm? : bool]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
-    (compiler_optimize_tests.opt-test-symbol "c27_if_convert")
+    (ot.opt-test-symbol "c27_if_convert")
     (smoke-c27-params)
     (ast.AstType.I64)
     8
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler_optimize_tests.opt-test-instrs
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
+      (irt.block "entry:
+           jump header")
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "header")
-          (compiler_optimize_tests.opt-test-instrs
-            (ir.CompilerIrInstr.Phi
-              2
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.I64 0)
-                (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 6)
-                  (ir.compiler-ir-label "merge")
-                  (ir.compiler-ir-phi-input-seq-empty)))
-              (ast.AstType.I64))
-            (ir.CompilerIrInstr.BinOp
-              5
-              ir.CompilerIrBinOp.Gt
-              (ir.CompilerIrValue.Var 1)
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.I64))
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Var 5)
-              (ir.compiler-ir-label "then")
-              (ir.compiler-ir-label "else"))))
+        (irt.block
+          "header:
+             %2 = phi [0, entry], [%6, merge] : i64
+             %5 = gt %1, 0 : i64
+             branch %5, then, else")
         (ir.compiler-ir-block-cons
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "then")
             (if computed-arm?
-              (compiler_optimize_tests.opt-test-instrs
-                (ir.CompilerIrInstr.BinOp
-                  3
-                  ir.CompilerIrBinOp.Add
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.CompilerIrValue.I64 1)
-                  (ast.AstType.I64))
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge")))
-              (compiler_optimize_tests.opt-test-instrs
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge")))))
+              (irt.instrs "%3 = add %1, 1 : i64
+                 jump merge")
+              (irt.instrs "jump merge")))
           (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "else")
-              (compiler_optimize_tests.opt-test-instrs
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))))
+            (irt.block "else:
+                 jump merge")
             (ir.compiler-ir-block-cons
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "merge")
-                (compiler_optimize_tests.opt-test-instrs
+                (ot.opt-test-instrs
                   (ir.CompilerIrInstr.Phi
                     4
                     (ir.compiler-ir-phi-input-seq-prepend
@@ -3970,29 +3310,11 @@
                         (ir.compiler-ir-label "else")
                         (ir.compiler-ir-phi-input-seq-empty)))
                     (ast.AstType.I64))
-                  (ir.CompilerIrInstr.BinOp
-                    6
-                    ir.CompilerIrBinOp.Add
-                    (ir.CompilerIrValue.Var 2)
-                    (ir.CompilerIrValue.I64 1)
-                    (ast.AstType.I64))
-                  (ir.CompilerIrInstr.BinOp
-                    7
-                    ir.CompilerIrBinOp.Lt
-                    (ir.CompilerIrValue.Var 6)
-                    (ir.CompilerIrValue.I64 2)
-                    (ast.AstType.I64))
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var 7)
-                    (ir.compiler-ir-label "header")
-                    (ir.compiler-ir-label "exit"))))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "exit")
-                  (compiler_optimize_tests.opt-test-instrs
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))
-                (ir.CompilerIrBlockList.Nil)))))))
+                  (irt.instr "%6 = add %2, 1 : i64")
+                  (irt.instr "%7 = lt %6, 2 : i64")
+                  (irt.instr "branch %7, header, exit")))
+              (irt.blocks "exit:
+                   return %4"))))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (smoke-c27-count-scalar-selects-instrs
@@ -4059,41 +3381,20 @@
 
 (define (smoke-c27-compare-function [extra-use? : bool]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
-    (compiler_optimize_tests.opt-test-symbol "c27_bit_test")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 0)
-      (ir.compiler-ir-param-seq-empty))
+    (ot.opt-test-symbol "c27_bit_test")
+    (irt.params "x=%0:i64")
     (ast.AstType.I64)
     4
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (compiler_optimize_tests.opt-test-instrs-with-tail
+        (ot.opt-test-instrs-with-tail
           (if extra-use?
-            (compiler_optimize_tests.opt-test-instrs
-              (ir.CompilerIrInstr.BinOp
-                3
-                ir.CompilerIrBinOp.Add
-                (ir.CompilerIrValue.Var 1)
-                (ir.CompilerIrValue.Var 2)
-                (ast.AstType.I64))
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3))))
-            (compiler_optimize_tests.opt-test-instrs
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))))
-          (ir.CompilerIrInstr.BinOp
-            1
-            ir.CompilerIrBinOp.BitAnd
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 1)
-            (ast.AstType.I64))
-          (ir.CompilerIrInstr.BinOp
-            2
-            ir.CompilerIrBinOp.Gt
-            (ir.CompilerIrValue.Var 1)
-            (ir.CompilerIrValue.I64 0)
-            (ast.AstType.I64))))
+            (irt.instrs "%3 = add %1, %2 : i64
+               return %3")
+            (irt.instrs "return %2"))
+          (irt.instr "%1 = bit_and %0, 1 : i64")
+          (irt.instr "%2 = gt %1, 0 : i64")))
       (ir.CompilerIrBlockList.Nil))
     ir.CompilerIrFunctionAbi.Ordinary))
 
@@ -4192,18 +3493,14 @@
   [cmp-op : ir.CompilerIrBinOp]
   [cmp-const : i64]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
-    (compiler_optimize_tests.opt-test-symbol "c27_mask_test")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 0)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "m" (ast.AstType.I64) 1)
-        (ir.compiler-ir-param-seq-empty)))
+    (ot.opt-test-symbol "c27_mask_test")
+    (irt.params "x=%0:i64, m=%1:i64")
     (ast.AstType.I64)
     4
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (compiler_optimize_tests.opt-test-instrs
+        (ot.opt-test-instrs
           (ir.CompilerIrInstr.BinOp
             2
             ir.CompilerIrBinOp.BitAnd
@@ -4216,8 +3513,7 @@
             (ir.CompilerIrValue.Var 2)
             (ir.CompilerIrValue.I64 cmp-const)
             (ast.AstType.I64))
-          (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
+          (irt.instr "return %3")))
       (ir.CompilerIrBlockList.Nil))
     ir.CompilerIrFunctionAbi.Ordinary))
 
@@ -4417,1004 +3713,732 @@
     [(not (smoke-c27-mask-idempotent?)) 14]
     [else 42]))
 
-(define (smoke-optimizer-late-self-tests) : i64
-  (begin
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-callgraph-self-test"
-      (compiler_optimize_tests.compiler-optimize-callgraph-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-scc-self-test"
-      (compiler_optimize_tests.compiler-optimize-scc-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-inline-self-test"
-      (compiler_optimize_tests.compiler-optimize-inline-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-inline-two-multiblock-self-test"
-      (compiler_optimize_tests.compiler-optimize-inline-two-multiblock-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-inline-phi-predecessor-self-test"
-      (smoke-inline-phi-predecessor-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-fixed-point-self-test"
-      (compiler_optimize_tests.compiler-optimize-fixed-point-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-tailrec-self-test"
-      (compiler_optimize_tests.compiler-optimize-tailrec-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-global-dce-self-test"
-      (compiler_optimize_tests.compiler-optimize-global-dce-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-aggregate-candidate-self-test"
-      (compiler_optimize_tests.compiler-optimize-aggregate-candidate-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-aggregate-promote-self-test"
-      (compiler_optimize_tests.compiler-optimize-aggregate-promote-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-aggregate-split-self-test"
-      (compiler_optimize_tests.compiler-optimize-aggregate-split-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-spans-self-test"
-      (compiler_optimize_tests.compiler-optimize-spans-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-gvn-self-test"
-      (compiler_optimize_tests.compiler-optimize-gvn-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-heavy-pass-large-gvn-self-test"
-      (smoke-heavy-pass-large-gvn-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-load-cse-self-test"
-      (compiler_optimize_tests.compiler-optimize-load-cse-self-test)
-      44)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dead-store-self-test"
-      (compiler_optimize_tests.compiler-optimize-dead-store-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-scratch-region-self-test"
-      (compiler_optimize_tests.compiler-optimize-scratch-region-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-function-index-leaf-starts-self-test"
-      (smoke-function-index-leaf-starts-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-switch-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-switch-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-second-exit-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-fuse-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-fuse-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-second-exit-refusal-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-far-phi-input-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-far-phi-input-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-pure-call-dedupe-self-test"
-      (compiler_optimize_tests.compiler-optimize-pure-call-dedupe-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-merged-body-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-merged-body-refusal-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-refusal-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-negative-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-fold-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-fold-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-fold-refusal-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-fold-refusal-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-nest-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-nest-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-reject-skip-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-reject-skip-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-pipeline-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-pipeline-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-mb-partial-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-mb-partial-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bce-version-p5a-self-test"
-      (compiler_optimize_tests.compiler-optimize-bce-version-p5a-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-unroll-p5a-remainder-self-test"
-      (compiler_optimize_tests.compiler-optimize-unroll-p5a-remainder-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-debug-verifier-self-test"
-      (compiler_optimize_tests.compiler-optimize-debug-verifier-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-gep-split-self-test"
-      (compiler_optimize_tests.compiler-optimize-gep-split-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-flag-exit-self-test"
-      (compiler_optimize_tests.compiler-optimize-flag-exit-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-flag-facts-self-test"
-      (compiler_optimize_tests.compiler-optimize-flag-facts-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-flag-exit-general-self-test"
-      (compiler_optimize_tests.compiler-optimize-flag-exit-general-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dead-phi-self-test"
-      (compiler_optimize_tests.compiler-optimize-dead-phi-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-dce-pack-self-test"
-      (compiler_optimize_tests.compiler-optimize-dce-pack-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-cmp-sink-self-test"
-      (compiler_optimize_tests.compiler-optimize-cmp-sink-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-load-sink-self-test"
-      (compiler_optimize_tests.compiler-optimize-load-sink-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-cmp-dup-self-test"
-      (compiler_optimize_tests.compiler-optimize-cmp-dup-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-ubound-self-test"
-      (compiler_optimize_tests.compiler-optimize-ubound-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-ubound-refusal-self-test"
-      (compiler_optimize_tests.compiler-optimize-ubound-refusal-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-ubound-tangled-self-test"
-      (compiler_optimize_tests.compiler-optimize-ubound-tangled-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bounds-group-self-test"
-      (compiler_optimize_tests.compiler-optimize-bounds-group-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bounds-group-offset-self-test"
-      (compiler_optimize_tests.compiler-optimize-bounds-group-offset-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bounds-group-refusal-self-test"
-      (compiler_optimize_tests.compiler-optimize-bounds-group-refusal-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-successor-sink-self-test"
-      (compiler_optimize_tests.compiler-optimize-successor-sink-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-c27-if-convert-compare-self-test"
-      (smoke-c27-if-convert-compare-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "smoke-c27-mask-test-admission-self-test"
-      (smoke-c27-mask-test-admission-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bit-test-equality-self-test"
-      (compiler_optimize_tests.compiler-optimize-bit-test-equality-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bit-test-range-self-test"
-      (compiler_optimize_tests.compiler-optimize-bit-test-range-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bit-test-refusal-self-test"
-      (compiler_optimize_tests.compiler-optimize-bit-test-refusal-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-bit-test-runtime-self-test"
-      (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
-      42)
-    42))
-
-(define (main) : i64
-  (begin
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "dense literal scan differential"
-      (if (compiler_optimize_tests.compiler-optimize-inline-literal-dense-scan-self-test)
-        1
-        0)
-      1)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-runtime-call-identity-self-test"
-      (compiler_optimize_tests.compiler-optimize-runtime-call-identity-self-test)
-      42)
-    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
-      "compiler-optimize-thread-facts-merge-self-test"
-      (compiler_optimize_tests.compiler-optimize-thread-facts-merge-self-test)
-      42)
-    (smoke-optimizer-core-self-tests)
-    (smoke-optimizer-loop-self-tests)
-    (smoke-optimizer-late-self-tests)
-    42))
-
 (test
   load-cse-copybytes-forwarding
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-load-cse-self-test)
+    (ot.compiler-optimize-load-cse-self-test)
     44
     "load-cse copybytes forwarding"))
 
 (test
   optimizer-alias-fact-model
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-alias-self-test)
+    (ot.compiler-optimize-alias-self-test)
     42
     "optimizer alias fact model"))
 
 (test
   inline-multiblock-switch-absorbable
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-multiblock-switch-ok?)
+    (ot.compiler-optimize-inline-multiblock-switch-ok?)
     "absorbable acyclic bounds+switch callee inlines with fresh CFG/phi labels"))
 
 (test
   inline-multiblock-cyclic-bounds-switch-admission
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-multiblock-cyclic-bounds-switch-admission-ok?)
+    (ot.compiler-optimize-inline-multiblock-cyclic-bounds-switch-admission-ok?)
     "a one-reference cyclic bounds+switch callee is taken in a loop-free caller, bounds check and cloned CFG intact"))
 
 (test
   inline-vm-run-bounds-loop-exception
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-vm-run-bounds-loop-ok?)
+    (ot.compiler-optimize-inline-vm-run-bounds-loop-ok?)
     "vm-run and the same-shaped qs-partition both inline at opt2 on shape, not on name; opt1 still refuses both"))
 
 (test
   inline-bounds-loop-in-loop-site
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-in-loop-site-ok?)
+    (ot.compiler-optimize-inline-bounds-loop-in-loop-site-ok?)
     "small absorbable bounds loop leaf inlines at an in-loop call site"))
 
 (test
   inline-bounds-loop-cold-site-admission
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cold-site-admission-ok?)
+    (ot.compiler-optimize-inline-bounds-loop-cold-site-admission-ok?)
     "the same leaf is taken at a straight-line site of a loop-free caller: no caller loop is there to tax"))
 
 (test
   inline-checked-depth-weighting
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-depth-weighting-ok?)
+    (ot.compiler-optimize-inline-checked-depth-weighting-ok?)
     "the measured tier prices a body at the depth an inline would put it, and the weight ladder saturates"))
 
 (test
   inline-checked-slow-copy-weighting
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-slow-copy-weighting-ok?)
+    (ot.compiler-optimize-inline-checked-slow-copy-weighting-ok?)
     "a versioned loop prices as one loop: the slow copy is the guard's failure path and is priced cold"))
 
 (test
   inline-checked-sret-copy
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-sret-copy-ok?)
+    (ot.compiler-optimize-inline-checked-sret-copy-ok?)
     "an sret callee's boundary adds the result copy a free inline retires: a word per 8 bytes of the widest store through __sret, nothing without one"))
 
 (test
   inline-checked-window
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-window-ok?)
+    (ot.compiler-optimize-inline-checked-window-ok?)
     "the accept window is two-sided: the model must agree with a free inline within a factor of two"))
 
 (test
   inline-checked-budget
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-budget-ok?)
+    (ot.compiler-optimize-inline-checked-budget-ok?)
     "the program budget counts verdicts and the tier arms and disarms"))
 
 (test
   inline-checked-band-exclusion
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-band-exclusion-ok?)
+    (ot.compiler-optimize-inline-checked-band-exclusion-ok?)
     "a band-admitted site never reaches the check, so a banked program spends no budget"))
 
 (test
   inline-checked-call-carrying-verdicts
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-self-test)
+    (ot.compiler-optimize-inline-checked-call-carrying-self-test)
     3000111
     "the tier prices call-carrying candidates the bands refuse, keeps the ones whose plan repays, and every function verifies"))
 
 (test
   inline-checked-call-carrying-deep-verdicts
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-deep-self-test)
+    (ot.compiler-optimize-inline-checked-call-carrying-deep-self-test)
     200
     "the tier keeps a call-carrying site one loop deeper too, and both callers verify"))
 
 (test
   inline-rescan-loop-nest
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-rescan-loop-nest-ok?)
+    (ot.compiler-optimize-inline-rescan-loop-nest-ok?)
     "the rescan clause is inert in generation one and separates a loop-bearing callee from the acyclic body of the same size"))
 
 (test
   inline-multiblock-alloc-shape
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-multiblock-alloc-shape-ok?)
+    (ot.compiler-optimize-inline-multiblock-alloc-shape-ok?)
     "the multiblock gate admits an aggregate-building body and names the clause that refuses each neighbour"))
 
 (test
   thread-phi-chain
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-thread-phi-chain-self-test)
+    (ot.compiler-optimize-thread-phi-chain-self-test)
     42
     "a phi merge threads through the compare tree it feeds on the facts each edge carries, and collapses onto the exit that reads it"))
 
 (test
   inline-one-block-shape
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-one-block-shape-ok?)
+    (ot.compiler-optimize-inline-one-block-shape-ok?)
     "a one-block body past the single-block cap is the checked tier's, and only a small one keeps there"))
 
 (test
   inline-multiblock-alloc-splice
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-multiblock-alloc-splice-ok?)
+    (ot.compiler-optimize-inline-multiblock-alloc-splice-ok?)
     "an aggregate-building sret body splices into a loop site once, and both storage runs keep the shape the allocator scans for"))
 
 (test
   inline-multiblock-tail-site-indirect-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-multiblock-tail-site-indirect-refusal-ok?)
+    (ot.compiler-optimize-inline-multiblock-tail-site-indirect-refusal-ok?)
     "an indirect tail-call site is not a site: the multiblock path admits only the direct form"))
 
 (test
   inline-checked-tail-site-verdicts
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-checked-tail-site-self-test)
+    (ot.compiler-optimize-inline-checked-tail-site-self-test)
     11
     "a tail call ends the function, so a tail site inside a loop is that loop's EXIT and runs once per invocation: at depth zero with the caller count as its whole frequency the frequency clause refuses both callers' sites before pricing, and both tail calls survive"))
 
 (test
   inline-checked-tail-post-site-verdict
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-checked-tail-post-self-test)
+    (ot.compiler-optimize-inline-checked-tail-post-self-test)
     110
     "a tail site that is its loop's only exit post-dominates the entry: the hot caller's site clears the relaxed floor, is priced, and takes the call-free leaf, the callee's returns become the caller's, and the cold caller's site is refused on frequency and keeps its tail call"))
 
 (test
   inline-checked-specialization
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-checked-specialization-self-test)
+    (ot.compiler-optimize-inline-checked-specialization-self-test)
     42
     "a literal argument widens the cap's prediction by what it folds, never the floor; a forwarder is tail-only; the specialized copy pins exactly the literal parameters"))
 
 (test
   inline-checked-tail-only-literal-site
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-checked-tail-only-self-test
-      true)
+    (ot.compiler-optimize-inline-checked-tail-only-self-test true)
     100
     "a forwarder -- every exit a tail call, no Return -- reaches a verdict at a hot site whose first argument is the temp a literal was materialized into, and the verdict takes it: no call to the forwarder survives"))
 
 (test
   inline-checked-tail-only-unspecialized-site
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-checked-tail-only-self-test
-      false)
+    (ot.compiler-optimize-inline-checked-tail-only-self-test false)
     1
     "the same forwarder at the same site with a parameter passed through is refused by the tail-only clause before pricing: no verdict, the call survives"))
 
 (test
   inline-checked-rescan-generations
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-checked-rescan-self-test)
+    (ot.compiler-optimize-inline-checked-rescan-self-test)
     11001
     "a keep exposes its copy's own sites, the rescan generation prices them, and the third level stays out of line"))
 
 (test
   inline-checked-absorb-rescan
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-checked-absorb-rescan-self-test)
+    (ot.compiler-optimize-inline-checked-absorb-rescan-self-test)
     10001
     "a body the absorb band moved in is rescanned: the site it exposes inside the caller's loop gets a core verdict and is kept, and the level below stays out of line"))
 
 (test
   inline-checked-generation-carry
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-generation-carry-ok?)
+    (ot.compiler-optimize-inline-checked-generation-carry-ok?)
     "a rescan generation carries the caller's verdicts, accepted rows and callee lock, and retires the finished generation's site keys"))
 
 (test
   inline-checked-generation-accept-cap
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-generation-accept-cap-ok?)
+    (ot.compiler-optimize-inline-checked-generation-accept-cap-ok?)
     "the per-caller accept cap is not refunded by a rescan: a site that would exceed it is refused there"))
 
 (test
   inline-checked-call-carrying-revert
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-revert-ok?)
+    (ot.compiler-optimize-inline-checked-call-carrying-revert-ok?)
     "the same call-carrying callee reverts when its measured plan does not repay the boundary"))
 
 (test
   inline-multiblock-call-clone-spans
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-spans-inline-multiblock-call-ok?)
+    (ot.compiler-optimize-spans-inline-multiblock-call-ok?)
     "the spans clone walk rebases a cloned call and re-keys its span under the caller"))
 
 (test
   inline-multiblock-clone-abort-span
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-clone-abort-span-ok?)
+    (ot.compiler-optimize-inline-clone-abort-span-ok?)
     "an abort inside a cloned call-carrying callee keeps the callee's span in a release build"))
 
 (test
   inline-chain-second-import-call
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-chain-second-import-call-ok?)
+    (ot.compiler-optimize-inline-chain-second-import-call-ok?)
     "a chain absorbed bottom-up re-clones an already cloned call and leaves one call in the caller"))
 
 (test
   inline-checked-sequence-two-sites
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-sequence-two-sites-ok?)
+    (ot.compiler-optimize-inline-checked-sequence-two-sites-ok?)
     "two sites of one callee are priced richest-first and both kept, each against the state before it"))
 
 (test
   inline-checked-sequence-partial
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-sequence-partial-ok?)
+    (ot.compiler-optimize-inline-checked-sequence-partial-ok?)
     "a caller keeps its first site and reverts its second: the rollback is per site, not per caller"))
 
 (test
   inline-checked-richness
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-richness-ok?)
+    (ot.compiler-optimize-inline-checked-richness-ok?)
     "sites are ordered by what a free inline is worth, per unit of the caller's growth budget it spends"))
 
 (test
   inline-checked-caller-cap
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-caller-cap-ok?)
+    (ot.compiler-optimize-inline-checked-caller-cap-ok?)
     "one caller cannot drain the program's verdict budget"))
 
 (test
   inline-checked-one-callee
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-one-callee-ok?)
+    (ot.compiler-optimize-inline-checked-one-callee-ok?)
     "a caller's later sites are restricted to the callee its first accept named"))
 
 (test
   inline-checked-depth-floor
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-depth-floor-ok?)
+    (ot.compiler-optimize-inline-checked-depth-floor-ok?)
     "the site-depth floor relaxes to zero exactly where the composite frequency already carries the evidence"))
 
 (test
   inline-checked-entry-equivalent
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-entry-equivalent-ok?)
+    (ot.compiler-optimize-inline-checked-entry-equivalent-ok?)
     "a depth-0 site reads as entry-equivalent at the entry block, at a block that post-dominates it in a loop-free caller, at an arm of the entry branch whose sibling leaves the function in a wrapper-shaped caller, and at an arm of a DISPATCH whose spine only compares and branches"))
 
 (test
   inline-checked-depth0-hot-site
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-checked-depth0-self-test 1)
+    (ot.opt-inline-checked-depth0-self-test 1)
     100
     "the recorded seven-parameter builder shape at a depth-0 entry site of a hot loop-holding caller is priced and taken: one verdict, no call left to the builder"))
 
 (test
   inline-checked-depth0-cold-site
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-checked-depth0-self-test 0)
+    (ot.opt-inline-checked-depth0-self-test 0)
     1
     "the same depth-0 site under a caller nothing reaches through a loop never reaches a verdict"))
 
 (test
   inline-checked-depth0-threaded-site
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-checked-depth0-self-test 2)
+    (ot.opt-inline-checked-depth0-self-test 2)
     100
     "moving the same site one unconditional jump off the entry block leaves it POST-DOMINATING the entry, so INL-4 reads it as entry-equivalent in this wrapper-shaped caller: the same verdict as the entry spelling, and it takes the body"))
 
 (test
   inline-checked-depth0-guarded-site
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-checked-depth0-self-test 3)
+    (ot.opt-inline-checked-depth0-self-test 3)
     101
     "putting the same site below a guard whose other arm returns makes its block neither the entry's post-dominator nor an arm of the entry branch, and the floor stands exactly as it did before the widening: one verdict fewer, the call still there"))
 
 (test
   inline-checked-inl8-post-multi-call-caller
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-checked-inl8-self-test 0)
+    (ot.opt-inline-checked-inl8-self-test 0)
     3000
     "a callee taken at a small wrapper and left out of line at a straight-line caller carrying calls of its own: INL-8 MEASURES the second caller's post-dominating site -- three verdicts, and neither caller keeps the call"))
 
 (test
   inline-checked-inl8-post-multi-call-caller-loop
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-checked-inl8-self-test 1)
+    (ot.opt-inline-checked-inl8-self-test 1)
     1010
     "the same pair with a LOOP below the second caller's site, which is the reading the caller clause had before: the site never reaches a verdict -- `site-depth` with `pos` reading `none` -- so one verdict fewer and that caller keeps its call out of line"))
 
 (test
   inline-checked-inl9-dispatch-arms
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-checked-inl9-self-test 0)
+    (ot.opt-inline-checked-inl9-self-test 0)
     3000
     "the three arms of a dispatch, each calling one acyclic call-free leaf: INL-9 reads every arm as entry-equivalent -- only the first is a successor of the entry branch, and the call count is one per arm by construction -- so the tier prices all three, keeps all three, and no arm is left holding the call"))
 
 (test
   inline-checked-inl9-dispatch-cyclic-callee
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-checked-inl9-self-test 1)
+    (ot.opt-inline-checked-inl9-self-test 1)
     3
     "the same dispatch with a LOOP around the same leaf's chain: the dispatch reading's own clause is on the callee, so no arm reaches a verdict at all -- `site-depth` with `pos` reading `none` -- three verdicts fewer and all three calls still there (gvn_table +8,031,268 when they are not)"))
 
 (test
   inline-checked-lock-bodies
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-lock-bodies-ok?)
+    (ot.compiler-optimize-inline-checked-lock-bodies-ok?)
     "the callee lock admits the ranked bodies up to its bound and refuses the one past it; a slim accept no longer refuses the next body by proxy"))
 
 (test
   inline-checked-relaxed-rank
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-relaxed-rank-ok?)
+    (ot.compiler-optimize-inline-checked-relaxed-rank-ok?)
     "a relaxed candidate is ranked behind every core one and charged to the relaxations' own reserve"))
 
 (test
   inline-synth-chain
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-synth-chain-ok?)
+    (ot.compiler-optimize-inline-synth-chain-ok?)
     "a leaf two straight-line wrappers below a loop reads one census weight on the propagated count and one on the census's own"))
 
 (test
   inline-synth-recursive
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-synth-recursive-ok?)
+    (ot.compiler-optimize-inline-synth-recursive-ok?)
     "a recursive component carries its own repetition, reproducibly and inside the saturating cap"))
 
 (test
   inline-synth-address-taken
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-synth-address-taken-ok?)
+    (ot.compiler-optimize-inline-synth-address-taken-ok?)
     "an address-taken callee starts at the unknown-caller base of one; the ordinary callee beside it starts at zero"))
 
 (test
   inline-synth-order
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-synth-order-ok?)
+    (ot.compiler-optimize-inline-synth-order-ok?)
     "the hotter candidate is armed first whatever order the caller's walk found the sites in"))
 
 (test
   inline-checked-relaxed-reserve
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-relaxed-reserve-ok?)
+    (ot.compiler-optimize-inline-checked-relaxed-reserve-ok?)
     "the relaxations' reserve runs out without touching the budget the core candidates read"))
 
 (test
   inline-checked-cheap-tier-claim
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-checked-cheap-tier-self-test)
+    (ot.opt-inline-checked-cheap-tier-self-test)
     10000
     "one checked-tier verdict, and the cheap tiers' four inlines of a tiny leaf all still in place"))
 
 (test
   inline-bounds-loop-cascade-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cascade-refusal-ok?)
+    (ot.compiler-optimize-inline-bounds-loop-cascade-refusal-ok?)
     "import refused when it would cost a bounds-free single-site caller its own inline"))
 
 (test
   inline-single-site-wide-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-absorb-ok?)
+    (ot.compiler-optimize-inline-single-site-wide-absorb-ok?)
     "a 220-instruction ten-parameter single-site callee absorbs whole at its one cold site"))
 
 (test
   inline-single-site-wide-loop-site-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-loop-site-absorb-ok?)
+    (ot.compiler-optimize-inline-single-site-wide-loop-site-absorb-ok?)
     "the same unbounded body absorbs at an in-loop site: the boundary retires per iteration"))
 
 (test
   inline-single-site-narrow-small-caller-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-small-caller-refusal-ok?)
+    (ot.compiler-optimize-inline-single-site-narrow-small-caller-refusal-ok?)
     "below the arity floor the body stays out of line even in a two-block caller"))
 
 (test
   inline-single-site-narrow-large-caller-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-large-caller-refusal-ok?)
+    (ot.compiler-optimize-inline-single-site-narrow-large-caller-refusal-ok?)
     "below the arity floor and past the narrow caller band, the body stays out of line"))
 
 (test
   inline-single-site-narrow-loop-site-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-loop-site-absorb-ok?)
+    (ot.compiler-optimize-inline-single-site-narrow-loop-site-absorb-ok?)
     "below the arity floor a small call-free body still moves at an in-loop site"))
 
 (test
   inline-single-site-narrow-straight-site-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-straight-site-refusal-ok?)
+    (ot.compiler-optimize-inline-single-site-narrow-straight-site-refusal-ok?)
     "the same body at a straight-line site stays out: below the floor there is no marshalling to retire"))
 
 (test
   inline-single-site-narrow-oversize-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-oversize-refusal-ok?)
+    (ot.compiler-optimize-inline-single-site-narrow-oversize-refusal-ok?)
     "past the loop tier's size class the in-loop waiver stops admitting a below-floor boundary"))
 
 (test
   inline-single-site-size-cap-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-size-cap-absorb-ok?)
+    (ot.compiler-optimize-inline-single-site-size-cap-absorb-ok?)
     "a single-site callee at the pathological backstop still absorbs: no growth to bound"))
 
 (test
   inline-sole-call-past-backstop-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-past-backstop-absorb-ok?)
+    (ot.compiler-optimize-inline-sole-call-past-backstop-absorb-ok?)
     "one block past the backstop the acyclic body absorbs anyway: the sole-call tier has no block cap"))
 
 (test
   inline-sole-call-narrow-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-narrow-absorb-ok?)
+    (ot.compiler-optimize-inline-sole-call-narrow-absorb-ok?)
     "a three-parameter forty-block acyclic sole-call callee absorbs at its one straight-line site"))
 
 (test
   inline-sole-call-cyclic-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-cyclic-refusal-ok?)
+    (ot.compiler-optimize-inline-sole-call-cyclic-refusal-ok?)
     "the identical body with one back edge stays out: a loop-carrying body compounds the caller's pressure"))
 
 (test
   inline-sole-call-loop-site-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-loop-site-absorb-ok?)
+    (ot.compiler-optimize-inline-sole-call-loop-site-absorb-ok?)
     "the same acyclic body absorbs at an in-loop site the loop runs every iteration: the boundary it retires is paid per iteration"))
 
 (test
   inline-sole-call-loop-site-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-loop-site-refusal-ok?)
+    (ot.compiler-optimize-inline-sole-call-loop-site-refusal-ok?)
     "the same body stays out at an in-loop site two deciding branches below the header: the import lands inside a region already priced, for a boundary the loop rarely retires"))
 
 (test
   inline-sole-call-staged-args-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-staged-args-refusal-ok?)
+    (ot.compiler-optimize-inline-sole-call-staged-args-refusal-ok?)
     "an sret callee stays out: the clone's staged path is fail-closed at this tier"))
 
 (test
   inline-sole-call-two-reference-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-two-reference-refusal-ok?)
+    (ot.compiler-optimize-inline-sole-call-two-reference-refusal-ok?)
     "two straight-line sites keep the body at both: the sole-call tier moves, it never copies"))
 
 (test
   inline-sole-call-address-taken-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-address-taken-refusal-ok?)
+    (ot.compiler-optimize-inline-sole-call-address-taken-refusal-ok?)
     "an address-taken callee is refused at one call site: the address is a second way in"))
 
 (test
   inline-sole-call-self-recursive-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-self-recursive-refusal-ok?)
+    (ot.compiler-optimize-inline-sole-call-self-recursive-refusal-ok?)
     "a self-calling callee counts two references and never reaches the sole-call tier"))
 
 (test
   inline-sole-call-extern-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-extern-refusal-ok?)
+    (ot.compiler-optimize-inline-sole-call-extern-refusal-ok?)
     "a callee with no body in the function sequence -- an extern -- keeps its call"))
 
 (test
   inline-sole-call-cascade-depth
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-sole-call-cascade-depth-code)
+    (ot.compiler-optimize-inline-sole-call-cascade-depth-code)
     0
     "A's only caller B absorbed into C in one pass, with the merged body's pred renames well formed"))
 
 (test
   inline-single-site-absorb-keeps-block-fuel
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-absorb-keeps-block-fuel-ok?)
+    (ot.compiler-optimize-inline-single-site-absorb-keeps-block-fuel-ok?)
     "a moved body does not spend the shared growth budget the cost model draws on"))
 
 (test
   inline-single-site-two-reference-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-two-reference-refusal-ok?)
+    (ot.compiler-optimize-inline-single-site-two-reference-refusal-ok?)
     "two cold sites keep the body at both: this band moves, it never copies"))
 
 (test
   inline-single-site-self-recursive-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-self-recursive-refusal-ok?)
+    (ot.compiler-optimize-inline-single-site-self-recursive-refusal-ok?)
     "a self-calling callee counts two references and is refused"))
 
 (test
   inline-single-site-call-bearing-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-call-bearing-refusal-ok?)
+    (ot.compiler-optimize-inline-single-site-call-bearing-refusal-ok?)
     "a wide single-site callee that calls out stays out of line: the band cannot price its callee's calls"))
 
 (test
   inline-single-site-loop-site-call-bearing-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-loop-site-call-bearing-absorb-ok?)
+    (ot.compiler-optimize-inline-single-site-loop-site-call-bearing-absorb-ok?)
     "the same call-carrying callee absorbs at an in-loop site: its calls already ran per iteration"))
 
 (test
   inline-single-site-cascade-site
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-cascade-site-ok?)
+    (ot.compiler-optimize-inline-single-site-cascade-site-ok?)
     "the cascade clause refuses at a straight-line site and comes off at an in-loop one"))
 
 (test
   inline-single-site-address-taken-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-address-taken-refusal-ok?)
+    (ot.compiler-optimize-inline-single-site-address-taken-refusal-ok?)
     "an address-taken callee is refused even at one call site"))
 
 (test
   inline-single-site-cascade
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-cascade-depth-code)
+    (ot.compiler-optimize-inline-single-site-cascade-depth-code)
     0
     "a three-deep single-site chain collapses into one function in a single pass"))
 
 (test
   inline-dup-two-site
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-dup-two-site-ok?)
+    (ot.compiler-optimize-inline-dup-two-site-ok?)
     "a two-reference call-free leaf is duplicated into both in-loop sites"))
 
 (test
   inline-dup-cascade-per-caller
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-dup-cascade-per-caller-ok?)
+    (ot.compiler-optimize-inline-dup-cascade-per-caller-ok?)
     "the cascade clause is asked per caller: the same duplicable leaf is refused at one site and admitted at the other"))
 
 (test
   inline-dup-call-bearing-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-dup-call-bearing-refusal-ok?)
+    (ot.compiler-optimize-inline-dup-call-bearing-refusal-ok?)
     "a two-reference leaf carrying a call stays out of line at both sites"))
 
 (test
   inline-hot-loop-leaf-three-site
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-three-site-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-three-site-ok?)
     "a call-free cyclic leaf past the duplication ceiling is copied into every in-loop site"))
 
 (test
   inline-hot-loop-leaf-call-bearing-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-call-bearing-refusal-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-call-bearing-refusal-ok?)
     "a multi-reference loop leaf carrying a call stays out of line at every site"))
 
 (test
   inline-hot-loop-leaf-too-big-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-too-big-refusal-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-too-big-refusal-ok?)
     "a multi-reference loop leaf one instruction past the band stays out of line"))
 
 (test
   inline-hot-loop-leaf-in-loop-small-caller
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-in-loop-small-caller-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-in-loop-small-caller-ok?)
     "a big-tier loop leaf is admitted at an in-loop site when the caller is small enough"))
 
 (test
   inline-hot-loop-leaf-in-loop-big-caller-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-in-loop-big-caller-refusal-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-in-loop-big-caller-refusal-ok?)
     "the same leaf at in-loop sites of callers past the size cap stays out of line"))
 
 (test
   inline-hot-loop-leaf-loop-free-site
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-loop-free-site-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-loop-free-site-ok?)
     "a loop-free caller takes the loop leaf at a straight-line site: no caller loop is there to tax"))
 
 (test
   inline-hot-loop-leaf-recursive-caller-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?)
     "the same leaf at the same sites of SELF-RECURSIVE callers is taken at every site: the tailrec rewrite runs before the inliner, so the caller's loop is there and the in-loop tier admits the leaf into it"))
 
 (test
   inline-recursive-caller-loop-free
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-recursive-caller-loop-free-ok?)
+    (ot.compiler-optimize-inline-recursive-caller-loop-free-ok?)
     "the loop-free clause separates a straight-line caller, a self-tail-recursive one and a looping one, and reports each as the band line's caller-rec field"))
 
 (test
   inline-hot-loop-leaf-cold-site-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-cold-site-refusal-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-cold-site-refusal-ok?)
     "a call in a looping caller's exit block stays out of line: neither repayment clause fires"))
 
 (test
   inline-hot-loop-leaf-budget-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-budget-refusal-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-budget-refusal-ok?)
     "five copies fit the per-caller block fuel; the sixth site keeps its call"))
 
 (test
   inline-hot-loop-leaf-single-reference
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-single-reference-ok?)
     "a one-reference big-tier loop leaf is taken at its in-loop site: the band starts at one reference, not three"))
 
 (test
   inline-hot-loop-leaf-single-reference-too-big-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-too-big-refusal-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-single-reference-too-big-refusal-ok?)
     "the size ceiling still binds at one reference: a leaf one instruction past the band keeps its call"))
 
 (test
   inline-hot-loop-leaf-single-reference-call-bearing-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-call-bearing-refusal-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-single-reference-call-bearing-refusal-ok?)
     "the call-free pricing clause still binds at one reference: a big-tier leaf carrying a call keeps its boundary"))
 
 (test
   inline-shared-accessor-floor
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-floor-ok?)
+    (ot.compiler-optimize-inline-shared-accessor-floor-ok?)
     "an acyclic accessor at the reference floor is taken at every in-loop site; one reference short stays out of line"))
 
 (test
   inline-shared-accessor-call-free
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-call-free-ok?)
+    (ot.compiler-optimize-inline-shared-accessor-call-free-ok?)
     "a shared accessor carrying a call stays out of line at every site"))
 
 (test
   inline-shared-accessor-acyclic
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-acyclic-ok?)
+    (ot.compiler-optimize-inline-shared-accessor-acyclic-ok?)
     "a cyclic call-bearing body at the same shared sites stays out of line: both gates refuse it"))
 
 (test
   inline-shared-accessor-in-loop-site
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-in-loop-site-ok?)
+    (ot.compiler-optimize-inline-shared-accessor-in-loop-site-ok?)
     "the same accessor at straight-line sites stays out of line"))
 
 (test
   inline-shared-accessor-dominant-floor
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-dominant-floor-ok?)
+    (ot.compiler-optimize-inline-shared-accessor-dominant-floor-ok?)
     "an accessor at the dominant reference floor is taken at every straight-line site; one reference short keeps every call"))
 
 (test
   inline-shared-accessor-dominant-call-free
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-dominant-call-free-ok?)
+    (ot.compiler-optimize-inline-shared-accessor-dominant-call-free-ok?)
     "a call-bearing body at the dominant floor stays out of line at every straight-line site"))
 
 (test
   inline-accessor-depth-weight
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-weight-ok?)
+    (ot.compiler-optimize-inline-accessor-depth-weight-ok?)
     "two nested-loop sites weigh 128 and take the accessor; the same two sites one loop shallower weigh 16 and keep both calls"))
 
 (test
   inline-accessor-depth-oversize-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-oversize-refusal-ok?)
+    (ot.compiler-optimize-inline-accessor-depth-oversize-refusal-ok?)
     "a body past the accessor block ceiling stays out of line at the same nested-loop sites"))
 
 (test
   inline-accessor-depth-bounds-admission
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-bounds-admission-ok?)
+    (ot.compiler-optimize-inline-accessor-depth-bounds-admission-ok?)
     "a bounds-carrying body is taken at two nested-loop sites and kept behind its call one loop shallower: the weight decides, not the bounds check"))
 
 (test
   inline-depth-multiple-latches
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-depth-multiple-latches-ok?)
+    (ot.compiler-optimize-inline-depth-multiple-latches-ok?)
     "multiple backedges to one loop header contribute one depth level"))
 
 (test
   inline-branch-chain-site
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-branch-chain-site-ok?)
+    (ot.compiler-optimize-inline-branch-chain-site-ok?)
     "a bounds-free acyclic decision chain past the block cap is taken at both in-loop sites"))
 
 (test
   inline-branch-chain-merge-web
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-branch-chain-merge-web-ok?)
+    (ot.compiler-optimize-inline-branch-chain-merge-web-ok?)
     "the same block count with one working block stays out of line: the chain gate prices blocks, not shapes"))
 
 (test
   inline-vm-run-bounds-loop-span-positive
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-switch-span-case-code
-      "bench.tl::vm-run"
-      true
-      2)
+    (ot.opt-inline-switch-span-case-code "bench.tl::vm-run" true 2)
     15
     "span-aware inliner admits exact vm-run and preserves cloned spans"))
 
 (test
   inline-qs-partition-bounds-loop-span-positive
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-switch-span-case-code
-      "bench.tl::qs-partition"
-      true
-      2)
+    (ot.opt-inline-switch-span-case-code "bench.tl::qs-partition" true 2)
     15
     "the similarly shaped qs-partition loop is admitted on its shape now, not on a name, and its cloned spans survive"))
 
 (test
   inline-vm-run-bounds-loop-span-negative
   (test.assert-i64-eq
-    (compiler_optimize_tests.opt-inline-switch-span-case-code
-      "bench.tl::vm-run"
-      false
-      1)
+    (ot.opt-inline-switch-span-case-code "bench.tl::vm-run" false 1)
     15
     "below opt2 the multiblock inliner does not run: the call survives with its caller-side span intact"))
 
 (test
   inline-multiblock-switch-cost-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-multiblock-switch-cost-refusal-ok?)
+    (ot.compiler-optimize-inline-multiblock-switch-cost-refusal-ok?)
     "multi-site switch callee above the weighted cost threshold stays uninlined"))
 
 (cfg
@@ -5422,210 +4446,210 @@
   (test
     licm-checked-root-disjointness
     (test.assert-i64-eq
-      (compiler_optimize_tests.compiler-optimize-licm-checked-root-self-test)
+      (ot.compiler-optimize-licm-checked-root-self-test)
       42
       "LICM checked-reference root disjointness")))
 
 (test
   dead-store-overwrite
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-dead-store-self-test)
+    (ot.compiler-optimize-dead-store-self-test)
     42
     "dead-store overwrite"))
 
 (test
   bce-version-multiblock-quicksort-shape
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-self-test)
+    (ot.compiler-optimize-bce-version-mb-self-test)
     42
     "multi-block counted-loop bounds-check versioning"))
 
 (test
   bce-version-multiblock-switch-cloning
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-switch-self-test)
+    (ot.compiler-optimize-bce-version-mb-switch-self-test)
     42
     "multi-block versioning remaps total-switch case and trap edges"))
 
 (test
   bce-version-multiblock-second-exit
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-self-test)
+    (ot.compiler-optimize-bce-version-mb-second-exit-self-test)
     42
     "multi-block versioning admits a second exiting branch on the guard chain"))
 
 (test
   bce-version-multiblock-second-exit-boundaries
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
+    (ot.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
     42
     "guard-chain admission keeps chain checks and refuses diamonds and unproven far uses"))
 
 (test
   bce-version-multiblock-far-phi-input
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-far-phi-input-self-test)
+    (ot.compiler-optimize-bce-version-mb-far-phi-input-self-test)
     42
     "a phi input out of a block the wire point dominates reads the merge phi"))
 
 (test
   pure-call-dedupe
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-pure-call-dedupe-self-test)
+    (ot.compiler-optimize-pure-call-dedupe-self-test)
     42
     "a repeated write-free direct call along single-predecessor blocks is a copy"))
 
 (test
   bce-version-multiblock-merged-body
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-self-test)
+    (ot.compiler-optimize-bce-version-mb-merged-body-self-test)
     42
     "multi-block versioning admits an absorbed body's exit join and clones it"))
 
 (test
   bce-version-multiblock-merged-body-boundaries
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-refusal-self-test)
+    (ot.compiler-optimize-bce-version-mb-merged-body-refusal-self-test)
     42
     "exit-join admission refuses loop-edge joins, checked joins and outside arms"))
 
 (test
   bce-version-cross-array-fusion
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-fuse-self-test)
+    (ot.compiler-optimize-bce-fuse-self-test)
     42
     "cross-array fusion removes dominated checks, covered stores included"))
 
 (test
   bce-version-multiblock-rejections
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
+    (ot.compiler-optimize-bce-version-mb-negative-self-test)
     42
     "multi-block versioning rejections"))
 
 (test
   bce-version-guard-dominated-fold
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-fold-self-test)
+    (ot.compiler-optimize-bce-version-fold-self-test)
     42
     "versioning guard facts fold dominated compares in the fast clone"))
 
 (test
   bce-version-guard-dominated-fold-refusals
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-fold-refusal-self-test)
+    (ot.compiler-optimize-bce-version-fold-refusal-self-test)
     42
     "guard-dominated compare folding refuses everything past its three rules"))
 
 (test
   bce-version-multiblock-loop-nest
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-nest-self-test)
+    (ot.compiler-optimize-bce-version-mb-nest-self-test)
     42
     "multi-block versioning admits loop nests under the nest budget"))
 
 (test
   bce-version-rejection-retires-one-loop
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-reject-skip-self-test)
+    (ot.compiler-optimize-bce-version-reject-skip-self-test)
     42
     "a refused versioning retires that loop, not the function's other loops"))
 
 (test
   bce-version-multiblock-pipeline
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-pipeline-self-test)
+    (ot.compiler-optimize-bce-version-mb-pipeline-self-test)
     42
     "multi-block versioning full pipeline"))
 
 (test
   unroll-store-free-simd-body
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-unroll-self-test)
+    (ot.compiler-optimize-unroll-self-test)
     42
     "16x unrolling remaps every admitted store-free SIMD instruction"))
 
 (test
   unroll-descending-shift-two-copies
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-unroll-descending-self-test)
+    (ot.compiler-optimize-unroll-descending-self-test)
     42
     "descending shift unrolls with a mirrored guard and program-order copies"))
 
 (test
   unroll-load-store-body-two-copies
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-unroll-load-store-self-test)
+    (ot.compiler-optimize-unroll-load-store-self-test)
     42
     "a load-and-store counted loop unrolls twice while a store-only body keeps sixteen"))
 
 (test
   unroll-versioned-multiblock-quicksort-shape
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-unroll-mb-self-test)
+    (ot.compiler-optimize-unroll-mb-self-test)
     42
     "2x unrolling of the check-free versioned conditional diamond"))
 
 (test
   bce-version-multiblock-partial
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-mb-partial-self-test)
+    (ot.compiler-optimize-bce-version-mb-partial-self-test)
     42
     "multi-block versioning keeps underivable checks in the fast clone"))
 
 (test
   bce-version-p5a-shifted-limits
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bce-version-p5a-self-test)
+    (ot.compiler-optimize-bce-version-p5a-self-test)
     42
     "shifted-limit compares, counter+K indices and the minimized guard version"))
 
 (test
   optimizer-debug-verifier-identity
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-debug-verifier-self-test)
+    (ot.compiler-optimize-debug-verifier-self-test)
     42
     "IR verifier failures include function, block, and instruction identity"))
 
 (test
   gep-use-splitting
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-gep-split-self-test)
+    (ot.compiler-optimize-gep-split-self-test)
     42
     "Gep use-splitting clones multi-use address Geps per memory use"))
 
 (test
   dce-pack-retirement
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-dce-pack-self-test)
+    (ot.compiler-optimize-dce-pack-self-test)
     42
     "Pipeline DCE retires a Pack whose extractions all folded"))
 
 (test
   cmp-sink-to-branch
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-cmp-sink-self-test)
+    (ot.compiler-optimize-cmp-sink-self-test)
     42
     "Sinking a loop-closing compare next to its branch"))
 
 (test
   load-sink-to-alu-consumer
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-load-sink-self-test)
+    (ot.compiler-optimize-load-sink-self-test)
     42
     "Sinking single-use gep;load pairs next to their consuming ALU ops"))
 
 (test
   cmp-dup-per-branch-copies
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-cmp-dup-self-test)
+    (ot.compiler-optimize-cmp-dup-self-test)
     42
     "Late compare duplication gives each branch its own fusable compare"))
 
 (test
   single-predecessor-successor-sink
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-successor-sink-self-test)
+    (ot.compiler-optimize-successor-sink-self-test)
     42
     "Successor sinking moves pure chains and rejects unsafe CFG/memory/trap cases"))
 
@@ -5660,82 +4684,363 @@
 (test
   bit-test-equality-chain
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bit-test-equality-self-test)
+    (ot.compiler-optimize-bit-test-equality-self-test)
     42
     "A six-way equality classifier chain becomes one windowed mask test"))
 
 (test
   bit-test-range-chain
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bit-test-range-self-test)
+    (ot.compiler-optimize-bit-test-range-self-test)
     42
     "Closed ranges and equalities share one mask over a subtracted base"))
 
 (test
   bit-test-refusals
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bit-test-refusal-self-test)
+    (ot.compiler-optimize-bit-test-refusal-self-test)
     42
     "Mixed values, impure links, wide windows, short chains and unsigned compares are refused"))
 
 (test
   bit-test-runtime-boundaries
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
+    (ot.compiler-optimize-bit-test-runtime-self-test)
     42
     "The source-level classifier preserves hits, gaps, window edges and out-of-window values"))
 
 (test
   dom-cmp-phi-carried-compare
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-dom-cmp-phi-carried-self-test)
+    (ot.compiler-optimize-dom-cmp-phi-carried-self-test)
     42
     "a rotated loop's header test folds when both joining edges decide it, and is refused when they disagree or one decides nothing"))
 
 (test
   ubound-narrowed-loop-test
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-ubound-self-test)
+    (ot.compiler-optimize-ubound-self-test)
     42
     "a multi-path advance loop drops its header check for one unsigned test against min(bound, length), and the rewrite is idempotent"))
 
 (test
   ubound-refusals
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-ubound-refusal-self-test)
+    (ot.compiler-optimize-ubound-refusal-self-test)
     42
     "a missing entry guard, an opaque length, an instruction ahead of the check, a second reader of the loop compare and a negative seed are refused"))
 
 (test
   bounds-group-coalescing
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bounds-group-self-test)
+    (ot.compiler-optimize-bounds-group-self-test)
     42
     "a parallel-array body drops one of its two checks for a single unsigned filter over the smaller length, with the originals kept on a slow arm"))
 
 (test
   bounds-group-offset-coalescing
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bounds-group-offset-self-test)
+    (ot.compiler-optimize-bounds-group-offset-self-test)
     42
     "i and i+1 against one length collapse to one saturating bound"))
 
 (test
   bounds-group-coalescing-refusals
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-bounds-group-refusal-self-test)
+    (ot.compiler-optimize-bounds-group-refusal-self-test)
     42
     "a body-defined length, a loopless block and an already-split block are refused"))
 
 (test
   ubound-tangled-phi-web
   (test.assert-i64-eq
-    (compiler_optimize_tests.compiler-optimize-ubound-tangled-self-test)
+    (ot.compiler-optimize-ubound-tangled-self-test)
     42
     "mutually dependent header phis and a three-edge phi terminate the search and are refused"))
 
 (test
   inline-multiblock-bounds-clone-keeps-callee-location
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-spans-inline-multiblock-bounds-located-ok?)
+    (ot.compiler-optimize-spans-inline-multiblock-bounds-located-ok?)
     "a BoundsCheck the multiblock with-spans path copies out of a callee keeps the CALLEE's located span -- path id included -- under the clone's freshened ok-label, in an ordinary build as well as under -g, so an abort raised inside an inlined body still names the load in the callee"))
+
+;; A module self-test returns 42 when every check it makes passes; the test
+;; name says which one failed.
+(define (smoke-require-42 [status : i64]) : unit
+  (test.assert-i64-eq status 42 "self-test status"))
+
+(test
+  runtime-call-identity
+  (smoke-require-42 (ot.compiler-optimize-runtime-call-identity-self-test)))
+
+(test
+  thread-facts-merge
+  (smoke-require-42 (ot.compiler-optimize-thread-facts-merge-self-test)))
+
+(test
+  named-failure-message-renderer
+  (test.assert-true
+    (smoke-optimizer-named-failure-message-ok?)
+    "named failure message renderer"))
+
+(test self-test (smoke-require-42 (ot.compiler-optimize-self-test)))
+
+(test
+  dense-storage
+  (smoke-require-42 (ot.compiler-optimize-dense-storage-self-test)))
+
+(test noop-int-cast-mov (smoke-require-42 (smoke-noop-int-cast-mov-self-test)))
+
+(test strength (smoke-require-42 (ot.compiler-optimize-strength-self-test)))
+
+(test dce (smoke-require-42 (ot.compiler-optimize-dce-self-test)))
+
+(test dce-mem (smoke-require-42 (ot.compiler-optimize-dce-mem-self-test)))
+
+(test
+  divrem-safety
+  (smoke-require-42 (ot.compiler-optimize-divrem-safety-self-test)))
+
+(test bit-length (smoke-require-42 (ot.compiler-optimize-bit-length-self-test)))
+
+(test
+  const-divisor
+  (smoke-require-42 (ot.compiler-optimize-const-divisor-self-test)))
+
+(test copy (smoke-require-42 (ot.compiler-optimize-copy-self-test)))
+
+(test bounds (smoke-require-42 (ot.compiler-optimize-bounds-self-test)))
+
+(test bounds-dom (smoke-require-42 (ot.compiler-optimize-bounds-dom-self-test)))
+
+(test
+  bounds-dom-slice-word
+  (smoke-require-42 (ot.compiler-optimize-bounds-dom-slice-word-self-test)))
+
+(test
+  range-merge
+  (smoke-require-42 (ot.compiler-optimize-range-merge-self-test)))
+
+(test
+  nonneg-globals
+  (smoke-require-42 (ot.compiler-optimize-nonneg-globals-self-test)))
+
+(test
+  dom-cmp-rule-a
+  (smoke-require-42 (ot.compiler-optimize-dom-cmp-rule-a-self-test)))
+
+(test
+  dom-cmp-rule-a-cfg
+  (smoke-require-42 (ot.compiler-optimize-dom-cmp-rule-a-cfg-self-test)))
+
+(test
+  dom-cmp-branch-fold
+  (smoke-require-42 (ot.compiler-optimize-dom-cmp-branch-fold-self-test)))
+
+(test object-bounds (smoke-require-42 (smoke-object-bounds-self-test)))
+
+(test range-bce (smoke-require-42 (smoke-range-bce-self-test)))
+
+(test ssa-iv-bce (smoke-require-42 (smoke-ssa-iv-bce-self-test)))
+
+(test
+  rotated-literal-bce
+  (smoke-require-42 (smoke-rotated-literal-bce-self-test)))
+
+(test
+  nonlength-guard-bce
+  (smoke-require-42 (smoke-nonlength-guard-bce-self-test)))
+
+(test additive-bce (smoke-require-42 (smoke-additive-bce-self-test)))
+
+(test sccp (smoke-require-42 (ot.compiler-optimize-sccp-self-test)))
+
+(test
+  addr-taken-forwarding
+  (smoke-require-42 (ot.compiler-optimize-addr-taken-forwarding-self-test)))
+
+(test
+  global-value-number
+  (smoke-require-42 (ot.compiler-optimize-global-value-number-self-test)))
+
+(test
+  load-gvn-substitution
+  (smoke-require-42 (ot.compiler-optimize-load-gvn-substitution-self-test)))
+
+(test
+  wide-literal-operand
+  (smoke-require-42 (ot.compiler-optimize-wide-literal-operand-self-test)))
+
+(test cfg (smoke-require-42 (ot.compiler-optimize-cfg-self-test)))
+
+(test switch-form (smoke-require-42 (compiler-optimize-switch-form-self-test)))
+
+(test
+  natural-loop
+  (smoke-require-42 (ot.compiler-optimize-natural-loop-self-test)))
+
+(test
+  preheader-synthesis
+  (smoke-require-42 (ot.compiler-optimize-preheader-synthesis-self-test)))
+
+(test
+  bce-shape-clause-order
+  (smoke-require-42 (ot.compiler-optimize-bce-shape-clause-order-self-test)))
+
+(test
+  bce-masked-capacity
+  (smoke-require-42 (ot.compiler-optimize-bce-masked-capacity-self-test)))
+
+(test
+  bce-guard-price
+  (smoke-require-42 (ot.compiler-optimize-bce-guard-price-self-test)))
+
+(test
+  loop-rotation
+  (smoke-require-42 (ot.compiler-optimize-loop-rotation-self-test)))
+
+(test rotate-ssa (smoke-require-42 (ot.compiler-optimize-rotate-ssa-self-test)))
+
+(test licm (smoke-require-42 (ot.compiler-optimize-licm-self-test)))
+
+(test
+  licm-profitability
+  (smoke-require-42 (ot.compiler-optimize-licm-profitability-self-test)))
+
+(test licm-simd (smoke-require-42 (ot.compiler-optimize-licm-simd-self-test)))
+
+(test licm-word (smoke-require-42 (ot.compiler-optimize-licm-word-self-test)))
+
+(test
+  licm-local-slot
+  (smoke-require-42 (ot.compiler-optimize-licm-local-slot-self-test)))
+
+(test
+  licm-unswitch
+  (smoke-require-42 (ot.compiler-optimize-licm-unswitch-self-test)))
+
+(test
+  licm-unswitch-chain
+  (smoke-require-42 (ot.compiler-optimize-licm-unswitch-chain-self-test)))
+
+(test
+  licm-unswitch-general
+  (smoke-require-42 (ot.compiler-optimize-licm-unswitch-general-self-test)))
+
+(test
+  licm-predicate-hoist
+  (smoke-require-42 (ot.compiler-optimize-licm-predicate-hoist-self-test)))
+
+(test
+  licm-checked-root
+  (smoke-require-42 (ot.compiler-optimize-licm-checked-root-self-test)))
+
+(test
+  call-memory-frame-roots
+  (smoke-require-42 (ot.compiler-optimize-call-memory-frame-roots-self-test)))
+
+(test
+  licm-frame-call
+  (smoke-require-42 (ot.compiler-optimize-licm-frame-call-self-test)))
+
+(test induction (smoke-require-42 (ot.compiler-optimize-induction-self-test)))
+
+(test
+  induction-add-inv
+  (smoke-require-42 (ot.compiler-optimize-induction-add-inv-self-test)))
+
+(test lftr (smoke-require-42 (ot.compiler-optimize-lftr-self-test)))
+
+(test lftr-sum (smoke-require-42 (ot.compiler-optimize-lftr-sum-self-test)))
+
+(test
+  inline-converted-leaf
+  (smoke-require-42 (ot.compiler-optimize-inline-converted-leaf-self-test)))
+
+(test
+  affine-env-reference-2
+  (smoke-require-42 (ot.compiler-optimize-affine-env-reference-self-test)))
+
+(test
+  affine-env-boundary
+  (smoke-require-42 (ot.compiler-optimize-affine-env-boundary-self-test)))
+
+(test
+  affine-storage-integration-2
+  (smoke-require-42 (ot.compiler-optimize-affine-storage-integration-self-test)))
+
+(test affine (smoke-require-42 (ot.compiler-optimize-affine-self-test)))
+
+(test
+  affine-pipeline
+  (smoke-require-42 (ot.compiler-optimize-affine-pipeline-self-test)))
+
+(test
+  ssa-preexisting-phi
+  (smoke-require-42 (ot.compiler-optimize-ssa-preexisting-phi-self-test)))
+
+(test
+  licm-multi-exit
+  (smoke-require-42 (ot.compiler-optimize-licm-multi-exit-self-test)))
+
+(test
+  licm-element-bound
+  (smoke-require-42 (ot.compiler-optimize-licm-element-bound-self-test)))
+
+(test
+  bce-version
+  (smoke-require-42 (ot.compiler-optimize-bce-version-self-test)))
+
+(test
+  bce-version-pipeline
+  (smoke-require-42 (ot.compiler-optimize-bce-version-pipeline-self-test)))
+
+(test ssa (smoke-require-42 (ot.compiler-optimize-ssa-self-test)))
+
+(test
+  ssa-fixed-handle
+  (smoke-require-42 (ot.compiler-optimize-ssa-fixed-handle-self-test)))
+
+(test level (smoke-require-42 (ot.compiler-optimize-level-self-test)))
+
+(test callgraph (smoke-require-42 (ot.compiler-optimize-callgraph-self-test)))
+
+(test scc (smoke-require-42 (ot.compiler-optimize-scc-self-test)))
+
+(test inline (smoke-require-42 (ot.compiler-optimize-inline-self-test)))
+
+(test
+  fixed-point
+  (smoke-require-42 (ot.compiler-optimize-fixed-point-self-test)))
+
+(test tailrec (smoke-require-42 (ot.compiler-optimize-tailrec-self-test)))
+
+(test global-dce (smoke-require-42 (ot.compiler-optimize-global-dce-self-test)))
+
+(test
+  aggregate-candidate
+  (smoke-require-42 (ot.compiler-optimize-aggregate-candidate-self-test)))
+
+(test
+  aggregate-promote
+  (smoke-require-42 (ot.compiler-optimize-aggregate-promote-self-test)))
+
+(test
+  aggregate-split
+  (smoke-require-42 (ot.compiler-optimize-aggregate-split-self-test)))
+
+(test spans (smoke-require-42 (ot.compiler-optimize-spans-self-test)))
+
+(test gvn (smoke-require-42 (ot.compiler-optimize-gvn-self-test)))
+
+(test
+  heavy-pass-large-gvn
+  (smoke-require-42 (smoke-heavy-pass-large-gvn-self-test)))
+
+(test
+  scratch-region
+  (smoke-require-42 (ot.compiler-optimize-scratch-region-self-test)))
+
+(test
+  function-index-leaf-starts
+  (smoke-require-42 (smoke-function-index-leaf-starts-self-test)))

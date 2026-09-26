@@ -318,8 +318,7 @@
 
 (define (tc-body-early-exit-suppress-push! [state : tc_core.TcBodyState]) : unit
   (let
-    [data : tc_core.TcBodyStateData
-      (tc_core.tc-body-state-data-value (tc_core.tc-global-shared-view state))]
+    [data : tc_core.TcBodyStateData (tc_core.tc-body-state-data-value state)]
     (if data.early-exit-facts-collecting
       (begin
         (set!
@@ -330,8 +329,7 @@
 
 (define (tc-body-early-exit-suppress-pop! [state : tc_core.TcBodyState]) : unit
   (let
-    [data : tc_core.TcBodyStateData
-      (tc_core.tc-body-state-data-value (tc_core.tc-global-shared-view state))]
+    [data : tc_core.TcBodyStateData (tc_core.tc-body-state-data-value state)]
     (if data.early-exit-facts-collecting
       (begin
         (set!
@@ -373,181 +371,84 @@
     [b : tc_core.TcBodyState (tc-body-state-new)]
     [reused : tc_core.TcBodyState (tc-body-state-new)]
     (begin
-      (tc_core.tc-body-early-exit-facts-start-with-limit!
-        (tc_core.tc-global-shared-view a)
-        128)
-      (tc_core.tc-body-early-exit-facts-start-with-limit!
-        (tc_core.tc-global-shared-view b)
-        32)
-      (tc_core.tc-body-early-exit-function-start!
-        (tc_core.tc-global-shared-view a))
-      (tc_core.tc-body-type-facts-start-recording!
-        (tc_core.tc-global-shared-view a))
-      (tc_core.tc-body-type-fact-record!
-        (tc_core.tc-global-shared-view a)
-        70
-        (ast.AstType.I64))
-      (tc_core.tc-body-early-exit-function-start!
-        (tc_core.tc-global-shared-view b))
-      (tc_core.tc-body-type-facts-start-recording!
-        (tc_core.tc-global-shared-view b))
-      (tc_core.tc-body-type-fact-record!
-        (tc_core.tc-global-shared-view b)
-        7
-        (ast.AstType.Bool))
-      (tc_core.tc-body-type-facts-start-consuming!
-        (tc_core.tc-global-shared-view a))
+      (tc_core.tc-body-early-exit-facts-start-with-limit! a 128)
+      (tc_core.tc-body-early-exit-facts-start-with-limit! b 32)
+      (tc_core.tc-body-early-exit-function-start! a)
+      (tc_core.tc-body-type-facts-start-recording! a)
+      (tc_core.tc-body-type-fact-record! a 70 (ast.AstType.I64))
+      (tc_core.tc-body-early-exit-function-start! b)
+      (tc_core.tc-body-type-facts-start-recording! b)
+      (tc_core.tc-body-type-fact-record! b 7 (ast.AstType.Bool))
+      (tc_core.tc-body-type-facts-start-consuming! a)
       (let
-        [a-hit : bool
-          (tc-body-state-type-fact-i64-hit?
-            (tc_core.tc-global-shared-view a)
-            70)]
+        [a-hit : bool (tc-body-state-type-fact-i64-hit? a 70)]
         [a-cross-miss : bool
-          (match (tc_core.tc-body-type-fact-lookup
-            (tc_core.tc-global-shared-view a)
-            7)
+          (match (tc_core.tc-body-type-fact-lookup a 7)
             [(tc_core.TcBodyTypeFact.Miss) true]
             [_ false])]
         (begin
-          (tc_core.tc-body-type-facts-start-consuming!
-            (tc_core.tc-global-shared-view b))
+          (tc_core.tc-body-type-facts-start-consuming! b)
           (let
-            [b-hit : bool
-              (tc-body-state-type-fact-bool-hit?
-                (tc_core.tc-global-shared-view b)
-                7)]
+            [b-hit : bool (tc-body-state-type-fact-bool-hit? b 7)]
             [b-cross-miss : bool
-              (match (tc_core.tc-body-type-fact-lookup
-                (tc_core.tc-global-shared-view b)
-                70)
+              (match (tc_core.tc-body-type-fact-lookup b 70)
                 [(tc_core.TcBodyTypeFact.Miss) true]
                 [_ false])]
             (begin
-              (tc_core.tc-body-early-exit-note!
-                (tc_core.tc-global-shared-view a))
-              (tc_core.tc-body-early-exit-function-finish!
-                (tc_core.tc-global-shared-view a)
-                70)
-              (tc-body-early-exit-suppress-push!
-                (tc_core.tc-global-shared-view b))
-              (tc_core.tc-body-early-exit-note!
-                (tc_core.tc-global-shared-view b))
-              (tc-body-early-exit-suppress-pop!
-                (tc_core.tc-global-shared-view b))
-              (tc_core.tc-body-early-exit-function-finish!
-                (tc_core.tc-global-shared-view b)
-                7)
-              (tc_core.tc-body-type-facts-clear!
-                (tc_core.tc-global-shared-view a))
-              (tc_core.tc-body-type-facts-clear!
-                (tc_core.tc-global-shared-view b))
-              (tc_core.tc-body-early-exit-facts-finish!
-                (tc_core.tc-global-shared-view a))
-              (tc_core.tc-body-early-exit-facts-finish!
-                (tc_core.tc-global-shared-view b))
-              (tc_core.tc-body-early-exit-facts-start-with-limit!
-                (tc_core.tc-global-shared-view reused)
-                64)
-              (tc_core.tc-body-early-exit-function-start!
-                (tc_core.tc-global-shared-view reused))
-              (tc_core.tc-body-type-facts-start-recording!
-                (tc_core.tc-global-shared-view reused))
-              (tc_core.tc-body-type-fact-record!
-                (tc_core.tc-global-shared-view reused)
-                31
-                (ast.AstType.I64))
-              (tc_core.tc-body-type-facts-start-consuming!
-                (tc_core.tc-global-shared-view reused))
+              (tc_core.tc-body-early-exit-note! a)
+              (tc_core.tc-body-early-exit-function-finish! a 70)
+              (tc-body-early-exit-suppress-push! b)
+              (tc_core.tc-body-early-exit-note! b)
+              (tc-body-early-exit-suppress-pop! b)
+              (tc_core.tc-body-early-exit-function-finish! b 7)
+              (tc_core.tc-body-type-facts-clear! a)
+              (tc_core.tc-body-type-facts-clear! b)
+              (tc_core.tc-body-early-exit-facts-finish! a)
+              (tc_core.tc-body-early-exit-facts-finish! b)
+              (tc_core.tc-body-early-exit-facts-start-with-limit! reused 64)
+              (tc_core.tc-body-early-exit-function-start! reused)
+              (tc_core.tc-body-type-facts-start-recording! reused)
+              (tc_core.tc-body-type-fact-record! reused 31 (ast.AstType.I64))
+              (tc_core.tc-body-type-facts-start-consuming! reused)
               (match (tc_core.ResultTcUnit.Err "controlled body diagnostic")
                 [(tc_core.ResultTcUnit.Ok) unit]
                 [(tc_core.ResultTcUnit.Err _)
                   (begin
-                    (tc_core.tc-body-type-facts-clear!
-                      (tc_core.tc-global-shared-view reused))
-                    (tc_core.tc-body-early-exit-facts-abort!
-                      (tc_core.tc-global-shared-view reused)))])
-              (tc_core.tc-body-early-exit-facts-start-with-limit!
-                (tc_core.tc-global-shared-view reused)
-                16)
-              (tc_core.tc-body-early-exit-function-start!
-                (tc_core.tc-global-shared-view reused))
-              (tc_core.tc-body-type-facts-start-recording!
-                (tc_core.tc-global-shared-view reused))
-              (tc_core.tc-body-type-fact-record!
-                (tc_core.tc-global-shared-view reused)
-                5
-                (ast.AstType.Bool))
-              (tc_core.tc-body-type-facts-start-consuming!
-                (tc_core.tc-global-shared-view reused))
+                    (tc_core.tc-body-type-facts-clear! reused)
+                    (tc_core.tc-body-early-exit-facts-abort! reused))])
+              (tc_core.tc-body-early-exit-facts-start-with-limit! reused 16)
+              (tc_core.tc-body-early-exit-function-start! reused)
+              (tc_core.tc-body-type-facts-start-recording! reused)
+              (tc_core.tc-body-type-fact-record! reused 5 (ast.AstType.Bool))
+              (tc_core.tc-body-type-facts-start-consuming! reused)
               (let
-                [reuse-hit : bool
-                  (tc-body-state-type-fact-bool-hit?
-                    (tc_core.tc-global-shared-view reused)
-                    5)]
+                [reuse-hit : bool (tc-body-state-type-fact-bool-hit? reused 5)]
                 (begin
-                  (tc-body-early-exit-suppress-push!
-                    (tc_core.tc-global-shared-view reused))
-                  (tc-body-early-exit-suppress-push!
-                    (tc_core.tc-global-shared-view reused))
-                  (tc_core.tc-body-early-exit-note!
-                    (tc_core.tc-global-shared-view reused))
-                  (tc-body-early-exit-suppress-pop!
-                    (tc_core.tc-global-shared-view reused))
-                  (tc_core.tc-body-early-exit-note!
-                    (tc_core.tc-global-shared-view reused))
-                  (tc-body-early-exit-suppress-pop!
-                    (tc_core.tc-global-shared-view reused))
-                  (tc_core.tc-body-early-exit-note!
-                    (tc_core.tc-global-shared-view reused))
-                  (tc_core.tc-body-early-exit-function-finish!
-                    (tc_core.tc-global-shared-view reused)
-                    5)
-                  (tc_core.tc-body-type-facts-clear!
-                    (tc_core.tc-global-shared-view reused))
-                  (tc_core.tc-body-early-exit-facts-finish!
-                    (tc_core.tc-global-shared-view reused))
+                  (tc-body-early-exit-suppress-push! reused)
+                  (tc-body-early-exit-suppress-push! reused)
+                  (tc_core.tc-body-early-exit-note! reused)
+                  (tc-body-early-exit-suppress-pop! reused)
+                  (tc_core.tc-body-early-exit-note! reused)
+                  (tc-body-early-exit-suppress-pop! reused)
+                  (tc_core.tc-body-early-exit-note! reused)
+                  (tc_core.tc-body-early-exit-function-finish! reused 5)
+                  (tc_core.tc-body-type-facts-clear! reused)
+                  (tc_core.tc-body-early-exit-facts-finish! reused)
                   (and
                     a-hit
                     a-cross-miss
                     b-hit
                     b-cross-miss
                     reuse-hit
-                    (tc-body-state-early-exit-known?
-                      (tc_core.tc-global-shared-view a)
-                      70
-                      true)
-                    (tc-body-state-early-exit-known?
-                      (tc_core.tc-global-shared-view b)
-                      7
-                      false)
-                    (tc-body-state-early-exit-known?
-                      (tc_core.tc-global-shared-view reused)
-                      5
-                      true)
-                    (=
-                      (tc-body-state-storage-arena-value
-                        (tc_core.tc-global-shared-view a))
-                      0)
-                    (=
-                      (tc-body-state-storage-arena-value
-                        (tc_core.tc-global-shared-view b))
-                      0)
-                    (=
-                      (tc-body-state-storage-arena-value
-                        (tc_core.tc-global-shared-view reused))
-                      0)
-                    (=
-                      (tc-body-state-type-fact-capacity
-                        (tc_core.tc-global-shared-view a))
-                      1)
-                    (=
-                      (tc-body-state-type-fact-capacity
-                        (tc_core.tc-global-shared-view b))
-                      1)
-                    (=
-                      (tc-body-state-type-fact-capacity
-                        (tc_core.tc-global-shared-view reused))
-                      1)
+                    (tc-body-state-early-exit-known? a 70 true)
+                    (tc-body-state-early-exit-known? b 7 false)
+                    (tc-body-state-early-exit-known? reused 5 true)
+                    (= (tc-body-state-storage-arena-value a) 0)
+                    (= (tc-body-state-storage-arena-value b) 0)
+                    (= (tc-body-state-storage-arena-value reused) 0)
+                    (= (tc-body-state-type-fact-capacity a) 1)
+                    (= (tc-body-state-type-fact-capacity b) 1)
+                    (= (tc-body-state-type-fact-capacity reused) 1)
                     (= (tc-body-state-early-exit-source-limit a) 128)
                     (= (tc-body-state-early-exit-source-limit b) 32)
                     (= (tc-body-state-early-exit-source-limit reused) 16)))))))))))
@@ -5315,26 +5216,13 @@
       ;; Seed three valid keys with distinct types that inference cannot
       ;; produce for these literals, so a hit is distinguishable from a re-walk
       ;; and the decoy-selected key 0 from the owning keys 1 and 2.
-      (tc_core.tc-body-type-fact-storage-start!
-        (tc_core.tc-global-shared-view state)
-        8)
-      (tc_core.tc-body-type-facts-start-recording!
-        (tc_core.tc-global-shared-view state))
-      (tc_core.tc-body-type-fact-record!
-        (tc_core.tc-global-shared-view state)
-        0
-        (ast.AstType.Bool))
-      (tc_core.tc-body-type-fact-record!
-        (tc_core.tc-global-shared-view state)
-        1
-        (ast.AstType.I64))
-      (tc_core.tc-body-type-fact-record!
-        (tc_core.tc-global-shared-view state)
-        2
-        (ast.AstType.F64))
+      (tc_core.tc-body-type-fact-storage-start! state 8)
+      (tc_core.tc-body-type-facts-start-recording! state)
+      (tc_core.tc-body-type-fact-record! state 0 (ast.AstType.Bool))
+      (tc_core.tc-body-type-fact-record! state 1 (ast.AstType.I64))
+      (tc_core.tc-body-type-fact-record! state 2 (ast.AstType.F64))
       (set! recording-ok? (tc-call-arg-fact-test-owning-facts? ctx-a env))
-      (tc_core.tc-body-type-facts-start-consuming!
-        (tc_core.tc-global-shared-view state))
+      (tc_core.tc-body-type-facts-start-consuming! state)
       ;; Installing the owner, then the decoy again, must not move the facts an
       ;; unchanged context and argument select.
       (ast.ast-node-pool-context-install! pools-a)
@@ -5346,7 +5234,7 @@
       ;; A cleared table misses: the argument is re-inferred from the owner's
       ;; Int 17 rather than answered by a stale seeded fact, and nothing is
       ;; recorded outside the recording phase.
-      (tc_core.tc-body-type-facts-clear! (tc_core.tc-global-shared-view state))
+      (tc_core.tc-body-type-facts-clear! state)
       (set!
         cleared-ok?
         (and
@@ -5355,25 +5243,12 @@
             env
             (ast.AstExpr.MacroExpansion 2 0 0)
             (ast.AstType.I32))
-          (<
-            (tc_core.tc-body-type-fact-slot
-              (tc_core.tc-global-shared-view state)
-              0)
-            0)
-          (<
-            (tc_core.tc-body-type-fact-slot
-              (tc_core.tc-global-shared-view state)
-              1)
-            0)
-          (<
-            (tc_core.tc-body-type-fact-slot
-              (tc_core.tc-global-shared-view state)
-              2)
-            0)))
+          (< (tc_core.tc-body-type-fact-slot state 0) 0)
+          (< (tc_core.tc-body-type-fact-slot state 1) 0)
+          (< (tc_core.tc-body-type-fact-slot state 2) 0)))
       ;; A restarted recording stores the re-inferred type under the owning
       ;; key, never under the decoy-selected one, and then serves it as a hit.
-      (tc_core.tc-body-type-facts-start-recording!
-        (tc_core.tc-global-shared-view state))
+      (tc_core.tc-body-type-facts-start-recording! state)
       (set!
         restart-ok?
         (and
@@ -5382,19 +5257,9 @@
             env
             (ast.AstExpr.MacroExpansion 2 0 0)
             (ast.AstType.I32))
-          (>=
-            (tc_core.tc-body-type-fact-slot
-              (tc_core.tc-global-shared-view state)
-              1)
-            0)
-          (<
-            (tc_core.tc-body-type-fact-slot
-              (tc_core.tc-global-shared-view state)
-              0)
-            0)
-          (match (tc_core.tc-call-arg-fact-lookup
-            (tc_core.tc-global-shared-view state)
-            1)
+          (>= (tc_core.tc-body-type-fact-slot state 1) 0)
+          (< (tc_core.tc-body-type-fact-slot state 0) 0)
+          (match (tc_core.tc-call-arg-fact-lookup state 1)
             [(tc_core.TcBodyTypeFact.Hit ty)
               (tc_core.tc-type-eq ty (ast.AstType.I32))]
             [(tc_core.TcBodyTypeFact.Miss) false])))

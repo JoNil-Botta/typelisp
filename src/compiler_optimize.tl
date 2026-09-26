@@ -192,59 +192,6 @@
 (define (compiler-opt-debug-set-suppressed! [on : bool]) : unit
   (set! compiler-opt-debug-suppressed? on))
 
-;; Set while the measured (checked) inlining tier prices a body
-;; (opt-inline-checked-plan-cost-at). The final late sweep is left OUT of the
-;; priced prefix, and the reason is the tier's window rather than the sweep.
-;;
-;; That window is a two-sided confidence interval on a MODEL: it keeps a site
-;; only when the modelled saving lands between half and twice what a free
-;; inline could produce, because a modelled saving far above that bound is
-;; evidence the two sides stopped being measured in the same currency (see
-;; opt-inline-checked-verdict). Its constants were measured against bodies
-;; priced by the pipeline as it stood. The late sweep deflates the MERGED side
-;; specifically -- inlining a small predicate is exactly what mints the
-;; `phi of bool literals -> mov literal -> branch` chain the sweep folds away,
-;; and the un-inlined caller and the standalone callee have no such chain -- so
-;; running it inside the priced prefix widens one side of that interval and
-;; pushes calibrated accepts out through its upper bound. Measured on
-;; intern_table: with the sweep outside the prefix, where this keeps it,
-;; `it-slice-eq?` into `it-intern-slice` prices at saving=171 against
-;; boundary=96 and keeps with a clear margin; running it inside moves the same
-;; site to saving=243/boundary=96, outside the window, and the row pays
-;; +31,754,258 Ir for the call boundary it then keeps.
-;;
-;; Re-calibrating that window is CB-2's business, not this sweep's. Keeping the
-;; sweep out of the priced prefix leaves every recorded verdict exactly where
-;; the corpus measured it and makes the sweep a pure codegen change, which is
-;; what it is.
-;;
-;; Scoped as a DEPTH, not as a bool. The tier prices site after site, and a
-;; body it is pricing is itself run through the whole level-2 pipeline, so
-;; "suppressed" is a property of a nesting rather than of the process: a bool
-;; that an inner scope restored would un-suppress the REST of the outer priced
-;; prefix and put the sweep back inside the window this keeps it out of. The
-;; depth answers correctly for any nesting and still costs one compare at the
-;; slot. Enter and leave are balanced by their single caller
-;; (`opt-inline-checked-plan-cost-at`), and leave clamps at zero so a stray
-;; leave cannot suppress the pipeline's own sweep.
-(define compiler-opt-late-sweep-suppress-depth : i64
-  0)
-
-(define (compiler-opt-late-sweep-suppressed?) : bool
-  (> compiler-opt-late-sweep-suppress-depth 0))
-
-(define (compiler-opt-late-sweep-suppress-enter!) : unit
-  (set!
-    compiler-opt-late-sweep-suppress-depth
-    (+ compiler-opt-late-sweep-suppress-depth 1)))
-
-(define (compiler-opt-late-sweep-suppress-leave!) : unit
-  (set!
-    compiler-opt-late-sweep-suppress-depth
-    (if (> compiler-opt-late-sweep-suppress-depth 0)
-      (- compiler-opt-late-sweep-suppress-depth 1)
-      0)))
-
 (define (compiler-opt-debug-configure!
   [structural-session : cis.InternStructuralSessionHandle]
   [trace-passes : bool]
@@ -6936,32 +6883,14 @@
       true
       (opt-aggregate-split-any-accepted? plan (+ index 1)))))
 
-;; The measured (checked) inlining tier prices bodies through this pipeline and
+;; Not in the frozen priced pipeline (opt-live-only). The checked inlining tier
 ;; keeps a site only when the modelled saving lands between half and twice what
-;; a free inline could produce (see opt-inline-checked-verdict). Its constants
-;; were measured against bodies priced by the pipeline as it stood, and this
-;; pass deflates the MERGED side specifically: inlining is what brings a callee
-;; that stores an aggregate's words together with a caller that reads them, so
-;; the split only collapses on the inlined side and one side of that interval
-;; widens. Measured on sccp_lattice: with the split outside the priced prefix,
-;; where this keeps it, `sccp-join` into `sccp-state-bind` prices at saving=13
-;; against boundary=9 and keeps, exactly as the corpus recorded it; running it
-;; inside the prefix moves the same site to saving=84/boundary=9, outside the
-;; window, and the row then pays the call boundary it reverts to.
-;;
-;; Re-calibrating that window is CB-2's business. Keeping the split out of the
-;; priced prefix leaves every recorded inline verdict exactly where the corpus
-;; measured it and makes this pass a pure code-quality change, which is what it
-;; is. This reuses the late sweep's depth for the same reason
-;; (compiler-opt-late-sweep-suppressed?).
+;; a free inline could produce (see opt-inline-checked-verdict), and this pass
+;; deflates the MERGED side specifically: inlining is what brings a callee that
+;; stores an aggregate's words together with a caller that reads them, so the
+;; split only collapses on the inlined side and one side of that interval
+;; widens.
 (define (opt-aggregate-split-function
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (if (compiler-opt-late-sweep-suppressed?)
-    func
-    (opt-aggregate-split-function-run type-segment-bases func)))
-
-(define (opt-aggregate-split-function-run
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
@@ -29769,14 +29698,14 @@
 ;; while the body's own instruction stays where it is -- every branch on it
 ;; folds on both sides, and the copy in the body is dead after the fold.
 ;; LU-2's widenings -- the body-defined condition, the compare-carrying
-;; dispatch block, the entry walk -- are read outside the inliner's priced
-;; prefix only, for the reason LU-1's general rail is: the checked tier runs
-;; this final pass inside each candidate plan, and a verdict that moves
-;; because the plan unswitched is a verdict the corpus never measured
-;; (`rg-seq-overlaps?` into `rg-count-conflicts` flipped to a revert on the
-;; first attempt, +4.1% on regalloc_greedy).
+;; dispatch block, the entry walk -- and LU-1's general rail are live-pipeline
+;; only: the frozen priced pipeline runs this final pass without them, and
+;; opt-licm-unswitch-final sets which one runs.
+(define opt-licm-unswitch-widen-on : bool
+  true)
+
 (define (opt-licm-unswitch-widened?) : bool
-  (not (compiler-opt-late-sweep-suppressed?)))
+  opt-licm-unswitch-widen-on)
 
 ;; PH-1: the clone is taken for loops up to LU-1's size; a bigger body -- the
 ;; shape gate admits up to 128 blocks -- has its guard chain hoisted as one
@@ -29916,10 +29845,8 @@
               ;; (`rg-merge-run!`'s three `from-order` tests: regalloc_greedy
               ;; -2.1%); one test does not on the short-trip loops the corpus
               ;; has (ssa-verify's per-instruction use scan, 1-2 trips per
-              ;; entry: +0.3% when admitted). LU-1's rail is read outside the
-              ;; inliner's priced prefix only, so no calibrated verdict moves
-              ;; (inside it, `get-value-or` into hashmap_get's main flipped to
-              ;; a revert and the row paid +15.8%).
+              ;; entry: +0.3% when admitted). LU-1's rail is live-pipeline only
+              ;; (opt-licm-unswitch-widened?).
               (match (compiler-opt-global-shared-view cond)
                 [(ir.CompilerIrValue.Var var)
                   (and
@@ -29941,7 +29868,7 @@
                         (compiler-opt-global-shared-view body-blocks-all)
                         false-label)
                       (and
-                        (not (compiler-opt-late-sweep-suppressed?))
+                        (opt-licm-unswitch-widened?)
                         (>=
                           (opt-licm-unswitch-cond-branch-count
                             (compiler-opt-global-shared-view body-blocks-all)
@@ -31223,10 +31150,13 @@
 ;; an intervening copy-propagation pass would merge them back into the hot
 ;; values, inflate those live-range weights, and make the backend spill the
 ;; outer accumulator. A final DCE removes computations made dead in the cold
-;; bypass clone without rewriting those copies.
+;; bypass clone without rewriting those copies. `widened?` selects the live
+;; pipeline's admission rails (opt-licm-unswitch-widened?).
 (define (opt-licm-unswitch-final
   [type-segment-bases : i64]
+  [widened? : bool]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (set! opt-licm-unswitch-widen-on widened?)
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (match (opt-licm-unswitch-function-with-context-result
@@ -63931,6 +63861,9 @@
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
+  ;; Set only for the inliner's checked tier, which runs the frozen priced
+  ;; pipeline instead of the live one (see opt-live-only).
+  (priced? bool)
   ;; Compile-profile ownership follows the already per-program summary bundle.
   ;; The disabled state is a one-word sentinel and allocates no summary storage.
   (profile-state profile_state.CompilerProfileState)
@@ -64006,8 +63939,12 @@
   (SomeBlock ir.CompilerIrBlock))
 
 (define (opt-loop-bce-empty-summaries) : OptLoopBceSummaries
+  (opt-loop-bce-empty-summaries-for false))
+
+(define (opt-loop-bce-empty-summaries-for [priced? : bool]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     false
+    priced?
     (profile_state.compiler-profile-state-new)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -111379,9 +111316,18 @@
 ;; stages. A stage calls its pass on views of the state (`opt-pass-func` and
 ;; friends) and hands the result back through one of the `opt-pass-with-*`
 ;; updates, which take the state last so the pass has run before it moves.
+;;
+;; D6: the inliner's checked tier prices a body by running it through the
+;; level-2 pipeline, and its accept window was calibrated against the bodies
+;; that pipeline produced. It therefore runs a frozen pipeline, `priced?`:
+;; every stage below except those marked `opt-live-only`, in the order they
+;; appear. The live pipeline can gain, lose or move a stage without moving a
+;; verdict: a new stage goes in as `opt-live-only`, a stage the live pipeline
+;; drops stays behind as `opt-priced-only`, and a moved stage is both.
 (defstruct OptPassState
   (type-segment-bases i64)
   (profile-state profile_state.CompilerProfileState)
+  (priced? bool)
   (func ir.CompilerIrFunction)
   (ctx OptCfgContext)
   (ctx-valid? bool)
@@ -111396,11 +111342,13 @@
 (define (opt-pass-state
   [type-segment-bases : i64]
   [profile-state : profile_state.CompilerProfileState]
+  [priced? : bool]
   [func : ir.CompilerIrFunction]
   [changed? : bool]) : OptPassState
   (OptPassState
     type-segment-bases
     profile-state
+    priced?
     func
     (compiler-opt-global-shared-view opt-pass-no-context)
     false
@@ -111445,6 +111393,18 @@
     [state : OptPassState ,next]
     (opt-pass-noted state ,pass start-ms)))
 
+;; A pass the frozen priced pipeline does not run.
+(defmacro (opt-live-only [state : Expr] [next : Expr]) : Expr
+  `(if (__tl-project-field ,state priced?)
+    ,state
+    ,next))
+
+;; A pass only the frozen priced pipeline still runs.
+(defmacro (opt-priced-only [state : Expr] [next : Expr]) : Expr
+  `(if (__tl-project-field ,state priced?)
+    ,next
+    ,state))
+
 (define (opt-pass-observed [state : OptPassState] [pass : String]) : OptPassState
   (begin
     (compiler-opt-debug-observe-function
@@ -111465,29 +111425,37 @@
       _start-ms)
     state))
 
-;; A rewrite that keeps the CFG: the context stays exact.
-(define (opt-pass-with-func
+(define (opt-pass-with
   [func : ir.CompilerIrFunction]
+  [ctx : OptCfgContext]
+  [ctx-valid? : bool]
+  [changed? : bool]
   [state : OptPassState]) : OptPassState
   (OptPassState
     state.type-segment-bases
     state.profile-state
+    state.priced?
     func
-    state.ctx
+    ctx
+    ctx-valid?
+    changed?))
+
+;; A rewrite that keeps the CFG: the context stays exact.
+(define (opt-pass-with-func
+  [func : ir.CompilerIrFunction]
+  [state : OptPassState]) : OptPassState
+  (opt-pass-with
+    func
+    (opt-pass-ctx state)
     state.ctx-valid?
-    state.changed?))
+    state.changed?
+    state))
 
 ;; A rewrite that may change the CFG.
 (define (opt-pass-with-cfg-func
   [func : ir.CompilerIrFunction]
   [state : OptPassState]) : OptPassState
-  (OptPassState
-    state.type-segment-bases
-    state.profile-state
-    func
-    state.ctx
-    false
-    state.changed?))
+  (opt-pass-with func (opt-pass-ctx state) false state.changed? state))
 
 (define (opt-pass-with-frame-blocks
   [frame : i64]
@@ -111502,6 +111470,14 @@
   [state : OptPassState]) : OptPassState
   (opt-pass-with-frame-blocks (opt-pass-frame state) blocks state))
 
+(define (opt-pass-with-changed [changed? : bool] [state : OptPassState]) : OptPassState
+  (opt-pass-with
+    (opt-pass-func state)
+    (opt-pass-ctx state)
+    state.ctx-valid?
+    (or state.changed? changed?)
+    state))
+
 (define (opt-pass-with-block-result
   [result : OptBlockListPassResult]
   [state : OptPassState]) : OptPassState
@@ -111509,43 +111485,27 @@
     [(OptBlockListPassResult.Result blocks changed?)
       (opt-pass-with-changed changed? (opt-pass-with-blocks blocks state))]))
 
-(define (opt-pass-with-changed [changed? : bool] [state : OptPassState]) : OptPassState
-  (OptPassState
-    state.type-segment-bases
-    state.profile-state
-    state.func
-    state.ctx
-    state.ctx-valid?
-    (or state.changed? changed?)))
-
 (define (opt-pass-with-block-ctx
   [result : OptBlockCtxResult]
   [state : OptPassState]) : OptPassState
   (match result
     [(OptBlockCtxResult.Result blocks ctx valid?)
-      (OptPassState
-        state.type-segment-bases
-        state.profile-state
+      (opt-pass-with
         (opt-function-with-frame-blocks
           (opt-pass-func state)
           (opt-pass-frame state)
           blocks)
         ctx
         valid?
-        state.changed?)]))
+        state.changed?
+        state)]))
 
 (define (opt-pass-with-ctx-result
   [result : OptFunctionCtxResult]
   [state : OptPassState]) : OptPassState
   (match result
     [(OptFunctionCtxResult.Result func ctx)
-      (OptPassState
-        state.type-segment-bases
-        state.profile-state
-        func
-        ctx
-        true
-        state.changed?)]))
+      (opt-pass-with func ctx true state.changed? state)]))
 
 ;; A branch rewrite hands back its input context unchanged when it declines, so
 ;; that context is exact only if the input's was.
@@ -111554,26 +111514,24 @@
   [state : OptPassState]) : OptPassState
   (match result
     [(OptFunctionRewriteResult.Result func ctx changed?)
-      (OptPassState
-        state.type-segment-bases
-        state.profile-state
+      (opt-pass-with
         func
         ctx
         (or state.ctx-valid? changed?)
-        (or state.changed? changed?))]))
+        (or state.changed? changed?)
+        state)]))
 
 (define (opt-pass-with-result
   [result : OptFunctionPassResult]
   [state : OptPassState]) : OptPassState
   (match result
     [(OptFunctionPassResult.Result func changed?)
-      (OptPassState
-        state.type-segment-bases
-        state.profile-state
+      (opt-pass-with
         func
-        state.ctx
+        (opt-pass-ctx state)
         (and state.ctx-valid? (not changed?))
-        (or state.changed? changed?))]))
+        (or state.changed? changed?)
+        state)]))
 
 ;; As `opt-pass-with-result`, rebuilding the context for a changed CFG.
 (define (opt-pass-with-result-context
@@ -111582,13 +111540,12 @@
   (match result
     [(OptFunctionPassResult.Result func changed?)
       (if changed?
-        (OptPassState
-          state.type-segment-bases
-          state.profile-state
+        (opt-pass-with
           (compiler-opt-global-shared-view func)
           (opt-cfg-context-build (opt-function-blocks func))
           true
-          true)
+          true
+          state)
         (opt-pass-with-func func state))]))
 
 ;; An instruction rewrite that leaves the CFG alone but replaces the blocks the
@@ -111655,7 +111612,12 @@
     ;; the first slot (fold) starts from.
     [s : OptPassState
       (opt-pass-observed
-        (opt-pass-state type-segment-bases summaries.profile-state func false)
+        (opt-pass-state
+          type-segment-bases
+          summaries.profile-state
+          summaries.priced?
+          func
+          false)
         "round_input")]
     ;; Fold first so SCCP can reuse local facts, then simplify the reachable
     ;; CFG and eliminate dead pure assignments.
@@ -111738,13 +111700,16 @@
     ;; SROA-2: the word split runs on the post-promotion blocks and before
     ;; rotation/`ssa`, so the scalar mem2reg below builds the phis the
     ;; per-arm word stores need. It mints word vars, so every pass underneath
-    ;; reads ITS frame, not the promoted one.
+    ;; reads ITS frame, not the promoted one. It is not in the priced
+    ;; pipeline (see opt-aggregate-split-function).
     [s
       (opt-stage
         "aggregate_split"
-        (opt-pass-with-cfg-func
-          (opt-aggregate-split-function type-segment-bases (opt-pass-func s))
-          s))]
+        (opt-live-only
+          s
+          (opt-pass-with-cfg-func
+            (opt-aggregate-split-function type-segment-bases (opt-pass-func s))
+            s)))]
     [run-heavy? : bool
       (<=
         (ir.compiler-ir-block-list-count (opt-pass-blocks s))
@@ -112480,7 +112445,12 @@
         (profile_state.compiler-profile-state-shared-view
           summaries.profile-state))]
     [s : OptPassState
-      (opt-pass-state type-segment-bases summaries.profile-state func false)]
+      (opt-pass-state
+        type-segment-bases
+        summaries.profile-state
+        summaries.priced?
+        func
+        false)]
     [s
       (opt-stage
         "fold"
@@ -112544,6 +112514,7 @@
           (opt-pass-state
             type-segment-bases
             summaries.profile-state
+            summaries.priced?
             pre-dce
             false)]
         [s
@@ -113009,8 +112980,7 @@
 ;; into a jump, and the sweep retires what is left.
 ;;
 ;; PLACEMENT. This runs inside the DCE-LATE slot, and only here. The slot is
-;; the one place below `cmp_dup` that the checked inlining tier's priced prefix
-;; does not reach (`compiler-opt-late-sweep-suppressed?`), so no verdict moves.
+;; below `cmp_dup` and outside the frozen priced pipeline, so no verdict moves.
 ;; Only Movs that sit in a decided join are forwarded, so `cmp_dup`'s compare
 ;; copies and `load_sink`'s pairs -- which sit in no such block -- are never
 ;; candidates, and a function with no such join pays one terminator test per
@@ -113189,13 +113159,6 @@
                       (OptFunctionPassResult.Result threaded true)])])))))]))
 
 (define (opt-dce-late-final-pass
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
-  (if (compiler-opt-late-sweep-suppressed?)
-    (OptFunctionPassResult.Result func false)
-    (opt-dce-late-final-pass-run type-segment-bases func)))
-
-(define (opt-dce-late-final-pass-run
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (opt-dce-late-unblock-decided-joins type-segment-bases func)
@@ -113578,6 +113541,7 @@
               (opt-pass-state
                 type-segment-bases
                 summaries.profile-state
+                summaries.priced?
                 fixed
                 changed?)])]
         ;; IT-2 rides the same below-the-fixpoint slot, immediately below
@@ -113604,7 +113568,10 @@
         [s
           (opt-pass-observed
             (opt-pass-with-cfg-func
-              (opt-licm-unswitch-final type-segment-bases (opt-pass-func s))
+              (opt-licm-unswitch-final
+                type-segment-bases
+                (not s.priced?)
+                (opt-pass-func s))
               s)
             "licm_unswitch")]
         ;; A wide power-of-two global multiply becomes a shift only here, after
@@ -113658,11 +113625,16 @@
         ;; DCE-LATE closes the list: the passes above it are the only ones that
         ;; run below the pipeline's own `dce`, and it neither moves an
         ;; instruction inside a block nor merges blocks, so the adjacency
-        ;; `cmp_dup` and `load_sink` established survives it.
+        ;; `cmp_dup` and `load_sink` established survives it. It is not in the
+        ;; priced pipeline: inlining a small predicate is exactly what mints
+        ;; the `phi of bool literals -> mov literal -> branch` chain it folds
+        ;; away, so it deflates the MERGED side of the checked tier's window.
         [s
-          (opt-pass-with-result
-            (opt-dce-late-final-pass type-segment-bases (opt-pass-func s))
-            s)]
+          (opt-live-only
+            s
+            (opt-pass-with-result
+              (opt-dce-late-final-pass type-segment-bases (opt-pass-func s))
+              s))]
         (OptFunctionPassResult.Result s.func s.changed?)))))
 
 (define (optimize-function-with-level-and-summaries
@@ -124518,17 +124490,19 @@
     [_silence : unit
       (begin
         (compiler-opt-debug-set-suppressed! true)
-        ;; See compiler-opt-late-sweep-suppressed?: the priced prefix stops
-        ;; above the final late sweep so this tier's calibrated window keeps
-        ;; reading the bodies it was measured against.
-        (compiler-opt-late-sweep-suppress-enter!)
         (set! compiler-opt-debug-verify-ir false))]
+    ;; D6: the plan is the frozen priced pipeline's output, the bodies this
+    ;; tier's window was calibrated against (see OptPassState).
     [optimized : ir.CompilerIrFunction
-      (optimize-function-with-level pools type-segment-bases func 2)]
+      (optimize-function-with-level-and-summaries
+        pools
+        type-segment-bases
+        func
+        2
+        (opt-loop-bce-empty-summaries-for true))]
     [_restore : unit
       (begin
         (compiler-opt-debug-set-suppressed! false)
-        (compiler-opt-late-sweep-suppress-leave!)
         (set! compiler-opt-debug-verify-ir saved-verify))]
     ;; INL-15: the plan is priced by the allocator's own estimator in the
     ;; tier's currency (opt-inline-checked-alloc-cost): weighted memory
@@ -132442,6 +132416,7 @@
         (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
       true
+      false
       (profile_state.compiler-profile-state-new)
       length-clean
       direct-call-clean
@@ -132459,6 +132434,7 @@
   [const-divisors : opt_i64_i64_map.Map]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     summaries.enabled
+    summaries.priced?
     summaries.profile-state
     summaries.length-clean
     summaries.direct-call-clean
@@ -132476,6 +132452,7 @@
   [global-cell : OptGlobalCellSummary]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     summaries.enabled
+    summaries.priced?
     summaries.profile-state
     summaries.length-clean
     summaries.direct-call-clean
@@ -132493,6 +132470,7 @@
   [state : profile_state.CompilerProfileState]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     summaries.enabled
+    summaries.priced?
     state
     summaries.length-clean
     summaries.direct-call-clean
@@ -132510,6 +132488,7 @@
   [representations : ir.CompilerIrRepresentationIndex]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     summaries.enabled
+    summaries.priced?
     summaries.profile-state
     summaries.length-clean
     summaries.direct-call-clean
@@ -132527,6 +132506,7 @@
   [lengths : OptConstLengths]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     summaries.enabled
+    summaries.priced?
     summaries.profile-state
     summaries.length-clean
     summaries.direct-call-clean

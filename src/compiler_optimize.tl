@@ -136184,29 +136184,26 @@
     [(ir.CompilerIrValue.Var var) (opt-alias-root-of-var facts var)]
     [_ (OptAliasRoot.NoRoot)]))
 
-;; Only fresh allocations and checked mutable-reference roots prove a write
-;; target disjoint from a DIFFERENT tracked root. SharedRef roots deliberately
-;; do not: separate immutable-reference parameters may alias each other.
-;; Allocation epochs play no part here -- root identity alone decides. The
-;; epoch-ordering rule is a separate disjunct in the load-table keep test.
+;; Whether a store through STORE-ROOT leaves a load table entry on ENTRY-ROOT
+;; untouched. This is LICM's rule, opt-licm-root-disjoint-store?, and must stay
+;; the same rule: two checked-reference parameter roots never prove disjoint,
+;; because a caller can pass two representation copies of one owning handle
+;; (see there). Allocation epochs play no part here -- root identity alone
+;; decides. The epoch-ordering rule is a separate disjunct in the load-table
+;; keep test.
 (define (opt-alias-store-root-disjoint?
   [store-root : OptAliasRoot]
   [entry-root : OptAliasRoot]) : bool
-  (match store-root
-    [(OptAliasRoot.Fresh store-id _)
-      (match entry-root
-        [(OptAliasRoot.Fresh entry-id _) (not (= store-id entry-id))]
-        [(OptAliasRoot.Exclusive entry-id) (not (= store-id entry-id))]
-        [(OptAliasRoot.Shared entry-id) (not (= store-id entry-id))]
-        [(OptAliasRoot.NoRoot) false])]
-    [(OptAliasRoot.Exclusive store-id)
-      (match entry-root
-        [(OptAliasRoot.Fresh entry-id _) (not (= store-id entry-id))]
-        [(OptAliasRoot.Exclusive entry-id) (not (= store-id entry-id))]
-        [(OptAliasRoot.Shared entry-id) (not (= store-id entry-id))]
-        [(OptAliasRoot.NoRoot) false])]
-    [(OptAliasRoot.Shared _) false]
-    [(OptAliasRoot.NoRoot) false]))
+  (opt-licm-root-disjoint-store?
+    (opt-alias-licm-root store-root)
+    (opt-alias-licm-root entry-root)))
+
+(define (opt-alias-licm-root [root : OptAliasRoot]) : OptLicmRoot
+  (match root
+    [(OptAliasRoot.NoRoot) (OptLicmRoot.NoRoot)]
+    [(OptAliasRoot.Fresh id _) (OptLicmRoot.Fresh id)]
+    [(OptAliasRoot.Exclusive id) (OptLicmRoot.Exclusive id)]
+    [(OptAliasRoot.Shared id) (OptLicmRoot.Shared id)]))
 
 (defenum OptAliasParamRootKind
   (NotCheckedRef)

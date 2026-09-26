@@ -28797,7 +28797,7 @@
           (=
             (opt-count-load-blocks
               (opt.compiler-opt-global-shared-view checked-ref-store-path))
-            1))
+            2))
         29]
       [(not
           (=
@@ -28806,7 +28806,7 @@
               4)
             0))
         30]
-      [(not (= (opt-blocks-return-var checked-ref-store-path (- 0 1)) 3)) 45]
+      [(not (= (opt-blocks-return-var checked-ref-store-path (- 0 1)) 4)) 45]
       [(not
           (=
             (opt-count-load-blocks
@@ -48537,6 +48537,45 @@
       20
       "nested explicit shallow aliases observe replacement")))
 
+;; Load CSE keeps a loaded value across a store only on the same root rule as
+;; LICM: `view` and `poke` below name one holder through two checked-reference
+;; roots, so the second read of `view.value` must observe the store. The
+;; recursion keeps the function out of the inliner, whose copy would no longer
+;; read through parameters.
+(define (opt-load-cse-shallow-read-poke-read
+  [view : (& OptLicmShallowDirectHolder)]
+  [poke : (&mut OptLicmShallowDirectHolder)]
+  [depth : i64]) : i64
+  (let
+    [first : i64 view.value]
+    (begin
+      (set! poke.value (+ depth 99))
+      (if (> depth 0)
+        (+ first (opt-load-cse-shallow-read-poke-read view poke (- depth 1)))
+        (+ first view.value)))))
+
+(define (opt-load-cse-shallow-alias-result) : i64
+  (let
+    [items : (__tl_dyn-array OptLicmShallowDirectHolder)
+      (__tl_make-array OptLicmShallowDirectHolder 1)]
+    (begin
+      (set! (array-ref items 0) (OptLicmShallowDirectHolder 1))
+      (let
+        [alias : (__tl_dyn-array OptLicmShallowDirectHolder)
+          (opt-licm-shallow-alias-direct
+            (ir.compiler-ir-global-shared-view items))]
+        (opt-load-cse-shallow-read-poke-read
+          (& (array-ref items 0))
+          (&mut (array-ref alias 0))
+          0)))))
+
+(test
+  load-cse-explicit-shallow-view-alias
+  (test.assert-i64-eq
+    (opt-load-cse-shallow-alias-result)
+    100
+    "a store through one checked-reference root is observed through another"))
+
 ;; --- ALIAS-3: the typed-word rule --------------------------------------------
 ;;
 ;; The shape the memory-root census is made of, in the smallest program that
@@ -54596,8 +54635,8 @@
      %7 = load %4 : i64"))
 
 ;; A native Slice parameter is a by-value two-word register group. Re-extracting
-;; its data/length after a store to a distinct mutable Slice must canonicalize
-;; both words, allowing the source-element load to survive that disjoint store.
+;; its data/length after a store through another mutable Slice must canonicalize
+;; both words.
 (define (opt-load-cse-slice-distinct-store-instrs) : ir.CompilerIrInstrSeq
   (opt-test-instrs
     (ir.CompilerIrInstr.Word 2 (ir.CompilerIrValue.Var 0) 0 (ast.AstType.U64))
@@ -56380,12 +56419,8 @@
       [(not (= (opt-count-load-instr-seq copybytes-overlap) 2)) 42]
       [(not (= (opt-count-mov-dst-instr-seq copybytes-overlap 5) 0)) 43]
       [(not (opt-load-cse-cap-self-test?)) 45]
-      [(not (= (opt-count-load-instr-seq checked-distinct) 1)) 46]
-      [(not
-          (=
-            (opt-count-mov-dst-var-src checked-distinct 5 3 (ast.AstType.I64))
-            1))
-        47]
+      [(not (= (opt-count-load-instr-seq checked-distinct) 2)) 46]
+      [(not (= (opt-count-mov-dst-instr-seq checked-distinct 5) 0)) 47]
       [(not (= (opt-count-load-instr-seq checked-shared-alias) 2)) 48]
       [(not (= (opt-count-mov-dst-instr-seq checked-shared-alias 5) 0)) 49]
       [(not (= (opt-count-load-instr-seq checked-same-root) 1)) 50]
@@ -56400,32 +56435,14 @@
               (ast.AstType.I64))
             1))
         53]
-      [(not (= (opt-count-load-instr-seq checked-copybytes) 1)) 54]
-      [(not
-          (=
-            (opt-count-mov-dst-var-src checked-copybytes 5 3 (ast.AstType.I64))
-            1))
-        55]
-      [(not (= (opt-count-load-instr-seq checked-cast-root) 1)) 56]
-      [(not
-          (=
-            (opt-count-mov-dst-var-src checked-cast-root 7 3 (ast.AstType.I64))
-            1))
-        57]
-      [(not (= (opt-count-load-instr-seq descriptor-data-root) 2)) 58]
-      [(not
-          (=
-            (opt-count-mov-dst-var-src
-              descriptor-data-root
-              7
-              5
-              (ast.AstType.I64))
-            1))
-        59]
-      [(not (= (opt-count-load-instr-seq call-disjoint) 1)) 60]
-      [(not
-          (= (opt-count-mov-dst-var-src call-disjoint 5 3 (ast.AstType.I64)) 1))
-        61]
+      [(not (= (opt-count-load-instr-seq checked-copybytes) 2)) 54]
+      [(not (= (opt-count-mov-dst-instr-seq checked-copybytes 5) 0)) 55]
+      [(not (= (opt-count-load-instr-seq checked-cast-root) 2)) 56]
+      [(not (= (opt-count-mov-dst-instr-seq checked-cast-root 7) 0)) 57]
+      [(not (= (opt-count-load-instr-seq descriptor-data-root) 3)) 58]
+      [(not (= (opt-count-mov-dst-instr-seq descriptor-data-root 7) 0)) 59]
+      [(not (= (opt-count-load-instr-seq call-disjoint) 2)) 60]
+      [(not (= (opt-count-mov-dst-instr-seq call-disjoint 5) 0)) 61]
       [(not (= (opt-count-load-instr-seq call-same-root) 2)) 62]
       [(not (= (opt-count-mov-dst-instr-seq call-same-root 5) 0)) 63]
       [(not (= (opt-count-load-instr-seq call-global) 2)) 64]
@@ -56690,8 +56707,9 @@
               (ast.AstType.I64))
             1))
         103]
-      ;; Native Slice register-group words remain stable across a disjoint
-      ;; output store, and the derived exclusive roots keep the source load.
+      ;; Native Slice register-group words remain stable across a store
+      ;; through another mutable Slice. The source element is loaded again: two
+      ;; checked-reference roots may name one object.
       [(not
           (=
             (opt-count-word-instrs
@@ -56716,16 +56734,8 @@
               (ast.AstType.U64))
             1))
         220]
-      [(not (= (opt-count-load-instr-seq slice-distinct-store) 1)) 221]
-      [(not
-          (=
-            (opt-count-mov-dst-var-src
-              slice-distinct-store
-              11
-              5
-              (ast.AstType.I64))
-            1))
-        222]
+      [(not (= (opt-count-load-instr-seq slice-distinct-store) 2)) 221]
+      [(not (= (opt-count-mov-dst-instr-seq slice-distinct-store 11) 0)) 222]
       ;; A same-root or unknown write still invalidates the cached element load.
       [(not
           (=

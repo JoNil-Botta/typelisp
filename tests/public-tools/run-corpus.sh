@@ -85,280 +85,14 @@ record_fail() {
     failed=$((failed + 1))
 }
 
-contains_file() {
-    file=$1
-    text=$2
-    grep -F -- "$text" "$file" >/dev/null 2>&1
-}
+. "$FIXTURE_ROOT/lib-result-checks.sh"
 
-json_has_key() {
-    file=$1
-    key=$2
-    grep -F "\"$key\"" "$file" >/dev/null 2>&1
-}
-
-json_number_value() {
-    file=$1
-    key=$2
-    sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\\(-\\{0,1\\}[0-9][0-9]*\\).*/\\1/p" "$file" | head -n 1
-}
-
-write_json_string_value() {
-    file=$1
-    key=$2
-    dest=$3
-    awk -v key="$key" '
-function decode(s,    i, n, ch, esc, out) {
-    out = ""
-    n = length(s)
-    for (i = 1; i <= n; i++) {
-        ch = substr(s, i, 1)
-        if (ch == "\\") {
-            i++
-            esc = substr(s, i, 1)
-            if (esc == "n") out = out "\n"
-            else if (esc == "r") out = out "\r"
-            else if (esc == "t") out = out "\t"
-            else out = out esc
-        } else {
-            out = out ch
-        }
-    }
-    return out
-}
-{
-    marker = "\"" key "\""
-    pos = index($0, marker)
-    if (!pos) next
-    rest = substr($0, pos + length(marker))
-    colon = index(rest, ":")
-    if (!colon) next
-    rest = substr(rest, colon + 1)
-    start = index(rest, "\"")
-    if (!start) next
-    rest = substr(rest, start + 1)
-    out = ""
-    for (i = 1; i <= length(rest); i++) {
-        ch = substr(rest, i, 1)
-        if (ch == "\\") {
-            out = out ch substr(rest, i + 1, 1)
-            i++
-        } else if (ch == "\"") {
-            printf "%s", decode(out)
-            exit
-        } else {
-            out = out ch
-        }
-    }
-}
-' "$file" > "$dest"
-}
-
-json_array_strings() {
-    file=$1
-    key=$2
-    awk -v key="$key" '
-function decode(s,    i, n, ch, esc, out) {
-    out = ""
-    n = length(s)
-    for (i = 1; i <= n; i++) {
-        ch = substr(s, i, 1)
-        if (ch == "\\") {
-            i++
-            esc = substr(s, i, 1)
-            if (esc == "n") out = out "\n"
-            else if (esc == "r") out = out "\r"
-            else if (esc == "t") out = out "\t"
-            else out = out esc
-        } else {
-            out = out ch
-        }
-    }
-    return out
-}
-function emit_strings(text,    i, ch, raw) {
-    for (i = 1; i <= length(text); i++) {
-        ch = substr(text, i, 1)
-        if (ch != "\"") continue
-        raw = ""
-        i++
-        while (i <= length(text)) {
-            ch = substr(text, i, 1)
-            if (ch == "\\") {
-                raw = raw ch substr(text, i + 1, 1)
-                i += 2
-                continue
-            }
-            if (ch == "\"") {
-                print decode(raw)
-                break
-            }
-            raw = raw ch
-            i++
-        }
-    }
-}
-{
-    if (!active) {
-        marker = "\"" key "\""
-        pos = index($0, marker)
-        if (!pos) next
-        rest = substr($0, pos + length(marker))
-        open = index(rest, "[")
-        if (!open) next
-        active = 1
-        rest = substr(rest, open + 1)
-    } else {
-        rest = $0
-    }
-
-    close_pos = index(rest, "]")
-    if (close_pos) {
-        emit_strings(substr(rest, 1, close_pos - 1))
-        exit
-    }
-    emit_strings(rest)
-}
-' "$file"
-}
-
-json_object_strings() {
-    text=$1
-    key=$2
-    tmp_path=$3
-    tmp_uri=$4
-    printf '%s\n' "$text" | awk -v key="$key" -v tmp_path="$tmp_path" -v tmp_uri="$tmp_uri" '
-function decode(s,    i, n, ch, esc, out) {
-    out = ""
-    n = length(s)
-    for (i = 1; i <= n; i++) {
-        ch = substr(s, i, 1)
-        if (ch == "\\") {
-            i++
-            esc = substr(s, i, 1)
-            if (esc == "n") out = out "\n"
-            else if (esc == "r") out = out "\r"
-            else if (esc == "t") out = out "\t"
-            else out = out esc
-        } else {
-            out = out ch
-        }
-    }
-    gsub(/\$\{\{TMP_URI\}\}/, tmp_uri, out)
-    gsub(/\$\{\{TMP\}\}/, tmp_path, out)
-    return out
-}
-{
-    rest = $0
-    marker = "\"" key "\""
-    while ((pos = index(rest, marker)) > 0) {
-        rest = substr(rest, pos + length(marker))
-        colon = index(rest, ":")
-        if (!colon) exit
-        rest = substr(rest, colon + 1)
-        start = index(rest, "\"")
-        if (!start) continue
-        rest = substr(rest, start + 1)
-        raw = ""
-        for (i = 1; i <= length(rest); i++) {
-            ch = substr(rest, i, 1)
-            if (ch == "\\") {
-                raw = raw ch substr(rest, i + 1, 1)
-                i++
-            } else if (ch == "\"") {
-                print decode(raw)
-                rest = substr(rest, i + 1)
-                break
-            } else {
-                raw = raw ch
-            }
-        }
-    }
-}
-'
-}
-
-check_exact_if_present() {
-    spec=$1
-    key=$2
-    actual=$3
-    label=$4
-    errors=$5
-    if json_has_key "$spec" "$key"; then
-        expected="$WORKDIR/expected.$$.$key"
-        write_json_string_value "$spec" "$key" "$expected"
-        actual_cmp=$actual
-        expected_cmp=$expected
-        actual_normalized=
-        expected_normalized=
-        if [ "$HOST_OS" = windows ]; then
-            actual_normalized="$WORKDIR/actual.$$.$key.normalized"
-            expected_normalized="$WORKDIR/expected.$$.$key.normalized"
-            tr -d '\r' < "$actual" > "$actual_normalized"
-            tr -d '\r' < "$expected" > "$expected_normalized"
-            actual_cmp=$actual_normalized
-            expected_cmp=$expected_normalized
-        fi
-        if ! cmp -s "$actual_cmp" "$expected_cmp"; then
-            {
-                printf '%s mismatch\n' "$label"
-                printf 'expected:\n'
-                sed 's/^/  /' "$expected" || true
-                printf 'got:\n'
-                sed 's/^/  /' "$actual" || true
-            } >> "$errors"
-        fi
-        rm -f "$expected" "$actual_normalized" "$expected_normalized"
-    fi
-}
-
-check_stream_patterns() {
-    spec=$1
-    key=$2
-    actual=$3
-    label=$4
-    mode=$5
-    errors=$6
-    json_array_strings "$spec" "$key" | while IFS= read -r pattern || [ -n "$pattern" ]; do
-        [ -n "$pattern" ] || continue
-        if [ "$mode" = contains ]; then
-            if ! contains_file "$actual" "$pattern"; then
-                printf '%s missing: %s\n' "$label" "$pattern" >> "$errors"
-            fi
-        else
-            if contains_file "$actual" "$pattern"; then
-                printf '%s unexpectedly contains: %s\n' "$label" "$pattern" >> "$errors"
-            fi
-        fi
-    done
-}
-
-check_repl_like_result() {
-    name=$1
-    spec=$2
-    out=$3
-    err=$4
-    code=$5
-    errors=$6
-
-    want_code=$(json_number_value "$spec" exit)
-    [ -n "$want_code" ] || want_code=0
-    if [ "$code" -ne "$want_code" ]; then
-        printf 'expected exit %s, got %s\n' "$want_code" "$code" >> "$errors"
-    fi
-
-    check_stream_patterns "$spec" stdout_contains "$out" stdout contains "$errors"
-    check_stream_patterns "$spec" stdout_not_contains "$out" stdout not_contains "$errors"
-    check_stream_patterns "$spec" stderr_contains "$err" stderr contains "$errors"
-    check_stream_patterns "$spec" stderr_not_contains "$err" stderr not_contains "$errors"
-    check_exact_if_present "$spec" stdout_exact "$out" stdout "$errors"
-    check_exact_if_present "$spec" stderr_exact "$err" stderr "$errors"
-
-    if [ -s "$errors" ]; then
-        record_fail "$name"
-        sed 's/^/    - /' "$errors"
+report_corpus_result() {
+    if [ -s "$2" ]; then
+        record_fail "$1"
+        sed 's/^/    - /' "$2"
     else
-        record_pass "$name"
+        record_pass "$1"
     fi
 }
 
@@ -391,7 +125,8 @@ run_repl_fixture() {
             printf 'expected empty stderr\n' >> "$errors"
         fi
     else
-        check_repl_like_result "$name" "$spec" "$out" "$err" "$code" "$errors"
+        check_corpus_result "$spec" "$out" "$err" "$code" "" "" "" "$HOST_OS" >> "$errors"
+        report_corpus_result "$name" "$errors"
         return
     fi
 
@@ -414,7 +149,13 @@ canonical_tmp_path() {
 
 file_uri_for_path() {
     path=$1
-    uri_path=$(printf '%s' "$path" | sed 's/ /%20/g')
+    uri_path=
+    while :; do
+        case "$path" in
+            *' '*) uri_path="$uri_path${path%% *}%20"; path=${path#* } ;;
+            *) uri_path="$uri_path$path"; break ;;
+        esac
+    done
     if [ "$HOST_OS" = windows ]; then
         printf 'file:///%s' "$uri_path"
     else
@@ -431,15 +172,18 @@ compiler_file_path() {
     fi
 }
 
-frame_append() {
+frame_append() (
     frame_file=$1
     frame_body=$2
-    frame_len=$(printf '%s' "$frame_body" | wc -c | tr -d ' ')
+    # POSIX shell length counts bytes in the C locale, as Content-Length requires.
+    LC_ALL=C
+    export LC_ALL
+    frame_len=${#frame_body}
     {
         printf 'Content-Length: %s\r\n\r\n' "$frame_len"
         printf '%s' "$frame_body"
     } >> "$frame_file"
-}
+)
 
 write_json_frames() {
     input_json=$1
@@ -480,130 +224,6 @@ NR == 1 { next }
     printf "%s\n", body
 }
 ' "$stdout_file" > "$messages_file"
-}
-
-message_has() {
-    message=$1
-    needle=$2
-    case "$message" in
-        *"$needle"*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-check_lsp_message_line() {
-    check_line=$1
-    messages_file=$2
-    tmp_path=$3
-    tmp_uri=$4
-
-    raw_contains="$WORKDIR/check-raw-contains.$$"
-    raw_not_contains="$WORKDIR/check-raw-not-contains.$$"
-    json_contains="$WORKDIR/check-json-contains.$$"
-    json_object_strings "$check_line" raw_contains "$tmp_path" "$tmp_uri" > "$raw_contains"
-    json_object_strings "$check_line" raw_not_contains "$tmp_path" "$tmp_uri" > "$raw_not_contains"
-    json_object_strings "$check_line" json_contains "$tmp_path" "$tmp_uri" > "$json_contains"
-
-    id_value=$(printf '%s\n' "$check_line" | sed -n 's/.*"jsonpath_id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
-    result_null=0
-    if printf '%s\n' "$check_line" | grep -F '"jsonpath_result": null' >/dev/null 2>&1; then
-        result_null=1
-    fi
-
-    found=1
-    while IFS= read -r message || [ -n "$message" ]; do
-        ok=0
-
-        if [ -n "$id_value" ] && ! message_has "$message" "\"id\":$id_value"; then
-            ok=1
-        fi
-        if [ "$result_null" -eq 1 ] && ! message_has "$message" '"result":null'; then
-            ok=1
-        fi
-
-        while IFS= read -r needle || [ -n "$needle" ]; do
-            [ -n "$needle" ] || continue
-            if ! message_has "$message" "$needle"; then
-                ok=1
-                break
-            fi
-        done < "$raw_contains"
-
-        while IFS= read -r needle || [ -n "$needle" ]; do
-            [ -n "$needle" ] || continue
-            if ! message_has "$message" "$needle"; then
-                ok=1
-                break
-            fi
-        done < "$json_contains"
-
-        while IFS= read -r needle || [ -n "$needle" ]; do
-            [ -n "$needle" ] || continue
-            if message_has "$message" "$needle"; then
-                ok=1
-                break
-            fi
-        done < "$raw_not_contains"
-
-        if [ "$ok" -eq 0 ]; then
-            found=0
-            break
-        fi
-    done < "$messages_file"
-
-    rm -f "$raw_contains" "$raw_not_contains" "$json_contains"
-    return "$found"
-}
-
-check_lsp_result() {
-    name=$1
-    spec=$2
-    out=$3
-    err=$4
-    code=$5
-    messages=$6
-    tmp_path=$7
-    tmp_uri=$8
-    errors=$9
-
-    want_code=$(json_number_value "$spec" exit)
-    [ -n "$want_code" ] || want_code=0
-    if [ "$code" -ne "$want_code" ]; then
-        printf 'expected exit %s, got %s\n' "$want_code" "$code" >> "$errors"
-    fi
-
-    check_stream_patterns "$spec" stdout_contains "$out" stdout contains "$errors"
-    check_stream_patterns "$spec" stdout_not_contains "$out" stdout not_contains "$errors"
-    check_stream_patterns "$spec" stderr_contains "$err" stderr contains "$errors"
-    check_stream_patterns "$spec" stderr_not_contains "$err" stderr not_contains "$errors"
-    check_exact_if_present "$spec" stdout_exact "$out" stdout "$errors"
-    check_exact_if_present "$spec" stderr_exact "$err" stderr "$errors"
-
-    if json_has_key "$spec" message_count; then
-        want_count=$(json_number_value "$spec" message_count)
-        got_count=$(wc -l < "$messages" | tr -d ' ')
-        if [ "$got_count" -ne "$want_count" ]; then
-            printf 'expected %s messages, got %s\n' "$want_count" "$got_count" >> "$errors"
-        fi
-    fi
-
-    awk '
-        /"message_checks"[[:space:]]*:/ { active = 1; next }
-        active && /^[[:space:]]*\]/ { exit }
-        active && /\{/ { print }
-    ' "$spec" | while IFS= read -r check_line || [ -n "$check_line" ]; do
-        [ -n "$check_line" ] || continue
-        if ! check_lsp_message_line "$check_line" "$messages" "$tmp_path" "$tmp_uri"; then
-            printf 'no message matched: %s\n' "$check_line" >> "$errors"
-        fi
-    done
-
-    if [ -s "$errors" ]; then
-        record_fail "$name"
-        sed 's/^/    - /' "$errors"
-    else
-        record_pass "$name"
-    fi
 }
 
 write_lsp_case_list() {
@@ -896,9 +516,9 @@ check_lsp_cases() {
             esac
         fi
         extract_lsp_bodies "$out" "$messages"
-        check_lsp_result \
-            "$name" "$spec" "$out" "$err" "$code" "$messages" \
-            "$tmp_path" "$tmp_uri" "$errors"
+        check_corpus_result "$spec" "$out" "$err" "$code" "$messages" \
+            "$tmp_path" "$tmp_uri" "$HOST_OS" >> "$errors"
+        report_corpus_result "$name" "$errors"
     done < "$cases"
 }
 

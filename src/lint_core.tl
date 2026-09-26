@@ -2055,19 +2055,23 @@
     true
     (lint-name-qualified-by-separator? name qualifier '/')))
 
+;; The import the unused-import rule looks for. A reference uses it when it
+;; is qualified by the import's alias or by its full module name.
+(defstruct LintImportRef
+  (alias String)
+  (module-name String))
+
 (define (lint-name-uses-import?
   [name : String]
-  [alias : (& alias str)]
-  [module-name : (& module-name str)]) : bool
-  (if (lint-name-qualified-by? name alias)
+  [import-ref : (& import-ref LintImportRef)]) : bool
+  (if (lint-name-qualified-by? name import-ref.alias)
     true
-    (lint-name-qualified-by? name module-name)))
+    (lint-name-qualified-by? name import-ref.module-name)))
 
 (define (lint-name-id-uses-import?
   [name : i64]
-  [alias : (& alias str)]
-  [module-name : (& module-name str)]) : bool
-  (lint-name-uses-import? (ci.intern-str name) alias module-name))
+  [import-ref : (& import-ref LintImportRef)]) : bool
+  (lint-name-uses-import? (ci.intern-str name) import-ref))
 
 (define (lint-expr-list-requires-enclosing-unsafe?
   [exprs : (& exprs ast.AstExprList)]) : bool
@@ -2133,8 +2137,7 @@
 
 (define (lint-names-use-import?
   [names : (& names LintNames)]
-  [alias : (& alias str)]
-  [module-name : (& module-name str)]) : bool
+  [import-ref : (& import-ref LintImportRef)]) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -2143,10 +2146,7 @@
         (begin
           (set!
             found
-            (lint-name-id-uses-import?
-              (array-ref names.ids index)
-              alias
-              module-name))
+            (lint-name-id-uses-import? (array-ref names.ids index) import-ref))
           (set! index (+ index 1))))
       found)))
 
@@ -3038,24 +3038,26 @@
                 [(ast.AstMaybeImportAlias.Some alias)
                   (if (lint-underscore-prefixed? (ci.intern-str alias))
                     acc
-                    (if (or
-                      (lint-names-use-import?
-                        names
-                        (ci.intern-str alias)
-                        (ci.intern-str module-name))
-                      (and
-                        (lint-stdlib-string-module-name?
-                          (ci.intern-str module-name))
-                        (lint-decl-list-has-stdlib-string-bare-use?
-                          all-decls
-                          current-module-id)))
-                      acc
-                      (lint-findings-add
-                        (lint-unused-import-finding
-                          (ci.intern-str module-name)
+                    (let
+                      [import-ref : LintImportRef
+                        (LintImportRef
                           (ci.intern-str alias)
-                          (__tl-box-place span))
-                        acc)))])]))])))
+                          (ci.intern-str module-name))]
+                      (if (or
+                        (lint-names-use-import? names (& import-ref))
+                        (and
+                          (lint-stdlib-string-module-name?
+                            (ci.intern-str module-name))
+                          (lint-decl-list-has-stdlib-string-bare-use?
+                            all-decls
+                            current-module-id)))
+                        acc
+                        (lint-findings-add
+                          (lint-unused-import-finding
+                            (ci.intern-str module-name)
+                            (ci.intern-str alias)
+                            (__tl-box-place span))
+                          acc))))])]))])))
 
 ;; Every import is checked against the names of the whole file, collected once.
 (define (lint-unused-imports-in-decl-list

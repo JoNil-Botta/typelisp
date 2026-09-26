@@ -169,7 +169,10 @@
   (source-names ci.InternSourceNameSessionHandle)
   ;; Hash-table backing arrays outlive per-file scratch arenas. Growth switches
   ;; to this owning compiler-job arena before publishing a replacement array.
-  (map-storage-arena i64))
+  (map-storage-arena i64)
+  ;; The module the macro call being evaluated expands into, as an intern ID
+  ;; (`current-module`); negative before any expansion has set it.
+  (expansion-module-id i64))
 
 (defstruct CompilerCtfeMacroState
   (address i64))
@@ -189,7 +192,8 @@
           (ctfe_key_map.with-capacity 1)
           false
           (ci.InternSourceNameSessionHandle 0)
-          (arena.tl_arena_current)))
+          (arena.tl_arena_current)
+          -1))
       (CompilerCtfeMacroState
         (cast
           (unsafe
@@ -213,6 +217,20 @@
         (cast state.address : u64)
         : (MutPtr CompilerCtfeMacroStateData))
       data)))
+
+(define (ctfe-expansion-module-id-for-state [state : CompilerCtfeMacroState]) : i64
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    data.expansion-module-id))
+
+(define (ctfe-expansion-module-set-for-state!
+  [state : CompilerCtfeMacroState]
+  [module-id : i64]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (set! data.expansion-module-id module-id)
+      (compiler-ctfe-macro-state-data-set! state data))))
 
 (define (compiler-ctfe-macro-state-bind-source-names!
   [state : CompilerCtfeMacroState]
@@ -7041,6 +7059,27 @@
           expr
           (str_cat.str-cat query-name " expects exactly two args"))))))
 
+;; `current-module` reports the module the evaluating macro call expands into,
+;; in `type-nominal-module`'s form: the root file is the empty module.
+(define (ctfe-eval-current-module-call
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 0)
+    (let
+      [module-id : i64
+        (ctfe-expansion-module-id-for-state (ctfe-env-macro-state (& env)))]
+      (ResultCtfe.Ok
+        (if (< module-id 0)
+          (ctfe-generated-string-value "")
+          (ctfe-name-value-for-session
+            (ctfe-env-structural-session (& env))
+            module-id))
+        fuel))
+    (ResultCtfe.Err
+      (box (ctfe-diagnostic-at-expr expr "current-module expects no arguments")))))
+
 (define (ctfe-eval-module-value-expr-call
   [args : ast.AstExprList]
   [expr : ast.AstExpr]
@@ -10404,6 +10443,8 @@
               fuel)]
           [(= call-id (ctfe-builtin-ref 285))
             (ctfe-eval-module-value-expr-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 300))
+            (ctfe-eval-current-module-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 286))
             (ctfe-eval-function-shared-borrow-returns-string-call
               args

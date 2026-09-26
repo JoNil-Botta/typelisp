@@ -797,8 +797,10 @@
 ;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
+(define compiler-builtin-ctfe-id-capacity : i64
+  301)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 300))
+  (__tl_make-array i64 compiler-builtin-ctfe-id-capacity))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -810,7 +812,8 @@
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 323)]
-    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 300)]
+    [ctfe-ids : (__tl_dyn-array i64)
+      (__tl_make-array i64 compiler-builtin-ctfe-id-capacity)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
@@ -822,7 +825,7 @@
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 300)
+      (while (< i compiler-builtin-ctfe-id-capacity)
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
@@ -897,7 +900,7 @@
 (define (state-capture-ctfe-ids! [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 300)
+    (while (< i compiler-builtin-ctfe-id-capacity)
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -905,7 +908,7 @@
 (define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 300)
+    (while (< i compiler-builtin-ctfe-id-capacity)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -1753,7 +1756,7 @@
 (define (compiler-builtin-clear-ctfe-ids!) : unit
   (let
     [index : i64 0]
-    (while (< index 300)
+    (while (< index compiler-builtin-ctfe-id-capacity)
       (begin
         (compiler-builtin-ctfe-set! index -1)
         (set! index (+ index 1))))))
@@ -2111,7 +2114,9 @@
     (compiler-builtin-load-ctfe-id! insert-missing 296 "nullable")
     (compiler-builtin-load-ctfe-id! insert-missing 297 "non-null")
     (compiler-builtin-load-ctfe-id! insert-missing 298 "unsafe-nullable")
-    (compiler-builtin-load-ctfe-id! insert-missing 299 "unsafe-non-null")))
+    (compiler-builtin-load-ctfe-id! insert-missing 299 "unsafe-non-null")
+    ;; The module a macro call expands into. Append-only.
+    (compiler-builtin-load-ctfe-id! insert-missing 300 "current-module")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -3393,6 +3398,9 @@
       (=
         (compiler-builtin-ctfe-ref 299)
         (ci.intern-source-slice "unsafe-non-null" 0 15))
+      (=
+        (compiler-builtin-ctfe-ref 300)
+        (ci.intern-source-slice "current-module" 0 14))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3474,6 +3482,7 @@
           (compiler-builtin-ctfe-set! 297 -1)
           (compiler-builtin-ctfe-set! 298 -1)
           (compiler-builtin-ctfe-set! 299 -1)
+          (compiler-builtin-ctfe-set! 300 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)

@@ -5689,6 +5689,7 @@ Primitive names and signatures are fixed as follows:
 | `(function-return-type type-expr)` | `type` | Function return type. |
 | `(module-value? module-expr name-expr)` | `bool` | True when the canonically identified module defines the named public value. |
 | `(module-value-type module-expr name-expr)` | `type` | Signature type of the named public value; a missing value is a compile-time diagnostic. |
+| `(current-module)` | `String` | Canonical identity of the module the current macro call expands into; `""` for the root file. |
 
 `index-expr`, `variant-index-expr`, and `payload-index-expr` must evaluate to
 `i64` in the same comptime context. Out-of-range indices, wrong arity,
@@ -5736,6 +5737,12 @@ Nominal identity is two-part:
 Both primitives reject non-nominal types. Generated nominal declarations use
 their generated declaration identity as the nominal name component, so
 reflection and generated declaration reuse share the same identity source.
+
+`current-module` reports the module a macro call's result is spliced into, in
+the same form as `type-nominal-module`: the calling declaration's module for an
+expression macro, and the module being expanded for a `: Decls` macro. It is
+the call site, not the module that defines the macro. A generator that must run
+beside a type, such as an owner hook, compares it with `type-nominal-module`.
 
 `type-key` is a compiler-owned ASCII string. It is stable across compiler runs
 for the same canonical type graph and is suitable as an input to generated

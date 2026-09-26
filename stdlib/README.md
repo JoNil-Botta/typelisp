@@ -186,7 +186,8 @@ Vec bang place macros as available yet.
   `syntax-name-fresh` for hygienic computed bindings. Reflection intrinsics
   include `type-cleanup-owning?` and `type-cleanup-function` for generated
   ownership-safe families. `module-value?` and `module-value-type` query public
-  signatures by canonical module identity, while `reference-element-type`
+  signatures by canonical module identity, and `current-module` names the
+  module a macro call expands into, while `reference-element-type`
   returns the referent of a shared or mutable reference. `expr-type` returns
   the produced type of a captured expression for macro-time reflection, while
   `type-expr` converts a reflected type value back into opaque resolved

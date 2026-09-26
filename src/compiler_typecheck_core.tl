@@ -123906,6 +123906,16 @@
         (cfg compile-profile (compiler-tc-walk-bind-params-finish!))
         bind-result))))
 
+;; Every transformer evaluation, native or interpreted, enters through
+;; `macro-eval-transformer-expanded` or `-expanded-with-env` with the call
+;; site's context, whose module is where the result splices: expression
+;; macros run in their declaration's module context and `: Decls` splices in
+;; the module being walked. `current-module` reports it.
+(define (macro-note-expansion-module! [ctx : TcContext]) : unit
+  (ctfe_support.ctfe-expansion-module-set-for-state!
+    (tc-context-ctfe-macro-state (tc-global-shared-view ctx))
+    (tc-context-module-id (tc-global-shared-view ctx))))
+
 ;; Run a macro transformer via CTFE. Module/declaration macro expansion also
 ;; needs the bound CTFE environment while normalizing generated import operands.
 (define (macro-eval-transformer-expanded-with-env
@@ -123922,117 +123932,123 @@
   [body : ast.AstExpr]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValueEnv
-  (match (macro-bind-transformer-expanded-profiled
-    (tc-global-shared-view ctx)
-    decls
-    (tc-global-shared-view fallback-module)
-    fallback-module-id
-    type-env
-    macro-name-id
-    (tc-global-shared-view macro-name)
-    (tc-global-shared-view params)
-    (tc-global-shared-view expanded-args)
-    (tc-global-shared-view call-expr))
-    [(ResultMacroEnv.Ok env)
-      (begin
-        ;; Both routes publish per-transformer syntax metadata. Reset before
-        ;; native dispatch as well as before an interpreted fallback so an
-        ;; earlier expansion cannot leak either marker into this result.
-        (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-          (tc-context-ctfe-macro-state (tc-global-shared-view ctx)))
-        (macro-result-provenance-reset-with-captured-body!
-          (tc-context-ctfe-macro-state (tc-global-shared-view ctx))
-          (macro-binding-prefix-transformer?
-            (tc-global-shared-view ctx)
-            (tc-global-shared-view fallback-module)
-            fallback-module-id
-            macro-name-id
-            (tc-global-shared-view params)))
-        (macro-hygiene-produced-eval-start!
-          (tc-context-macro-state (tc-global-shared-view ctx))
-          (tc-global-shared-view env))
-        (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
-        (cfg compile-profile (compiler-tc-macro-profile-start))
-        (match (let
-          [native-result : MacroNativeStdlibTlciResult
-            (macro-try-stdlib-tlci-native
+  (begin
+    (macro-note-expansion-module! (tc-global-shared-view ctx))
+    (match (macro-bind-transformer-expanded-profiled
+      (tc-global-shared-view ctx)
+      decls
+      (tc-global-shared-view fallback-module)
+      fallback-module-id
+      type-env
+      macro-name-id
+      (tc-global-shared-view macro-name)
+      (tc-global-shared-view params)
+      (tc-global-shared-view expanded-args)
+      (tc-global-shared-view call-expr))
+      [(ResultMacroEnv.Ok env)
+        (begin
+          ;; Both routes publish per-transformer syntax metadata. Reset before
+          ;; native dispatch as well as before an interpreted fallback so an
+          ;; earlier expansion cannot leak either marker into this result.
+          (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
+            (tc-context-ctfe-macro-state (tc-global-shared-view ctx)))
+          (macro-result-provenance-reset-with-captured-body!
+            (tc-context-ctfe-macro-state (tc-global-shared-view ctx))
+            (macro-binding-prefix-transformer?
               (tc-global-shared-view ctx)
               (tc-global-shared-view fallback-module)
-              declaration-id
-              (tc-global-shared-view macro-name)
-              (tc-global-shared-view params)
-              (tc-global-shared-view ret)
-              (tc-global-shared-view env)
-              (tc-global-shared-view call-expr))]
-          (begin
-            (cfg compile-profile (compiler-tc-walk-native-dispatch-finish!))
-            native-result))
-          [(MacroNativeStdlibTlciResult.Value value)
-            (begin
-              (macro-adopt-transformer-env-pools!
+              fallback-module-id
+              macro-name-id
+              (tc-global-shared-view params)))
+          (macro-hygiene-produced-eval-start!
+            (tc-context-macro-state (tc-global-shared-view ctx))
+            (tc-global-shared-view env))
+          (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
+          (cfg compile-profile (compiler-tc-macro-profile-start))
+          (match (let
+            [native-result : MacroNativeStdlibTlciResult
+              (macro-try-stdlib-tlci-native
                 (tc-global-shared-view ctx)
-                (tc-global-shared-view env))
-              (cfg
-                compile-profile
-                (compiler-tc-macro-profile-finish
-                  (tc-context-macro-state (tc-global-shared-view ctx))
-                  (ci.intern-composite-pair-id fallback-module-id macro-name-id)
-                  macro-name
-                  expanded-args))
-              (ResultMacroValueEnv.Ok value env))]
-          [(MacroNativeStdlibTlciResult.Err diag)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-tc-macro-profile-finish
-                  (tc-context-macro-state (tc-global-shared-view ctx))
-                  (ci.intern-composite-pair-id fallback-module-id macro-name-id)
-                  macro-name
-                  expanded-args))
-              (ResultMacroValueEnv.Err (box diag)))]
-          [(MacroNativeStdlibTlciResult.No)
-            (begin
-              (macro-note-stdlib-tlci-route
-                (tc-context-macro-state (tc-global-shared-view ctx))
                 (tc-global-shared-view fallback-module)
+                declaration-id
                 (tc-global-shared-view macro-name)
-                ret)
-              (macro-eval-transformer-interpreted-with-env
-                (tc-global-shared-view ctx)
-                fallback-module-id
-                macro-name-id
-                macro-name
-                body
-                (macro-binding-prefix-transformer?
-                  ctx
-                  fallback-module
+                (tc-global-shared-view params)
+                (tc-global-shared-view ret)
+                (tc-global-shared-view env)
+                (tc-global-shared-view call-expr))]
+            (begin
+              (cfg compile-profile (compiler-tc-walk-native-dispatch-finish!))
+              native-result))
+            [(MacroNativeStdlibTlciResult.Value value)
+              (begin
+                (macro-adopt-transformer-env-pools!
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view env))
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-finish
+                    (tc-context-macro-state (tc-global-shared-view ctx))
+                    (ci.intern-composite-pair-id
+                      fallback-module-id
+                      macro-name-id)
+                    macro-name
+                    expanded-args))
+                (ResultMacroValueEnv.Ok value env))]
+            [(MacroNativeStdlibTlciResult.Err diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-finish
+                    (tc-context-macro-state (tc-global-shared-view ctx))
+                    (ci.intern-composite-pair-id
+                      fallback-module-id
+                      macro-name-id)
+                    macro-name
+                    expanded-args))
+                (ResultMacroValueEnv.Err (box diag)))]
+            [(MacroNativeStdlibTlciResult.No)
+              (begin
+                (macro-note-stdlib-tlci-route
+                  (tc-context-macro-state (tc-global-shared-view ctx))
+                  (tc-global-shared-view fallback-module)
+                  (tc-global-shared-view macro-name)
+                  ret)
+                (macro-eval-transformer-interpreted-with-env
+                  (tc-global-shared-view ctx)
                   fallback-module-id
                   macro-name-id
-                  params)
-                expanded-args
-                env))]
-          [(MacroNativeStdlibTlciResult.Shell)
-            (begin
-              (macro-note-stdlib-tlci-route
-                (tc-context-macro-state (tc-global-shared-view ctx))
-                (tc-global-shared-view fallback-module)
-                (tc-global-shared-view macro-name)
-                ret)
-              (macro-eval-transformer-interpreted-with-env
-                (tc-global-shared-view ctx)
-                fallback-module-id
-                macro-name-id
-                macro-name
-                body
-                (macro-binding-prefix-transformer?
-                  ctx
-                  fallback-module
+                  macro-name
+                  body
+                  (macro-binding-prefix-transformer?
+                    ctx
+                    fallback-module
+                    fallback-module-id
+                    macro-name-id
+                    params)
+                  expanded-args
+                  env))]
+            [(MacroNativeStdlibTlciResult.Shell)
+              (begin
+                (macro-note-stdlib-tlci-route
+                  (tc-context-macro-state (tc-global-shared-view ctx))
+                  (tc-global-shared-view fallback-module)
+                  (tc-global-shared-view macro-name)
+                  ret)
+                (macro-eval-transformer-interpreted-with-env
+                  (tc-global-shared-view ctx)
                   fallback-module-id
                   macro-name-id
-                  params)
-                expanded-args
-                env))]))]
-    [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)]))
+                  macro-name
+                  body
+                  (macro-binding-prefix-transformer?
+                    ctx
+                    fallback-module
+                    fallback-module-id
+                    macro-name-id
+                    params)
+                  expanded-args
+                  env))]))]
+      [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)])))
 
 ;; Run a macro transformer via CTFE. Callers decide how to interpret the
 ;; returned syntax value for expression, module, or declaration positions.
@@ -124051,6 +124067,7 @@
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValue
   (begin
+    (macro-note-expansion-module! (tc-global-shared-view ctx))
     (macro-prepare-transformer-pools! (tc-global-shared-view ctx))
     (match (macro-try-stdlib-tlci-direct-expression
       (tc-global-shared-view ctx)

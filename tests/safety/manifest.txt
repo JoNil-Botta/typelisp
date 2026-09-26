@@ -200,6 +200,7 @@ mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_referenc
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|borrow requires a local, parameter, or aggregate place
 comptime_mut_borrow_rvalue_reject|check-fail|tests/safety/comptime_mut_borrow_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 comptime_mut_call_rvalue_reject|check-fail|tests/safety/comptime_mut_call_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
+comptime_current_module_args_reject|check-fail|tests/safety/comptime_current_module_args_reject.tl|-|current-module expects no arguments
 queue_bang_rvalue_reject|check-fail|tests/safety/queue_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 set_bang_rvalue_reject|check-fail|tests/safety/set_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place

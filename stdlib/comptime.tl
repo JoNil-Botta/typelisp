@@ -467,6 +467,11 @@
 (define (module-name [module : String]) : String
   module)
 
+;: Return the canonical identity of the module the current macro call expands
+;: into, in `type-nominal-module`'s form (`""` for the root file).
+(define (current-module) : String
+  (comptime-error "current-module is compile-time only"))
+
 ;: Return true when a module defines a public value named `name`.
 (define (module-value? [_module : String] [_name : String]) : bool
   false)

@@ -658,6 +658,7 @@ lsp_position_edit_smoke|src/tests/lsp_position_edit_smoke.tl|42|-|-|lsp_frame_co
 function_lifetime_elision|tests/integration/function_lifetime_elision.tl|42|-|-|stdlib/io.tl
 consume_parameters|tests/integration/consume_parameters.tl|0|-|-|consume/parameters/helper.tl stdlib/string.tl
 comptime_module_value_reflection|tests/integration/comptime_module_value_reflection.tl|42|-|-|reflection/signature/provider.tl stdlib/comptime.tl
+comptime_current_module|tests/integration/comptime_current_module.tl|42|-|-|comptime_current/provider.tl comptime_current/user.tl stdlib/comptime.tl stdlib/string.tl
 comptime_type_expr_worklist|tests/integration/comptime_type_expr_worklist.tl|42|-|-|stdlib/comptime.tl
 comptime_lambda_reflected_closure|tests/integration/comptime_lambda_reflected_closure.tl|42|-|-|stdlib/comptime.tl stdlib/string.tl
 str_cat_scoped_region|tests/integration/str_cat_scoped_region.tl|42|-|-|-

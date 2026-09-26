@@ -15,8 +15,9 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-bounded-pool.sh"
 BOUNDED_POOL_LABEL=selfhost-compile
 
-# --self-test-pool runs only the chunk pool self-test (a fake compiler, no
-# manifest); every ordinary run also runs it before compiling the manifest.
+# --self-test-pool runs only the self-tests (the expectation checker on
+# synthetic assembly, and the chunk pool with a fake compiler); every ordinary
+# run also runs them before compiling the manifest.
 SELF_TEST_POOL=0
 case "${1:-}" in
     "") ;;
@@ -201,243 +202,224 @@ compiler_batch_path() {
     fi
 }
 
-contains_text() {
-    needle=$1
-    [ "$compiled" -eq 2 ] && return
-    if ! grep -F -- "$needle" "$asm_path" >/dev/null; then
-        if expectation_contains_text "$needle"; then
-            return
-        fi
-        fail "$case_id assembly is missing expected text [$needle] in $EXPECTATION_MODE mode (assembly: $asm_path)"
-    fi
-}
+# A case's contains / not-contains / count-at-least directives are checked in
+# one pass once its `end` is read (#8005). Collecting them costs no process:
+# each directive becomes one row of the case's expectation file and one or two
+# keys. At `end`, one `grep -F -f` keeps every assembly line that holds any key
+# -- a needle, the bare symbol of a symbol needle, a main-label or `# TODO`
+# marker, or a stage1 symbol-metadata row -- and one awk decides every
+# directive from those lines. A per-directive grep cost a process and a full
+# scan of the assembly per needle, which dominated this gate on Windows.
+#
+# The decisions are the per-directive ones, in order:
+# - contains: a line contains the needle; else a line matches the needle's
+#   symbol regex; else, in stage1 mode, the compact spelling that stage1
+#   symbol metadata gives the needle's readable symbol.
+# - not-contains: no line contains the needle, and neither fallback matches.
+# - count-at-least: the needle's line count; if that is below the minimum, the
+#   symbol regex's line count when it is positive, else (stage1) the summed
+#   compact line counts.
+# Every symbol regex requires its bare symbol literally, so keeping only the
+# lines that hold a key never drops a line a regex would have matched;
+# `expectation_add` refuses a needle for which that does not hold. Compact
+# spellings are known only after the metadata is read, so that rare fallback
+# rereads the assembly inside the same awk process.
 
-not_contains_text() {
-    needle=$1
-    [ "$compiled" -eq 2 ] && return
-    if grep -F -- "$needle" "$asm_path" >/dev/null; then
-        fail "$case_id assembly contains forbidden text [$needle] in $EXPECTATION_MODE mode (assembly: $asm_path)"
-    fi
-    if expectation_contains_text "$needle"; then
-        fail "$case_id assembly contains forbidden qualified text for [$needle] in $EXPECTATION_MODE mode (assembly: $asm_path)"
-    fi
-}
-
-count_at_least() {
-    needle=$1
-    min=$2
-    [ "$compiled" -eq 2 ] && return
-    count=$(grep -F -- "$needle" "$asm_path" | wc -l | tr -d ' ')
-    if [ "$count" -lt "$min" ]; then
-        count=$(expectation_count_text "$needle")
-    fi
-    if [ "$count" -lt "$min" ]; then
-        fail "$case_id assembly has $count occurrence(s) of [$needle] in $EXPECTATION_MODE mode, expected at least $min (assembly: $asm_path)"
-    fi
-}
-
-expectation_symbol_regex() {
-    needle=$1
-    case "$needle" in
-        match_nested)
-            printf '_match_\n'
-            return 0
-            ;;
+# Set expectation_symbol to the bare symbol of a symbol needle, or to empty.
+# The needle forms and their order are those of the symbol regexes below.
+expectation_symbol_for() {
+    expectation_symbol=
+    case "$1" in
+        match_nested) expectation_symbol=_match_ ;;
         .L_tl_*:)
-            symbol=${needle#.L_tl_}
-            symbol=${symbol%:}
-            printf '(_tl__u2eL_tl_%s|_tl_%s|\\.L_tl_%s)\n' "$symbol" "$symbol" "$symbol"
-            return 0
+            expectation_symbol=${1#.L_tl_}
+            expectation_symbol=${expectation_symbol%:}
             ;;
-        .L_tl_*)
-            symbol=${needle#.L_tl_}
-            printf '(_tl__u2eL_tl_%s|_tl_%s|\\.L_tl_%s)\n' "$symbol" "$symbol" "$symbol"
-            return 0
-            ;;
+        .L_tl_*) expectation_symbol=${1#.L_tl_} ;;
         _tl_*:)
-            symbol=${needle#_tl_}
-            symbol=${symbol%:}
-            printf '^(_tl_([[:alnum:]_]+_u2etl_colon_colon|[[:alnum:]_]+_)?|tl_)%s:$\n' "$symbol"
-            return 0
+            expectation_symbol=${1#_tl_}
+            expectation_symbol=${expectation_symbol%:}
             ;;
-        _tl_*)
-            symbol=${needle#_tl_}
-            printf '(_tl_([[:alnum:]_]+_u2etl_colon_colon|[[:alnum:]_]+_)?|tl_)%s([^[:alnum:]_]|$)\n' "$symbol"
-            return 0
-            ;;
-        call\ _tl_*)
-            symbol=${needle#call _tl_}
-            printf 'call[[:space:]]+(_tl_([[:alnum:]_]+_u2etl_colon_colon|[[:alnum:]_]+_)?|tl_)%s([^[:alnum:]_]|$)\n' "$symbol"
-            return 0
-            ;;
-        call\ .L_tl_*)
-            symbol=${needle#call .L_tl_}
-            printf 'call[[:space:]]+(_tl__u2eL_tl_%s|_tl_%s|\\.L_tl_%s)\n' "$symbol" "$symbol" "$symbol"
-            return 0
+        _tl_*) expectation_symbol=${1#_tl_} ;;
+        call\ _tl_*) expectation_symbol=${1#call _tl_} ;;
+        call\ .L_tl_*) expectation_symbol=${1#call .L_tl_} ;;
+    esac
+}
+
+# Record one directive of the current case: KIND NEEDLE [MINIMUM].
+expectation_add() {
+    [ -n "$2" ] || fail "$case_id has an empty $1 needle"
+    case "$2" in
+        *"$EXPECTATION_TAB"*) fail "$case_id $1 needle contains a tab: [$2]" ;;
+    esac
+    printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >> "$case_expectations"
+    printf '%s\n' "$2" >> "$case_expectation_keys"
+    expectation_symbol_for "$2"
+    case "$2" in
+        match_nested | .L_tl_* | _tl_* | call\ _tl_* | call\ .L_tl_*)
+            case "$expectation_symbol" in
+                "" | *[!A-Za-z0-9_]*)
+                    fail "$case_id $1 needle [$2] has symbol [$expectation_symbol]; symbol needles need a non-empty [A-Za-z0-9_] symbol"
+                    ;;
+            esac
+            printf '%s\n' "$expectation_symbol" >> "$case_expectation_keys"
             ;;
     esac
-    return 1
 }
 
-expectation_contains_text() {
-    needle=$1
-    if regex=$(expectation_symbol_regex "$needle"); then
-        grep -E -- "$regex" "$asm_path" >/dev/null && return 0
-    fi
-    if [ "$EXPECTATION_MODE" = stage1 ]; then
-        stage1_compact_contains_text "$needle"
-        return $?
-    fi
-    return 1
+expectation_case_begin() {
+    case_expectations="$case_dir/expectations.tsv"
+    case_expectation_keys="$case_dir/expectation-keys.txt"
+    printf 'main:\n_tl_start:\n# TODO\ntypelisp-symbol\n#t\n' > "$case_expectation_keys"
+    : > "$case_expectations"
 }
 
-expectation_count_text() {
-    needle=$1
-    if regex=$(expectation_symbol_regex "$needle"); then
-        count=$(grep -E -- "$regex" "$asm_path" | wc -l | tr -d ' ')
-        if [ "$count" -gt 0 ]; then
-            printf '%s\n' "$count"
-            return
-        fi
-    fi
-    if [ "$EXPECTATION_MODE" = stage1 ]; then
-        stage1_compact_count_text "$needle"
-        return
-    fi
-    printf '0\n'
+# Check the current case: its assembly exists, has no `# TODO`, satisfies its
+# main policy, and satisfies every recorded directive. The first failure is
+# reported with the message the per-directive checks used.
+expectation_case_check() {
+    asm_path="$case_dir/$case_id.s"
+    [ -f "$asm_path" ] || fail "$case_id batch compile did not produce assembly: $asm_path"
+    candidates="$case_dir/expectation-lines.txt"
+    grep_status=0
+    grep -F -f "$case_expectation_keys" -- "$asm_path" > "$candidates" || grep_status=$?
+    [ "$grep_status" -le 1 ] || fail "$case_id expectation scan failed (grep exited $grep_status)"
+    verdict=$(awk \
+        -v case_id="$case_id" \
+        -v main_policy="$main_policy" \
+        -v mode="$EXPECTATION_MODE" \
+        -v asm_path="$asm_path" \
+        -v directives="$case_expectations" \
+        "$EXPECTATION_AWK" "$candidates") ||
+        fail "$case_id expectation evaluation failed"
+    [ -z "$verdict" ] || fail "$verdict"
 }
 
-stage1_compact_readable_symbol() {
-    needle=$1
-    case "$needle" in
-        .L_tl_*:)
-            symbol=${needle%:}
-            symbol=${symbol#.}
-            printf '_tl__u2e%s\n' "$symbol"
-            return 0
-            ;;
-        .L_tl_*)
-            symbol=${needle#.}
-            printf '_tl__u2e%s\n' "$symbol"
-            return 0
-            ;;
-        _tl_*:)
-            symbol=${needle#_tl_}
-            symbol=${symbol%:}
-            case "$symbol" in
-                *_u2etl_colon_colon*) symbol=${symbol##*_u2etl_colon_colon} ;;
-            esac
-            printf '_tl_%s\n' "$symbol"
-            return 0
-            ;;
-        _tl_*)
-            symbol=${needle#_tl_}
-            case "$symbol" in
-                *_u2etl_colon_colon*) symbol=${symbol##*_u2etl_colon_colon} ;;
-            esac
-            printf '_tl_%s\n' "$symbol"
-            return 0
-            ;;
-        call\ _tl_*)
-            symbol=${needle#call _tl_}
-            case "$symbol" in
-                *_u2etl_colon_colon*) symbol=${symbol##*_u2etl_colon_colon} ;;
-            esac
-            printf '_tl_%s\n' "$symbol"
-            return 0
-            ;;
-        call\ .L_tl_*)
-            symbol=${needle#call }
-            symbol=${symbol#.}
-            printf '_tl__u2e%s\n' "$symbol"
-            return 0
-            ;;
-        *:)
-            symbol=${needle%:}
-            printf '_tl_%s\n' "$symbol"
-            return 0
-            ;;
-    esac
-    return 1
+EXPECTATION_TAB=$(printf '\t')
+EXPECTATION_AWK='
+function starts(s, p) { return substr(s, 1, length(p)) == p }
+function ends(s, p) { return length(s) >= length(p) && substr(s, length(s) - length(p) + 1) == p }
+function no_colon(s) { return ends(s, ":") ? substr(s, 1, length(s) - 1) : s }
+function after_colon_colon(s,    at) {
+    while ((at = index(s, "_u2etl_colon_colon")) > 0) s = substr(s, at + 18)
+    return s
 }
-
-stage1_compact_symbols_for() {
-    readable=$1
-    awk -v readable="$readable" '
-        $1 == "#" && $2 == "typelisp-symbol" && $4 == readable { print $3 }
-        $1 == "#t" && $3 == readable { print $2 }
-    ' "$asm_path"
+# The symbol regex, stage1 readable symbol and compact check form of needle i.
+function derive(i,    s, sym, an, word, lead) {
+    s = needle[i]
+    an = "[A-Za-z0-9_]"
+    word = "([^A-Za-z0-9_]|$)"
+    lead = "(_tl_(" an "+_u2etl_colon_colon|" an "+_)?|tl_)"
+    re[i] = ""
+    sym = ""
+    if (s == "match_nested") { re[i] = "_match_"; sym = "_match_" }
+    else if (starts(s, ".L_tl_") && ends(s, ":")) { sym = no_colon(substr(s, 7)); re[i] = "(_tl__u2eL_tl_" sym "|_tl_" sym "|\\.L_tl_" sym ")" }
+    else if (starts(s, ".L_tl_")) { sym = substr(s, 7); re[i] = "(_tl__u2eL_tl_" sym "|_tl_" sym "|\\.L_tl_" sym ")" }
+    else if (starts(s, "_tl_") && ends(s, ":")) { sym = no_colon(substr(s, 5)); re[i] = "^" lead sym ":$" }
+    else if (starts(s, "_tl_")) { sym = substr(s, 5); re[i] = lead sym word }
+    else if (starts(s, "call _tl_")) { sym = substr(s, 10); re[i] = "call[ \t\v\f\r]+" lead sym word }
+    else if (starts(s, "call .L_tl_")) { sym = substr(s, 12); re[i] = "call[ \t\v\f\r]+(_tl__u2eL_tl_" sym "|_tl_" sym "|\\.L_tl_" sym ")" }
+    symbol[i] = sym
+    readable[i] = ""
+    form[i] = ""
+    if (starts(s, ".L_tl_") && ends(s, ":")) { readable[i] = "_tl__u2e" substr(no_colon(s), 2); form[i] = "colon" }
+    else if (starts(s, ".L_tl_")) { readable[i] = "_tl__u2e" substr(s, 2); form[i] = "word" }
+    else if (starts(s, "_tl_") && ends(s, ":")) { readable[i] = "_tl_" after_colon_colon(no_colon(substr(s, 5))); form[i] = "colon" }
+    else if (starts(s, "_tl_")) { readable[i] = "_tl_" after_colon_colon(substr(s, 5)); form[i] = "word" }
+    else if (starts(s, "call _tl_")) { readable[i] = "_tl_" after_colon_colon(substr(s, 10)); form[i] = "call" }
+    else if (starts(s, "call .L_tl_")) { readable[i] = "_tl__u2e" substr(s, 7); form[i] = "call" }
+    else if (ends(s, ":")) { readable[i] = "_tl_" no_colon(s); form[i] = "colon" }
 }
-
-stage1_compact_contains_text() {
-    needle=$1
-    readable=$(stage1_compact_readable_symbol "$needle") || return 1
-    for compact in $(stage1_compact_symbols_for "$readable"); do
-        case "$needle" in
-            .L_tl_*:)
-                grep -F -- "$compact:" "$asm_path" >/dev/null && return 0
-                ;;
-            _tl_*:)
-                grep -F -- "$compact:" "$asm_path" >/dev/null && return 0
-                ;;
-            call\ .L_tl_*)
-                grep -E -- "call[[:space:]]+$compact([^[:alnum:]_]|$)" "$asm_path" >/dev/null && return 0
-                ;;
-            call\ _tl_*)
-                grep -E -- "call[[:space:]]+$compact([^[:alnum:]_]|$)" "$asm_path" >/dev/null && return 0
-                ;;
-            .L_tl_*)
-                grep -E -- "$compact([^[:alnum:]_]|$)" "$asm_path" >/dev/null && return 0
-                ;;
-            _tl_*)
-                grep -E -- "$compact([^[:alnum:]_]|$)" "$asm_path" >/dev/null && return 0
-                ;;
-            *:)
-                grep -F -- "$compact:" "$asm_path" >/dev/null && return 0
-                ;;
-        esac
-    done
-    return 1
+function compact_hit(line, j) {
+    if (compact_form[j] == "colon") return index(line, compact_name[j] ":") > 0
+    if (compact_form[j] == "call") return line ~ ("call[ \t\v\f\r]+" compact_name[j] "([^A-Za-z0-9_]|$)")
+    return line ~ (compact_name[j] "([^A-Za-z0-9_]|$)")
 }
-
-stage1_compact_count_text() {
-    needle=$1
-    readable=$(stage1_compact_readable_symbol "$needle") || {
-        printf '0\n'
-        return
+function missing(i) { return case_id " assembly is missing expected text [" needle[i] "] in " mode " mode (assembly: " asm_path ")" }
+BEGIN {
+    n = 0
+    while ((getline row < directives) > 0) {
+        n++
+        tab = index(row, "\t")
+        kind[n] = substr(row, 1, tab - 1)
+        rest = substr(row, tab + 1)
+        tab = index(rest, "\t")
+        needle[n] = substr(rest, 1, tab - 1)
+        minimum[n] = substr(rest, tab + 1) + 0
+        derive(n)
+        lit[n] = 0
+        rec[n] = 0
+        if (mode == "stage1" && readable[n] != "") wanted[readable[n]] = 1
     }
-    total=0
-    for compact in $(stage1_compact_symbols_for "$readable"); do
-        case "$needle" in
-            .L_tl_*:)
-                count=$(grep -F -- "$compact:" "$asm_path" | wc -l | tr -d ' ')
-                ;;
-            _tl_*:)
-                count=$(grep -F -- "$compact:" "$asm_path" | wc -l | tr -d ' ')
-                ;;
-            call\ .L_tl_*)
-                count=$(grep -E -- "call[[:space:]]+$compact([^[:alnum:]_]|$)" "$asm_path" | wc -l | tr -d ' ')
-                ;;
-            call\ _tl_*)
-                count=$(grep -E -- "call[[:space:]]+$compact([^[:alnum:]_]|$)" "$asm_path" | wc -l | tr -d ' ')
-                ;;
-            .L_tl_*)
-                count=$(grep -E -- "$compact([^[:alnum:]_]|$)" "$asm_path" | wc -l | tr -d ' ')
-                ;;
-            _tl_*)
-                count=$(grep -E -- "$compact([^[:alnum:]_]|$)" "$asm_path" | wc -l | tr -d ' ')
-                ;;
-            *:)
-                count=$(grep -F -- "$compact:" "$asm_path" | wc -l | tr -d ' ')
-                ;;
-            *)
-                count=0
-                ;;
-        esac
-        total=$((total + count))
-    done
-    printf '%s\n' "$total"
+    close(directives)
+    todo = 0
+    mains = 0
+    starts_seen = 0
 }
+{
+    line = $0
+    if (index(line, "# TODO") > 0) todo = 1
+    if (line == "main:") mains++
+    if (line == "_tl_start:") starts_seen++
+    if (mode == "stage1") {
+        split(line, w, " ")
+        if (w[1] == "#" && w[2] == "typelisp-symbol" && (w[4] in wanted)) compacts[w[4]] = compacts[w[4]] " " w[3]
+        if (w[1] == "#t" && (w[3] in wanted)) compacts[w[3]] = compacts[w[3]] " " w[2]
+    }
+    for (i = 1; i <= n; i++) {
+        if (index(line, needle[i]) > 0) lit[i]++
+        if (re[i] != "" && index(line, symbol[i]) > 0 && line ~ re[i]) rec[i]++
+    }
+}
+END {
+    if (todo) { print case_id " assembly still contains # TODO"; exit }
+    if (main_policy == "exactly-one") {
+        if (mains == 0 && mode == "stage1") {
+            if (starts_seen != 1) { print case_id " expected exactly one stage1 _tl_start: entry fallback, found " starts_seen; exit }
+        } else if (mains != 1) { print case_id " expected exactly one main: label, found " mains; exit }
+    } else if (main_policy == "present") {
+        if (mains == 0 && mode == "stage1") {
+            if (starts_seen < 1) { print case_id " expected a main: label or stage1 _tl_start: entry fallback"; exit }
+        } else if (mains < 1) { print case_id " expected a main: label"; exit }
+    } else if (main_policy == "none") {
+        if (mains != 0) { print case_id " expected no main: label, found " mains; exit }
+    } else if (main_policy != "skip") { print case_id " has unknown main policy: " main_policy; exit }
+    # The stage1 compact fallback, for directives the other routes left open.
+    pairs = 0
+    for (i = 1; i <= n; i++) {
+        cnt[i] = 0
+        open_i = (kind[i] == "contains" && lit[i] == 0 && rec[i] == 0) ||
+            (kind[i] == "not-contains" && lit[i] == 0 && rec[i] == 0) ||
+            (kind[i] == "count-at-least" && lit[i] < minimum[i] && rec[i] == 0)
+        if (!open_i || mode != "stage1" || readable[i] == "" || !(readable[i] in compacts)) continue
+        m = split(compacts[readable[i]], names, " ")
+        for (k = 1; k <= m; k++) {
+            pairs++
+            compact_owner[pairs] = i
+            compact_name[pairs] = names[k]
+            compact_form[pairs] = form[i]
+        }
+    }
+    if (pairs > 0) {
+        while ((getline full < asm_path) > 0)
+            for (j = 1; j <= pairs; j++)
+                if (compact_hit(full, j)) cnt[compact_owner[j]]++
+        close(asm_path)
+    }
+    for (i = 1; i <= n; i++) {
+        if (kind[i] == "contains") {
+            if (lit[i] == 0 && rec[i] == 0 && cnt[i] == 0) { print missing(i); exit }
+        } else if (kind[i] == "not-contains") {
+            if (lit[i] > 0) { print case_id " assembly contains forbidden text [" needle[i] "] in " mode " mode (assembly: " asm_path ")"; exit }
+            if (rec[i] > 0 || cnt[i] > 0) { print case_id " assembly contains forbidden qualified text for [" needle[i] "] in " mode " mode (assembly: " asm_path ")"; exit }
+        } else {
+            count = lit[i]
+            if (count < minimum[i]) count = rec[i] > 0 ? rec[i] : cnt[i]
+            if (count < minimum[i]) { print case_id " assembly has " count " occurrence(s) of [" needle[i] "] in " mode " mode, expected at least " minimum[i] " (assembly: " asm_path ")"; exit }
+        }
+    }
+}
+'
 
 prepare_compile_batch() {
     : > "$BATCH_INPUT"
@@ -690,64 +672,94 @@ run_compile_batch() {
     fi
 }
 
-main_label_count() {
-    awk 'BEGIN { count = 0 } /^main:$/ { count += 1 } END { print count }' "$asm_path"
+# Expectation self-test (#8005): run every directive kind through
+# expectation_case_check on small synthetic assemblies. Each fallback route
+# (the symbol regex, and the stage1 compact spelling from symbol metadata) must
+# decide at least one case that its absence would fail, and each kind must
+# report its failure with the exact message. Runs before every ordinary run.
+expectation_self_test_fail() {
+    echo "FAIL: compile manifest expectation self-test: $*" >&2
+    exit 1
 }
 
-stage1_entry_label_count() {
-    awk 'BEGIN { count = 0 } /^_tl_start:$/ { count += 1 } END { print count }' "$asm_path"
+# NAME MODE MAIN-POLICY EXPECT ASM DIRECTIVE...: EXPECT is `pass` or the
+# failure message; ASM uses \n escapes; a DIRECTIVE is KIND|NEEDLE[|MINIMUM].
+expectation_self_test_case() {
+    _et_name=$1
+    _et_mode=$2
+    main_policy=$3
+    _et_expect=$4
+    _et_asm=$5
+    shift 5
+    case_id=$_et_name
+    case_dir="$EXPECTATION_SELF_TEST_ROOT/$_et_name"
+    mkdir -p "$case_dir"
+    printf '%b' "$_et_asm" > "$case_dir/$_et_name.s"
+    expectation_case_begin
+    for _et_directive in "$@"; do
+        _et_kind=${_et_directive%%|*}
+        _et_rest=${_et_directive#*|}
+        case "$_et_rest" in
+            *'|'*) expectation_add "$_et_kind" "${_et_rest%|*}" "${_et_rest##*|}" ;;
+            *) expectation_add "$_et_kind" "$_et_rest" ;;
+        esac
+    done
+    _et_status=0
+    ( EXPECTATION_MODE=$_et_mode; expectation_case_check ) \
+        > "$case_dir/stdout" 2> "$case_dir/stderr" || _et_status=$?
+    if [ "$_et_expect" = pass ]; then
+        [ "$_et_status" -eq 0 ] ||
+            expectation_self_test_fail "$_et_name should pass, got: $(cat "$case_dir/stderr")"
+    else
+        [ "$_et_status" -ne 0 ] || expectation_self_test_fail "$_et_name should fail with: $_et_expect"
+        [ "$(cat "$case_dir/stderr")" = "FAIL: $_et_expect" ] ||
+            expectation_self_test_fail "$_et_name: expected [FAIL: $_et_expect], got [$(cat "$case_dir/stderr")]"
+    fi
 }
 
-ensure_compiled() {
-    if [ "$compiled" -ne 0 ]; then
-        return
-    fi
+expectation_self_test() {
+    EXPECTATION_SELF_TEST_ROOT="$WORKDIR/expectation-self-test"
+    rm -rf "$EXPECTATION_SELF_TEST_ROOT"
+    at() { printf '%s assembly %s in %s mode (assembly: %s)' "$1" "$2" "$3" "$EXPECTATION_SELF_TEST_ROOT/$1/$1.s"; }
+    base='main:\n    call _tl_mod_widget\n_tl_mod_widget:\n    ret\n'
 
-    asm_path="$case_dir/$case_id.s"
-    if [ ! -f "$asm_path" ]; then
-        fail "$case_id batch compile did not produce assembly: $asm_path"
-    fi
+    # contains: literal, symbol regex, stage1 compact, and a miss.
+    expectation_self_test_case literal stage0 exactly-one pass "$base" 'contains|call _tl_mod_widget'
+    expectation_self_test_case regex stage0 exactly-one pass "$base" 'contains|_tl_widget:' 'contains|call _tl_widget'
+    compact='main:\n# typelisp-symbol _tl_g7 _tl_gadget\n_tl_g7:\n    call _tl_g7\n'
+    expectation_self_test_case compact stage1 exactly-one pass "$compact" 'contains|_tl_gadget:' 'contains|call _tl_gadget'
+    expectation_self_test_case compact_stage0 stage0 exactly-one \
+        "$(at compact_stage0 "is missing expected text [_tl_gadget:]" stage0)" "$compact" 'contains|_tl_gadget:'
+    expectation_self_test_case miss stage1 exactly-one \
+        "$(at miss "is missing expected text [nothing here]" stage1)" "$base" 'contains|call _tl_mod_widget' 'contains|nothing here'
 
-    if grep -F -- "# TODO" "$asm_path" >/dev/null; then
-        fail "$case_id assembly still contains # TODO"
-    fi
+    # not-contains: clean, literal hit, symbol-regex hit and compact hit.
+    expectation_self_test_case absent stage1 exactly-one pass "$base" 'not-contains|call _tl_other'
+    expectation_self_test_case forbidden stage1 exactly-one \
+        "$(at forbidden "contains forbidden text [    ret]" stage1)" "$base" 'not-contains|    ret'
+    expectation_self_test_case forbidden_regex stage0 exactly-one \
+        "$(at forbidden_regex "contains forbidden qualified text for [_tl_widget:]" stage0)" "$base" 'not-contains|_tl_widget:'
+    expectation_self_test_case forbidden_compact stage1 exactly-one \
+        "$(at forbidden_compact "contains forbidden qualified text for [_tl_gadget:]" stage1)" "$compact" 'not-contains|_tl_gadget:'
 
-    main_count=$(main_label_count)
-    stage1_entry_count=0
-    if [ "$EXPECTATION_MODE" = stage1 ]; then
-        stage1_entry_count=$(stage1_entry_label_count)
-    fi
-    case "$main_policy" in
-        exactly-one)
-            if [ "$main_count" -eq 0 ] && [ "$EXPECTATION_MODE" = stage1 ]; then
-                if [ "$stage1_entry_count" -ne 1 ]; then
-                    fail "$case_id expected exactly one stage1 _tl_start: entry fallback, found $stage1_entry_count"
-                fi
-            elif [ "$main_count" -ne 1 ]; then
-                fail "$case_id expected exactly one main: label, found $main_count"
-            fi
-            ;;
-        present)
-            if [ "$main_count" -eq 0 ] && [ "$EXPECTATION_MODE" = stage1 ]; then
-                if [ "$stage1_entry_count" -lt 1 ]; then
-                    fail "$case_id expected a main: label or stage1 _tl_start: entry fallback"
-                fi
-            elif [ "$main_count" -lt 1 ]; then
-                fail "$case_id expected a main: label"
-            fi
-            ;;
-        none)
-            if [ "$main_count" -ne 0 ]; then
-                fail "$case_id expected no main: label, found $main_count"
-            fi
-            ;;
-        skip) ;;
-        *)
-            fail "$case_id has unknown main policy: $main_policy"
-            ;;
-    esac
+    # count-at-least: literal, regex and compact counts, and a shortfall.
+    twice='main:\n    call _tl_a_twice\n    call _tl_b_twice\n# typelisp-symbol _tl_t9 _tl_thrice\n    call _tl_t9\n    call _tl_t9 # again\n    call _tl_t9\n'
+    expectation_self_test_case counted stage1 exactly-one pass "$twice" \
+        'count-at-least|    call |5' 'count-at-least|call _tl_twice|2' 'count-at-least|call _tl_thrice|3'
+    expectation_self_test_case short stage1 exactly-one \
+        "$(printf '%s assembly has 2 occurrence(s) of [call _tl_twice] in stage1 mode, expected at least 3 (assembly: %s)' short "$EXPECTATION_SELF_TEST_ROOT/short/short.s")" \
+        "$twice" 'count-at-least|call _tl_twice|3'
 
-    compiled=1
+    # The case-level checks come first, in the per-directive order.
+    expectation_self_test_case todo stage1 skip "todo assembly still contains # TODO" \
+        'main:\n    # TODO: lower this\n' 'contains|nothing here'
+    expectation_self_test_case two_mains stage1 exactly-one "two_mains expected exactly one main: label, found 2" \
+        'main:\nmain:\n' 'contains|nothing here'
+    expectation_self_test_case entry_fallback stage1 exactly-one pass '_tl_start:\n' 'contains|_tl_start:'
+    expectation_self_test_case entry_stage0 stage0 present "entry_stage0 expected a main: label" '_tl_start:\n'
+    expectation_self_test_case no_main stage1 none "no_main expected no main: label, found 1" "$base"
+    expectation_self_test_case no_main_ok stage1 none pass '_tl_x:\n    ret\n' 'contains|ret'
+    echo "[selfhost-compile] expectation self-test passed"
 }
 
 # Pool self-test (#7998): drive run_compile_batch with a fake compiler and pin
@@ -894,6 +906,7 @@ FAKE
     echo "[selfhost-compile] pool self-test passed"
 }
 
+( expectation_self_test )
 ( manifest_pool_self_test )
 if [ "$SELF_TEST_POOL" -eq 1 ]; then
     exit 0
@@ -908,7 +921,6 @@ case_source=
 case_mode=
 main_policy=
 case_dir=
-compiled=1
 case_count=0
 case_requires_stage0_mode=
 
@@ -926,8 +938,7 @@ while IFS='|' read -r kind a b c d e; do
             [ "$case_mode" = "direct" ] || [ "$case_mode" = "stage" ] || fail "$case_id has unknown mode: $case_mode"
             case_dir="$WORKDIR/$case_id"
             mkdir -p "$case_dir"
-            asm_path=
-            compiled=0
+            expectation_case_begin
             case_requires_symbol=
             case_requires_stage0_mode=
             case_count=$((case_count + 1))
@@ -948,8 +959,7 @@ while IFS='|' read -r kind a b c d e; do
             ;;
         contains)
             [ -n "$case_id" ] || fail "contains appears before a case"
-            ensure_compiled
-            contains_text "$a"
+            expectation_add contains "$a"
             ;;
         lint-root)
             [ -n "$case_id" ] || fail "lint-root appears before a case"
@@ -957,17 +967,18 @@ while IFS='|' read -r kind a b c d e; do
             ;;
         not-contains)
             [ -n "$case_id" ] || fail "not-contains appears before a case"
-            ensure_compiled
-            not_contains_text "$a"
+            expectation_add not-contains "$a"
             ;;
         count-at-least)
             [ -n "$case_id" ] || fail "count-at-least appears before a case"
-            ensure_compiled
-            count_at_least "$a" "$b"
+            case "$b" in
+                "" | *[!0-9]*) fail "$case_id count-at-least [$a] needs a non-negative integer minimum, got [$b]" ;;
+            esac
+            expectation_add count-at-least "$a" "$b"
             ;;
         end)
             [ -n "$case_id" ] || fail "end appears before a case"
-            ensure_compiled
+            expectation_case_check
             case_id=
             ;;
         *)

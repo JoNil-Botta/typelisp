@@ -24,9 +24,15 @@
 (import sym_i64_env)
 (import compiler_typecheck_core as tc_core)
 
-;; Layout queries need the struct names unqualified.
+;; Layout queries need the struct names unqualified. Lint does not count a use
+;; inside `(type ...)`.
+;; lint-allow: unused-import
 (import compiler_typecheck_core.TcTypeEnvBinding)
+
+;; lint-allow: unused-import
 (import compiler_typecheck_core.TcTypeEnvCache)
+
+;; lint-allow: unused-import
 (import compiler_typecheck_core.TcTypeEnvStore)
 
 ;; Copies of core's walk-state field macros: a type named in a macro template

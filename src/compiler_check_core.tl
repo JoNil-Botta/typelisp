@@ -1,7 +1,7 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers.
 (import compiler_owned_view as owned_view)
 (cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
-(import stdlib.io)
+(cfg compile-profile (import stdlib.io))
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)

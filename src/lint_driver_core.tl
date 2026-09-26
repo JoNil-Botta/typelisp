@@ -639,6 +639,9 @@
       "src/tests/compiler_ir_types_smoke.tl")
     (selfhost-lint-path-suffix?
       (owned_view.compiler-owned-shared-view path)
+      "src/tests/compiler_typecheck_core_tests.tl")
+    (selfhost-lint-path-suffix?
+      (owned_view.compiler-owned-shared-view path)
       "src/tests/compiler_typecheck_list_storage_unit.tl")
     (selfhost-lint-path-suffix?
       (owned_view.compiler-owned-shared-view path)

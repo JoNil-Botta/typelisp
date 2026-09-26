@@ -12,12 +12,16 @@
 (import compiler_intern as spec_ci)
 (import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
-(import compiler_profile_state as profile_state)
+(cfg test (import compiler_profile_state as profile_state))
 (cfg test (import stdlib.test))
 (import compiler_specialize as spec)
 
-;; Layout queries need the struct names unqualified.
+;; Layout queries need the struct names unqualified. Lint does not count a use
+;; inside `(type ...)`.
+;; lint-allow: unused-import
 (import compiler_specialize.SpecTemplateShadowState)
+
+;; lint-allow: unused-import
 (import compiler_specialize.SpecTemplateShadowStateData)
 
 (define (spec-template-env-shadow-state

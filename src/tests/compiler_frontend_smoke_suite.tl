@@ -8,7 +8,7 @@
 (import compiler_symbols)
 (import compiler_check_tests)
 (import compiler_semantic_index)
-(import compiler_typecheck)
+(import compiler_typecheck_tests as tc_tests)
 (import compiler_ctfe)
 (import compiler_ast_types as ast)
 (import compiler_parse_core as parser)
@@ -603,7 +603,7 @@
     [(string.eq name "reflection")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (if (compiler_typecheck.compiler-typecheck-reflection-tests-ok?)
+        (if (tc_tests.compiler-typecheck-reflection-tests-ok?)
           42
           1))]
     [(string.eq name "doc-test") (doc_test.doc-test-smoke-all)]

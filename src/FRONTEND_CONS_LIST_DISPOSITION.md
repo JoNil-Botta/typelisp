@@ -23,7 +23,7 @@ only after the generated vector substrate is ready. The typechecker environment
 families are not vector rewrites: they encode persistent scope and marker-scan
 semantics and need scoped-stack design first. The layout/spec lists are a
 separate measured slice because they are ordered metadata lists, not AST or
-scope data. Test-local families in `compiler_typecheck.tl` are source-literal
+scope data. Test-local families in `tests/compiler_typecheck_tests.tl` are source-literal
 fixtures and should change only as part of the production family they mirror.
 
 No broad conversion PR should start from #2565 until this table has landed.
@@ -119,7 +119,7 @@ layout/spec metadata, and wrappers around other data.
 | `MacroHygieneEnv` | `src/compiler_typecheck_core.tl:36200` | `MacroHygieneEnv.Nil` / `MacroHygieneEnv.Bind` | Persistent rename environment with nested shared tails. | Macro expansion path. | `redesign-scope-stack` | #3428. |
 | `MacroHygienePatternList` | `src/compiler_typecheck_core.tl:36219` | `MacroHygienePatternList.PatternList` | Product wrapper for `AstPatternList` plus hygiene env. | Macro expansion path. | `not-a-cons-migration-target` | Follows `AstPatternList`/`MacroHygieneEnv`. |
 
-## src/compiler_typecheck.tl
+## src/tests/compiler_typecheck_tests.tl
 
 This file is a smoke-test module. Its apparent list/env families are mostly
 source strings used to validate layout, typechecking, clone behavior, and
@@ -127,16 +127,16 @@ inline aggregate recursion. They are not production storage families.
 
 | Family | File:line | Constructors | Access/order/indexing | Hotness | Disposition | Blocker/follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| `StringList` fixture | `src/compiler_typecheck.tl:613` | `SNil` / `SCons` | Source-literal clone fixture. | Test only. | `not-a-cons-migration-target` | Keep until clone fixture changes. |
-| `ListI64` fixtures | `src/compiler_typecheck.tl:1026`, `1724`, `1893` | `ListNil` / `ListCons` | Source-literal recursive-list/layout fixtures. | Test only. | `not-a-cons-migration-target` | Keep; update only with fixture intent. |
-| `SymI64Env` fixture | `src/compiler_typecheck.tl:1903` | `SymI64Nil` / `SymI64Bind` | Source-literal env layout fixture. | Test only. | `not-a-cons-migration-target` | Production `SymI64Env` lives elsewhere. |
-| `InlineHelperRootList` fixture | `src/compiler_typecheck.tl:1908` | `InlineHelperRootNil` / `InlineHelperRootCons` | Source-literal helper layout fixture. | Test only. | `not-a-cons-migration-target` | Keep as recursive-list coverage. |
-| `CompilerPkgDepList` fixture | `src/compiler_typecheck.tl:1914` | `CompilerPkgDepNil` / `CompilerPkgDepCons` | Source-literal package-dep list layout fixture. | Test only. | `not-a-cons-migration-target` | Keep as recursive-list coverage. |
-| `AstTypeList` fixtures | `src/compiler_typecheck.tl:1945`, `1987` | `AstTypeList.Nil` / `AstTypeList.Cons` | Source-literal mirrors for inline layout tests. | Test only. | `not-a-cons-migration-target` | Production family handled in #3427. |
-| `CtfeEnv` fixture | `src/compiler_typecheck.tl` | Indexed `CtfeEnvArena` / `CtfeEnvBinding` fixture | Source-literal CTFE metadata layout fixture. | Test only. | `migrated` | Updated with the production arena migration in #5928. |
-| `AstPatternList` fixture | `src/compiler_typecheck.tl:1993` | `AstPatternList.Nil` / `AstPatternList.Cons` | Source-literal AST layout fixture. | Test only. | `not-a-cons-migration-target` | Production family handled in #3427. |
-| `FixtureExprList` fixture | `src/compiler_typecheck.tl:2001` | `FixtureExprList.Nil` / `FixtureExprList.Cons` | Source-literal AST layout fixture. | Test only. | `not-a-cons-migration-target` | Production expression-list families handled in #4180. |
-| `FormatCstList` fixture | `src/compiler_typecheck.tl:2027` | `FmtCstNil` / `FmtCstCons` | Source-literal formatter layout fixture. | Test only. | `not-a-cons-migration-target` | Production formatter family is outside #2565. |
+| `StringList` fixture | `src/tests/compiler_typecheck_tests.tl` | `SNil` / `SCons` | Source-literal clone fixture. | Test only. | `not-a-cons-migration-target` | Keep until clone fixture changes. |
+| `ListI64` fixtures | `src/tests/compiler_typecheck_tests.tl` | `ListNil` / `ListCons` | Source-literal recursive-list/layout fixtures. | Test only. | `not-a-cons-migration-target` | Keep; update only with fixture intent. |
+| `SymI64Env` fixture | `src/tests/compiler_typecheck_tests.tl` | `SymI64Nil` / `SymI64Bind` | Source-literal env layout fixture. | Test only. | `not-a-cons-migration-target` | Production `SymI64Env` lives elsewhere. |
+| `InlineHelperRootList` fixture | `src/tests/compiler_typecheck_tests.tl` | `InlineHelperRootNil` / `InlineHelperRootCons` | Source-literal helper layout fixture. | Test only. | `not-a-cons-migration-target` | Keep as recursive-list coverage. |
+| `CompilerPkgDepList` fixture | `src/tests/compiler_typecheck_tests.tl` | `CompilerPkgDepNil` / `CompilerPkgDepCons` | Source-literal package-dep list layout fixture. | Test only. | `not-a-cons-migration-target` | Keep as recursive-list coverage. |
+| `AstTypeList` fixtures | `src/tests/compiler_typecheck_tests.tl` | `AstTypeList.Nil` / `AstTypeList.Cons` | Source-literal mirrors for inline layout tests. | Test only. | `not-a-cons-migration-target` | Production family handled in #3427. |
+| `CtfeEnv` fixture | `src/tests/compiler_typecheck_tests.tl` | Indexed `CtfeEnvArena` / `CtfeEnvBinding` fixture | Source-literal CTFE metadata layout fixture. | Test only. | `migrated` | Updated with the production arena migration in #5928. |
+| `AstPatternList` fixture | `src/tests/compiler_typecheck_tests.tl` | `AstPatternList.Nil` / `AstPatternList.Cons` | Source-literal AST layout fixture. | Test only. | `not-a-cons-migration-target` | Production family handled in #3427. |
+| `FixtureExprList` fixture | `src/tests/compiler_typecheck_tests.tl` | `FixtureExprList.Nil` / `FixtureExprList.Cons` | Source-literal AST layout fixture. | Test only. | `not-a-cons-migration-target` | Production expression-list families handled in #4180. |
+| `FormatCstList` fixture | `src/tests/compiler_typecheck_tests.tl` | `FmtCstNil` / `FmtCstCons` | Source-literal formatter layout fixture. | Test only. | `not-a-cons-migration-target` | Production formatter family is outside #2565. |
 
 ## Conversion Rules
 

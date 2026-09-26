@@ -63006,6 +63006,19 @@
   [variant-id : i64]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : option_i64.Option
+  (tc-variant-member-handle-in-list-at
+    session
+    enum-handle
+    (tc-variant-member-name-id session variant-id)
+    variants
+    index))
+
+(define (tc-variant-member-handle-in-list-at
+  [session : cis.InternStructuralSessionHandle]
+  [enum-handle : i64]
+  [variant-member : i64]
+  [variants : (& variants ast.AstVariantDefList)]
+  [index : i64]) : option_i64.Option
   (if (>= index variants.len)
     option_i64.None
     (match (ast.ast-variant-def-list-get
@@ -63013,16 +63026,18 @@
       index
       (ast.ast-variant-def-fallback))
       [(ast.AstVariantDef.Def name _ _)
-        (if (tc-variant-member-name-id-eq? session name variant-id)
+        (if (tc-variant-member-id-eq?
+          (tc-variant-member-name-id session name)
+          variant-member)
           (option_i64.Some
             (csym.compiler-registry-make-handle
               (csym.compiler-symbol-kind-enum-variant)
               (csym.compiler-symbol-handle-index enum-handle)
               index))
-          (tc-variant-handle-in-list-at
+          (tc-variant-member-handle-in-list-at
             session
             enum-handle
-            variant-id
+            variant-member
             variants
             (+ index 1)))])))
 
@@ -63044,25 +63059,26 @@
         [else name-id])]
     (macro-hygiene-global-source-name-id-or session member-id member-id)))
 
-(define (tc-variant-member-name-id-eq?
-  [session : cis.InternStructuralSessionHandle]
-  [left : i64]
-  [right : i64]) : bool
-  (let
-    [left-member : i64 (tc-variant-member-name-id session left)]
-    [right-member : i64 (tc-variant-member-name-id session right)]
-    (cond
-      [(= left-member right-member) true]
-      [(or
-          (< left-member 0)
-          (>= left-member (ci.intern-capacity))
-          (< right-member 0)
-          (>= right-member (ci.intern-capacity)))
-        false]
-      [else
-        (string.eq
-          (tc-variant-member-name-text left-member)
-          (tc-variant-member-name-text right-member))])))
+(define (tc-variant-member-id-eq? [left : i64] [right : i64]) : bool
+  (cond
+    [(= left right) true]
+    [(or
+        (< left 0)
+        (>= left (ci.intern-capacity))
+        (< right 0)
+        (>= right (ci.intern-capacity)))
+      false]
+    [(and (tc-variant-member-dotless? left) (tc-variant-member-dotless? right))
+      (string.eq (ci.intern-str left) (ci.intern-str right))]
+    [else
+      (string.eq
+        (tc-variant-member-name-text left)
+        (tc-variant-member-name-text right))]))
+
+;; A source-lane id records where its first dot is when it is interned, so a
+;; dotless one is its own member name.
+(define (tc-variant-member-dotless? [name-id : i64]) : bool
+  (and (< name-id (ci.intern-pool-len)) (< (ci.intern-first-dot name-id) 0)))
 
 (define (tc-variant-member-name-text [name-id : i64]) : String
   (let
@@ -63092,42 +63108,55 @@
   [enum-id : i64]
   [pattern-id : i64]
   [variant-id : i64]) : bool
+  (tc-variant-name-matches-resolved?
+    ctx
+    enum-id
+    pattern-id
+    (tc-variant-name-handle ctx enum-id pattern-id)
+    (tc-variant-member-name-id (tc-context-structural-session ctx) pattern-id)
+    variant-id
+    (tc-variant-name-handle ctx enum-id variant-id)
+    (tc-variant-member-name-id (tc-context-structural-session ctx) variant-id)))
+
+;; `tc-variant-name-matches-id?` for names already resolved with
+;; `tc-variant-name-handle` and `tc-variant-member-name-id`.
+(define (tc-variant-name-matches-resolved?
+  [ctx : TcContext]
+  [enum-id : i64]
+  [pattern-id : i64]
+  [pattern-handle : i64]
+  [pattern-member : i64]
+  [variant-id : i64]
+  [variant-handle : i64]
+  [variant-member : i64]) : bool
   (cond
     [(= pattern-id variant-id) true]
     [(or (< enum-id 0) (< pattern-id 0) (< variant-id 0)) false]
     [else
-      (let
-        [symbols (tc-context-symbols ctx)]
-        [pattern-handle : i64
-          (tc-source-variant-handle-for-enum-id-or
-            ctx
-            enum-id
-            pattern-id
-            (csym.compiler-symbols-missing-handle))]
-        [candidate-handle : i64
-          (tc-source-variant-handle-for-enum-id-or
-            ctx
-            enum-id
-            variant-id
-            (csym.compiler-symbols-missing-handle))]
-        (and
-          (csym.compiler-symbols-handle-found? pattern-handle)
-          (csym.compiler-symbols-handle-found? candidate-handle)
-          (or
-            (= pattern-handle candidate-handle)
-            (and
-              (tc-variant-handle-owner-id-eq?
-                ctx
-                symbols
-                pattern-handle
-                candidate-handle)
-              (=
-                (tc-variant-member-name-id
-                  (tc-context-structural-session ctx)
-                  pattern-id)
-                (tc-variant-member-name-id
-                  (tc-context-structural-session ctx)
-                  variant-id))))))]))
+      (and
+        (csym.compiler-symbols-handle-found? pattern-handle)
+        (csym.compiler-symbols-handle-found? variant-handle)
+        (or
+          (= pattern-handle variant-handle)
+          (and
+            (= pattern-member variant-member)
+            (tc-variant-handle-owner-id-eq?
+              ctx
+              (tc-context-symbols ctx)
+              pattern-handle
+              variant-handle))))]))
+
+(define (tc-variant-name-handle
+  [ctx : TcContext]
+  [enum-id : i64]
+  [name-id : i64]) : i64
+  (if (or (< enum-id 0) (< name-id 0))
+    (csym.compiler-symbols-missing-handle)
+    (tc-source-variant-handle-for-enum-id-or
+      ctx
+      enum-id
+      name-id
+      (csym.compiler-symbols-missing-handle))))
 
 (define (tc-variant-handle-owner-id-eq?
   [ctx : TcContext]
@@ -63548,19 +63577,39 @@
 (define (tc-pattern-covers-variant?
   [ctx : TcContext]
   [pattern : ast.AstPattern]
+  [arm-names : (& arm-names TcArmVariantNames)]
+  [arm-index : i64]
   [enum-id : i64]
   [variant-id : i64]
+  [variant-handle : i64]
+  [variant-member : i64]
   [enum-lifetimes : ast.AstLifetimeList]) : bool
   (match pattern
     [(ast.AstPattern.Wildcard) true]
     [(ast.AstPattern.Binding name)
-      (tc-variant-name-matches-id? ctx enum-id name variant-id)]
+      (tc-variant-name-matches-resolved?
+        ctx
+        enum-id
+        name
+        (array-ref arm-names.handles arm-index)
+        (array-ref arm-names.members arm-index)
+        variant-id
+        variant-handle
+        variant-member)]
     [(ast.AstPattern.Variant name args-box)
       (let
         [args : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view args-box)]
         (and
-          (tc-variant-name-matches-id? ctx enum-id name variant-id)
+          (tc-variant-name-matches-resolved?
+            ctx
+            enum-id
+            name
+            (array-ref arm-names.handles arm-index)
+            (array-ref arm-names.members arm-index)
+            variant-id
+            variant-handle
+            variant-member)
           (tc-variant-pattern-irrefutable-id?
             ctx
             enum-id
@@ -63569,25 +63618,55 @@
             args)))]
     [_ false]))
 
-(define (tc-match-arms-cover-variant?
+;; Each arm's variant name resolved against the scrutinee's enum, as
+;; `tc-variant-name-handle` and `tc-variant-member-name-id`. Coverage compares
+;; every arm with every variant, so an arm's name is resolved once per match
+;; rather than once per variant.
+(defstruct TcArmVariantNames
+  (handles (__tl_dyn-array i64))
+  (members (__tl_dyn-array i64)))
+
+(define (tc-arm-variant-names
   [ctx : TcContext]
-  [arms : ast.AstMatchArmList]
-  [enum-id : i64]
-  [variant-id : i64]
-  [enum-lifetimes : ast.AstLifetimeList]) : bool
-  (tc-match-arms-cover-variant-at?
-    ctx
-    (& arms)
-    enum-id
-    variant-id
-    enum-lifetimes
-    0))
+  [arms : (& arms ast.AstMatchArmList)]
+  [enum-id : i64]) : TcArmVariantNames
+  (let
+    [handles : (__tl_dyn-array i64) (__tl_make-array i64 arms.len)]
+    [members : (__tl_dyn-array i64) (__tl_make-array i64 arms.len)]
+    [index : i64 0]
+    (begin
+      (while (< index arms.len)
+        (let
+          [name-id : i64
+            (match (ast.ast-match-arm-list-get
+              arms
+              index
+              (ast.ast-match-arm-fallback))
+              [(ast.AstMatchArm.Arm pattern _)
+                (match pattern
+                  [(ast.AstPattern.Binding name) name]
+                  [(ast.AstPattern.Variant name _) name]
+                  [_ -1])])]
+          (begin
+            (set!
+              (array-ref handles index)
+              (tc-variant-name-handle ctx enum-id name-id))
+            (set!
+              (array-ref members index)
+              (tc-variant-member-name-id
+                (tc-context-structural-session ctx)
+                name-id))
+            (set! index (+ index 1)))))
+      (TcArmVariantNames handles members))))
 
 (define (tc-match-arms-cover-variant-at?
   [ctx : TcContext]
   [arms : (& arms ast.AstMatchArmList)]
+  [arm-names : (& arm-names TcArmVariantNames)]
   [enum-id : i64]
   [variant-id : i64]
+  [variant-handle : i64]
+  [variant-member : i64]
   [enum-lifetimes : ast.AstLifetimeList]
   [index : i64]) : bool
   (if (>= index arms.len)
@@ -63597,15 +63676,22 @@
         (if (tc-pattern-covers-variant?
           ctx
           pattern
+          arm-names
+          index
           enum-id
           variant-id
+          variant-handle
+          variant-member
           (tc-global-shared-view enum-lifetimes))
           true
           (tc-match-arms-cover-variant-at?
             ctx
             arms
+            arm-names
             enum-id
             variant-id
+            variant-handle
+            variant-member
             enum-lifetimes
             (+ index 1)))])))
 
@@ -63656,13 +63742,16 @@
   [enum-lifetimes : ast.AstLifetimeList]
   [variants : ast.AstVariantDefList]
   [arms : ast.AstMatchArmList]) : ResultTcUnit
-  (tc-enum-variants-exhaustive-ok-at
-    ctx
-    enum-id
-    enum-lifetimes
-    (& variants)
-    arms
-    0))
+  (let
+    [arm-names : TcArmVariantNames (tc-arm-variant-names ctx (& arms) enum-id)]
+    (tc-enum-variants-exhaustive-ok-at
+      ctx
+      enum-id
+      enum-lifetimes
+      (& variants)
+      arms
+      (& arm-names)
+      0)))
 
 (define (tc-enum-variants-exhaustive-ok-at
   [ctx : TcContext]
@@ -63670,6 +63759,7 @@
   [enum-lifetimes : ast.AstLifetimeList]
   [variants : (& variants ast.AstVariantDefList)]
   [arms : ast.AstMatchArmList]
+  [arm-names : (& arm-names TcArmVariantNames)]
   [index : i64]) : ResultTcUnit
   (if (>= index variants.len)
     ResultTcUnit.Ok
@@ -63678,18 +63768,23 @@
       index
       (ast.ast-variant-def-fallback))
       [(ast.AstVariantDef.Def name _ _)
-        (if (tc-match-arms-cover-variant?
+        (if (tc-match-arms-cover-variant-at?
           ctx
-          (tc-global-shared-view arms)
+          (& arms)
+          arm-names
           enum-id
           name
-          (tc-global-shared-view enum-lifetimes))
+          (tc-variant-name-handle ctx enum-id name)
+          (tc-variant-member-name-id (tc-context-structural-session ctx) name)
+          (tc-global-shared-view enum-lifetimes)
+          0)
           (tc-enum-variants-exhaustive-ok-at
             ctx
             enum-id
             enum-lifetimes
             variants
             arms
+            arm-names
             (+ index 1))
           (if (tc-match-arms-mention-variant? ctx arms enum-id name)
             (ResultTcUnit.Err "typecheck: non-exhaustive match")
@@ -101814,7 +101909,30 @@
                     binding-owner-module-id
                     tail-id
                     false))]
-              [(TcMaybeNameId.No) source-name-id])))))))
+              [(TcMaybeNameId.No)
+                ;; `Enum.Variant` names a variant of an enum the macro's module
+                ;; sees, wherever the macro is used.
+                (let
+                  [enum-owner-module-id : i64
+                    (if (csym.compiler-symbols-handle-found?
+                      (csym.compiler-symbols-lookup-type-in-module-id-or
+                        hygiene.symbols
+                        lookup-module-id
+                        alias-id
+                        (csym.compiler-symbols-missing-handle)))
+                      (macro-hygiene-binding-owner-module-id-or
+                        hygiene
+                        definition-module-id
+                        alias-id
+                        -2)
+                      -2)]
+                  (if (>= enum-owner-module-id -1)
+                    (macro-hygiene-global-id
+                      (tc-macro-state-structural-session state)
+                      enum-owner-module-id
+                      source-name-id
+                      false)
+                    source-name-id))])))))))
 
 (define (macro-hygiene-rename-var-id
   [env : MacroHygieneEnv]

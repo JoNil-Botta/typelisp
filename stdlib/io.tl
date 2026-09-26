@@ -2481,11 +2481,6 @@
 ;; Inline test coverage.
 (cfg
   test
-  (define (io-edges-test-fail [message : String]) : unit
-    (panic message)))
-
-(cfg
-  test
   (defmacro (io-test-global-shared-view [place : Expr]) : Expr
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
@@ -2638,110 +2633,95 @@
 
 (cfg
   test
-  (define (io-edges-test-main) : i64
-    (begin
-      (io-edges-test-expect-try-read-missing
-        (io-test-global-shared-view io-missing-file))
-      (match (io-edges-test-try-file-exists?
-        (io-test-global-shared-view io-missing-file))
-        [(OkIoBool exists)
-          (test.assert-false exists "missing file does not exist")]
-        [(ErrIoBool error) (panic (error-message error))])
-      (let
-        [path : String ""]
-        (match (try-read-file (& path))
-          [(OkIoBytes _) (panic "empty path read should fail")]
-          [(ErrIoBytes error) (io-edges-test-expect-invalid-path error)]))
-      (let
-        [path : String ""]
-        [contents : String "bad"]
-        (match (try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
-          [(OkIoUnit) (panic "empty path write should fail")]
-          [(ErrIoUnit error) (io-edges-test-expect-invalid-path error)]))
-      (let
-        [path : String ""]
-        [contents : String "bad"]
-        (match (try-append-file (& path) (byte_buf.str-as-bytes (& contents)))
-          [(OkIoUnit) (panic "empty path append should fail")]
-          [(ErrIoUnit error) (io-edges-test-expect-invalid-path error)]))
-      (io-edges-test-expect-try-read-error
-        (io-test-global-shared-view io-directory-path))
-      (io-edges-test-expect-try-write-error
-        (io-test-global-shared-view io-missing-parent-file))
-      (io-edges-test-expect-try-append-error
-        (io-test-global-shared-view io-missing-parent-file))
-      (test.assert-owned-string-eq
-        (io-edges-test-read-file-or
-          (io-test-global-shared-view io-missing-file)
-          "fallback")
-        "fallback"
-        "missing file fallback")
-      (test.assert-false
-        (io-edges-test-file-nonempty?
-          (io-test-global-shared-view io-missing-file))
-        "missing file is not nonempty")
-      (let
-        [contents : String ""]
-        (write-file
-          (io-test-global-shared-view io-empty-file)
-          (byte_buf.str-as-bytes (& contents))))
-      (test.assert-false
-        (io-edges-test-file-nonempty?
-          (io-test-global-shared-view io-empty-file))
-        "empty file is not nonempty")
-      (io-edges-test-expect-try-write-ok
-        (io-test-global-shared-view io-file)
-        "alpha")
-      (io-edges-test-expect-try-read-ok
-        (io-test-global-shared-view io-file)
-        "alpha")
-      (test.assert-owned-string-eq
-        (io-edges-test-read-file-or
-          (io-test-global-shared-view io-file)
-          "fallback")
-        "alpha"
-        "read existing file")
-      (test.assert-true
-        (io-edges-test-file-nonempty? (io-test-global-shared-view io-file))
-        "written file is nonempty")
-      (let
-        [contents : String "-beta"]
-        (match (io-edges-test-try-append-file
-          (io-test-global-shared-view io-file)
-          contents)
-          [(OkIoUnit) unit]
-          [(ErrIoUnit error) (panic (error-message error))]))
-      (test.assert-owned-string-eq
-        (byte_buf.to-string (read-file (io-test-global-shared-view io-file)))
-        "alpha-beta"
-        "append existing file")
-      (let
-        [created-file : String
-          (io-edges-test-missing-path
-            (io-test-global-shared-view io-created-file))]
-        [contents : String "created"]
-        (begin
-          (io-edges-test-append-file created-file contents)
-          (test.assert-owned-string-eq
-            (byte_buf.to-string (read-file created-file))
-            "created"
-            "append creates missing file")))
-      42)))
-
-(cfg
-  test
   (test
     io-edges-api
-    (if (= (io-edges-test-main) 42)
-      unit
-      (io-edges-test-fail "io-edges-api did not return 42"))))
+    (io-edges-test-expect-try-read-missing
+      (io-test-global-shared-view io-missing-file))
+    (match (io-edges-test-try-file-exists?
+      (io-test-global-shared-view io-missing-file))
+      [(OkIoBool exists)
+        (test.assert-false exists "missing file does not exist")]
+      [(ErrIoBool error) (panic (error-message error))])
+    (let
+      [path : String ""]
+      (match (try-read-file (& path))
+        [(OkIoBytes _) (panic "empty path read should fail")]
+        [(ErrIoBytes error) (io-edges-test-expect-invalid-path error)]))
+    (let
+      [path : String ""]
+      [contents : String "bad"]
+      (match (try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
+        [(OkIoUnit) (panic "empty path write should fail")]
+        [(ErrIoUnit error) (io-edges-test-expect-invalid-path error)]))
+    (let
+      [path : String ""]
+      [contents : String "bad"]
+      (match (try-append-file (& path) (byte_buf.str-as-bytes (& contents)))
+        [(OkIoUnit) (panic "empty path append should fail")]
+        [(ErrIoUnit error) (io-edges-test-expect-invalid-path error)]))
+    (io-edges-test-expect-try-read-error
+      (io-test-global-shared-view io-directory-path))
+    (io-edges-test-expect-try-write-error
+      (io-test-global-shared-view io-missing-parent-file))
+    (io-edges-test-expect-try-append-error
+      (io-test-global-shared-view io-missing-parent-file))
+    (test.assert-owned-string-eq
+      (io-edges-test-read-file-or
+        (io-test-global-shared-view io-missing-file)
+        "fallback")
+      "fallback"
+      "missing file fallback")
+    (test.assert-false
+      (io-edges-test-file-nonempty?
+        (io-test-global-shared-view io-missing-file))
+      "missing file is not nonempty")
+    (let
+      [contents : String ""]
+      (write-file
+        (io-test-global-shared-view io-empty-file)
+        (byte_buf.str-as-bytes (& contents))))
+    (test.assert-false
+      (io-edges-test-file-nonempty? (io-test-global-shared-view io-empty-file))
+      "empty file is not nonempty")
+    (io-edges-test-expect-try-write-ok
+      (io-test-global-shared-view io-file)
+      "alpha")
+    (io-edges-test-expect-try-read-ok
+      (io-test-global-shared-view io-file)
+      "alpha")
+    (test.assert-owned-string-eq
+      (io-edges-test-read-file-or
+        (io-test-global-shared-view io-file)
+        "fallback")
+      "alpha"
+      "read existing file")
+    (test.assert-true
+      (io-edges-test-file-nonempty? (io-test-global-shared-view io-file))
+      "written file is nonempty")
+    (let
+      [contents : String "-beta"]
+      (match (io-edges-test-try-append-file
+        (io-test-global-shared-view io-file)
+        contents)
+        [(OkIoUnit) unit]
+        [(ErrIoUnit error) (panic (error-message error))]))
+    (test.assert-owned-string-eq
+      (byte_buf.to-string (read-file (io-test-global-shared-view io-file)))
+      "alpha-beta"
+      "append existing file")
+    (let
+      [created-file : String
+        (io-edges-test-missing-path
+          (io-test-global-shared-view io-created-file))]
+      [contents : String "created"]
+      (begin
+        (io-edges-test-append-file created-file contents)
+        (test.assert-owned-string-eq
+          (byte_buf.to-string (read-file created-file))
+          "created"
+          "append creates missing file")))))
 
 ;; Inline test coverage.
-(cfg
-  test
-  (define (io-handle-test-fail [message : String]) : unit
-    (panic message)))
-
 (cfg
   test
   (define handle-read-file : String
@@ -3155,34 +3135,25 @@
 
 (cfg
   test
-  (define (io-handle-test-main) : i64
-    (begin
-      (cfg
-        windows
-        (begin
-          (io-handle-test-assert-open-not-found
-            (io-handle-test-file-open handle-missing-file OpenRead)
-            "windows missing read handle reports not found")
-          (io-handle-test-assert-read-unsupported
-            (file-read-chunk (FileHandle 1) 1)
-            "windows file reads are unsupported")
-          (io-handle-test-assert-unit-unsupported
-            (io-handle-test-file-write (FileHandle 1) "x")
-            "write"
-            "windows file writes are unsupported")
-          (io-handle-test-assert-unit-unsupported
-            (file-flush (FileHandle 1))
-            "flush"
-            "windows file flush is unsupported"))
-        (begin
-          (exercise-linux-file-handles)
-          (exercise-linux-file-handle-reuse)))
-      42)))
-
-(cfg
-  test
   (test
     io-file-handle-api
-    (if (= (io-handle-test-main) 42)
-      unit
-      (io-handle-test-fail "io-file-handle-api did not return 42"))))
+    (cfg
+      windows
+      (begin
+        (io-handle-test-assert-open-not-found
+          (io-handle-test-file-open handle-missing-file OpenRead)
+          "windows missing read handle reports not found")
+        (io-handle-test-assert-read-unsupported
+          (file-read-chunk (FileHandle 1) 1)
+          "windows file reads are unsupported")
+        (io-handle-test-assert-unit-unsupported
+          (io-handle-test-file-write (FileHandle 1) "x")
+          "write"
+          "windows file writes are unsupported")
+        (io-handle-test-assert-unit-unsupported
+          (file-flush (FileHandle 1))
+          "flush"
+          "windows file flush is unsupported"))
+      (begin
+        (exercise-linux-file-handles)
+        (exercise-linux-file-handle-reuse)))))

@@ -40,7 +40,7 @@
 (import (hashmap.hashmap i64 i64) as backend_i64_i64_map)
 (import stdlib.string)
 (import stdlib.byte_buf_core)
-(import stdlib.str_cat_runtime as str_cat)
+(import compiler_str_cat as str_cat)
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 (import compiler_owned_view as owned_view)
@@ -5475,7 +5475,7 @@
                 " "
                 mask-reg
                 ", "
-                (compiler-backend-global-shared-view gpr)
+                gpr
                 "\n")
               gpr))])]
     [(ResultBackendMaskUse.Err message) (ResultBackendVectorUse.Err message)]))
@@ -5751,37 +5751,33 @@
                                     (str_cat.str-cat
                                       groups
                                       "    "
-                                      (compiler-backend-global-shared-view
-                                        widen)
+                                      widen
                                       " "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
                                         word-offset)
                                       ", "
-                                      (compiler-backend-global-shared-view tmp0)
+                                      tmp0
                                       "\n    "
-                                      (compiler-backend-global-shared-view
-                                        widen)
+                                      widen
                                       " "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
                                         (+ vector-bytes word-offset))
                                       ", "
-                                      (compiler-backend-global-shared-view tmp1)
+                                      tmp1
                                       "\n    "
-                                      (compiler-backend-global-shared-view
-                                        shift)
+                                      shift
                                       " "
-                                      (compiler-backend-global-shared-view tmp1)
+                                      tmp1
                                       ", "
-                                      (compiler-backend-global-shared-view tmp0)
+                                      tmp0
                                       ", "
-                                      (compiler-backend-global-shared-view tmp0)
+                                      tmp0
                                       "\n    "
-                                      (compiler-backend-global-shared-view
-                                        dword-move)
+                                      dword-move
                                       " "
-                                      (compiler-backend-global-shared-view tmp0)
+                                      tmp0
                                       ", "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
@@ -5793,7 +5789,7 @@
                                 lhs-asm
                                 rhs-asm
                                 "    subq $128, %rsp\n    "
-                                (compiler-backend-global-shared-view move)
+                                move
                                 " "
                                 lhs-reg
                                 ", (%rsp)\n    "
@@ -5803,45 +5799,45 @@
                                 ", 32(%rsp)\n"
                                 groups
                                 "    vpcmpeqd "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 "\n    vpsrld $16, "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view tmp0)
-                                "\n    "
-                                (compiler-backend-global-shared-view dword-move)
-                                " 64(%rsp), "
-                                (compiler-backend-global-shared-view tmp1)
-                                "\n    vpand "
-                                (compiler-backend-global-shared-view tmp0)
-                                ", "
-                                (compiler-backend-global-shared-view tmp1)
-                                ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp0
                                 "\n    "
                                 dword-move
-                                " 96(%rsp), "
-                                (compiler-backend-global-shared-view dst-reg)
+                                " 64(%rsp), "
+                                tmp1
                                 "\n    vpand "
                                 tmp0
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                tmp1
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                tmp1
+                                "\n    "
+                                dword-move
+                                " 96(%rsp), "
+                                dst-reg
+                                "\n    vpand "
+                                tmp0
+                                ", "
+                                dst-reg
+                                ", "
+                                dst-reg
                                 "\n    vpackusdw "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 "\n    vpermq $216, "
                                 tmp1
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    addq $128, %rsp\n"
                                 (compiler-backend-vector-store-dst
                                   assignments
@@ -5995,37 +5991,33 @@
                                     (str_cat.str-cat
                                       groups
                                       "    "
-                                      (compiler-backend-global-shared-view
-                                        widen)
+                                      widen
                                       " "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
                                         byte-offset)
                                       ", "
-                                      (compiler-backend-global-shared-view tmp0)
+                                      tmp0
                                       "\n    "
-                                      (compiler-backend-global-shared-view
-                                        widen)
+                                      widen
                                       " "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
                                         (+ vector-bytes byte-offset))
                                       ", "
-                                      (compiler-backend-global-shared-view tmp1)
+                                      tmp1
                                       "\n    "
-                                      (compiler-backend-global-shared-view
-                                        shift)
+                                      shift
                                       " "
-                                      (compiler-backend-global-shared-view tmp1)
+                                      tmp1
                                       ", "
-                                      (compiler-backend-global-shared-view tmp0)
+                                      tmp0
                                       ", "
-                                      (compiler-backend-global-shared-view tmp0)
+                                      tmp0
                                       "\n    "
-                                      (compiler-backend-global-shared-view
-                                        dword-move)
+                                      dword-move
                                       " "
-                                      (compiler-backend-global-shared-view tmp0)
+                                      tmp0
                                       ", "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
@@ -6039,7 +6031,7 @@
                                 "    subq $"
                                 (string.int->string stack-bytes)
                                 ", %rsp\n    "
-                                (compiler-backend-global-shared-view move)
+                                move
                                 " "
                                 lhs-reg
                                 ", (%rsp)\n    "
@@ -6055,138 +6047,138 @@
                                 (if avx512
                                   (str_cat.str-cat
                                     "    vpternlogd $255, "
-                                    (compiler-backend-global-shared-view tmp0)
+                                    tmp0
                                     ", "
-                                    (compiler-backend-global-shared-view tmp0)
+                                    tmp0
                                     ", "
-                                    (compiler-backend-global-shared-view tmp0)
+                                    tmp0
                                     "\n")
                                   (str_cat.str-cat
                                     "    vpcmpeqd "
-                                    (compiler-backend-global-shared-view tmp0)
+                                    tmp0
                                     ", "
-                                    (compiler-backend-global-shared-view tmp0)
+                                    tmp0
                                     ", "
-                                    (compiler-backend-global-shared-view tmp0)
+                                    tmp0
                                     "\n"))
                                 "    vpsrld $24, "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 "\n    "
-                                (compiler-backend-global-shared-view dword-move)
+                                dword-move
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   group-base)
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 "\n    "
-                                (compiler-backend-global-shared-view bit-and)
+                                bit-and
                                 " "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 "\n    "
-                                (compiler-backend-global-shared-view dword-move)
+                                dword-move
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base vector-bytes))
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    "
-                                (compiler-backend-global-shared-view bit-and)
+                                bit-and
                                 " "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    vpackusdw "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 "\n    "
-                                (compiler-backend-global-shared-view dword-move)
+                                dword-move
                                 " "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 ", "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   group-base)
                                 "\n    "
-                                (compiler-backend-global-shared-view dword-move)
+                                dword-move
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base (* vector-bytes 2)))
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 "\n    "
-                                (compiler-backend-global-shared-view bit-and)
+                                bit-and
                                 " "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 "\n    "
-                                (compiler-backend-global-shared-view dword-move)
+                                dword-move
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base (* vector-bytes 3)))
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    "
                                 bit-and
                                 " "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    vpackusdw "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 "\n    "
-                                (compiler-backend-global-shared-view dword-move)
+                                dword-move
                                 " "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 ", "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base vector-bytes))
                                 "\n    "
-                                (compiler-backend-global-shared-view dword-move)
+                                dword-move
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   group-base)
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 "\n    "
-                                (compiler-backend-global-shared-view dword-move)
+                                dword-move
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base vector-bytes))
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    vpackuswb "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 ", "
-                                (compiler-backend-global-shared-view tmp1)
+                                tmp1
                                 "\n    movl $50462976, "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
@@ -6211,51 +6203,51 @@
                                   "(%rsp)"
                                   index-offset)
                                 ", "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 "\n    "
                                 dword-move
                                 " "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    vpsrld $"
                                 (if avx512
                                   "2"
                                   "1")
                                 ", "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 "\n    vpslld $"
                                 (if avx512
                                   "30"
                                   "31")
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    vpsrld $"
                                 (if avx512
                                   "28"
                                   "29")
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    "
                                 bit-or
                                 " "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 ", "
-                                (compiler-backend-global-shared-view tmp0)
+                                tmp0
                                 "\n    vpermd "
                                 tmp1
                                 ", "
                                 tmp0
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    addq $"
                                 (string.int->string stack-bytes)
                                 ", %rsp\n"
@@ -6352,45 +6344,45 @@
                             lhs-asm
                             rhs-asm
                             "    vpsrlw $8, "
-                            (compiler-backend-global-shared-view lhs-reg)
+                            lhs-reg
                             ", "
-                            (compiler-backend-global-shared-view tmp0)
+                            tmp0
                             "\n    vpsrlw $8, "
-                            (compiler-backend-global-shared-view rhs-reg)
+                            rhs-reg
                             ", "
-                            (compiler-backend-global-shared-view tmp1)
+                            tmp1
                             "\n    vpmullw "
                             tmp1
                             ", "
-                            (compiler-backend-global-shared-view tmp0)
+                            tmp0
                             ", "
-                            (compiler-backend-global-shared-view tmp0)
+                            tmp0
                             "\n    vpsllw $8, "
-                            (compiler-backend-global-shared-view tmp0)
+                            tmp0
                             ", "
-                            (compiler-backend-global-shared-view tmp0)
+                            tmp0
                             "\n    vpmullw "
                             rhs-reg
                             ", "
                             lhs-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n    vpsllw $8, "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n    vpsrlw $8, "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n    "
                             bit-or
                             " "
                             tmp0
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n"
                             (compiler-backend-vector-store-dst
                               assignments
@@ -6664,7 +6656,7 @@
                     addr
                     ", ")
                   (str_cat.str-cat
-                    (compiler-backend-global-shared-view dst-reg)
+                    dst-reg
                     "\n"
                     (compiler-backend-vector-store-dst
                       assignments
@@ -6816,7 +6808,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastd "
                     xmm-reg
                     ", "))]
@@ -6835,7 +6827,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastd "
                     xmm-reg
                     ", "))]
@@ -6854,7 +6846,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastw "
                     xmm-reg
                     ", "))]
@@ -6873,7 +6865,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastw "
                     xmm-reg
                     ", "))]
@@ -6892,7 +6884,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastb "
                     xmm-reg
                     ", "))]
@@ -6911,7 +6903,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastb "
                     xmm-reg
                     ", "))]
@@ -6930,7 +6922,7 @@
                     "    vmovq "
                     gp-reg
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastq "
                     xmm-reg
                     ", "))]
@@ -6967,7 +6959,7 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 load-asm
-                (compiler-backend-global-shared-view dst-reg)
+                dst-reg
                 "\n"
                 (compiler-backend-vector-store-dst
                   assignments
@@ -7035,23 +7027,23 @@
                         [body : String
                           (str_cat.str-cat
                             "    vpsrlq $32, "
-                            (compiler-backend-global-shared-view lhs-reg)
+                            lhs-reg
                             ", %ymm0\n    vpmuludq "
-                            (compiler-backend-global-shared-view rhs-reg)
+                            rhs-reg
                             ", %ymm0, %ymm0\n    vpsrlq $32, "
-                            (compiler-backend-global-shared-view rhs-reg)
+                            rhs-reg
                             ", %ymm1\n    vpmuludq "
-                            (compiler-backend-global-shared-view lhs-reg)
+                            lhs-reg
                             ", %ymm1, %ymm1\n    vpaddq %ymm1, %ymm0, %ymm0\n    vpsllq $32, %ymm0, %ymm0\n    vpmuludq "
                             rhs-reg
                             ", "
                             lhs-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n    vpaddq %ymm0, "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n")]
                         (ResultCompilerBackend.Ok
                           (str_cat.str-cat
@@ -7126,19 +7118,19 @@
                           lhs-asm
                           rhs-asm
                           "    vpxor %ymm1, %ymm1, %ymm1\n    vpcmpgtq "
-                          (compiler-backend-global-shared-view lhs-reg)
+                          lhs-reg
                           ", %ymm1, %ymm0\n    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpsllq $63, %ymm1, %ymm1\n    vpsrlq $57, %ymm1, %ymm1\n    vpsubq "
-                          (compiler-backend-global-shared-view rhs-reg)
+                          rhs-reg
                           ", %ymm1, %ymm1\n    vpsllvq %ymm1, %ymm0, %ymm0\n    vpsrlvq "
                           rhs-reg
                           ", "
                           lhs-reg
                           ", "
-                          (compiler-backend-global-shared-view dst-reg)
+                          dst-reg
                           "\n    vpor %ymm0, "
-                          (compiler-backend-global-shared-view dst-reg)
+                          dst-reg
                           ", "
-                          (compiler-backend-global-shared-view dst-reg)
+                          dst-reg
                           "\n"
                           (compiler-backend-vector-store-dst
                             assignments
@@ -7291,8 +7283,7 @@
                                     ", "
                                     lhs-reg
                                     ", "
-                                    (compiler-backend-global-shared-view
-                                      dst-reg)
+                                    dst-reg
                                     "\n"
                                     (compiler-backend-vector-store-dst
                                       assignments
@@ -7393,7 +7384,7 @@
                                 ", "
                                 reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n"
                                 (compiler-backend-vector-store-dst
                                   assignments
@@ -7892,11 +7883,7 @@
                                   (compiler-backend-global-shared-view elem-ty)))
                               " ")
                             source-reg)
-                          (str_cat.str-cat
-                            ", "
-                            (str_cat.str-cat
-                              (compiler-backend-global-shared-view dst-reg)
-                              "\n")))))
+                          (str_cat.str-cat ", " (str_cat.str-cat dst-reg "\n")))))
                     (compiler-backend-vector-store-dst
                       assignments
                       dst
@@ -7949,11 +7936,7 @@
                                   lanes))
                               " ")
                             source-reg)
-                          (str_cat.str-cat
-                            ", "
-                            (str_cat.str-cat
-                              (compiler-backend-global-shared-view dst-reg)
-                              "\n")))))
+                          (str_cat.str-cat ", " (str_cat.str-cat dst-reg "\n")))))
                     (compiler-backend-avx512-mask-store-dst
                       assignments
                       dst
@@ -8184,7 +8167,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastw "
                     xmm-reg
                     ", "))]
@@ -8203,7 +8186,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastw "
                     xmm-reg
                     ", "))]
@@ -8222,7 +8205,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastb "
                     xmm-reg
                     ", "))]
@@ -8241,7 +8224,7 @@
                     "    vmovd "
                     gp32
                     ", "
-                    (compiler-backend-global-shared-view xmm-reg)
+                    xmm-reg
                     "\n    vpbroadcastb "
                     xmm-reg
                     ", "))]
@@ -8459,7 +8442,7 @@
               "    vmovdqa64 "
               data-label
               "(%rip), "
-              (compiler-backend-global-shared-view dst-reg)
+              dst-reg
               "\n"
               (compiler-backend-vector-store-dst
                 assignments
@@ -8492,7 +8475,7 @@
                 "    vmovdqa "
                 data-label
                 "(%rip), "
-                (compiler-backend-global-shared-view dst-reg)
+                dst-reg
                 "\n"
                 (compiler-backend-vector-store-dst
                   assignments
@@ -8556,7 +8539,7 @@
                     addr
                     ", ")
                   (str_cat.str-cat
-                    (compiler-backend-global-shared-view dst-reg)
+                    dst-reg
                     "\n"
                     (compiler-backend-vector-store-dst
                       assignments
@@ -8615,7 +8598,7 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 load-asm
-                (compiler-backend-global-shared-view dst-reg)
+                dst-reg
                 "\n"
                 (compiler-backend-vector-store-dst
                   assignments
@@ -8765,7 +8748,7 @@
                                   ", "
                                   lhs-reg
                                   ", "
-                                  (compiler-backend-global-shared-view dst-reg)
+                                  dst-reg
                                   "\n"
                                   (compiler-backend-vector-store-dst
                                     assignments
@@ -8865,7 +8848,7 @@
                               ", "
                               reg
                               ", "
-                              (compiler-backend-global-shared-view dst-reg)
+                              dst-reg
                               "\n"
                               (compiler-backend-vector-store-dst
                                 assignments
@@ -8965,7 +8948,7 @@
                                 ", "
                                 lhs-reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n"
                                 (compiler-backend-avx512-mask-store-dst
                                   assignments
@@ -9061,15 +9044,15 @@
 (define (compiler-backend-avx2-compare-invert-asm [reg : String] [tmp : String]) : String
   (str_cat.str-cat
     "    vpcmpeqd "
-    (compiler-backend-global-shared-view tmp)
+    tmp
     ", "
-    (compiler-backend-global-shared-view tmp)
+    tmp
     ", "
-    (compiler-backend-global-shared-view tmp)
+    tmp
     "\n    vpxor "
     tmp
     ", "
-    (compiler-backend-global-shared-view reg)
+    reg
     ", "
     reg
     "\n"))
@@ -9106,7 +9089,7 @@
           ", "
           lhs-reg
           ", "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           "\n"
           (compiler-backend-avx2-compare-invert-asm dst-reg "%ymm0"))]
       [(compiler_ir_types.CompilerIrBinOp.Gt)
@@ -9122,7 +9105,7 @@
           ", "
           rhs-reg
           ", "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           "\n"
           (compiler-backend-avx2-compare-invert-asm dst-reg "%ymm0"))]
       [(compiler_ir_types.CompilerIrBinOp.Le)
@@ -9134,7 +9117,7 @@
           ", "
           lhs-reg
           ", "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           "\n"
           (compiler-backend-avx2-compare-invert-asm dst-reg "%ymm0"))]
       [_ ""])))
@@ -9178,7 +9161,7 @@
             ", %ymm1\n    vpxor %ymm0, "
             lhs-reg
             ", "
-            (compiler-backend-global-shared-view dst-reg)
+            dst-reg
             "\n")]
         (match op
           [(compiler_ir_types.CompilerIrBinOp.Lt)
@@ -9187,7 +9170,7 @@
               "    "
               gt
               " "
-              (compiler-backend-global-shared-view dst-reg)
+              dst-reg
               ", %ymm1, "
               dst-reg
               "\n")]
@@ -9197,7 +9180,7 @@
               "    "
               gt
               " %ymm1, "
-              (compiler-backend-global-shared-view dst-reg)
+              dst-reg
               ", "
               dst-reg
               "\n")]
@@ -9207,9 +9190,9 @@
               "    "
               gt
               " %ymm1, "
-              (compiler-backend-global-shared-view dst-reg)
+              dst-reg
               ", "
-              (compiler-backend-global-shared-view dst-reg)
+              dst-reg
               "\n"
               (compiler-backend-avx2-compare-invert-asm dst-reg "%ymm0"))]
           [(compiler_ir_types.CompilerIrBinOp.Ge)
@@ -9218,9 +9201,9 @@
               "    "
               gt
               " "
-              (compiler-backend-global-shared-view dst-reg)
+              dst-reg
               ", %ymm1, "
-              (compiler-backend-global-shared-view dst-reg)
+              dst-reg
               "\n"
               (compiler-backend-avx2-compare-invert-asm dst-reg "%ymm0"))]
           [_ ""])))))
@@ -9333,7 +9316,7 @@
                                   ", "
                                   lhs-reg
                                   ", "
-                                  (compiler-backend-global-shared-view dst-reg)
+                                  dst-reg
                                   "\n")
                                 "")
                               (compiler-backend-avx2-emit-int-compare-asm
@@ -9583,7 +9566,7 @@
                   (str_cat.str-cat
                     first-load
                     "%ymm14\n    vpaddq "
-                    (compiler-backend-global-shared-view label)
+                    label
                     "(%rip), %ymm14, %ymm14\n    vpaddq %ymm14, %ymm15, %ymm15\n")
                   (if dword
                     (str_cat.str-cat
@@ -9630,7 +9613,7 @@
                   (str_cat.str-cat
                     first-load
                     "%zmm14\n    vpaddq "
-                    (compiler-backend-global-shared-view label)
+                    label
                     "(%rip), %zmm14, %zmm14\n    vpaddq %zmm14, %zmm15, %zmm15\n")
                   (if dword
                     (str_cat.str-cat
@@ -9735,7 +9718,7 @@
                           (str_cat.str-cat
                             index-asm
                             "    vmovdqu "
-                            (compiler-backend-global-shared-view index-addr)
+                            index-addr
                             ", %ymm15\n"
                             (if dword
                               (str_cat.str-cat
@@ -9746,33 +9729,33 @@
                             "    subq $"
                             (string.int->string stack-bytes)
                             ", %rsp\n    vmovdqu "
-                            (compiler-backend-global-shared-view mask-reg)
+                            mask-reg
                             ", (%rsp)\n"
                             (if dword
                               "    vmovdqu %ymm14, 64(%rsp)\n"
                               "")
                             adjust.first
-                            (compiler-backend-global-shared-view base-asm)
+                            base-asm
                             "    vpxor "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n    vpcmpeqd "
-                            (compiler-backend-global-shared-view mask-reg)
+                            mask-reg
                             ", "
-                            (compiler-backend-global-shared-view mask-reg)
+                            mask-reg
                             ", "
-                            (compiler-backend-global-shared-view mask-reg)
+                            mask-reg
                             "\n    "
-                            (compiler-backend-global-shared-view mnemonic)
+                            mnemonic
                             " "
                             (if dword
                               mask-xmm
                               (compiler-backend-global-shared-view mask-reg))
                             ", ("
-                            (compiler-backend-global-shared-view base-reg)
+                            base-reg
                             ",%ymm15,"
                             (if dword
                               "4"
@@ -9785,21 +9768,21 @@
                             (if dword
                               (str_cat.str-cat
                                 "    vmovdqu "
-                                (compiler-backend-global-shared-view dst-xmm)
+                                dst-xmm
                                 ", "
                                 (string.int->string result-off)
                                 "(%rsp)\n    vpxor "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    vpcmpeqd "
-                                (compiler-backend-global-shared-view mask-reg)
+                                mask-reg
                                 ", "
-                                (compiler-backend-global-shared-view mask-reg)
+                                mask-reg
                                 ", "
-                                (compiler-backend-global-shared-view mask-reg)
+                                mask-reg
                                 "\n    vmovdqu 64(%rsp), %ymm15\n"
                                 adjust.second
                                 base-asm
@@ -9810,11 +9793,11 @@
                                 ", ("
                                 base-reg
                                 ",%ymm15,4), "
-                                (compiler-backend-global-shared-view dst-xmm)
+                                dst-xmm
                                 "\n    vmovdqu "
                                 dst-xmm
                                 ", 112(%rsp)\n    vmovdqu 96(%rsp), "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n")
                               "")
                             "    vmovdqu (%rsp), "
@@ -9932,7 +9915,7 @@
                           (str_cat.str-cat
                             index-asm
                             "    vmovdqu64 "
-                            (compiler-backend-global-shared-view index-addr)
+                            index-addr
                             ", %zmm15\n"
                             (if dword
                               (str_cat.str-cat
@@ -9947,17 +9930,17 @@
                               "    vmovdqu64 %zmm14, (%rsp)\n"
                               "")
                             adjust.first
-                            (compiler-backend-global-shared-view base-asm)
+                            base-asm
                             "    kxnorw %k7, %k7, %k7\n    vpxord "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n    "
-                            (compiler-backend-global-shared-view mnemonic)
+                            mnemonic
                             " ("
-                            (compiler-backend-global-shared-view base-reg)
+                            base-reg
                             ",%zmm15,"
                             (if dword
                               "4"
@@ -9970,13 +9953,13 @@
                             (if dword
                               (str_cat.str-cat
                                 "    vmovdqu32 "
-                                (compiler-backend-global-shared-view dst-ymm)
+                                dst-ymm
                                 ", 64(%rsp)\n    kxnorw %k7, %k7, %k7\n    vpxord "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 ", "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n    vmovdqu64 (%rsp), %zmm15\n"
                                 adjust.second
                                 base-asm
@@ -9985,11 +9968,11 @@
                                 " ("
                                 base-reg
                                 ",%zmm15,4), "
-                                (compiler-backend-global-shared-view dst-ymm)
+                                dst-ymm
                                 "{%k7}\n    vmovdqu32 "
                                 dst-ymm
                                 ", 96(%rsp)\n    vmovdqu32 64(%rsp), "
-                                (compiler-backend-global-shared-view dst-reg)
+                                dst-reg
                                 "\n")
                               "")
                             (compiler-backend-vector-store-dst
@@ -10120,21 +10103,16 @@
         (if dword
           (str_cat.str-cat "    movl " value-reg32 ", " index-slot "\n")
           (if avx512
-            (str_cat.str-cat
-              "    movq "
-              (compiler-backend-global-shared-view value-reg)
-              ", "
-              index-slot
-              "\n")
+            (str_cat.str-cat "    movq " value-reg ", " index-slot "\n")
             (str_cat.str-cat
               "    shll $1, "
-              (compiler-backend-global-shared-view value-reg32)
+              value-reg32
               "\n    movl "
-              (compiler-backend-global-shared-view value-reg32)
+              value-reg32
               ", "
               index-slot
               "\n    addl $1, "
-              (compiler-backend-global-shared-view value-reg32)
+              value-reg32
               "\n    movl "
               value-reg32
               ", "
@@ -10146,7 +10124,7 @@
         "    movq "
         selector-slot
         ", "
-        (compiler-backend-global-shared-view value-reg)
+        value-reg
         "\n"
         copy-asm
         (compiler-backend-shuffle-index-lane-copy-asm
@@ -10187,26 +10165,26 @@
         "    leaq -1("
         active-reg
         "), "
-        (compiler-backend-global-shared-view value-reg)
+        value-reg
         "\n    vpbroadcastq "
         value-reg
         ", %zmm0\n    vmovdqu64 (%rsp), %zmm1\n    vpcmpuq $6, %zmm0, %zmm1, %k7\n    kmovw %k7, "
-        (compiler-backend-global-shared-view value-reg32)
+        value-reg32
         "\n"
         (if (> selector-count 1)
           (str_cat.str-cat
             "    vmovdqu64 "
             high-slot
             ", %zmm1\n    vpcmpuq $6, %zmm0, %zmm1, %k7\n    kmovw %k7, "
-            (compiler-backend-global-shared-view active-reg32)
+            active-reg32
             "\n    orl "
             active-reg32
             ", "
-            (compiler-backend-global-shared-view value-reg32)
+            value-reg32
             "\n")
           "")
         "    testl "
-        (compiler-backend-global-shared-view value-reg32)
+        value-reg32
         ", "
         value-reg32
         "\n    jne "
@@ -10216,38 +10194,38 @@
         "    leaq -1("
         active-reg
         "), "
-        (compiler-backend-global-shared-view value-reg)
+        value-reg
         "\n    vmovq "
         value-reg
         ", %xmm0\n    vpbroadcastq %xmm0, %ymm0\n    vmovdqu (%rsp), %ymm1\n    vpmovmskb %ymm1, "
-        (compiler-backend-global-shared-view value-reg32)
+        value-reg32
         "\n    vpcmpgtq %ymm0, %ymm1, %ymm1\n    vpmovmskb %ymm1, "
-        (compiler-backend-global-shared-view active-reg32)
+        active-reg32
         "\n    orl "
-        (compiler-backend-global-shared-view active-reg32)
+        active-reg32
         ", "
-        (compiler-backend-global-shared-view value-reg32)
+        value-reg32
         "\n"
         (if (> selector-count 1)
           (str_cat.str-cat
             "    vmovdqu "
             high-slot
             ", %ymm1\n    vpmovmskb %ymm1, "
-            (compiler-backend-global-shared-view active-reg32)
-            "\n    orl "
-            (compiler-backend-global-shared-view active-reg32)
-            ", "
-            (compiler-backend-global-shared-view value-reg32)
-            "\n    vpcmpgtq %ymm0, %ymm1, %ymm1\n    vpmovmskb %ymm1, "
-            (compiler-backend-global-shared-view active-reg32)
+            active-reg32
             "\n    orl "
             active-reg32
             ", "
-            (compiler-backend-global-shared-view value-reg32)
+            value-reg32
+            "\n    vpcmpgtq %ymm0, %ymm1, %ymm1\n    vpmovmskb %ymm1, "
+            active-reg32
+            "\n    orl "
+            active-reg32
+            ", "
+            value-reg32
             "\n")
           "")
         "    testl "
-        (compiler-backend-global-shared-view value-reg32)
+        value-reg32
         ", "
         value-reg32
         "\n    jne "
@@ -10452,17 +10430,13 @@
                                     (if avx512
                                       (str_cat.str-cat
                                         "    vpxord "
-                                        (compiler-backend-global-shared-view
-                                          index-reg)
+                                        index-reg
                                         ", "
-                                        (compiler-backend-global-shared-view
-                                          index-reg)
+                                        index-reg
                                         ", "
-                                        (compiler-backend-global-shared-view
-                                          index-reg)
+                                        index-reg
                                         "\n    vmovdqu64 "
-                                        (compiler-backend-global-shared-view
-                                          index-reg)
+                                        index-reg
                                         ", "
                                         (compiler-backend-address-add-byte-offset
                                           "(%rsp)"
@@ -10470,17 +10444,13 @@
                                         "\n")
                                       (str_cat.str-cat
                                         "    vpxor "
-                                        (compiler-backend-global-shared-view
-                                          index-reg)
+                                        index-reg
                                         ", "
-                                        (compiler-backend-global-shared-view
-                                          index-reg)
+                                        index-reg
                                         ", "
-                                        (compiler-backend-global-shared-view
-                                          index-reg)
+                                        index-reg
                                         "\n    vmovdqu "
-                                        (compiler-backend-global-shared-view
-                                          index-reg)
+                                        index-reg
                                         ", "
                                         (compiler-backend-address-add-byte-offset
                                           "(%rsp)"
@@ -10499,11 +10469,9 @@
                                         "(%rsp)"
                                         source-offset)
                                       ", "
-                                      (compiler-backend-global-shared-view
-                                        index-reg)
+                                      index-reg
                                       ", "
-                                      (compiler-backend-global-shared-view
-                                        dst-reg)
+                                      dst-reg
                                       "\n")]
                                   (ResultCompilerBackend.Ok
                                     (str_cat.str-cat
@@ -10555,8 +10523,7 @@
                                         avx512
                                         value-reg)
                                       "    jmp "
-                                      (compiler-backend-global-shared-view
-                                        permute-label)
+                                      permute-label
                                       "\n"
                                       abort-label
                                       ":\n"
@@ -10804,9 +10771,9 @@
               [(compiler_ast_types.AstType.I32) "vpaddd"]
               [_ "vpaddq"])
             " "
-            (compiler-backend-global-shared-view work0)
+            work0
             ", "
-            (compiler-backend-global-shared-view dst-reg)
+            dst-reg
             ", "
             out-reg
             "\n")]
@@ -10815,93 +10782,83 @@
             [(compiler_ast_types.AstType.I32)
               (str_cat.str-cat
                 "    vpminsd "
-                (compiler-backend-global-shared-view work0)
+                work0
                 ", "
-                (compiler-backend-global-shared-view dst-reg)
+                dst-reg
                 ", "
                 out-reg
                 "\n")]
             [_
               (str_cat.str-cat
                 "    vpcmpgtq "
-                (compiler-backend-global-shared-view work0)
+                work0
                 ", "
-                (compiler-backend-global-shared-view dst-reg)
+                dst-reg
                 ", "
-                (compiler-backend-global-shared-view work1)
+                work1
                 "\n    vpand "
-                (compiler-backend-global-shared-view work1)
+                work1
                 ", "
-                (compiler-backend-global-shared-view work0)
+                work0
                 ", "
-                (compiler-backend-global-shared-view work0)
+                work0
                 "\n    vpandn "
-                (compiler-backend-global-shared-view dst-reg)
+                dst-reg
                 ", "
-                (compiler-backend-global-shared-view work1)
+                work1
                 ", "
-                (compiler-backend-global-shared-view work1)
+                work1
                 "\n    vpor "
                 work1
                 ", "
-                (compiler-backend-global-shared-view work0)
+                work0
                 ", "
-                (compiler-backend-global-shared-view work0)
+                work0
                 "\n"
                 (if blend?
                   ""
-                  (str_cat.str-cat
-                    "    vmovdqu "
-                    (compiler-backend-global-shared-view work0)
-                    ", "
-                    (compiler-backend-global-shared-view dst-reg)
-                    "\n")))])]
+                  (str_cat.str-cat "    vmovdqu " work0 ", " dst-reg "\n")))])]
         [(compiler_ir_types.CompilerIrVectorPrefixOp.Max)
           (match elem-ty
             [(compiler_ast_types.AstType.I32)
               (str_cat.str-cat
                 "    vpmaxsd "
-                (compiler-backend-global-shared-view work0)
+                work0
                 ", "
-                (compiler-backend-global-shared-view dst-reg)
+                dst-reg
                 ", "
                 out-reg
                 "\n")]
             [_
               (str_cat.str-cat
                 "    vpcmpgtq "
-                (compiler-backend-global-shared-view dst-reg)
+                dst-reg
                 ", "
-                (compiler-backend-global-shared-view work0)
+                work0
                 ", "
-                (compiler-backend-global-shared-view work1)
+                work1
                 "\n    vpand "
-                (compiler-backend-global-shared-view work1)
+                work1
                 ", "
-                (compiler-backend-global-shared-view work0)
+                work0
                 ", "
-                (compiler-backend-global-shared-view work0)
+                work0
                 "\n    vpandn "
-                (compiler-backend-global-shared-view dst-reg)
+                dst-reg
                 ", "
-                (compiler-backend-global-shared-view work1)
+                work1
                 ", "
-                (compiler-backend-global-shared-view work1)
+                work1
                 "\n    vpor "
                 work1
                 ", "
-                (compiler-backend-global-shared-view work0)
+                work0
                 ", "
-                (compiler-backend-global-shared-view work0)
+                work0
                 "\n"
                 (if blend?
                   ""
-                  (str_cat.str-cat
-                    "    vmovdqu "
-                    (compiler-backend-global-shared-view work0)
-                    ", "
-                    (compiler-backend-global-shared-view dst-reg)
-                    "\n")))])]
+                  (str_cat.str-cat "    vmovdqu " work0 ", " dst-reg "\n")))])]
         [_ ""])]
     (str_cat.str-cat
       combine
@@ -10912,7 +10869,7 @@
           ", "
           work0
           ", "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           ", "
           dst-reg
           "\n")
@@ -10933,9 +10890,9 @@
       [(compiler_ast_types.AstType.I32)
         (str_cat.str-cat
           "    vpslldq $4, "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           ", "
-          (compiler-backend-global-shared-view work0)
+          work0
           "\n"
           (compiler-backend-avx2-vector-prefix-numeric-combine
             op
@@ -10947,9 +10904,9 @@
             (compiler-backend-global-shared-view work0-xmm)
             (compiler-backend-global-shared-view work1-xmm))
           "    vpslldq $8, "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           ", "
-          (compiler-backend-global-shared-view work0)
+          work0
           "\n"
           (compiler-backend-avx2-vector-prefix-numeric-combine
             op
@@ -10961,13 +10918,13 @@
             (compiler-backend-global-shared-view work0-xmm)
             (compiler-backend-global-shared-view work1-xmm))
           "    vperm2i128 $0, "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           ", "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           ", "
-          (compiler-backend-global-shared-view work0)
+          work0
           "\n    vpshufd $255, "
-          (compiler-backend-global-shared-view work0)
+          work0
           ", "
           work0
           "\n"
@@ -10981,9 +10938,9 @@
       [_
         (str_cat.str-cat
           "    vpslldq $8, "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           ", "
-          (compiler-backend-global-shared-view work0)
+          work0
           "\n"
           (compiler-backend-avx2-vector-prefix-numeric-combine
             op
@@ -10995,13 +10952,13 @@
             (compiler-backend-global-shared-view work0-xmm)
             (compiler-backend-global-shared-view work1-xmm))
           "    vperm2i128 $0, "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           ", "
-          (compiler-backend-global-shared-view dst-reg)
+          dst-reg
           ", "
-          (compiler-backend-global-shared-view work0)
+          work0
           "\n    vpermq $85, "
-          (compiler-backend-global-shared-view work0)
+          work0
           ", "
           work0
           "\n"
@@ -11026,52 +10983,45 @@
       "    vpslldq $"
       (string.int->string shift)
       ", "
-      (compiler-backend-global-shared-view dst-reg)
+      dst-reg
       ", "
-      (compiler-backend-global-shared-view work0)
+      work0
       "\n"
       (match op
         [(compiler_ir_types.CompilerIrVectorPrefixOp.Any)
-          (str_cat.str-cat
-            "    vpor "
-            work0
-            ", "
-            (compiler-backend-global-shared-view dst-reg)
-            ", "
-            dst-reg
-            "\n")]
+          (str_cat.str-cat "    vpor " work0 ", " dst-reg ", " dst-reg "\n")]
         [_
           (str_cat.str-cat
             "    vpand "
-            (compiler-backend-global-shared-view dst-reg)
+            dst-reg
             ", "
-            (compiler-backend-global-shared-view work0)
+            work0
             ", "
-            (compiler-backend-global-shared-view work0)
+            work0
             "\n    vpcmpeqd "
-            (compiler-backend-global-shared-view work1)
+            work1
             ", "
-            (compiler-backend-global-shared-view work1)
+            work1
             ", "
-            (compiler-backend-global-shared-view work1)
+            work1
             "\n    vpslldq $"
             (string.int->string shift)
             ", "
-            (compiler-backend-global-shared-view work1)
+            work1
             ", "
-            (compiler-backend-global-shared-view work1)
+            work1
             "\n    vpand "
-            (compiler-backend-global-shared-view work1)
+            work1
             ", "
-            (compiler-backend-global-shared-view work0)
+            work0
             ", "
-            (compiler-backend-global-shared-view work0)
+            work0
             "\n    vpandn "
-            (compiler-backend-global-shared-view dst-reg)
+            dst-reg
             ", "
-            (compiler-backend-global-shared-view work1)
+            work1
             ", "
-            (compiler-backend-global-shared-view work1)
+            work1
             "\n    vpor "
             work1
             ", "
@@ -11116,33 +11066,33 @@
         (compiler-backend-global-shared-view work0-xmm)
         work1-xmm)
       "    vperm2i128 $0, "
-      (compiler-backend-global-shared-view dst-reg)
+      dst-reg
       ", "
-      (compiler-backend-global-shared-view dst-reg)
+      dst-reg
       ", "
-      (compiler-backend-global-shared-view work0)
+      work0
       "\n    vpsrldq $15, "
-      (compiler-backend-global-shared-view work0)
+      work0
       ", "
-      (compiler-backend-global-shared-view work0)
+      work0
       "\n    vpbroadcastb "
       work0-xmm
       ", "
-      (compiler-backend-global-shared-view work0)
+      work0
       "\n    "
       (match op
         [(compiler_ir_types.CompilerIrVectorPrefixOp.Any) "vpor"]
         [_ "vpand"])
       " "
-      (compiler-backend-global-shared-view work0)
+      work0
       ", "
-      (compiler-backend-global-shared-view dst-reg)
+      dst-reg
       ", "
-      (compiler-backend-global-shared-view work0)
+      work0
       "\n    vpblendd $240, "
       work0
       ", "
-      (compiler-backend-global-shared-view dst-reg)
+      dst-reg
       ", "
       dst-reg
       "\n")))
@@ -11188,25 +11138,25 @@
           (str_cat.str-cat
             carry-asm
             "    testq "
-            (compiler-backend-global-shared-view gp-reg)
+            gp-reg
             ", "
             gp-reg
             "\n    setne "
-            (compiler-backend-global-shared-view gp8)
+            gp8
             "\n    movzbl "
             gp8
             ", "
-            (compiler-backend-global-shared-view gp32)
+            gp32
             "\n    negl "
-            (compiler-backend-global-shared-view gp32)
+            gp32
             "\n    vmovd "
             gp32
             ", "
-            (compiler-backend-global-shared-view work0-xmm)
+            work0-xmm
             "\n    vpbroadcastb "
             work0-xmm
             ", "
-            (compiler-backend-global-shared-view work0)
+            work0
             "\n    "
             (match op
               [(compiler_ir_types.CompilerIrVectorPrefixOp.Any) "vpor"]
@@ -11214,7 +11164,7 @@
             " "
             work0
             ", "
-            (compiler-backend-global-shared-view dst-reg)
+            dst-reg
             ", "
             dst-reg
             "\n"))]
@@ -11277,7 +11227,7 @@
                   " "
                   gp-part
                   ", "
-                  (compiler-backend-global-shared-view work0-xmm)
+                  work0-xmm
                   "\n    "
                   (match elem-ty
                     [(compiler_ast_types.AstType.I32) "vpbroadcastd"]
@@ -11358,7 +11308,7 @@
                           "    vmovdqu "
                           src-reg
                           ", "
-                          (compiler-backend-global-shared-view dst-reg)
+                          dst-reg
                           "\n"))]
                     [prefix-asm : String
                       (match (compiler-backend-global-shared-view elem-ty)
@@ -11511,7 +11461,7 @@
       " "
       work0
       ", "
-      (compiler-backend-global-shared-view dst-reg)
+      dst-reg
       ", "
       dst-reg
       (if masked?
@@ -11543,7 +11493,7 @@
       ", "
       work1
       ", "
-      (compiler-backend-global-shared-view dst-reg)
+      dst-reg
       ", "
       work0
       "\n"
@@ -11569,9 +11519,9 @@
         "zmm")]
     (str_cat.str-cat
       "    vpxord "
-      (compiler-backend-global-shared-view work1)
+      work1
       ", "
-      (compiler-backend-global-shared-view work1)
+      work1
       ", "
       work1
       "\n"
@@ -11643,13 +11593,13 @@
   [shift : i64]) : String
   (str_cat.str-cat
     "    movq "
-    (compiler-backend-global-shared-view bits-gp)
+    bits-gp
     ", "
-    (compiler-backend-global-shared-view temp-gp)
+    temp-gp
     "\n    shlq $"
     (string.int->string shift)
     ", "
-    (compiler-backend-global-shared-view temp-gp)
+    temp-gp
     "\n    orq "
     temp-gp
     ", "
@@ -11669,10 +11619,7 @@
         [_ false])]
     (str_cat.str-cat
       (if all?
-        (str_cat.str-cat
-          "    notq "
-          (compiler-backend-global-shared-view bits-gp)
-          "\n")
+        (str_cat.str-cat "    notq " bits-gp "\n")
         "")
       (compiler-backend-avx512-vector-prefix-bool-stage
         (compiler-backend-global-shared-view bits-gp)
@@ -11721,17 +11668,17 @@
         [_ "andq"])]
     (str_cat.str-cat
       "    testq "
-      (compiler-backend-global-shared-view carry-gp)
+      carry-gp
       ", "
-      (compiler-backend-global-shared-view carry-gp)
+      carry-gp
       "\n    setne "
-      (compiler-backend-global-shared-view carry8)
+      carry8
       "\n    movzbl "
       carry8
       ", "
       carry32
       "\n    negq "
-      (compiler-backend-global-shared-view carry-gp)
+      carry-gp
       "\n    "
       combine
       " "
@@ -11754,7 +11701,7 @@
     " "
     bits-gp
     ", "
-    (compiler-backend-global-shared-view dst-reg)
+    dst-reg
     "\n"
     (compiler-backend-avx512-mask-store-dst
       assignments
@@ -11830,11 +11777,11 @@
                       (str_cat.str-cat
                         src-asm
                         "    "
-                        (compiler-backend-global-shared-view mask-move)
+                        mask-move
                         " "
                         src-reg
                         ", "
-                        (compiler-backend-global-shared-view bits-gp)
+                        bits-gp
                         "\n"
                         (compiler-backend-avx512-vector-prefix-bool-body
                           op
@@ -11925,7 +11872,7 @@
                         "    vmovdqu64 "
                         src-reg
                         ", "
-                        (compiler-backend-global-shared-view dst-reg)
+                        dst-reg
                         "\n"))]
                   (match (compiler-backend-avx512-splat-load
                     assignments
@@ -12146,16 +12093,7 @@
   (if (= mask 0)
     (let
       [kxor : String (compiler-backend-avx512-mask-kxor-mnemonic lanes)]
-      (str_cat.str-cat
-        "    "
-        kxor
-        " "
-        (compiler-backend-global-shared-view dst-reg)
-        ", "
-        (compiler-backend-global-shared-view dst-reg)
-        ", "
-        dst-reg
-        "\n"))
+      (str_cat.str-cat "    " kxor " " dst-reg ", " dst-reg ", " dst-reg "\n"))
     (let
       [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
       [mask-move : String (compiler-backend-avx512-mask-move-mnemonic lanes)]
@@ -12166,7 +12104,7 @@
         " $"
         (string.int->string mask)
         ", "
-        (compiler-backend-global-shared-view mask-gpr)
+        mask-gpr
         "\n    "
         mask-move
         " "
@@ -12340,51 +12278,35 @@
                   "    subq "
                   index-reg
                   ", "
-                  (compiler-backend-global-shared-view count-reg)
+                  count-reg
                   "\n    cmpq $"
                   (string.int->string lanes)
                   ", "
-                  (compiler-backend-global-shared-view count-reg)
+                  count-reg
                   "\n    jge "
-                  (compiler-backend-global-shared-view full-label)
+                  full-label
                   "\n")]
               [body-nonzero-a : String
                 (str_cat.str-cat
                   "    testq "
-                  (compiler-backend-global-shared-view count-reg)
+                  count-reg
                   ", "
                   count-reg
                   "\n    jle "
-                  (compiler-backend-global-shared-view zero-label)
+                  zero-label
                   "\n    "
-                  (compiler-backend-global-shared-view mov-imm)
+                  mov-imm
                   " $1, ")]
               [body-nonzero-b : String
-                (str_cat.str-cat
-                  (compiler-backend-global-shared-view mask-gpr)
-                  "\n    "
-                  shift
-                  " %cl, "
-                  (compiler-backend-global-shared-view mask-gpr)
-                  "\n")]
+                (str_cat.str-cat mask-gpr "\n    " shift " %cl, " mask-gpr "\n")]
               [body-mask-a : String
-                (str_cat.str-cat
-                  "    "
-                  sub
-                  " $1, "
-                  (compiler-backend-global-shared-view mask-gpr)
-                  "\n    ")]
+                (str_cat.str-cat "    " sub " $1, " mask-gpr "\n    ")]
               [body-mask-b : String
-                (str_cat.str-cat
-                  (compiler-backend-global-shared-view mask-move)
-                  " "
-                  (compiler-backend-global-shared-view mask-gpr)
-                  ", "
-                  (compiler-backend-global-shared-view dst-reg))]
+                (str_cat.str-cat mask-move " " mask-gpr ", " dst-reg)]
               [body-mask-c : String
                 (str_cat.str-cat
                   "\n    jmp "
-                  (compiler-backend-global-shared-view done-label)
+                  done-label
                   "\n"
                   full-label
                   ":\n    ")]
@@ -12394,14 +12316,14 @@
                   " $"
                   (string.int->string full-mask)
                   ", "
-                  (compiler-backend-global-shared-view mask-gpr))]
+                  mask-gpr)]
               [body-full-b : String
                 (str_cat.str-cat "\n    " mask-move " " mask-gpr ", ")]
               [body-full-c : String
                 (str_cat.str-cat
-                  (compiler-backend-global-shared-view dst-reg)
+                  dst-reg
                   "\n    jmp "
-                  (compiler-backend-global-shared-view done-label)
+                  done-label
                   "\n"
                   zero-label
                   ":\n")]
@@ -12410,9 +12332,9 @@
                   "    "
                   kxor
                   " "
-                  (compiler-backend-global-shared-view dst-reg)
+                  dst-reg
                   ", "
-                  (compiler-backend-global-shared-view dst-reg)
+                  dst-reg
                   ", "
                   dst-reg
                   "\n"
@@ -12607,7 +12529,7 @@
                             " "
                             addr
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "{"
                             mask-reg
                             "}{z}\n"
@@ -12807,28 +12729,23 @@
                                     "    vmovdqu8 "
                                     addr
                                     ", "
-                                    (compiler-backend-global-shared-view
-                                      bytes-reg)
+                                    bytes-reg
                                     "{"
                                     mask-reg
                                     "}{z}\n"
                                     "    vpxord "
-                                    (compiler-backend-global-shared-view
-                                      zero-reg)
+                                    zero-reg
                                     ", "
-                                    (compiler-backend-global-shared-view
-                                      zero-reg)
+                                    zero-reg
                                     ", "
-                                    (compiler-backend-global-shared-view
-                                      zero-reg)
+                                    zero-reg
                                     "\n"
                                     "    vpcmpub $4, "
                                     zero-reg
                                     ", "
                                     bytes-reg
                                     ", "
-                                    (compiler-backend-global-shared-view
-                                      dst-reg)
+                                    dst-reg
                                     "\n"
                                     (compiler-backend-avx512-mask-store-dst
                                       assignments
@@ -12936,26 +12853,21 @@
                                       addr-asm
                                       (str_cat.str-cat
                                         "    vpxord "
-                                        (compiler-backend-global-shared-view
-                                          bytes-reg)
+                                        bytes-reg
                                         ", "
-                                        (compiler-backend-global-shared-view
-                                          bytes-reg)
+                                        bytes-reg
                                         ", "
-                                        (compiler-backend-global-shared-view
-                                          bytes-reg)
+                                        bytes-reg
                                         "\n"
                                         "    pushq $1\n"
                                         "    vpbroadcastb (%rsp), "
-                                        (compiler-backend-global-shared-view
-                                          ones-reg)
+                                        ones-reg
                                         "\n"
                                         "    addq $8, %rsp\n"
                                         "    vmovdqu8 "
                                         ones-reg
                                         ", "
-                                        (compiler-backend-global-shared-view
-                                          bytes-reg)
+                                        bytes-reg
                                         "{"
                                         value-reg
                                         "}\n"
@@ -13074,13 +12986,13 @@
                             " "
                             rhs-gpr
                             ", "
-                            (compiler-backend-global-shared-view lhs-gpr)
+                            lhs-gpr
                             "\n    "
                             (compiler-backend-avx512-mask-move-mnemonic lanes)
                             " "
                             lhs-gpr
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n"
                             (compiler-backend-avx512-mask-store-dst
                               assignments
@@ -13236,13 +13148,13 @@
                     " $"
                     (string.int->string full-mask)
                     ", "
-                    (compiler-backend-global-shared-view mask-gpr)
+                    mask-gpr
                     "\n    "
                     (compiler-backend-avx512-mask-move-mnemonic lanes)
                     " "
                     mask-gpr
                     ", "
-                    (compiler-backend-global-shared-view dst-reg)
+                    dst-reg
                     "\n"
                     (compiler-backend-avx512-mask-store-dst
                       assignments
@@ -13324,7 +13236,7 @@
                       " $"
                       (string.int->string full-mask)
                       ", "
-                      (compiler-backend-global-shared-view mask-gpr)
+                      mask-gpr
                       "\n    "
                       mask-move
                       " "
@@ -13555,21 +13467,17 @@
                                               (str_cat.str-cat
                                                 prefix-asm
                                                 "    "
-                                                (compiler-backend-global-shared-view
-                                                  move)
+                                                move
                                                 " "
                                                 true-reg
                                                 ", "
-                                                (compiler-backend-global-shared-view
-                                                  temp-reg)
+                                                temp-reg
                                                 "\n    "
-                                                (compiler-backend-global-shared-view
-                                                  move)
+                                                move
                                                 " "
                                                 false-reg
                                                 ", "
-                                                (compiler-backend-global-shared-view
-                                                  dst-reg)
+                                                dst-reg
                                                 "\n    "
                                                 move
                                                 " "
@@ -13611,13 +13519,11 @@
                                                   ""
                                                   (str_cat.str-cat
                                                     "    "
-                                                    (compiler-backend-global-shared-view
-                                                      move)
+                                                    move
                                                     " "
                                                     false-reg
                                                     ", "
-                                                    (compiler-backend-global-shared-view
-                                                      dst-reg)
+                                                    dst-reg
                                                     "\n"))
                                                 "    "
                                                 move
@@ -13722,7 +13628,7 @@
                             ", "
                             lhs-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n"
                             (compiler-backend-vector-store-dst
                               assignments
@@ -13822,7 +13728,7 @@
                     "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpxor "
                     src-reg
                     ", %ymm0, "
-                    (compiler-backend-global-shared-view dst-reg)
+                    dst-reg
                     "\n"
                     (compiler-backend-vector-store-dst
                       assignments
@@ -14024,8 +13930,7 @@
                                     ", "
                                     false-reg
                                     ", "
-                                    (compiler-backend-global-shared-view
-                                      dst-reg)
+                                    dst-reg
                                     "\n"
                                     (compiler-backend-vector-store-dst
                                       assignments
@@ -14229,12 +14134,7 @@
           test-load
           (if (not (string.eq var-test ""))
             var-test
-            (str_cat.str-cat
-              "    testq "
-              (compiler-backend-global-shared-view test-reg)
-              ", "
-              test-reg
-              "\n"))
+            (str_cat.str-cat "    testq " test-reg ", " test-reg "\n"))
           "    cmovne "
           conditional-operand
           ", "
@@ -14767,11 +14667,11 @@
             "    testl $"
             (string.int->string bit)
             ", %r11d\n    je "
-            (compiler-backend-global-shared-view skip-label)
+            skip-label
             "\n    cmpb $0, "
             mem
             "\n    je "
-            (compiler-backend-global-shared-view skip-label)
+            skip-label
             "\n    "
             (compiler-backend-avx2-lane-fill-mnemonic lane-bytes)
             " $-1, "
@@ -14783,13 +14683,13 @@
             "    testl $"
             (string.int->string bit)
             ", %r11d\n    je "
-            (compiler-backend-global-shared-view skip-label)
+            skip-label
             "\n    "
-            (compiler-backend-global-shared-view move)
+            move
             " "
             mem
             ", "
-            (compiler-backend-global-shared-view tmp)
+            tmp
             "\n    "
             move
             " "
@@ -14846,13 +14746,13 @@
           "    testl $"
           (string.int->string bit)
           ", %r11d\n    je "
-          (compiler-backend-global-shared-view skip-label)
+          skip-label
           "\n    "
-          (compiler-backend-global-shared-view move)
+          move
           " "
           slot
           ", "
-          (compiler-backend-global-shared-view tmp)
+          tmp
           "\n    "
           move
           " "
@@ -14901,7 +14801,7 @@
           "    testl $"
           (string.int->string bit)
           ", %r11d\n    je "
-          (compiler-backend-global-shared-view skip-label)
+          skip-label
           "\n    movb $0, %al\n    testl $"
           (string.int->string bit)
           ", %r10d\n    setne %al\n    movb %al, "
@@ -14992,7 +14892,7 @@
                               ", %r11d\n"
                               lanes-asm
                               "    vmovdqu (%rsp), "
-                              (compiler-backend-global-shared-view dst-reg)
+                              dst-reg
                               "\n    addq $32, %rsp\n"
                               (compiler-backend-vector-store-dst
                                 assignments
@@ -15012,7 +14912,7 @@
                             ", "
                             mask-reg
                             ", "
-                            (compiler-backend-global-shared-view dst-reg)
+                            dst-reg
                             "\n"
                             (compiler-backend-vector-store-dst
                               assignments
@@ -15318,7 +15218,7 @@
           "    leaq "
           (string.int->string lane)
           "(%r8), %r10\n    cmpq %r9, %r10\n    jge "
-          (compiler-backend-global-shared-view skip-label)
+          skip-label
           "\n    "
           move
           " $-1, "
@@ -15396,7 +15296,7 @@
                           lanes
                           "")
                         "    vmovdqu (%rsp), "
-                        (compiler-backend-global-shared-view dst-reg)
+                        dst-reg
                         "\n    addq $32, %rsp\n"))
                     (compiler-backend-vector-store-dst
                       assignments
@@ -15654,7 +15554,7 @@
               (set!
                 out
                 (str_cat.str-cat
-                  (compiler-backend-global-shared-view out)
+                  out
                   (if (string.eq out "")
                     ""
                     ",")
@@ -16195,7 +16095,7 @@
             [save-line : String
               (str_cat.str-cat
                 "    movdqu "
-                (compiler-backend-global-shared-view reg)
+                reg
                 ", "
                 (compiler-backend-frame-offset-with-backend-state
                   backend-state
@@ -16273,7 +16173,7 @@
           [rsp-offset : i64 (+ rsp-bias slot-offset)]
           (str_cat.str-cat
             "    movdqu "
-            (compiler-backend-global-shared-view reg)
+            reg
             ", "
             (str_cat.str-cat
               (string.int->string rsp-offset)
@@ -16344,12 +16244,7 @@
   [target : CompilerBackendTarget]
   [symbol : String]) : String
   (if (compiler-backend-target-linux? target)
-    (str_cat.str-cat
-      "    .size "
-      (compiler-backend-global-shared-view symbol)
-      ", . - "
-      symbol
-      "\n")
+    (str_cat.str-cat "    .size " symbol ", . - " symbol "\n")
     ""))
 
 (define (compiler-backend-emit-function-entry
@@ -16479,13 +16374,7 @@
         sub-s
         frame)]
     [idx : i64 0]
-    [acc : String
-      (str_cat.str-cat
-        ".seh_proc "
-        (compiler-backend-global-shared-view symbol)
-        "\n"
-        symbol
-        ":\n")]
+    [acc : String (str_cat.str-cat ".seh_proc " symbol "\n" symbol ":\n")]
     (begin
       (while (< idx (array-length push-regs))
         (begin
@@ -17496,11 +17385,11 @@
       (not
         (compiler-backend-string-contains?
           (compiler-backend-global-shared-view text)
-          (str_cat.str-cat "%xmm" (compiler-backend-global-shared-view digits))))
+          (str_cat.str-cat "%xmm" digits)))
       (not
         (compiler-backend-string-contains?
           (compiler-backend-global-shared-view text)
-          (str_cat.str-cat "%ymm" (compiler-backend-global-shared-view digits))))
+          (str_cat.str-cat "%ymm" digits)))
       (not
         (compiler-backend-string-contains? text (str_cat.str-cat "%zmm" digits))))))
 
@@ -18458,7 +18347,7 @@
             -1
             false
             backend-state)]
-        (str_cat.str-cat-scoped xmm gp))
+        (str_cat.str-cat xmm gp))
       gp)))
 
 (define (compiler-backend-return-label
@@ -19799,23 +19688,19 @@
                     (compiler_ast_types.ast-source-span-start-col location.span)))])]
           [id-text : String (string.int->string function-id)]
           [name-label : String
-            (str_cat.str-cat
-              ".L_tl_backtrace_name_"
-              (compiler-backend-global-shared-view id-text))]
+            (str_cat.str-cat ".L_tl_backtrace_name_" id-text)]
           [path-label : String
-            (str_cat.str-cat
-              ".L_tl_backtrace_path_"
-              (compiler-backend-global-shared-view id-text))]
+            (str_cat.str-cat ".L_tl_backtrace_path_" id-text)]
           [end-label : String
             (str_cat.str-cat ".L_tl_backtrace_function_end_" id-text)]
           (str_cat.str-cat
             (compiler-backend-backtrace-string-section target)
-            (compiler-backend-global-shared-view name-label)
+            name-label
             ":\n    .ascii \""
             (compiler-backend-escape-string
               (compiler-backend-global-shared-view name-text))
             "\"\n"
-            (compiler-backend-global-shared-view path-label)
+            path-label
             ":\n    .ascii \""
             (compiler-backend-escape-string
               (compiler-backend-global-shared-view path))
@@ -20034,8 +19919,7 @@
   [backend-state : CompilerBackendState]
   [label : String]) : String
   (let
-    [end-label : String
-      (str_cat.str-cat (compiler-backend-global-shared-view label) "_end")]
+    [end-label : String (str_cat.str-cat label "_end")]
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
     [path : String
@@ -20044,7 +19928,7 @@
         compiler-backend-function-string-abort-site-path)]
     (str_cat.str-cat
       "    jmp "
-      (compiler-backend-global-shared-view end-label)
+      end-label
       "\n    .balign 8\n"
       label
       ":\n    .quad "
@@ -21267,44 +21151,44 @@
           "    vextractf128 $1, "
           ymm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          "\n    "
-          (compiler-backend-global-shared-view mnemonic)
-          " "
-          (compiler-backend-global-shared-view acc-xmm)
-          ", "
-          xmm
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          "\n")
-        (str_cat.str-cat
-          "    vshufps $78, "
-          (compiler-backend-global-shared-view acc-xmm)
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          acc-xmm
           "\n    "
           mnemonic
           " "
-          (compiler-backend-global-shared-view scratch-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
+          "\n")
+        (str_cat.str-cat
+          "    vshufps $78, "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
           "\n"
           "")
         (str_cat.str-cat
           "    vshufps $177, "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    vaddss "
           scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
           acc-xmm
           "\n"))]
@@ -21314,27 +21198,27 @@
           "    vextractf128 $1, "
           ymm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n    "
           mnemonic
           " "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
           xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n")
         (str_cat.str-cat
           "    vunpckhpd "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    vaddsd "
           scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
           acc-xmm
           "\n"))]
@@ -21346,27 +21230,27 @@
               "    vextracti128 $1, "
               ymm
               ", "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               "\n    "
-              (compiler-backend-global-shared-view mnemonic)
+              mnemonic
               " "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               ", "
               xmm
               ", "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               "\n")
             (str_cat.str-cat
               "    vpsrldq $8, "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               ", "
-              (compiler-backend-global-shared-view scratch-xmm)
+              scratch-xmm
               "\n    "
               mnemonic
               " "
               scratch-xmm
               ", "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               ", "
               acc-xmm
               "\n"
@@ -21393,37 +21277,37 @@
               "    vextracti128 $1, "
               ymm
               ", "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               "\n    vpcmpgtq "
               high-compare-left
               ", "
               high-compare-right
               ", "
-              (compiler-backend-global-shared-view scratch-xmm)
+              scratch-xmm
               "\n    vpblendvb "
-              (compiler-backend-global-shared-view scratch-xmm)
+              scratch-xmm
               ", "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               ", "
               xmm
               ", "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               "\n    vpsrldq $8, "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               ", "
-              (compiler-backend-global-shared-view scratch-xmm)
+              scratch-xmm
               "\n    vpcmpgtq "
               lane-compare-left
               ", "
               lane-compare-right
               ", "
-              (compiler-backend-global-shared-view mask-xmm)
+              mask-xmm
               "\n    vpblendvb "
               mask-xmm
               ", "
               scratch-xmm
               ", "
-              (compiler-backend-global-shared-view acc-xmm)
+              acc-xmm
               ", "
               acc-xmm
               "\n"
@@ -21434,42 +21318,42 @@
           "    vextracti128 $1, "
           ymm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
           xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n")
         (str_cat.str-cat
           "    vpsrldq $8, "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
-          "\n    "
-          (compiler-backend-global-shared-view mnemonic)
-          " "
-          (compiler-backend-global-shared-view scratch-xmm)
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          "\n"
-          "")
-        (str_cat.str-cat
-          "    vpsrldq $4, "
-          (compiler-backend-global-shared-view acc-xmm)
-          ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    "
           mnemonic
           " "
           scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    vpsrldq $4, "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
           ", "
           acc-xmm
           "\n"
@@ -21609,15 +21493,15 @@
     "    vpsrldq $"
     (string.int->string bytes)
     ", "
-    (compiler-backend-global-shared-view acc-xmm)
+    acc-xmm
     ", "
-    (compiler-backend-global-shared-view scratch-xmm)
+    scratch-xmm
     "\n    "
     mnemonic
     " "
     scratch-xmm
     ", "
-    (compiler-backend-global-shared-view acc-xmm)
+    acc-xmm
     ", "
     acc-xmm
     "\n"))
@@ -21634,27 +21518,27 @@
     "    vextracti64x4 $1, "
     zmm
     ", "
-    (compiler-backend-global-shared-view acc-ymm)
+    acc-ymm
     "\n    "
-    (compiler-backend-global-shared-view mnemonic)
+    mnemonic
     " "
-    (compiler-backend-global-shared-view acc-ymm)
+    acc-ymm
     ", "
     ymm
     ", "
-    (compiler-backend-global-shared-view acc-ymm)
+    acc-ymm
     "\n    vextracti128 $1, "
     acc-ymm
     ", "
-    (compiler-backend-global-shared-view scratch-xmm)
+    scratch-xmm
     "\n    "
-    (compiler-backend-global-shared-view mnemonic)
+    mnemonic
     " "
-    (compiler-backend-global-shared-view scratch-xmm)
+    scratch-xmm
     ", "
-    (compiler-backend-global-shared-view acc-xmm)
+    acc-xmm
     ", "
-    (compiler-backend-global-shared-view acc-xmm)
+    acc-xmm
     "\n"
     (compiler-backend-vector-reduce-byte-shift-asm
       (compiler-backend-global-shared-view mnemonic)
@@ -21701,61 +21585,61 @@
           "    vextractf32x8 $1, "
           zmm
           ", "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           "\n    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           ", "
           ymm
           ", "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           "\n")
         (str_cat.str-cat
           "    vextractf128 $1, "
           acc-ymm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n"
           "")
         (str_cat.str-cat
           "    vshufps $78, "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    "
           mnemonic
           " "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n"
           "")
         (str_cat.str-cat
           "    vshufps $177, "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    vaddss "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n"))]
     [(compiler_ast_types.AstType.F64)
       (str_cat.str-cat
@@ -21763,44 +21647,44 @@
           "    vextractf64x4 $1, "
           zmm
           ", "
-          (compiler-backend-global-shared-view acc-ymm)
-          "\n    "
-          (compiler-backend-global-shared-view mnemonic)
-          " "
-          (compiler-backend-global-shared-view acc-ymm)
-          ", "
-          ymm
-          ", "
-          (compiler-backend-global-shared-view acc-ymm)
-          "\n")
-        (str_cat.str-cat
-          "    vextractf128 $1, "
-          (compiler-backend-global-shared-view acc-ymm)
-          ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          acc-ymm
           "\n    "
           mnemonic
           " "
-          (compiler-backend-global-shared-view scratch-xmm)
+          acc-ymm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          ymm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-ymm
+          "\n")
+        (str_cat.str-cat
+          "    vextractf128 $1, "
+          acc-ymm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
           "\n"
           "")
         (str_cat.str-cat
           "    vunpckhpd "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    vaddsd "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n"))]
     [(compiler_ast_types.AstType.I64)
       (str_cat.str-cat
@@ -21808,44 +21692,44 @@
           "    vextracti64x4 $1, "
           zmm
           ", "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           "\n    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           ", "
           ymm
           ", "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           "\n")
         (str_cat.str-cat
           "    vextracti128 $1, "
           acc-ymm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n"
           "")
         (str_cat.str-cat
           "    vpsrldq $8, "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    "
           mnemonic
           " "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n"
           ""))]
     [(compiler_ast_types.AstType.I32)
@@ -21854,59 +21738,59 @@
           "    vextracti64x4 $1, "
           zmm
           ", "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           "\n    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           ", "
           ymm
           ", "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           "\n")
         (str_cat.str-cat
           "    vextracti128 $1, "
-          (compiler-backend-global-shared-view acc-ymm)
+          acc-ymm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n"
           "")
         (str_cat.str-cat
           "    vpsrldq $8, "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n"
           "")
         (str_cat.str-cat
           "    vpsrldq $4, "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           "\n    "
           mnemonic
           " "
-          (compiler-backend-global-shared-view scratch-xmm)
+          scratch-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           ", "
-          (compiler-backend-global-shared-view acc-xmm)
+          acc-xmm
           "\n"
           ""))]
     [(compiler_ast_types.AstType.I16)
@@ -24149,7 +24033,7 @@
       ;; for the original source-located overflow diagnostic.
       (str_cat.str-cat
         "    cmp"
-        (compiler-backend-global-shared-view suffix)
+        suffix
         " $1, "
         lhs
         "\n    jno 1f\n    cmp"
@@ -25860,8 +25744,7 @@
                                                           "%rbx")
                                                         (str_cat.str-cat
                                                           "    movq %rbx, "
-                                                          (compiler-backend-global-shared-view
-                                                            home)
+                                                          home
                                                           "\n"))
                                                       (compiler-backend-emit-load-i64-absolute
                                                         magic
@@ -26435,20 +26318,17 @@
   [dividend-reg : String]) : String
   (if want-remainder
     (str_cat.str-cat
-      (str_cat.str-cat
-        "    movq %rax, "
-        (compiler-backend-global-shared-view dividend-reg)
-        "\n")
+      (str_cat.str-cat "    movq %rax, " dividend-reg "\n")
       (compiler-backend-emit-load-u64-absolute
         divisor
         (compiler-backend-global-shared-view scratch-reg))
       (str_cat.str-cat
         "    cmpq "
-        (compiler-backend-global-shared-view scratch-reg)
+        scratch-reg
         ", %rax\n    jb 1f\n    subq "
         scratch-reg
         ", "
-        (compiler-backend-global-shared-view dividend-reg)
+        dividend-reg
         "\n1:\n    movq "
         dividend-reg
         ", %rax\n"))
@@ -26486,10 +26366,7 @@
         [quotient-asm : String
           (if want-remainder
             (str_cat.str-cat
-              (str_cat.str-cat
-                "    movq %rax, "
-                (compiler-backend-global-shared-view dividend-reg)
-                "\n")
+              (str_cat.str-cat "    movq %rax, " dividend-reg "\n")
               magic-load
               (str_cat.str-cat "    mulq " magic-src "\n")
               (compiler-backend-divmod-shift-reg "shr" shift "%rdx"))
@@ -26523,14 +26400,11 @@
         [quotient-asm : String
           (if want-remainder
             (str_cat.str-cat
-              (str_cat.str-cat
-                "    movq %rax, "
-                (compiler-backend-global-shared-view dividend-reg)
-                "\n")
+              (str_cat.str-cat "    movq %rax, " dividend-reg "\n")
               magic-load
               (str_cat.str-cat
                 "    mulq "
-                (compiler-backend-global-shared-view magic-src)
+                magic-src
                 "\n    addq "
                 magic-src
                 ", %rax\n    adcq $0, %rdx\n")
@@ -26539,7 +26413,7 @@
               magic-load
               (str_cat.str-cat
                 "    mulq "
-                (compiler-backend-global-shared-view magic-src)
+                magic-src
                 "\n    addq "
                 magic-src
                 ", %rax\n    adcq $0, %rdx\n    movq %rdx, %rax\n")
@@ -26576,33 +26450,25 @@
           "    andq $"
           (string.int->string mask-i64)
           ", "
-          (compiler-backend-global-shared-view mask-reg)
+          mask-reg
           "\n")
         (str_cat.str-cat
           (compiler-backend-emit-load-u64-absolute
             mask
             (compiler-backend-global-shared-view scratch-reg))
-          (str_cat.str-cat
-            "    andq "
-            (compiler-backend-global-shared-view scratch-reg)
-            ", "
-            (compiler-backend-global-shared-view mask-reg)
-            "\n")))]
+          (str_cat.str-cat "    andq " scratch-reg ", " mask-reg "\n")))]
     [quotient-asm : String
       (str_cat.str-cat
         ;; The dividend save feeds only the remainder expansion below; a
         ;; quotient-only site never reads dividend-reg, so the copy is dead.
         (str_cat.str-cat
           (if want-remainder
-            (str_cat.str-cat
-              "    movq %rax, "
-              (compiler-backend-global-shared-view dividend-reg)
-              "\n")
+            (str_cat.str-cat "    movq %rax, " dividend-reg "\n")
             "")
           "    movq %rax, "
-          (compiler-backend-global-shared-view mask-reg)
+          mask-reg
           "\n    sarq $63, "
-          (compiler-backend-global-shared-view mask-reg)
+          mask-reg
           "\n")
         mask-op-asm
         (str_cat.str-cat "    addq " mask-reg ", %rax\n")
@@ -26648,49 +26514,43 @@
       (if want-remainder
         (str_cat.str-cat
           "    movq %rax, "
-          (compiler-backend-global-shared-view dividend-reg)
+          dividend-reg
           "\n"
           magic-load
           "    imulq "
           magic-src
           "\n"
           (if (compiler-backend-u64-high-bit? magic)
-            (str_cat.str-cat
-              "    addq "
-              (compiler-backend-global-shared-view dividend-reg)
-              ", %rdx\n")
+            (str_cat.str-cat "    addq " dividend-reg ", %rdx\n")
             "")
           (compiler-backend-divmod-shift-reg "sar" shift "%rdx")
           "    movq "
-          (compiler-backend-global-shared-view dividend-reg)
+          dividend-reg
           ", "
-          (compiler-backend-global-shared-view mask-reg)
+          mask-reg
           "\n    sarq $63, "
-          (compiler-backend-global-shared-view mask-reg)
+          mask-reg
           "\n    subq "
           mask-reg
           ", %rdx\n")
         (str_cat.str-cat
           "    movq %rax, "
-          (compiler-backend-global-shared-view dividend-reg)
+          dividend-reg
           "\n"
           magic-load
           "    imulq "
           magic-src
           "\n    movq %rdx, %rax\n"
           (if (compiler-backend-u64-high-bit? magic)
-            (str_cat.str-cat
-              "    addq "
-              (compiler-backend-global-shared-view dividend-reg)
-              ", %rax\n")
+            (str_cat.str-cat "    addq " dividend-reg ", %rax\n")
             "")
           (compiler-backend-divmod-shift-rax "sar" shift)
           "    movq "
-          (compiler-backend-global-shared-view dividend-reg)
+          dividend-reg
           ", "
-          (compiler-backend-global-shared-view mask-reg)
+          mask-reg
           "\n    sarq $63, "
-          (compiler-backend-global-shared-view mask-reg)
+          mask-reg
           "\n    subq "
           mask-reg
           ", %rax\n"))]
@@ -26733,7 +26593,7 @@
       ", "
       quotient-reg
       ", "
-      (compiler-backend-global-shared-view product-reg)
+      product-reg
       "\n    subq "
       product-reg
       ", "
@@ -26746,7 +26606,7 @@
       "    imulq "
       quotient-reg
       ", "
-      (compiler-backend-global-shared-view scratch-reg)
+      scratch-reg
       "\n    subq "
       scratch-reg
       ", "
@@ -26773,10 +26633,7 @@
           (compiler-backend-emit-load-u64-absolute
             mask
             (compiler-backend-global-shared-view scratch-reg))
-          (str_cat.str-cat
-            "    andq "
-            (compiler-backend-global-shared-view scratch-reg)
-            ", %rdx\n")))]
+          (str_cat.str-cat "    andq " scratch-reg ", %rdx\n")))]
     [quotient-asm : String
       (str_cat.str-cat
         (compiler-backend-divmod-result-move
@@ -26846,10 +26703,7 @@
         magic-src
         "\n"
         (if (compiler-backend-u64-high-bit? magic)
-          (str_cat.str-cat
-            "    addq "
-            (compiler-backend-global-shared-view src-reg)
-            ", %rdx\n")
+          (str_cat.str-cat "    addq " src-reg ", %rdx\n")
           "")
         "    movq %rdx, %rax\n    shrq $63, %rax\n"
         (compiler-backend-divmod-shift-reg "sar" shift "%rdx"))]
@@ -26892,12 +26746,7 @@
   (if (= divisor 1)
     (CompilerBackendMaybeAsm.Some
       (if want-remainder
-        (str_cat.str-cat
-          "    xorq "
-          (compiler-backend-global-shared-view result-reg)
-          ", "
-          result-reg
-          "\n")
+        (str_cat.str-cat "    xorq " result-reg ", " result-reg "\n")
         (compiler-backend-divmod-result-move src-reg result-reg)))
     (if (= divisor (compiler-backend-i64-min-value))
       (CompilerBackendMaybeAsm.No)
@@ -27837,9 +27686,9 @@
             type-segment-bases
             (compiler-backend-global-shared-view count-ty))
           " "
-          (compiler-backend-global-shared-view count-sized)
+          count-sized
           ", "
-          (compiler-backend-global-shared-view count-sized)
+          count-sized
           "\n    jge 1f\n"
           negative-abort
           "1:\n")
@@ -27871,10 +27720,7 @@
     [count-move : String
       (if (string.eq count-reg "%rcx")
         ""
-        (str_cat.str-cat
-          "    movq "
-          (compiler-backend-global-shared-view count-reg)
-          ", %rcx\n"))]
+        (str_cat.str-cat "    movq " count-reg ", %rcx\n"))]
     (str_cat.str-cat
       (compiler-backend-shift-guard-asm
         type-segment-bases
@@ -28837,19 +28683,19 @@
 (define (compiler-backend-bit-length-reg-asm [signed? : bool] [reg : String]) : String
   (str_cat.str-cat
     "    testq "
-    (compiler-backend-global-shared-view reg)
+    reg
     ", "
-    (compiler-backend-global-shared-view reg)
+    reg
     (if signed?
       "\n    jle 1f\n    bsrq "
       "\n    je 1f\n    bsrq ")
-    (compiler-backend-global-shared-view reg)
+    reg
     ", "
-    (compiler-backend-global-shared-view reg)
+    reg
     "\n    addq $1, "
-    (compiler-backend-global-shared-view reg)
+    reg
     "\n    jmp 2f\n1:\n    xorq "
-    (compiler-backend-global-shared-view reg)
+    reg
     ", "
     reg
     "\n2:\n"))
@@ -29359,7 +29205,7 @@
           "    sqrt"
           (compiler-backend-float-suffix ty)
           " "
-          (compiler-backend-global-shared-view reg)
+          reg
           ", "
           reg
           "\n"))]
@@ -29896,7 +29742,7 @@
         [(and (or (= n 3) (= n 5) (= n 9)) (not (string.eq lhs-reg "%rbp")))
           (str_cat.str-cat
             "    leaq ("
-            (compiler-backend-global-shared-view lhs-reg)
+            lhs-reg
             ","
             lhs-reg
             ","
@@ -32253,7 +32099,7 @@
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    movq %rax, "
-          (compiler-backend-global-shared-view frame)
+          frame
           "\n"
           lhs-asm
           (compiler-backend-binop-compare-set-reg-asm
@@ -32276,7 +32122,7 @@
             (str_cat.str-cat
               lhs-asm
               "    movq %rax, "
-              (compiler-backend-global-shared-view frame)
+              frame
               "\n"
               rhs-asm
               (compiler-backend-binop-compare-set-reg-asm
@@ -32798,12 +32644,7 @@
             (let
               [home-name : String
                 (compiler_abi.compiler-abi-register-spelling home)]
-              (str_cat.str-cat
-                "    testq "
-                (compiler-backend-global-shared-view home-name)
-                ", "
-                home-name
-                "\n"))]
+              (str_cat.str-cat "    testq " home-name ", " home-name "\n"))]
           [(compiler_regalloc.CompilerRegLocation.RegisterPair _ _) ""]
           [(compiler_regalloc.CompilerRegLocation.Spill offset)
             (str_cat.str-cat
@@ -32854,12 +32695,7 @@
         (ResultCompilerBackend.Ok
           (str_cat.str-cat
             load
-            (str_cat.str-cat
-              "    testq "
-              (compiler-backend-global-shared-view test-reg)
-              ", "
-              test-reg
-              "\n")
+            (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
             (compiler-backend-emit-branch-jumps
               function
               true-label
@@ -32945,12 +32781,7 @@
                 (ResultCompilerBackend.Ok
                   (str_cat.str-cat
                     load
-                    (str_cat.str-cat
-                      "    testq "
-                      (compiler-backend-global-shared-view test-reg)
-                      ", "
-                      test-reg
-                      "\n")
+                    (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
                     ;; Non-scalar conditions can emergency-borrow an occupied
                     ;; register while materializing the value. Flush that
                     ;; restore after `testq` and before either edge, just like
@@ -34177,11 +34008,11 @@
     length-asm
     (str_cat.str-cat
       "    cmpq "
-      (compiler-backend-global-shared-view length-operand)
+      length-operand
       ", "
-      (compiler-backend-global-shared-view index-operand)
+      index-operand
       "\n    jb "
-      (compiler-backend-global-shared-view ok-symbol)
+      ok-symbol
       "\n")
     (compiler-backend-bounds-check-tail
       call-space
@@ -34211,11 +34042,11 @@
     length-asm
     (str_cat.str-cat
       "    cmpq "
-      (compiler-backend-global-shared-view index-imm)
+      index-imm
       ", "
-      (compiler-backend-global-shared-view length-operand)
+      length-operand
       "\n    ja "
-      (compiler-backend-global-shared-view ok-symbol)
+      ok-symbol
       "\n")
     (compiler-backend-bounds-check-tail
       call-space
@@ -34572,12 +34403,7 @@
                       "%r8"
                       backend-state)]
                   (str_cat.str-cat
-                    (str_cat.str-cat
-                      "    leaq "
-                      slot
-                      ", "
-                      (compiler-backend-global-shared-view addr-reg)
-                      "\n")
+                    (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
                     (str_cat.str-cat
                       "    movq "
                       addr-reg
@@ -34601,12 +34427,7 @@
                   "%r8"
                   backend-state)]
               (str_cat.str-cat
-                (str_cat.str-cat
-                  "    leaq "
-                  slot
-                  ", "
-                  (compiler-backend-global-shared-view addr-reg)
-                  "\n")
+                (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
                 (compiler-backend-emit-store-var-with-plan
                   assignments
                   dst
@@ -34639,7 +34460,7 @@
     (if (or (= scale 2) (= scale 4) (= scale 8))
       (str_cat.str-cat
         "    leaq ("
-        (compiler-backend-global-shared-view base-reg)
+        base-reg
         ","
         index-reg
         ","
@@ -34659,7 +34480,7 @@
                 "    shlq $"
                 (string.int->string count)
                 ", "
-                (compiler-backend-global-shared-view index-reg)
+                index-reg
                 "\n"
                 "")]
             [(option_i64.None)
@@ -34667,7 +34488,7 @@
                 "    imulq $"
                 (string.int->string scale)
                 ", "
-                (compiler-backend-global-shared-view index-reg)
+                index-reg
                 "\n"
                 "")])]
         (str_cat.str-cat
@@ -34728,7 +34549,7 @@
             "    addq $"
             (string.int->string disp)
             ", "
-            (compiler-backend-global-shared-view base-reg)
+            base-reg
             "\n"))]
       (str_cat.str-cat
         (compiler-backend-gep-index-base-asm base-reg scale index-reg)
@@ -35679,12 +35500,12 @@
             offset
             (compiler-backend-global-shared-view src-reg))
           ", "
-          (compiler-backend-global-shared-view xmm-scratch)
+          xmm-scratch
           "\n"
           "")
         (str_cat.str-cat
           "    movups "
-          (compiler-backend-global-shared-view xmm-scratch)
+          xmm-scratch
           ", "
           (compiler-backend-copy-address
             (+ dst-bias offset)
@@ -35720,7 +35541,7 @@
               offset
               (compiler-backend-global-shared-view src-reg))
             ", ")
-          (compiler-backend-global-shared-view reg)
+          reg
           "\n"
           (str_cat.str-cat
             "    mov"
@@ -35775,12 +35596,12 @@
             copy-offset
             (compiler-backend-global-shared-view src-reg))
           ", "
-          (compiler-backend-global-shared-view xmm-scratch)
+          xmm-scratch
           "\n")
         (str_cat.str-cat
           (str_cat.str-cat
             "    movups "
-            (compiler-backend-global-shared-view xmm-scratch)
+            xmm-scratch
             ", "
             (compiler-backend-c-memory-stack-dst-address dst-offset copy-offset)
             "\n")
@@ -35814,21 +35635,16 @@
             [preserve? : bool (> remaining chunk)]
             (str_cat.str-cat
               (if preserve?
-                (str_cat.str-cat
-                  "    movq "
-                  (compiler-backend-global-shared-view src-reg)
-                  ", "
-                  (compiler-backend-global-shared-view xmm-scratch)
-                  "\n")
+                (str_cat.str-cat "    movq " src-reg ", " xmm-scratch "\n")
                 "")
               "    mov"
-              (compiler-backend-global-shared-view suffix)
+              suffix
               " "
               (compiler-backend-copy-address
                 copy-offset
                 (compiler-backend-global-shared-view src-reg))
               ", "
-              (compiler-backend-global-shared-view part)
+              part
               "\n"
               "    mov"
               suffix
@@ -35840,12 +35656,7 @@
                 copy-offset)
               "\n"
               (if preserve?
-                (str_cat.str-cat
-                  "    movq "
-                  (compiler-backend-global-shared-view xmm-scratch)
-                  ", "
-                  (compiler-backend-global-shared-view src-reg)
-                  "\n")
+                (str_cat.str-cat "    movq " xmm-scratch ", " src-reg "\n")
                 "")
               (compiler-backend-emit-c-memory-stack-copy-chunks
                 type-segment-bases
@@ -35860,20 +35671,20 @@
             (str_cat.str-cat
               (str_cat.str-cat
                 "    "
-                (compiler-backend-global-shared-view mnemonic)
+                mnemonic
                 " "
                 (compiler-backend-copy-address
                   copy-offset
                   (compiler-backend-global-shared-view src-reg))
                 ", "
-                (compiler-backend-global-shared-view xmm-scratch)
+                xmm-scratch
                 "\n")
               (str_cat.str-cat
                 (str_cat.str-cat
                   "    "
                   mnemonic
                   " "
-                  (compiler-backend-global-shared-view xmm-scratch)
+                  xmm-scratch
                   ", "
                   (compiler-backend-c-memory-stack-dst-address
                     dst-offset
@@ -37182,11 +36993,7 @@
             "")]
         [load-addr : String
           (if (string.eq addr "")
-            (str_cat.str-cat
-              "("
-              (compiler-backend-global-shared-view base-reg)
-              ")"
-              "")
+            (str_cat.str-cat "(" base-reg ")" "")
             addr)]
         (match (if use-base-home?
           (ResultCompilerBackend.Ok "")
@@ -37819,12 +37626,7 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 ptr-asm
-                (str_cat.str-cat
-                  "    movq "
-                  (compiler-backend-global-shared-view base-mem)
-                  ", "
-                  (compiler-backend-global-shared-view base)
-                  "\n")
+                (str_cat.str-cat "    movq " base-mem ", " base "\n")
                 (if (compiler-backend-float-type?
                   (compiler-backend-global-shared-view second-ty))
                   (compiler-backend-emit-load-float-address-to-var
@@ -38232,12 +38034,7 @@
                   (str_cat.str-cat
                     (if (string.eq base-reg scav-fold)
                       ""
-                      (str_cat.str-cat
-                        "    movq "
-                        (compiler-backend-global-shared-view base-reg)
-                        ", "
-                        (compiler-backend-global-shared-view scav-fold)
-                        "\n"))
+                      (str_cat.str-cat "    movq " base-reg ", " scav-fold "\n"))
                     (compiler-backend-gep-index-base-asm-disp
                       gep-disp
                       (compiler-backend-global-shared-view scav-fold)
@@ -38381,22 +38178,12 @@
     [(compiler_ast_types.AstType.F64)
       (match to-ty
         [(compiler_ast_types.AstType.F32)
-          (str_cat.str-cat
-            "    cvtsd2ss "
-            (compiler-backend-global-shared-view reg)
-            ", "
-            reg
-            "\n")]
+          (str_cat.str-cat "    cvtsd2ss " reg ", " reg "\n")]
         [_ ""])]
     [(compiler_ast_types.AstType.F32)
       (match to-ty
         [(compiler_ast_types.AstType.F64)
-          (str_cat.str-cat
-            "    cvtss2sd "
-            (compiler-backend-global-shared-view reg)
-            ", "
-            reg
-            "\n")]
+          (str_cat.str-cat "    cvtss2sd " reg ", " reg "\n")]
         [_ ""])]
     [_ ""]))
 
@@ -38447,54 +38234,46 @@
         high-label)]
     [done-symbol : String (compiler-backend-asm-label function done-label)]
     (str_cat.str-cat
-      (str_cat.str-cat
-        "    testq "
-        (compiler-backend-global-shared-view value-reg)
-        ", "
-        (compiler-backend-global-shared-view value-reg)
-        "\n")
+      (str_cat.str-cat "    testq " value-reg ", " value-reg "\n")
       (str_cat.str-cat
         "    js "
-        (compiler-backend-global-shared-view high-symbol)
+        high-symbol
         "\n    cvtsi2"
-        (compiler-backend-global-shared-view op)
-        "q "
-        (compiler-backend-global-shared-view value-reg)
-        ", "
-        (compiler-backend-global-shared-view result-reg)
-        "\n")
-      (str_cat.str-cat
-        "    jmp "
-        (compiler-backend-global-shared-view done-symbol)
-        "\n")
-      (str_cat.str-cat high-symbol ":\n" "")
-      (str_cat.str-cat
-        "    movq "
-        (compiler-backend-global-shared-view value-reg)
-        ", "
-        (compiler-backend-global-shared-view scratch-reg)
-        "\n    andq $1, "
-        (compiler-backend-global-shared-view scratch-reg)
-        "\n")
-      (str_cat.str-cat
-        "    shrq $1, "
-        (compiler-backend-global-shared-view value-reg)
-        "\n    orq "
-        scratch-reg
-        ", "
-        (compiler-backend-global-shared-view value-reg)
-        "\n")
-      (str_cat.str-cat
-        "    cvtsi2"
-        (compiler-backend-global-shared-view op)
+        op
         "q "
         value-reg
         ", "
-        (compiler-backend-global-shared-view result-reg)
+        result-reg
+        "\n")
+      (str_cat.str-cat "    jmp " done-symbol "\n")
+      (str_cat.str-cat high-symbol ":\n" "")
+      (str_cat.str-cat
+        "    movq "
+        value-reg
+        ", "
+        scratch-reg
+        "\n    andq $1, "
+        scratch-reg
+        "\n")
+      (str_cat.str-cat
+        "    shrq $1, "
+        value-reg
+        "\n    orq "
+        scratch-reg
+        ", "
+        value-reg
+        "\n")
+      (str_cat.str-cat
+        "    cvtsi2"
+        op
+        "q "
+        value-reg
+        ", "
+        result-reg
         "\n    add"
         op
         " "
-        (compiler-backend-global-shared-view result-reg)
+        result-reg
         ", "
         result-reg
         "\n")
@@ -38554,18 +38333,18 @@
     (str_cat.str-cat
       (str_cat.str-cat
         "    ucomi"
-        (compiler-backend-global-shared-view op)
+        op
         " "
-        (compiler-backend-global-shared-view threshold)
+        threshold
         "(%rip), "
-        (compiler-backend-global-shared-view src-reg)
+        src-reg
         "\n    jae "
-        (compiler-backend-global-shared-view high-symbol)
+        high-symbol
         "\n")
       (str_cat.str-cat
-        (compiler-backend-global-shared-view convert)
+        convert
         "    jmp "
-        (compiler-backend-global-shared-view done-symbol)
+        done-symbol
         "\n"
         high-symbol
         ":\n    sub"
@@ -39605,29 +39384,24 @@
         (compiler-backend-global-shared-view scav))
       (str_cat.str-cat
         "    testq "
-        (compiler-backend-global-shared-view scav)
+        scav
         ", "
-        (compiler-backend-global-shared-view scav)
+        scav
         "\n    jz "
-        (compiler-backend-global-shared-view slow-label)
+        slow-label
         "\n    testq $1, 48("
-        (compiler-backend-global-shared-view scav)
+        scav
         ")\n    jnz "
-        (compiler-backend-global-shared-view slow-label)
+        slow-label
         "\n    movq 56("
-        (compiler-backend-global-shared-view scav)
+        scav
         "), "
-        (compiler-backend-global-shared-view head-reg)
+        head-reg
         "\n    movq 16("
-        (compiler-backend-global-shared-view head-reg)
+        head-reg
         "), %rax"
         "\n")
-      (str_cat.str-cat
-        "    leaq "
-        (compiler-backend-global-shared-view size-text)
-        "(%rax), "
-        (compiler-backend-global-shared-view scav)
-        "\n")
+      (str_cat.str-cat "    leaq " size-text "(%rax), " scav "\n")
       ;; No wrap guard: `size` is a fixed 8..64 byte literal (the
       ;; fast-alloc admission gate) and the bump cursor is a canonical
       ;; user-space arena address, so `cursor + size` cannot carry past
@@ -39638,15 +39412,15 @@
         "    cmpq "
         usable-end-offset
         "("
-        (compiler-backend-global-shared-view head-reg)
+        head-reg
         "), "
-        (compiler-backend-global-shared-view scav)
+        scav
         "\n")
       (str_cat.str-cat
         "    ja "
-        (compiler-backend-global-shared-view slow-label)
+        slow-label
         "\n    movq "
-        (compiler-backend-global-shared-view scav)
+        scav
         ", 16("
         head-reg
         ")\n")
@@ -39655,12 +39429,7 @@
         profile-label
         profile
         scav)
-      (str_cat.str-cat
-        "    jmp "
-        (compiler-backend-global-shared-view done-label)
-        "\n"
-        slow-label
-        ":\n")
+      (str_cat.str-cat "    jmp " done-label "\n" slow-label ":\n")
       (str_cat.str-cat
         "    call "
         (compiler-backend-fast-alloc-label size)
@@ -45886,7 +45655,7 @@
           "    movq "
           operand
           ", "
-          (compiler-backend-global-shared-view scratch)
+          scratch
           "\n    movq "
           scratch
           ", "
@@ -45916,7 +45685,7 @@
             backend-state
             slot-index)
           ", "
-          (compiler-backend-global-shared-view scratch)
+          scratch
           "\n    movq "
           scratch
           ", "
@@ -45948,11 +45717,11 @@
           (compiler-backend-phi-float-temp-scratch backend-state)]
         (str_cat.str-cat
           "    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
           operand
           ", "
-          (compiler-backend-global-shared-view scratch)
+          scratch
           "\n    "
           mnemonic
           " "
@@ -45979,11 +45748,11 @@
           (compiler-backend-phi-float-temp-scratch backend-state)]
         (str_cat.str-cat
           "    "
-          (compiler-backend-global-shared-view mnemonic)
+          mnemonic
           " "
           (compiler-backend-cycle-temp-slot-with-backend-state backend-state 0)
           ", "
-          (compiler-backend-global-shared-view scratch)
+          scratch
           "\n    "
           mnemonic
           " "
@@ -46637,7 +46406,7 @@
               (let
                 [copy : String
                   (str_cat.str-cat
-                    (compiler-backend-global-shared-view load)
+                    load
                     (compiler-backend-emit-store-typed-var-with-plan
                       assignments
                       dst
@@ -46705,7 +46474,7 @@
                       backend-state)
                     (str_cat.str-cat
                       "    pushq "
-                      (compiler-backend-global-shared-view reg)
+                      reg
                       "\n"
                       copy
                       "    popq "
@@ -50309,11 +50078,11 @@
       [(compiler-backend-atomic-op-fetch-add? name)
         (str_cat.str-cat
           "    mov"
-          (compiler-backend-global-shared-view suffix)
+          suffix
           " "
           value
           ", "
-          (compiler-backend-global-shared-view rax)
+          rax
           "\n    lock xadd"
           suffix
           " "
@@ -50324,7 +50093,7 @@
       [else
         (str_cat.str-cat
           "    mov"
-          (compiler-backend-global-shared-view suffix)
+          suffix
           " "
           value
           ", "
@@ -50396,12 +50165,12 @@
   [symbol : String]) : String
   (str_cat.str-cat
     ".globl "
-    (compiler-backend-global-shared-view symbol)
+    symbol
     "\n"
     (compiler-backend-emit-function-type-directive
       target
       (compiler-backend-global-shared-view symbol))
-    (compiler-backend-global-shared-view symbol)
+    symbol
     ":\n"
     (compiler-backend-inline-memory-call-asm
       target
@@ -51004,11 +50773,7 @@
                 (str_cat.str-cat
                   (if (string.eq home "%ymm0")
                     ""
-                    (str_cat.str-cat
-                      "    vmovdqu %ymm0, "
-                      (compiler-backend-global-shared-view home)
-                      "\n"
-                      ""))
+                    (str_cat.str-cat "    vmovdqu %ymm0, " home "\n" ""))
                   (compiler-backend-vector-store-dst
                     assignments
                     dst
@@ -51258,7 +51023,7 @@
                       (compiler-backend-avx512-vector-move
                         (compiler-backend-global-shared-view ty))
                       " %zmm16, "
-                      (compiler-backend-global-shared-view home)
+                      home
                       "\n"))
                   (compiler-backend-vector-store-dst
                     assignments
@@ -51285,11 +51050,7 @@
                 (str_cat.str-cat
                   (if (string.eq home "%k1")
                     ""
-                    (str_cat.str-cat
-                      "    kmovq %k1, "
-                      (compiler-backend-global-shared-view home)
-                      "\n"
-                      ""))
+                    (str_cat.str-cat "    kmovq %k1, " home "\n" ""))
                   (compiler-backend-avx512-mask-store-dst
                     assignments
                     dst
@@ -51841,7 +51602,7 @@
         "    movq "
         (string.int->string save-offset)
         "(%rsp), "
-        (compiler-backend-global-shared-view base-reg)
+        base-reg
         "\n")
       (compiler-backend-emit-c-abi-return-slot-stores
         type-segment-bases
@@ -51885,7 +51646,7 @@
           "    movq "
           (compiler_ir_types.compiler-ir-label-text label)
           "(%rip), "
-          (compiler-backend-global-shared-view scratch-reg)
+          scratch-reg
           "\n")
         (compiler-backend-emit-store-typed-var-with-plan
           assignments
@@ -51982,10 +51743,7 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 operand-asm
-                (str_cat.str-cat
-                  "    movq %rbx, "
-                  (compiler-backend-global-shared-view scav)
-                  "\n    cpuid\n")
+                (str_cat.str-cat "    movq %rbx, " scav "\n    cpuid\n")
                 (compiler-backend-cpuid-result-move reg-index)
                 (str_cat.str-cat "    movq " scav ", %rbx\n")
                 (compiler-backend-emit-store-typed-var-with-plan
@@ -52720,23 +52478,23 @@
             "    subq $"
             (string.int->string base)
             ", "
-            (compiler-backend-global-shared-view index-reg)
+            index-reg
             "\n"
             ""))
         "    leaq "
         (compiler-backend-switch-table-label function current-label)
         "(%rip), "
-        (compiler-backend-global-shared-view table-reg)
+        table-reg
         "\n    movq ("
-        (compiler-backend-global-shared-view table-reg)
+        table-reg
         ","
         index-reg
         ",8), "
-        (compiler-backend-global-shared-view table-reg)
+        table-reg
         "\n    movq "
         table-reg
         ", "
-        (compiler-backend-global-shared-view target-slot)
+        target-slot
         "\n"
         restore
         "    jmp *"
@@ -52750,7 +52508,7 @@
             "    subq $"
             (string.int->string base)
             ", "
-            (compiler-backend-global-shared-view index-reg)
+            index-reg
             "\n"
             ""))
         "    leaq "
@@ -52758,29 +52516,29 @@
           (compiler-backend-global-shared-view function)
           default-label)
         "(%rip), "
-        (compiler-backend-global-shared-view table-reg)
+        table-reg
         "\n    cmpq $"
         (string.int->string (- case-count 1))
         ", "
-        (compiler-backend-global-shared-view index-reg)
+        index-reg
         "\n    ja "
-        (compiler-backend-global-shared-view done-label)
+        done-label
         "\n    leaq "
         (compiler-backend-switch-table-label function current-label)
         "(%rip), "
-        (compiler-backend-global-shared-view table-reg)
+        table-reg
         "\n    movq ("
-        (compiler-backend-global-shared-view table-reg)
+        table-reg
         ","
         index-reg
         ",8), "
-        (compiler-backend-global-shared-view table-reg)
+        table-reg
         "\n"
         done-label
         ":\n    movq "
         table-reg
         ", "
-        (compiler-backend-global-shared-view target-slot)
+        target-slot
         "\n"
         restore
         "    jmp *"
@@ -52870,7 +52628,7 @@
           "    subq $"
           (string.int->string base)
           ", "
-          (compiler-backend-global-shared-view index-reg)
+          index-reg
           "\n"
           ""))]
     ;; Emitted after the last read of index-reg, before the transfer.
@@ -52883,13 +52641,13 @@
         "    movq "
         table-label
         "(,"
-        (compiler-backend-global-shared-view index-reg)
+        index-reg
         ",8), "
-        (compiler-backend-global-shared-view index-reg)
+        index-reg
         "\n    movq "
         index-reg
         ", "
-        (compiler-backend-global-shared-view target-slot)
+        target-slot
         "\n"
         restore
         "    jmp *"
@@ -52901,29 +52659,29 @@
         "    cmpq $"
         (string.int->string (- case-count 1))
         ", "
-        (compiler-backend-global-shared-view index-reg)
+        index-reg
         "\n    ja "
-        (compiler-backend-global-shared-view default-stub-label)
+        default-stub-label
         "\n    movq "
         table-label
         "(,"
-        (compiler-backend-global-shared-view index-reg)
+        index-reg
         ",8), "
-        (compiler-backend-global-shared-view index-reg)
+        index-reg
         "\n    jmp "
-        (compiler-backend-global-shared-view done-label)
+        done-label
         "\n"
         default-stub-label
         ":\n    leaq "
         (compiler-backend-asm-label function default-label)
         "(%rip), "
-        (compiler-backend-global-shared-view index-reg)
+        index-reg
         "\n"
         done-label
         ":\n    movq "
         index-reg
         ", "
-        (compiler-backend-global-shared-view target-slot)
+        target-slot
         "\n"
         restore
         "    jmp *"
@@ -53035,13 +52793,13 @@
                       "    subq $"
                       (string.int->string base)
                       ", "
-                      (compiler-backend-global-shared-view index-reg)
+                      index-reg
                       "\n"
                       ""))
                   "    jmp *"
                   (compiler-backend-switch-table-label function current-label)
                   "(,"
-                  (compiler-backend-global-shared-view index-reg)
+                  index-reg
                   ",8)\n")
                 (str_cat.str-cat
                   load-index
@@ -53051,13 +52809,13 @@
                       "    subq $"
                       (string.int->string base)
                       ", "
-                      (compiler-backend-global-shared-view index-reg)
+                      index-reg
                       "\n"
                       ""))
                   "    cmpq $"
                   (string.int->string (- case-count 1))
                   ", "
-                  (compiler-backend-global-shared-view index-reg)
+                  index-reg
                   "\n    ja "
                   (compiler-backend-asm-label
                     (compiler-backend-global-shared-view function)
@@ -53065,7 +52823,7 @@
                   "\n    jmp *"
                   (compiler-backend-switch-table-label function current-label)
                   "(,"
-                  (compiler-backend-global-shared-view index-reg)
+                  index-reg
                   ",8)\n"))
               (if (compiler-backend-function-scratch-bool?
                 (compiler-backend-state-function-state backend-state)
@@ -53093,17 +52851,17 @@
                         "    subq $"
                         (string.int->string base)
                         ", "
-                        (compiler-backend-global-shared-view index-reg)
+                        index-reg
                         "\n"
                         ""))
                     "    leaq "
                     (compiler-backend-switch-table-label function current-label)
                     "(%rip), "
-                    (compiler-backend-global-shared-view table-reg)
+                    table-reg
                     "\n    jmp *("
                     table-reg
                     ","
-                    (compiler-backend-global-shared-view index-reg)
+                    index-reg
                     ",8)\n")
                   (str_cat.str-cat
                     load-index
@@ -53113,13 +52871,13 @@
                         "    subq $"
                         (string.int->string base)
                         ", "
-                        (compiler-backend-global-shared-view index-reg)
+                        index-reg
                         "\n"
                         ""))
                     "    cmpq $"
                     (string.int->string (- case-count 1))
                     ", "
-                    (compiler-backend-global-shared-view index-reg)
+                    index-reg
                     "\n    ja "
                     (compiler-backend-asm-label
                       (compiler-backend-global-shared-view function)
@@ -53127,7 +52885,7 @@
                     "\n    leaq "
                     (compiler-backend-switch-table-label function current-label)
                     "(%rip), "
-                    (compiler-backend-global-shared-view table-reg)
+                    table-reg
                     "\n    jmp *("
                     table-reg
                     ","
@@ -54141,11 +53899,7 @@
         (let
           [symbol : String
             (compiler-backend-state-user-symbol-id ctx.backend-state name)]
-          [addr : String
-            (str_cat.str-cat
-              (compiler-backend-global-shared-view symbol)
-              "(%rip)"
-              "")]
+          [addr : String (str_cat.str-cat symbol "(%rip)" "")]
           [inline-size : i64
             (compiler-backend-inline-aggregate-global-size
               ctx.backend-state
@@ -56199,7 +55953,7 @@
         "    movq "
         addr0
         ", "
-        (compiler-backend-global-shared-view dst-home)
+        dst-home
         "\n    "
         mnem
         "q "
@@ -57039,11 +56793,7 @@
               "")]
           [load-addr : String
             (if (string.eq addr "")
-              (str_cat.str-cat
-                "("
-                (compiler-backend-global-shared-view base-reg)
-                ")"
-                "")
+              (str_cat.str-cat "(" base-reg ")" "")
               addr)]
           (match (if use-base-home?
             (ResultCompilerBackend.Ok "")
@@ -59450,7 +59200,7 @@
                               "    movq "
                               addr1
                               ", "
-                              (compiler-backend-global-shared-view stage)
+                              stage
                               "\n    "
                               mnem
                               "q "
@@ -60611,11 +60361,11 @@
                             [call-tail : String
                               (str_cat.str-cat
                                 "    movq 8("
-                                (compiler-backend-global-shared-view scav-clo)
+                                scav-clo
                                 "), "
                                 env-reg
                                 "\n    call *("
-                                (compiler-backend-global-shared-view scav-clo)
+                                scav-clo
                                 ")\n"
                                 (str_cat.str-cat
                                   (compiler-backend-emit-call-space-add
@@ -60635,10 +60385,9 @@
                                     func-asm
                                     (str_cat.str-cat
                                       "    movq "
-                                      (compiler-backend-global-shared-view
-                                        scav-clo)
+                                      scav-clo
                                       ", "
-                                      (compiler-backend-global-shared-view slot)
+                                      slot
                                       "\n")
                                     args-asm
                                     (str_cat.str-cat
@@ -60782,12 +60531,7 @@
                 [(ResultBackendReg.Ok env-reg)
                   (let
                     [target-addr : String
-                      (str_cat.str-cat
-                        "*("
-                        (compiler-backend-global-shared-view clo-reg)
-                        ")"
-                        ""
-                        "")]
+                      (str_cat.str-cat "*(" clo-reg ")" "" "")]
                     [descriptor-asm : String
                       (str_cat.str-cat
                         func-asm
@@ -64729,13 +64473,13 @@
                       (CompilerBackendMaybeAsm.Some
                         (str_cat.str-cat
                           "    leaq ("
-                          (compiler-backend-global-shared-view source)
+                          source
                           ","
                           source
                           ","
                           (string.int->string (- factor 1))
                           "), "
-                          (compiler-backend-global-shared-view temp)
+                          temp
                           "\n    leaq ("
                           base-home
                           ","
@@ -66810,7 +66554,7 @@
                   "    vmovdqu "
                   (string.int->string (* 32 special-index))
                   "(%r10), "
-                  (compiler-backend-global-shared-view home)
+                  home
                   "\n"
                   (compiler-backend-vector-store-dst
                     assignments
@@ -67088,7 +66832,7 @@
           "    leaq "
           addr
           ", "
-          (compiler-backend-global-shared-view scratch)
+          scratch
           "\n"
           (compiler-backend-emit-store-var-with-plan
             assignments
@@ -70758,7 +70502,7 @@
             (set!
               acc
               (str_cat.str-cat
-                (compiler-backend-global-shared-view acc)
+                acc
                 (if (string.eq acc "")
                   ""
                   "\n")
@@ -79168,11 +78912,7 @@
                             (if wrap-active?
                               (let
                                 [label-line : String
-                                  (str_cat.str-cat
-                                    (compiler-backend-global-shared-view
-                                      saving-asm-label)
-                                    ":\n"
-                                    "")]
+                                  (str_cat.str-cat saving-asm-label ":\n" "")]
                                 (string.replace
                                   (compiler-backend-global-shared-view
                                     guarded-body)
@@ -79184,8 +78924,7 @@
                                     "")))
                               (str_cat.str-cat
                                 saving-prologue-body
-                                (compiler-backend-global-shared-view
-                                  guarded-body)
+                                guarded-body
                                 ""))]
                           [post-prologue : String
                             (str_cat.str-cat
@@ -79629,11 +79368,7 @@
                                 (if wrap-active?
                                   (string.replace
                                     swb-body
-                                    (str_cat.str-cat
-                                      (compiler-backend-global-shared-view
-                                        saving-asm-label)
-                                      ":\n"
-                                      "")
+                                    (str_cat.str-cat saving-asm-label ":\n" "")
                                     (compiler-backend-global-shared-view
                                       selected-prologue))
                                   swb-body)]
@@ -79770,8 +79505,7 @@
                                           program-index
                                           name)
                                         ".globl "
-                                        (compiler-backend-global-shared-view
-                                          symbol)
+                                        symbol
                                         "\n"
                                         (compiler-backend-debug-function-location
                                           target
@@ -79788,11 +79522,7 @@
                                           (compiler-backend-global-shared-view
                                             symbol))
                                         (if wrap-active?
-                                          (str_cat.str-cat
-                                            (compiler-backend-global-shared-view
-                                              symbol)
-                                            ":\n"
-                                            "")
+                                          (str_cat.str-cat symbol ":\n" "")
                                           selected-prologue)
                                         ""
                                         ""
@@ -81517,10 +81247,7 @@
     [suffix : String
       (compiler-backend-string-label-suffix
         (compiler-backend-global-shared-view text))]
-    [data-label : String
-      (str_cat.str-cat
-        ".L_tl_str_data_"
-        (compiler-backend-global-shared-view suffix))]
+    [data-label : String (str_cat.str-cat ".L_tl_str_data_" suffix)]
     [fat-label : String (str_cat.str-cat ".L_tl_str_" suffix)]
     [escaped : String
       (compiler-backend-escape-string
@@ -81622,10 +81349,7 @@
         bytes
         (text_buf.append
           (text_buf.append buf "    .balign 8\n")
-          (str_cat.str-cat
-            (compiler-backend-global-shared-view data-label)
-            ":\n"
-            "")))]
+          (str_cat.str-cat data-label ":\n" "")))]
     (text_buf.append
       (text_buf.append
         (text_buf.append
@@ -82706,11 +82430,11 @@
             offset
             (compiler-backend-global-shared-view src-reg))
           ", "
-          (compiler-backend-global-shared-view xmm)
+          xmm
           "\n")
         (str_cat.str-cat
           "    movups "
-          (compiler-backend-global-shared-view xmm)
+          xmm
           ", "
           (compiler-backend-inline-aggregate-symbol-operand
             (compiler-backend-global-shared-view symbol)
@@ -82731,11 +82455,11 @@
             offset
             (compiler-backend-global-shared-view src-reg))
           ", "
-          (compiler-backend-global-shared-view gp)
+          gp
           "\n")
         (str_cat.str-cat
           "    movq "
-          (compiler-backend-global-shared-view gp)
+          gp
           ", "
           (compiler-backend-inline-aggregate-symbol-operand
             (compiler-backend-global-shared-view symbol)
@@ -82942,7 +82666,7 @@
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
               ".globl "
-              (compiler-backend-global-shared-view symbol)
+              symbol
               "\n"
               (compiler-backend-emit-runtime-global
                 target
@@ -82962,7 +82686,7 @@
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   ".globl "
-                  (compiler-backend-global-shared-view symbol)
+                  symbol
                   "\n"
                   symbol
                   ":\n"
@@ -83052,7 +82776,7 @@
             (compiler-backend-global-shared-view ty))
           (str_cat.str-cat
             "    movq %rax, "
-            (compiler-backend-global-shared-view symbol)
+            symbol
             "(%rip)\n    movq %rdx, "
             symbol
             "+8(%rip)\n"
@@ -95345,7 +95069,7 @@
                             "    "
                             (compiler-backend-cold-jcc-inverse data first mend)
                             " "
-                            (compiler-backend-global-shared-view cold-label))]
+                            cold-label)]
                         [head : String (str_cat.str-cat cold-label ":")]
                         [loc : i64
                           (compiler-backend-cold-loc-before

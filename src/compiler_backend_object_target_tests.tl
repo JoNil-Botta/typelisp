@@ -74,22 +74,20 @@
         "Windows leaf emits entry unwind xdata")
       (test.assert-true
         (let
-          [kind (cobj.CompilerObjectSectionKind.Rsrc)]
           [label
             (object_windows.compiler-backend-object-manifest-label-shared-view)]
           (cobj.compiler-object-section-contains-label?
             windows-sections
-            kind
+            (cobj.CompilerObjectSectionKind.Rsrc)
             label))
         "Windows leaf emits the UTF-8 manifest resource")
       (test.assert-true
         (let
-          [kind (cobj.CompilerObjectRelocationKind.Addr32Nb)]
           [target
             (object_windows.compiler-backend-object-manifest-label-shared-view)]
           (cobj.compiler-object-relocation-list-contains?
             windows-image.relocations
-            kind
+            (cobj.CompilerObjectRelocationKind.Addr32Nb)
             target))
         "Windows leaf relocates the manifest resource"))))
 

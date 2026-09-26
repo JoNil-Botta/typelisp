@@ -2156,172 +2156,46 @@
     refs
     (selfhost-lint-dead-expr-list-refs-from
       exprs
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get (ast.ast-expr-list-get (& exprs) index 0))
-        refs)
+      (selfhost-lint-dead-expr-refs (ast.ast-expr-list-get exprs index 0) refs)
       (+ index 1))))
 
-(define (selfhost-lint-dead-let-binding-refs
-  [bindings : ast.AstLetBindingList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-let-binding-refs-at (& bindings) refs 0))
-
-(define (selfhost-lint-dead-let-binding-refs-at
-  [bindings : (& bindings ast.AstLetBindingList)]
+(define (selfhost-lint-dead-child-list-refs-from
+  [children : (& children ast.AstExprChildList)]
   [refs : lint_svec.Vec]
   [index : i64]) : lint_svec.Vec
-  (if (>= index (ast.ast-let-binding-list-len bindings))
+  (if (>= index children.len)
     refs
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ maybe-ty init)
-        (selfhost-lint-dead-let-binding-refs-at
-          bindings
-          (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get init)
-            (selfhost-lint-dead-maybe-type-refs maybe-ty refs))
-          (+ index 1))])))
+    (selfhost-lint-dead-child-list-refs-from
+      children
+      (match (ast.ast-expr-child-list-get
+        children
+        index
+        (ast.ast-expr-child-fallback))
+        [(ast.AstExprChild.Expr id) (selfhost-lint-dead-expr-refs id refs)]
+        [(ast.AstExprChild.TypeId id) (selfhost-lint-dead-type-id-refs id refs)]
+        [(ast.AstExprChild.Type ty) (selfhost-lint-dead-type-refs ty refs)]
+        [(ast.AstExprChild.Pattern pattern)
+          (selfhost-lint-dead-pattern-refs pattern refs)])
+      (+ index 1))))
 
-(define (selfhost-lint-dead-match-arm-refs
-  [arms : ast.AstMatchArmList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-match-arm-refs-at (& arms) refs 0))
-
-(define (selfhost-lint-dead-match-arm-refs-at
-  [arms : (& arms ast.AstMatchArmList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index arms.len)
-    refs
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm pattern body)
-        (selfhost-lint-dead-match-arm-refs-at
-          arms
-          (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get body)
-            (selfhost-lint-dead-pattern-refs pattern refs))
-          (+ index 1))])))
-
-(define (selfhost-lint-dead-resource-binding-refs
-  [bindings : ast.AstResourceBindingList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-resource-binding-refs-at (& bindings) refs 0))
-
-(define (selfhost-lint-dead-resource-binding-refs-at
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    refs
-    (match (ast.ast-resource-binding-list-get
-      bindings
-      index
-      (ast.ast-resource-binding-fallback))
-      [(ast.AstResourceBinding.Binding _ init cleanup _)
-        (selfhost-lint-dead-resource-binding-refs-at
-          bindings
-          (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get cleanup)
-            (selfhost-lint-dead-expr-refs (ast.ast-node-get init) refs))
-          (+ index 1))])))
-
-(define (selfhost-lint-dead-expr-refs
+(define (selfhost-lint-dead-expr-children
   [expr : ast.AstExpr]
   [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner-box) refs)]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner-box) refs)]
-    [(ast.AstExpr.Literal _) refs]
+  (let
+    [children : ast.AstExprChildList (ast.ast-expr-children expr)]
+    (selfhost-lint-dead-child-list-refs-from (& children) refs 0)))
+
+(define (selfhost-lint-dead-expr-refs [node-id : i64] [refs : lint_svec.Vec]) : lint_svec.Vec
+  ;; The arms below collect names, fields and the read for-owned slots, and
+  ;; keep the SPMD scan and compact types ahead of their operands; every other
+  ;; variant's children are collected through the AstExpr child list.
+  (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Var name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(ast.AstExpr.Binary _ left right)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get right)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get left) refs))]
-    [(ast.AstExpr.Unary _ inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.Call func args)
-      (selfhost-lint-dead-expr-list-refs
-        args
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get func) refs))]
-    [(ast.AstExpr.If cond then-branch else-branch)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get else-branch)
-        (selfhost-lint-dead-expr-refs
-          (ast.ast-node-get then-branch)
-          (selfhost-lint-dead-expr-refs (ast.ast-node-get cond) refs)))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body)
-          (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get body)
-            (selfhost-lint-dead-let-binding-refs bindings refs))])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda params ret body)
-          (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get body)
-            (selfhost-lint-dead-maybe-type-refs
-              ret
-              (selfhost-lint-dead-param-list-refs params refs)))])]
-    [(ast.AstExpr.Tuple exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(ast.AstExpr.TupleRef tuple _)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get tuple) refs)]
-    [(ast.AstExpr.Array exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(ast.AstExpr.DynArray exprs)
-      (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(ast.AstExpr.FixedMakeArray elem-id len)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get len)
-        (selfhost-lint-dead-type-refs (ast.ty-node-get elem-id) refs))]
-    [(ast.AstExpr.MakeArray elem-id len)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get len)
-        (selfhost-lint-dead-type-refs (ast.ty-node-get elem-id) refs))]
-    [(ast.AstExpr.ArrayRef array index)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get index)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs))]
-    [(ast.AstExpr.ArraySet array index value)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get value)
-        (selfhost-lint-dead-expr-refs
-          (ast.ast-node-get index)
-          (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs)))]
-    [(ast.AstExpr.ArrayTake array live index)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get index)
-        (selfhost-lint-dead-expr-refs
-          (ast.ast-node-get live)
-          (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs)))]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get index)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs))]
-    [(ast.AstExpr.Replace place replacement)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get replacement)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get place) refs))]
-    [(ast.AstExpr.ArrayPush array value)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get value)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs))]
-    [(ast.AstExpr.StringRef text index)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get index)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get text) refs))]
-    [(ast.AstExpr.While cond body)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get body)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get cond) refs))]
     [(ast.AstExpr.ForOwnedState payload)
       (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
+        (ast.ast-for-owned-state-body (& payload))
         (selfhost-lint-dead-expr-refs
-          (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
+          (ast.ast-for-owned-state-source (& payload))
           refs))]
     [(ast.AstExpr.ForOwnedStep payload)
       (let
@@ -2331,62 +2205,22 @@
         [done : i64 (ast.ast-for-owned-step-done-name (& payload))]
         [body : i64 (ast.ast-for-owned-step-body (& payload))]
         (selfhost-lint-dead-expr-refs
-          (ast.ast-node-get body)
+          body
           (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get done)
+            done
             (if (>= expected-type 0)
               (selfhost-lint-dead-expr-refs
-                (ast.ast-node-get expected-type)
+                expected-type
                 (selfhost-lint-dead-expr-refs
-                  (ast.ast-node-get index)
-                  (selfhost-lint-dead-expr-refs (ast.ast-node-get source) refs)))
+                  index
+                  (selfhost-lint-dead-expr-refs source refs)))
               (selfhost-lint-dead-expr-refs
-                (ast.ast-node-get index)
-                (selfhost-lint-dead-expr-refs (ast.ast-node-get source) refs))))))]
-    [(ast.AstExpr.Begin exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(ast.AstExpr.Unsafe exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
+                index
+                (selfhost-lint-dead-expr-refs source refs))))))]
     [(ast.AstExpr.Set target value)
       (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get value)
+        value
         (selfhost-lint-dead-ref-add-id refs target))]
-    [(ast.AstExpr.Ann inner ty-id)
-      (selfhost-lint-dead-type-refs
-        (ast.ty-node-get ty-id)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs))]
-    [(ast.AstExpr.Cast inner ty-id)
-      (selfhost-lint-dead-type-refs
-        (ast.ty-node-get ty-id)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs))]
-    [(ast.AstExpr.Borrow _ _ place)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get place) refs)]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee arms)
-          (selfhost-lint-dead-match-arm-refs
-            arms
-            (selfhost-lint-dead-expr-refs (ast.ast-node-get scrutinee) refs))])]
-    [(ast.AstExpr.Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(ast.AstForeach.Foreach _ index-ty start end body)
-          (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get body)
-            (selfhost-lint-dead-expr-refs
-              (ast.ast-node-get end)
-              (selfhost-lint-dead-expr-refs
-                (ast.ast-node-get start)
-                (selfhost-lint-dead-type-refs index-ty refs))))])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(ast.AstSpmdReduce.Reduce _ _ index-ty start end init value)
-          (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get value)
-            (selfhost-lint-dead-expr-refs
-              (ast.ast-node-get init)
-              (selfhost-lint-dead-expr-refs
-                (ast.ast-node-get end)
-                (selfhost-lint-dead-expr-refs
-                  (ast.ast-node-get start)
-                  (selfhost-lint-dead-type-refs index-ty refs)))))])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
@@ -2401,15 +2235,15 @@
             value
             body)
           (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get body)
+            body
             (selfhost-lint-dead-expr-refs
-              (ast.ast-node-get value)
+              value
               (selfhost-lint-dead-expr-refs
-                (ast.ast-node-get init)
+                init
                 (selfhost-lint-dead-expr-refs
-                  (ast.ast-node-get end)
+                  end
                   (selfhost-lint-dead-expr-refs
-                    (ast.ast-node-get start)
+                    start
                     (selfhost-lint-dead-type-refs
                       prefix-ty
                       (selfhost-lint-dead-type-refs index-ty refs)))))))])]
@@ -2426,147 +2260,29 @@
             keep
             body)
           (selfhost-lint-dead-expr-refs
-            (ast.ast-node-get body)
+            body
             (selfhost-lint-dead-expr-refs
-              (ast.ast-node-get keep)
+              keep
               (selfhost-lint-dead-expr-refs
-                (ast.ast-node-get init)
+                init
                 (selfhost-lint-dead-expr-refs
-                  (ast.ast-node-get end)
+                  end
                   (selfhost-lint-dead-expr-refs
-                    (ast.ast-node-get start)
+                    start
                     (selfhost-lint-dead-type-refs
                       slot-ty
                       (selfhost-lint-dead-type-refs index-ty refs)))))))])]
-    [(ast.AstExpr.SpmdBroadcast value lane)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get lane)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get value) refs))]
-    [(ast.AstExpr.SpmdShuffle value lane)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get lane)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get value) refs))]
-    [(ast.AstExpr.StructGet receiver field)
+    [(ast.AstExpr.StructGet _ field)
       (selfhost-lint-dead-ref-add-id
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get receiver) refs)
+        (selfhost-lint-dead-expr-children (ast.ast-node-get node-id) refs)
         field)]
     [(ast.AstExpr.StructSet receiver field value)
       (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get value)
+        value
         (selfhost-lint-dead-ref-add-id
-          (selfhost-lint-dead-expr-refs (ast.ast-node-get receiver) refs)
+          (selfhost-lint-dead-expr-refs receiver refs)
           field))]
-    [(ast.AstExpr.WithRegion _ body)
-      (selfhost-lint-dead-expr-list-refs body refs)]
-    [(ast.AstExpr.WithEscape scratch body)
-      (selfhost-lint-dead-expr-list-refs
-        body
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get scratch) refs))]
-    [(ast.AstExpr.WithScratch body)
-      (selfhost-lint-dead-expr-list-refs body refs)]
-    [(ast.AstExpr.InArena arena body)
-      (selfhost-lint-dead-expr-list-refs
-        body
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get arena) refs))]
-    [(ast.AstExpr.WithResource wr-box)
-      (match (__tl-box-place wr-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (selfhost-lint-dead-expr-list-refs
-            body
-            (selfhost-lint-dead-resource-binding-refs bindings refs))])]
-    [(ast.AstExpr.Box inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.BoxGet inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.BoxTake inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.BoxSet inner value)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get value)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs))]
-    [(ast.AstExpr.TypeLiteral ty-id)
-      (selfhost-lint-dead-type-refs (ast.ty-node-get ty-id) refs)]
-    [(ast.AstExpr.Init maybe-ty-id)
-      (selfhost-lint-dead-maybe-type-refs
-        (ast.ast-maybe-type-from-id maybe-ty-id)
-        refs)]
-    [(ast.AstExpr.Comptime inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.Quote inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.Quasiquote inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.Unquote inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.UnquoteSplicing inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.BracketClause items)
-      (selfhost-lint-dead-expr-list-refs items refs)]
-    [(ast.AstExpr.Try inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.Return inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.Break) refs]
-    [(ast.AstExpr.Continue) refs]
-    [(ast.AstExpr.PtrNull ty-id)
-      (selfhost-lint-dead-type-refs (ast.ty-node-get ty-id) refs)]
-    [(ast.AstExpr.PtrNullCheck inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.PtrAddrOf place)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get place) refs)]
-    [(ast.AstExpr.PtrRead ptr)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs)]
-    [(ast.AstExpr.PtrWrite ptr value)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get value)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs))]
-    [(ast.AstExpr.PtrOffset ptr offset)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get offset)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs))]
-    [(ast.AstExpr.PtrCast ptr ty-id)
-      (selfhost-lint-dead-type-refs
-        (ast.ty-node-get ty-id)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs))]
-    [(ast.AstExpr.PtrToInt ptr)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs)]
-    [(ast.AstExpr.IntToPtr value ty-id)
-      (selfhost-lint-dead-type-refs
-        (ast.ty-node-get ty-id)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get value) refs))]
-    [(ast.AstExpr.StringData inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.StringFromBytes ptr len)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get len)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs))]
-    [(ast.AstExpr.ArrayData inner)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
-    [(ast.AstExpr.BinaryData _) refs]
-    [(ast.AstExpr.SpmdProgramIndex) refs]
-    [(ast.AstExpr.SpmdProgramCount) refs]
-    [(ast.AstExpr.ProgramArgc) refs]
-    [(ast.AstExpr.ProgramArgv) refs]
-    [(ast.AstExpr.ProgramEnvp) refs]
-    [(ast.AstExpr.CpuIdEax leaf subleaf)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get subleaf)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get leaf) refs))]
-    [(ast.AstExpr.CpuIdEbx leaf subleaf)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get subleaf)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get leaf) refs))]
-    [(ast.AstExpr.CpuIdEcx leaf subleaf)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get subleaf)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get leaf) refs))]
-    [(ast.AstExpr.CpuIdEdx leaf subleaf)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-node-get subleaf)
-        (selfhost-lint-dead-expr-refs (ast.ast-node-get leaf) refs))]
-    [(ast.AstExpr.Xgetbv index)
-      (selfhost-lint-dead-expr-refs (ast.ast-node-get index) refs)]
-    [(ast.AstExpr.Syscall args) (selfhost-lint-dead-expr-list-refs args refs)]))
+    [_ (selfhost-lint-dead-expr-children (ast.ast-node-get node-id) refs)]))
 
 (define (selfhost-lint-dead-expr-span [expr-id : i64]) : ast.AstSourceSpan
   (match (ast.ast-node-get expr-id)
@@ -2919,7 +2635,7 @@
             [text : String (ci.intern-str name)]
             [refs : lint_svec.Vec
               (selfhost-lint-dead-expr-refs
-                (ast.ast-node-get body)
+                body
                 (selfhost-lint-dead-maybe-type-refs maybe-ty (lint_svec.new)))]
             [span : ast.AstSourceSpan
               (selfhost-lint-dead-decl-span
@@ -2941,7 +2657,7 @@
             [text : String (ci.intern-str name)]
             [refs : lint_svec.Vec
               (selfhost-lint-dead-expr-refs
-                (ast.ast-node-get body)
+                body
                 (selfhost-lint-dead-type-refs
                   ret
                   (selfhost-lint-dead-param-list-refs params (lint_svec.new))))]
@@ -2969,7 +2685,7 @@
             (ci.intern-str name)
             (selfhost-lint-dead-expr-span body)
             (selfhost-lint-dead-expr-refs
-              (ast.ast-node-get body)
+              body
               (selfhost-lint-dead-type-refs
                 ret
                 (selfhost-lint-dead-macro-param-list-refs
@@ -3054,9 +2770,7 @@
               _))
           (selfhost-lint-dead-refs-to-roots
             scan
-            (selfhost-lint-dead-expr-refs
-              (ast.ast-node-get call-expr)
-              (lint_svec.new)))]
+            (selfhost-lint-dead-expr-refs call-expr (lint_svec.new)))]
         [(ast.AstDecl.Import
             decl-meta
             (ast.AstImportSpec.Spec
@@ -3067,9 +2781,7 @@
               _))
           (selfhost-lint-dead-refs-to-roots
             scan
-            (selfhost-lint-dead-expr-refs
-              (ast.ast-node-get call-expr)
-              (lint_svec.new)))]
+            (selfhost-lint-dead-expr-refs call-expr (lint_svec.new)))]
         [(ast.AstDecl.Import decl-meta _) scan]
         [(ast.AstDecl.IncludeStr _ _) scan]
         [(ast.AstDecl.IncludeStrComptime _ _) scan]
@@ -3091,9 +2803,7 @@
         [(ast.AstDecl.Test _ body _ _)
           (selfhost-lint-dead-refs-to-roots
             scan
-            (selfhost-lint-dead-expr-refs
-              (ast.ast-node-get body)
-              (lint_svec.new)))]
+            (selfhost-lint-dead-expr-refs body (lint_svec.new)))]
         [(ast.AstDecl.Unsafe inner)
           (selfhost-lint-dead-scan-decl
             scan

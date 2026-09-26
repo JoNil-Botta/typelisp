@@ -3891,117 +3891,13 @@
   [expr-id : i64]) : ir.CompilerMaybeSourceSpan
   (lower-ast-expr-span pools (ast.ast-node-pool-context-expr-get pools expr-id)))
 
-(define (lower-expr-id-first-span2
-  [pools : (& pools ast.AstNodePoolContext)]
-  [first : i64]
-  [second : i64]) : ir.CompilerMaybeSourceSpan
-  (match (lower-expr-id-span pools first)
+;; List fold for the first source span: keep a span found in an earlier child,
+;; otherwise ask the next child.
+(defmacro (lower-first-span [found : Expr] [next : Expr]) : Expr
+  `(match ,found
     [(ir.CompilerMaybeSourceSpan.Some span)
       (ir.CompilerMaybeSourceSpan.Some span)]
-    [(ir.CompilerMaybeSourceSpan.No) (lower-expr-id-span pools second)]))
-
-(define (lower-expr-id-first-span3
-  [pools : (& pools ast.AstNodePoolContext)]
-  [first : i64]
-  [second : i64]
-  [third : i64]) : ir.CompilerMaybeSourceSpan
-  (match (lower-expr-id-span pools first)
-    [(ir.CompilerMaybeSourceSpan.Some span)
-      (ir.CompilerMaybeSourceSpan.Some span)]
-    [(ir.CompilerMaybeSourceSpan.No)
-      (lower-expr-id-first-span2 pools second third)]))
-
-(define (lower-expr-list-first-span-at
-  [pools : (& pools ast.AstNodePoolContext)]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : ir.CompilerMaybeSourceSpan
-  (if (>= index (ast.ast-expr-list-len exprs))
-    (ir.CompilerMaybeSourceSpan.No)
-    (match (lower-expr-id-span pools (ast.ast-expr-list-get exprs index 0))
-      [(ir.CompilerMaybeSourceSpan.Some span)
-        (ir.CompilerMaybeSourceSpan.Some span)]
-      [(ir.CompilerMaybeSourceSpan.No)
-        (lower-expr-list-first-span-at pools exprs (+ index 1))])))
-
-(define (lower-expr-list-first-span
-  [pools : (& pools ast.AstNodePoolContext)]
-  [exprs : ast.AstExprList]) : ir.CompilerMaybeSourceSpan
-  (lower-expr-list-first-span-at pools (& exprs) 0))
-
-(define (lower-expr-id-or-list-first-span
-  [pools : (& pools ast.AstNodePoolContext)]
-  [first : i64]
-  [exprs : ast.AstExprList]) : ir.CompilerMaybeSourceSpan
-  (match (lower-expr-id-span pools first)
-    [(ir.CompilerMaybeSourceSpan.Some span)
-      (ir.CompilerMaybeSourceSpan.Some span)]
-    [(ir.CompilerMaybeSourceSpan.No) (lower-expr-list-first-span pools exprs)]))
-
-(define (lower-let-binding-list-first-span-at
-  [pools : (& pools ast.AstNodePoolContext)]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]) : ir.CompilerMaybeSourceSpan
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    (ir.CompilerMaybeSourceSpan.No)
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ _ value)
-        (match (lower-expr-id-span pools value)
-          [(ir.CompilerMaybeSourceSpan.Some span)
-            (ir.CompilerMaybeSourceSpan.Some span)]
-          [(ir.CompilerMaybeSourceSpan.No)
-            (lower-let-binding-list-first-span-at pools bindings (+ index 1))])])))
-
-(define (lower-let-binding-list-first-span
-  [pools : (& pools ast.AstNodePoolContext)]
-  [bindings : ast.AstLetBindingList]) : ir.CompilerMaybeSourceSpan
-  (lower-let-binding-list-first-span-at pools (& bindings) 0))
-
-(define (lower-match-arm-list-first-span-at
-  [pools : (& pools ast.AstNodePoolContext)]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : ir.CompilerMaybeSourceSpan
-  (if (>= index (ast.ast-match-arm-list-len arms))
-    (ir.CompilerMaybeSourceSpan.No)
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm _ body)
-        (match (lower-expr-id-span pools body)
-          [(ir.CompilerMaybeSourceSpan.Some span)
-            (ir.CompilerMaybeSourceSpan.Some span)]
-          [(ir.CompilerMaybeSourceSpan.No)
-            (lower-match-arm-list-first-span-at pools arms (+ index 1))])])))
-
-(define (lower-match-arm-list-first-span
-  [pools : (& pools ast.AstNodePoolContext)]
-  [arms : ast.AstMatchArmList]) : ir.CompilerMaybeSourceSpan
-  (lower-match-arm-list-first-span-at pools (& arms) 0))
-
-(define (lower-resource-binding-list-first-span-at
-  [pools : (& pools ast.AstNodePoolContext)]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [index : i64]) : ir.CompilerMaybeSourceSpan
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    (ir.CompilerMaybeSourceSpan.No)
-    (match (ast.ast-resource-binding-list-get
-      bindings
-      index
-      (ast.ast-resource-binding-fallback))
-      [(ast.AstResourceBinding.Binding _ init cleanup _)
-        (match (lower-expr-id-first-span2 pools init cleanup)
-          [(ir.CompilerMaybeSourceSpan.Some span)
-            (ir.CompilerMaybeSourceSpan.Some span)]
-          [(ir.CompilerMaybeSourceSpan.No)
-            (lower-resource-binding-list-first-span-at
-              pools
-              bindings
-              (+ index 1))])])))
-
-(define (lower-resource-binding-list-first-span
-  [pools : (& pools ast.AstNodePoolContext)]
-  [bindings : ast.AstResourceBindingList]) : ir.CompilerMaybeSourceSpan
-  (lower-resource-binding-list-first-span-at pools (& bindings) 0))
+    [(ir.CompilerMaybeSourceSpan.No) ,next]))
 
 (define (lower-ast-expr-direct-span [expr : ast.AstExpr]) : ir.CompilerMaybeSourceSpan
   (match expr
@@ -4014,146 +3910,18 @@
 (define (lower-ast-expr-span
   [pools : (& pools ast.AstNodePoolContext)]
   [expr : ast.AstExpr]) : ir.CompilerMaybeSourceSpan
-  (match expr
+  (match (lower-global-shared-view expr)
     [(ast.AstExpr.Spanned _ span) (ir.CompilerMaybeSourceSpan.Some span)]
-    [(ast.AstExpr.Binary _ left right)
-      (lower-expr-id-first-span2 pools left right)]
-    [(ast.AstExpr.Unary _ inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Call callee args)
-      (lower-expr-id-or-list-first-span pools callee args)]
-    [(ast.AstExpr.If cond then-expr else-expr)
-      (lower-expr-id-first-span3 pools cond then-expr else-expr)]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body)
-          (match (lower-let-binding-list-first-span pools bindings)
-            [(ir.CompilerMaybeSourceSpan.Some span)
-              (ir.CompilerMaybeSourceSpan.Some span)]
-            [(ir.CompilerMaybeSourceSpan.No) (lower-expr-id-span pools body)])])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda _ _ body) (lower-expr-id-span pools body)])]
-    [(ast.AstExpr.Tuple values) (lower-expr-list-first-span pools values)]
-    [(ast.AstExpr.TupleRef target _) (lower-expr-id-span pools target)]
-    [(ast.AstExpr.Array values) (lower-expr-list-first-span pools values)]
-    [(ast.AstExpr.DynArray values) (lower-expr-list-first-span pools values)]
-    [(ast.AstExpr.FixedMakeArray _ size) (lower-expr-id-span pools size)]
-    [(ast.AstExpr.MakeArray _ size) (lower-expr-id-span pools size)]
-    [(ast.AstExpr.ArrayRef target index)
-      (lower-expr-id-first-span2 pools target index)]
-    [(ast.AstExpr.ArraySet target index value)
-      (lower-expr-id-first-span3 pools target index value)]
-    [(ast.AstExpr.ArrayTake target live index)
-      (lower-expr-id-first-span3 pools target live index)]
-    [(ast.AstExpr.FixedArrayTake target index)
-      (lower-expr-id-first-span2 pools target index)]
-    [(ast.AstExpr.Replace place replacement)
-      (lower-expr-id-first-span2 pools place replacement)]
-    [(ast.AstExpr.ArrayPush target value)
-      (lower-expr-id-first-span2 pools target value)]
-    [(ast.AstExpr.StringRef target index)
-      (lower-expr-id-first-span2 pools target index)]
-    [(ast.AstExpr.While cond body) (lower-expr-id-first-span2 pools cond body)]
-    [(ast.AstExpr.Begin exprs) (lower-expr-list-first-span pools exprs)]
-    [(ast.AstExpr.Unsafe exprs) (lower-expr-list-first-span pools exprs)]
-    [(ast.AstExpr.Set _ value) (lower-expr-id-span pools value)]
-    [(ast.AstExpr.Ann inner _) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Cast inner _) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Borrow _ _ inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Match match-box)
-      (match (deref match-box)
-        [(ast.AstMatch.Match scrutinee arms)
-          (match (lower-expr-id-span pools scrutinee)
-            [(ir.CompilerMaybeSourceSpan.Some span)
-              (ir.CompilerMaybeSourceSpan.Some span)]
-            [(ir.CompilerMaybeSourceSpan.No)
-              (lower-match-arm-list-first-span pools arms)])])]
-    [(ast.AstExpr.Foreach foreach-box)
-      (match (__tl-box-place foreach-box)
-        [(ast.AstForeach.Foreach _ _ start end body)
-          (lower-expr-id-first-span3 pools start end body)])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
-          (match (lower-expr-id-first-span3 pools start end init)
-            [(ir.CompilerMaybeSourceSpan.Some span)
-              (ir.CompilerMaybeSourceSpan.Some span)]
-            [(ir.CompilerMaybeSourceSpan.No) (lower-expr-id-span pools value)])])]
-    [(ast.AstExpr.SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
-          (match (lower-expr-id-first-span3 pools start end init)
-            [(ir.CompilerMaybeSourceSpan.Some span)
-              (ir.CompilerMaybeSourceSpan.Some span)]
-            [(ir.CompilerMaybeSourceSpan.No)
-              (lower-expr-id-first-span2 pools value body)])])]
-    [(ast.AstExpr.SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(ast.AstSpmdCompact.Compact _ _ start end _ _ init keep body)
-          (match (lower-expr-id-first-span3 pools start end init)
-            [(ir.CompilerMaybeSourceSpan.Some span)
-              (ir.CompilerMaybeSourceSpan.Some span)]
-            [(ir.CompilerMaybeSourceSpan.No)
-              (lower-expr-id-first-span2 pools keep body)])])]
-    [(ast.AstExpr.SpmdBroadcast value lane)
-      (lower-expr-id-first-span2 pools value lane)]
-    [(ast.AstExpr.SpmdShuffle value lane)
-      (lower-expr-id-first-span2 pools value lane)]
-    [(ast.AstExpr.StructGet target _) (lower-expr-id-span pools target)]
-    [(ast.AstExpr.StructSet target _ value)
-      (lower-expr-id-first-span2 pools target value)]
-    [(ast.AstExpr.WithRegion _ body) (lower-expr-list-first-span pools body)]
-    [(ast.AstExpr.WithEscape escape body)
-      (lower-expr-id-or-list-first-span pools escape body)]
-    [(ast.AstExpr.WithScratch body) (lower-expr-list-first-span pools body)]
-    [(ast.AstExpr.InArena arena body)
-      (lower-expr-id-or-list-first-span pools arena body)]
-    [(ast.AstExpr.WithResource wr-box)
-      (match (__tl-box-place wr-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (match (lower-resource-binding-list-first-span pools bindings)
-            [(ir.CompilerMaybeSourceSpan.Some span)
-              (ir.CompilerMaybeSourceSpan.Some span)]
-            [(ir.CompilerMaybeSourceSpan.No)
-              (lower-expr-list-first-span pools body)])])]
-    [(ast.AstExpr.Box value) (lower-expr-id-span pools value)]
-    [(ast.AstExpr.BoxGet value) (lower-expr-id-span pools value)]
-    [(ast.AstExpr.BoxTake value) (lower-expr-id-span pools value)]
-    [(ast.AstExpr.BoxSet target value)
-      (lower-expr-id-first-span2 pools target value)]
-    [(ast.AstExpr.Comptime inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Quote inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Quasiquote inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Unquote inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.UnquoteSplicing inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Try inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Return inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.PtrNullCheck inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.PtrAddrOf inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.PtrRead inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.PtrWrite target value)
-      (lower-expr-id-first-span2 pools target value)]
-    [(ast.AstExpr.PtrOffset target offset)
-      (lower-expr-id-first-span2 pools target offset)]
-    [(ast.AstExpr.PtrCast inner _) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.PtrToInt inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.IntToPtr inner _) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.StringData inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.StringFromBytes data len)
-      (lower-expr-id-first-span2 pools data len)]
-    [(ast.AstExpr.ArrayData inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.CpuIdEax leaf subleaf)
-      (lower-expr-id-first-span2 pools leaf subleaf)]
-    [(ast.AstExpr.CpuIdEbx leaf subleaf)
-      (lower-expr-id-first-span2 pools leaf subleaf)]
-    [(ast.AstExpr.CpuIdEcx leaf subleaf)
-      (lower-expr-id-first-span2 pools leaf subleaf)]
-    [(ast.AstExpr.CpuIdEdx leaf subleaf)
-      (lower-expr-id-first-span2 pools leaf subleaf)]
-    [(ast.AstExpr.Xgetbv inner) (lower-expr-id-span pools inner)]
-    [(ast.AstExpr.Syscall args) (lower-expr-list-first-span pools args)]
-    [(ast.AstExpr.BracketClause items) (lower-expr-list-first-span pools items)]
-    [_ (ir.CompilerMaybeSourceSpan.No)]))
+    [(ast.AstExpr.MacroExpansion _ _ _) (ir.CompilerMaybeSourceSpan.No)]
+    [(ast.AstExpr.ForOwnedState _) (ir.CompilerMaybeSourceSpan.No)]
+    [(ast.AstExpr.ForOwnedStep _) (ir.CompilerMaybeSourceSpan.No)]
+    [_
+      (ast.ast-expr-list-fold
+        (ast.ast-expr-child-ids expr)
+        lower-first-span
+        (ir.CompilerMaybeSourceSpan.No)
+        lower-expr-id-span
+        pools)]))
 
 (define (lower-diagnostic-at-expr-with-pools
   [pools : (& pools ast.AstNodePoolContext)]
@@ -15351,488 +15119,86 @@
           params
           (+ index 1))])))
 
+;; Add the types a node's children name, in payload order.
+(define (lower-used-types-add-children-at
+  [session : cis.InternStructuralSessionHandle]
+  [pools : ast.AstNodePoolContext]
+  [used : lower_i64_i64_map.Map]
+  [module : String]
+  [children : (& children ast.AstExprChildList)]
+  [index : i64]) : lower_i64_i64_map.Map
+  (if (>= index children.len)
+    used
+    (lower-used-types-add-children-at
+      session
+      pools
+      (match (ast.ast-expr-child-list-get
+        children
+        index
+        (ast.ast-expr-child-fallback))
+        [(ast.AstExprChild.Expr id)
+          (lower-used-types-add-expr-id
+            session
+            pools
+            used
+            (lower-global-shared-view module)
+            id)]
+        [(ast.AstExprChild.TypeId id)
+          (lower-used-types-add-type
+            session
+            pools
+            used
+            (lower-global-shared-view module)
+            (ast.ast-node-pool-context-type-get pools id))]
+        [(ast.AstExprChild.Type ty)
+          (lower-used-types-add-type
+            session
+            pools
+            used
+            (lower-global-shared-view module)
+            ty)]
+        [(ast.AstExprChild.Pattern pattern)
+          (lower-used-types-add-pattern
+            session
+            pools
+            used
+            (lower-global-shared-view module)
+            pattern)])
+      module
+      children
+      (+ index 1))))
+
+;; A type operand is added before the expression it annotates or converts.
+(define (lower-used-types-add-type-then-expr
+  [session : cis.InternStructuralSessionHandle]
+  [pools : ast.AstNodePoolContext]
+  [used : lower_i64_i64_map.Map]
+  [module : String]
+  [ty-id : i64]
+  [expr-id : i64]) : lower_i64_i64_map.Map
+  (lower-used-types-add-expr-id
+    session
+    (lower-global-shared-view pools)
+    (lower-used-types-add-type
+      session
+      pools
+      used
+      (lower-global-shared-view module)
+      (ast.ast-node-pool-context-type-get pools ty-id))
+    module
+    expr-id))
+
 (define (lower-used-types-add-expr-id
   [session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]
   [used : lower_i64_i64_map.Map]
   [module : String]
   [expr-id : i64]) : lower_i64_i64_map.Map
-  (lower-used-types-add-expr
-    session
-    (lower-global-shared-view pools)
-    used
-    module
-    (ast.ast-node-pool-context-expr-get pools expr-id)))
-
-(define (lower-used-types-add-expr-list
-  [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [exprs : ast.AstExprList]) : lower_i64_i64_map.Map
-  (lower-used-types-add-expr-list-at session pools used module (& exprs) 0))
-
-(define (lower-used-types-add-expr-list-at
-  [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : lower_i64_i64_map.Map
-  (if (>= index exprs.len)
-    used
-    (lower-used-types-add-expr-list-at
-      session
-      (lower-global-shared-view pools)
-      (lower-used-types-add-expr-id
-        session
-        pools
-        used
-        (lower-global-shared-view module)
-        (ast.ast-expr-list-get exprs index 0))
-      module
-      exprs
-      (+ index 1))))
-
-(define (lower-used-types-add-pattern
-  [session : cis.InternStructuralSessionHandle]
-  [pools : (& pools ast.AstNodePoolContext)]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [pattern : ast.AstPattern]) : lower_i64_i64_map.Map
-  (match pattern
-    [(ast.AstPattern.Var _ maybe-ty)
-      (lower-used-types-add-maybe-type session pools used module maybe-ty)]
-    [(ast.AstPattern.Tuple patterns-box)
-      (lower-used-types-add-pattern-list
-        session
-        pools
-        used
-        module
-        (deref patterns-box))]
-    [(ast.AstPattern.Array patterns-box)
-      (lower-used-types-add-pattern-list
-        session
-        pools
-        used
-        module
-        (deref patterns-box))]
-    [(ast.AstPattern.Wildcard) used]
-    [(ast.AstPattern.Binding _) used]
-    [(ast.AstPattern.Variant name patterns-box)
-      (let
-        ;; `name` is already the interned id; read the id-keyed metadata slots
-        ;; directly instead of re-hashing `(tc-env-key-name-text name)` twice.
-        [with-head : lower_i64_i64_map.Map
-          (if (or
-            (tc_core.tc-name-qualified-id? session name)
-            (>= (tc_core.tc-name-first-dot-id session name) 0))
-            (lower-used-type-name-add
-              session
-              used
-              (lower-global-shared-view module)
-              name)
-            used)]
-        (lower-used-types-add-pattern-list
-          session
-          pools
-          with-head
-          module
-          (deref patterns-box)))]
-    [(ast.AstPattern.Literal _) used]))
-
-(define (lower-used-types-add-pattern-list
-  [session : cis.InternStructuralSessionHandle]
-  [pools : (& pools ast.AstNodePoolContext)]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [patterns : ast.AstPatternList]) : lower_i64_i64_map.Map
-  (lower-used-types-add-pattern-list-at
-    session
-    pools
-    used
-    module
-    (& patterns)
-    0))
-
-(define (lower-used-types-add-pattern-list-at
-  [session : cis.InternStructuralSessionHandle]
-  [pools : (& pools ast.AstNodePoolContext)]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [patterns : (& patterns ast.AstPatternList)]
-  [index : i64]) : lower_i64_i64_map.Map
-  (if (>= index patterns.len)
-    used
-    (lower-used-types-add-pattern-list-at
-      session
-      pools
-      (lower-used-types-add-pattern
-        session
-        pools
-        used
-        (lower-global-shared-view module)
-        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback)))
-      module
-      patterns
-      (+ index 1))))
-
-(define (lower-used-types-add-let-bindings
-  [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [bindings : ast.AstLetBindingList]) : lower_i64_i64_map.Map
-  (lower-used-types-add-let-bindings-at
-    session
-    pools
-    used
-    module
-    (& bindings)
-    0))
-
-(define (lower-used-types-add-let-bindings-at
-  [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]) : lower_i64_i64_map.Map
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    used
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ maybe-ty value-box)
-        (lower-used-types-add-let-bindings-at
-          session
-          (lower-global-shared-view pools)
-          (lower-used-types-add-expr-id
-            session
-            (lower-global-shared-view pools)
-            (lower-used-types-add-maybe-type
-              session
-              pools
-              used
-              (lower-global-shared-view module)
-              maybe-ty)
-            (lower-global-shared-view module)
-            value-box)
-          module
-          bindings
-          (+ index 1))])))
-
-(define (lower-used-types-add-match-arms
-  [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [arms : ast.AstMatchArmList]) : lower_i64_i64_map.Map
-  (lower-used-types-add-match-arms-at session pools used module (& arms) 0))
-
-(define (lower-used-types-add-match-arms-at
-  [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : lower_i64_i64_map.Map
-  (if (>= index arms.len)
-    used
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm pattern body-box)
-        (lower-used-types-add-match-arms-at
-          session
-          (lower-global-shared-view pools)
-          (lower-used-types-add-expr-id
-            session
-            (lower-global-shared-view pools)
-            (lower-used-types-add-pattern
-              session
-              pools
-              used
-              (lower-global-shared-view module)
-              pattern)
-            (lower-global-shared-view module)
-            body-box)
-          module
-          arms
-          (+ index 1))])))
-
-(define (lower-used-types-add-resource-bindings
-  [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [bindings : ast.AstResourceBindingList]) : lower_i64_i64_map.Map
-  (lower-used-types-add-resource-bindings-at
-    session
-    pools
-    used
-    module
-    (& bindings)
-    0))
-
-(define (lower-used-types-add-resource-bindings-at
-  [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [index : i64]) : lower_i64_i64_map.Map
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    used
-    (match (ast.ast-resource-binding-list-get
-      bindings
-      index
-      (ast.ast-resource-binding-fallback))
-      [(ast.AstResourceBinding.Binding _ acquire-box cleanup-box _)
-        (lower-used-types-add-resource-bindings-at
-          session
-          (lower-global-shared-view pools)
-          (lower-used-types-add-expr-id
-            session
-            (lower-global-shared-view pools)
-            (lower-used-types-add-expr-id
-              session
-              pools
-              used
-              (lower-global-shared-view module)
-              acquire-box)
-            (lower-global-shared-view module)
-            cleanup-box)
-          module
-          bindings
-          (+ index 1))])))
-
-(define (lower-used-types-add-expr
-  [session : cis.InternStructuralSessionHandle]
-  [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map]
-  [module : String]
-  [expr : ast.AstExpr]) : lower_i64_i64_map.Map
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.Literal _) used]
-    [(ast.AstExpr.Var _) used]
-    [(ast.AstExpr.Binary _ lhs-box rhs-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          lhs-box)
-        module
-        rhs-box)]
-    [(ast.AstExpr.Unary _ inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.Call callee-box args)
-      (lower-used-types-add-expr-list
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          callee-box)
-        module
-        args)]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          (lower-global-shared-view pools)
-          (lower-used-types-add-expr-id
-            session
-            pools
-            used
-            (lower-global-shared-view module)
-            cond-box)
-          (lower-global-shared-view module)
-          then-box)
-        module
-        else-box)]
-    [(ast.AstExpr.Let let-box)
-      (match (deref let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (lower-used-types-add-expr-id
-            session
-            (lower-global-shared-view pools)
-            (lower-used-types-add-let-bindings
-              session
-              pools
-              used
-              (lower-global-shared-view module)
-              bindings)
-            module
-            body-box)])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (deref lambda-box)
-        [(ast.AstLambda.Lambda params ret body-box)
-          (lower-used-types-add-expr-id
-            session
-            (lower-global-shared-view pools)
-            (lower-used-types-add-maybe-type
-              session
-              pools
-              (lower-used-types-add-param-list
-                session
-                (lower-global-shared-view pools)
-                used
-                (lower-global-shared-view module)
-                params)
-              (lower-global-shared-view module)
-              ret)
-            module
-            body-box)])]
-    [(ast.AstExpr.Tuple values)
-      (lower-used-types-add-expr-list session pools used module values)]
-    [(ast.AstExpr.TupleRef value-box _)
-      (lower-used-types-add-expr-id session pools used module value-box)]
-    [(ast.AstExpr.Array values)
-      (lower-used-types-add-expr-list session pools used module values)]
-    [(ast.AstExpr.DynArray values)
-      (lower-used-types-add-expr-list session pools used module values)]
-    [(ast.AstExpr.FixedMakeArray ty-id len-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-type
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          (ast.ast-node-pool-context-type-get pools ty-id))
-        module
-        len-box)]
-    [(ast.AstExpr.MakeArray ty-id len-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-type
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          (ast.ast-node-pool-context-type-get pools ty-id))
-        module
-        len-box)]
-    [(ast.AstExpr.ArrayRef array-box index-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          array-box)
-        module
-        index-box)]
-    [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          (lower-global-shared-view pools)
-          (lower-used-types-add-expr-id
-            session
-            pools
-            used
-            (lower-global-shared-view module)
-            array-box)
-          (lower-global-shared-view module)
-          index-box)
-        module
-        value-box)]
-    [(ast.AstExpr.ArrayTake array-box live-box index-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          (lower-global-shared-view pools)
-          (lower-used-types-add-expr-id
-            session
-            pools
-            used
-            (lower-global-shared-view module)
-            array-box)
-          (lower-global-shared-view module)
-          live-box)
-        module
-        index-box)]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          array-box)
-        module
-        index-box)]
-    [(ast.AstExpr.Replace place-box replacement-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          place-box)
-        module
-        replacement-box)]
-    [(ast.AstExpr.ArrayPush array-box value-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          array-box)
-        module
-        value-box)]
-    [(ast.AstExpr.StringRef text-box index-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          text-box)
-        module
-        index-box)]
-    [(ast.AstExpr.While cond-box body-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          cond-box)
-        module
-        body-box)]
+  ;; The arms below add a type operand before its expression, keep the SPMD
+  ;; scan and compact types ahead of their operands, read only some for-owned
+  ;; slots and skip quoted syntax; every other variant's children are added
+  ;; through the AstExpr child list.
+  (match (ast.ast-node-pool-context-expr-get pools expr-id)
     [(ast.AstExpr.ForOwnedState payload)
       (lower-used-types-add-expr-id
         session
@@ -15861,112 +15227,22 @@
             used)
           module
           (ast.ast-for-owned-step-body (& payload))))]
-    [(ast.AstExpr.Begin exprs)
-      (lower-used-types-add-expr-list session pools used module exprs)]
-    [(ast.AstExpr.Unsafe exprs)
-      (lower-used-types-add-expr-list session pools used module exprs)]
-    [(ast.AstExpr.Set _ value-box)
-      (lower-used-types-add-expr-id session pools used module value-box)]
     [(ast.AstExpr.Ann inner-box ty-id)
-      (lower-used-types-add-expr-id
+      (lower-used-types-add-type-then-expr
         session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-type
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          (ast.ast-node-pool-context-type-get pools ty-id))
+        pools
+        used
         module
+        ty-id
         inner-box)]
     [(ast.AstExpr.Cast inner-box ty-id)
-      (lower-used-types-add-expr-id
+      (lower-used-types-add-type-then-expr
         session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-type
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          (ast.ast-node-pool-context-type-get pools ty-id))
+        pools
+        used
         module
+        ty-id
         inner-box)]
-    [(ast.AstExpr.Borrow _ _ inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match value-box arms)
-          (lower-used-types-add-match-arms
-            session
-            (lower-global-shared-view pools)
-            (lower-used-types-add-expr-id
-              session
-              pools
-              used
-              (lower-global-shared-view module)
-              value-box)
-            module
-            arms)])]
-    [(ast.AstExpr.Foreach foreach-box)
-      (match (deref foreach-box)
-        [(ast.AstForeach.Foreach _ index-ty start-box end-box body-box)
-          (lower-used-types-add-expr-id
-            session
-            (lower-global-shared-view pools)
-            (lower-used-types-add-expr-id
-              session
-              (lower-global-shared-view pools)
-              (lower-used-types-add-expr-id
-                session
-                (lower-global-shared-view pools)
-                (lower-used-types-add-type
-                  session
-                  pools
-                  used
-                  (lower-global-shared-view module)
-                  index-ty)
-                (lower-global-shared-view module)
-                start-box)
-              (lower-global-shared-view module)
-              end-box)
-            module
-            body-box)])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (deref reduce-box)
-        [(ast.AstSpmdReduce.Reduce
-            _
-            _
-            index-ty
-            source-box
-            init-box
-            map-expr-box
-            reduce-expr-box)
-          (lower-used-types-add-expr-id
-            session
-            (lower-global-shared-view pools)
-            (lower-used-types-add-expr-id
-              session
-              (lower-global-shared-view pools)
-              (lower-used-types-add-expr-id
-                session
-                (lower-global-shared-view pools)
-                (lower-used-types-add-expr-id
-                  session
-                  (lower-global-shared-view pools)
-                  (lower-used-types-add-type
-                    session
-                    pools
-                    used
-                    (lower-global-shared-view module)
-                    index-ty)
-                  (lower-global-shared-view module)
-                  source-box)
-                (lower-global-shared-view module)
-                init-box)
-              (lower-global-shared-view module)
-              map-expr-box)
-            module
-            reduce-expr-box)])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (deref scan-box)
         [(ast.AstSpmdScan.Scan
@@ -16064,271 +15340,119 @@
               keep-box)
             module
             body-box)])]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          value-box)
-        module
-        lane-box)]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          value-box)
-        module
-        lane-box)]
-    [(ast.AstExpr.StructGet value-box _)
-      (lower-used-types-add-expr-id session pools used module value-box)]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          receiver-box)
-        module
-        value-box)]
-    [(ast.AstExpr.WithRegion _ exprs)
-      (lower-used-types-add-expr-list session pools used module exprs)]
-    [(ast.AstExpr.WithEscape scratch-box exprs)
-      (lower-used-types-add-expr-list
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          scratch-box)
-        module
-        exprs)]
-    [(ast.AstExpr.WithScratch exprs)
-      (lower-used-types-add-expr-list session pools used module exprs)]
-    [(ast.AstExpr.InArena arena-box exprs)
-      (lower-used-types-add-expr-list
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          arena-box)
-        module
-        exprs)]
-    [(ast.AstExpr.WithResource wr-box)
-      (match (deref wr-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (lower-used-types-add-expr-list
-            session
-            (lower-global-shared-view pools)
-            (lower-used-types-add-resource-bindings
-              session
-              pools
-              used
-              (lower-global-shared-view module)
-              bindings)
-            module
-            body)])]
-    [(ast.AstExpr.Box inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.BoxGet inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.BoxTake inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          inner-box)
-        module
-        value-box)]
-    [(ast.AstExpr.TypeLiteral ty-id)
-      (lower-used-types-add-type
-        session
-        pools
-        used
-        module
-        (ast.ast-node-pool-context-type-get pools ty-id))]
-    [(ast.AstExpr.Init maybe-ty-id)
-      (let
-        [maybe-ty
-          (ast.ast-maybe-type-from-id-with-pools
-            (lower-global-shared-view pools)
-            maybe-ty-id)]
-        (lower-used-types-add-maybe-type session pools used module maybe-ty))]
-    [(ast.AstExpr.Comptime inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
     [(ast.AstExpr.Quote _) used]
     [(ast.AstExpr.Quasiquote _) used]
-    [(ast.AstExpr.Unquote inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.UnquoteSplicing inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.BracketClause items)
-      (lower-used-types-add-expr-list session pools used module items)]
-    [(ast.AstExpr.Try inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.Return inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.Break) used]
-    [(ast.AstExpr.Continue) used]
-    [(ast.AstExpr.PtrNull ty-id)
-      (lower-used-types-add-type
+    [(ast.AstExpr.PtrCast ptr-box ty-id)
+      (lower-used-types-add-type-then-expr
         session
         pools
         used
         module
-        (ast.ast-node-pool-context-type-get pools ty-id))]
-    [(ast.AstExpr.PtrNullCheck value-box)
-      (lower-used-types-add-expr-id session pools used module value-box)]
-    [(ast.AstExpr.PtrAddrOf place-box)
-      (lower-used-types-add-expr-id session pools used module place-box)]
-    [(ast.AstExpr.PtrRead ptr-box)
-      (lower-used-types-add-expr-id session pools used module ptr-box)]
-    [(ast.AstExpr.PtrWrite ptr-box value-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          ptr-box)
-        module
-        value-box)]
-    [(ast.AstExpr.PtrOffset ptr-box offset-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          ptr-box)
-        module
-        offset-box)]
-    [(ast.AstExpr.PtrCast ptr-box ty-id)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-type
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          (ast.ast-node-pool-context-type-get pools ty-id))
-        module
+        ty-id
         ptr-box)]
-    [(ast.AstExpr.PtrToInt ptr-box)
-      (lower-used-types-add-expr-id session pools used module ptr-box)]
     [(ast.AstExpr.IntToPtr value-box ty-id)
-      (lower-used-types-add-expr-id
+      (lower-used-types-add-type-then-expr
         session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-type
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          (ast.ast-node-pool-context-type-get pools ty-id))
+        pools
+        used
         module
+        ty-id
         value-box)]
-    [(ast.AstExpr.StringData inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.StringFromBytes ptr-box len-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
+    [_
+      (let
+        [children : ast.AstExprChildList
+          (ast.ast-expr-children
+            (ast.ast-node-pool-context-expr-get pools expr-id))]
+        (lower-used-types-add-children-at
           session
           pools
           used
-          (lower-global-shared-view module)
-          ptr-box)
-        module
-        len-box)]
-    [(ast.AstExpr.ArrayData inner-box)
-      (lower-used-types-add-expr-id session pools used module inner-box)]
-    [(ast.AstExpr.BinaryData _) used]
-    [(ast.AstExpr.SpmdProgramIndex) used]
-    [(ast.AstExpr.SpmdProgramCount) used]
-    [(ast.AstExpr.ProgramArgc) used]
-    [(ast.AstExpr.ProgramArgv) used]
-    [(ast.AstExpr.ProgramEnvp) used]
-    [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
-      (lower-used-types-add-expr-id
+          module
+          (& children)
+          0))]))
+
+(define (lower-used-types-add-pattern
+  [session : cis.InternStructuralSessionHandle]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [used : lower_i64_i64_map.Map]
+  [module : String]
+  [pattern : ast.AstPattern]) : lower_i64_i64_map.Map
+  (match pattern
+    [(ast.AstPattern.Var _ maybe-ty)
+      (lower-used-types-add-maybe-type session pools used module maybe-ty)]
+    [(ast.AstPattern.Tuple patterns-box)
+      (lower-used-types-add-pattern-list
         session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
+        pools
+        used
+        module
+        (deref patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (lower-used-types-add-pattern-list
+        session
+        pools
+        used
+        module
+        (deref patterns-box))]
+    [(ast.AstPattern.Wildcard) used]
+    [(ast.AstPattern.Binding _) used]
+    [(ast.AstPattern.Variant name patterns-box)
+      (let
+        ;; `name` is already the interned id; read the id-keyed metadata slots
+        ;; directly instead of re-hashing `(tc-env-key-name-text name)` twice.
+        [with-head : lower_i64_i64_map.Map
+          (if (or
+            (tc_core.tc-name-qualified-id? session name)
+            (>= (tc_core.tc-name-first-dot-id session name) 0))
+            (lower-used-type-name-add
+              session
+              used
+              (lower-global-shared-view module)
+              name)
+            used)]
+        (lower-used-types-add-pattern-list
           session
           pools
-          used
-          (lower-global-shared-view module)
-          leaf-box)
-        module
-        subleaf-box)]
-    [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
-      (lower-used-types-add-expr-id
+          with-head
+          module
+          (deref patterns-box)))]
+    [(ast.AstPattern.Literal _) used]))
+
+(define (lower-used-types-add-pattern-list
+  [session : cis.InternStructuralSessionHandle]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [used : lower_i64_i64_map.Map]
+  [module : String]
+  [patterns : ast.AstPatternList]) : lower_i64_i64_map.Map
+  (lower-used-types-add-pattern-list-at
+    session
+    pools
+    used
+    module
+    (& patterns)
+    0))
+
+(define (lower-used-types-add-pattern-list-at
+  [session : cis.InternStructuralSessionHandle]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [used : lower_i64_i64_map.Map]
+  [module : String]
+  [patterns : (& patterns ast.AstPatternList)]
+  [index : i64]) : lower_i64_i64_map.Map
+  (if (>= index patterns.len)
+    used
+    (lower-used-types-add-pattern-list-at
+      session
+      pools
+      (lower-used-types-add-pattern
         session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          leaf-box)
-        module
-        subleaf-box)]
-    [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          leaf-box)
-        module
-        subleaf-box)]
-    [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
-      (lower-used-types-add-expr-id
-        session
-        (lower-global-shared-view pools)
-        (lower-used-types-add-expr-id
-          session
-          pools
-          used
-          (lower-global-shared-view module)
-          leaf-box)
-        module
-        subleaf-box)]
-    [(ast.AstExpr.Xgetbv index-box)
-      (lower-used-types-add-expr-id session pools used module index-box)]
-    [(ast.AstExpr.Syscall args)
-      (lower-used-types-add-expr-list session pools used module args)]))
+        pools
+        used
+        (lower-global-shared-view module)
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback)))
+      module
+      patterns
+      (+ index 1))))
 
 (define (lower-used-types-add-field-list
   [session : cis.InternStructuralSessionHandle]
@@ -71700,427 +70824,46 @@
       (ir.CompilerIrInstr.Return
         (lower-return-maybe (ir.CompilerIrValue.Var sret-var) ret-ty)))))
 
+;; List fold hook for the early-return scan.
+(defmacro (lower-rvo-child-has-early-return? [ctx : Expr] [id : Expr]) : Expr
+  `(lower-rvo-node-has-early-return? (lower-global-shared-view ,ctx) ,id))
+
 (define (lower-rvo-node-has-early-return? [ctx : tc_core.TcContext] [id : i64]) : bool
-  (lower-rvo-expr-has-early-return?
-    (lower-global-shared-view ctx)
-    (lower-context-expr-get ctx id)))
-
-(define (lower-rvo-expr-list-has-early-return?
-  [ctx : tc_core.TcContext]
-  [exprs : ast.AstExprList]) : bool
-  (lower-rvo-expr-list-has-early-return-at? ctx (& exprs) 0))
-
-(define (lower-rvo-expr-list-has-early-return-at?
-  [ctx : tc_core.TcContext]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (lower-rvo-node-has-early-return?
-        (lower-global-shared-view ctx)
-        (ast.ast-expr-list-get exprs index 0))
-      (lower-rvo-expr-list-has-early-return-at? ctx exprs (+ index 1)))))
-
-(define (lower-rvo-let-bindings-have-early-return?
-  [ctx : tc_core.TcContext]
-  [bindings : ast.AstLetBindingList]) : bool
-  (lower-rvo-let-bindings-have-early-return-at? ctx (& bindings) 0))
-
-(define (lower-rvo-let-bindings-have-early-return-at?
-  [ctx : tc_core.TcContext]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (or
-      (match (ast.ast-let-binding-list-get
-        bindings
-        binding-index
-        (ast.ast-let-binding-fallback))
-        [(ast.AstLetBinding.Binding _ _ init-box)
-          (lower-rvo-node-has-early-return?
-            (lower-global-shared-view ctx)
-            init-box)])
-      (lower-rvo-let-bindings-have-early-return-at?
-        ctx
-        bindings
-        (+ binding-index 1)))))
-
-(define (lower-rvo-match-arms-have-early-return?
-  [ctx : tc_core.TcContext]
-  [arms : ast.AstMatchArmList]) : bool
-  (lower-rvo-match-arms-have-early-return-at? ctx (& arms) 0))
-
-(define (lower-rvo-match-arms-have-early-return-at?
-  [ctx : tc_core.TcContext]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : bool
-  (if (>= index arms.len)
-    false
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm _ body-box)
-        (or
-          (lower-rvo-node-has-early-return?
-            (lower-global-shared-view ctx)
-            body-box)
-          (lower-rvo-match-arms-have-early-return-at? ctx arms (+ index 1)))])))
-
-(define (lower-rvo-resource-bindings-have-early-return?
-  [ctx : tc_core.TcContext]
-  [bindings : ast.AstResourceBindingList]) : bool
-  (lower-rvo-resource-bindings-have-early-return-at? ctx (& bindings) 0))
-
-(define (lower-rvo-resource-bindings-have-early-return-at?
-  [ctx : tc_core.TcContext]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-resource-binding-list-len bindings))
-    false
-    (or
-      (match (ast.ast-resource-binding-list-get
-        bindings
-        binding-index
-        (ast.ast-resource-binding-fallback))
-        [(ast.AstResourceBinding.Binding _ acquire-box cleanup-box _)
-          (or
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              acquire-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              cleanup-box))])
-      (lower-rvo-resource-bindings-have-early-return-at?
-        ctx
-        bindings
-        (+ binding-index 1)))))
-
-(define (lower-rvo-expr-has-early-return?
-  [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]) : bool
-  (match expr
+  ;; `return` and `try` exit early. The arms below also answer for quoted
+  ;; syntax (no), for the forms this scan does not descend into (yes, to stay
+  ;; conservative) and for TupleRef, whose index it reads as a node; every
+  ;; other variant asks its expression children through the AstExpr child
+  ;; list.
+  (match (lower-context-expr-get (lower-global-shared-view ctx) id)
     [(ast.AstExpr.Return _) true]
     [(ast.AstExpr.Try _) true]
-    [(ast.AstExpr.Literal _) false]
-    [(ast.AstExpr.Var _) false]
-    [(ast.AstExpr.TypeLiteral _) false]
-    [(ast.AstExpr.Init _) false]
-    [(ast.AstExpr.PtrNull _) false]
-    [(ast.AstExpr.PtrAddrOf place-box)
-      (lower-rvo-node-has-early-return? ctx place-box)]
-    [(ast.AstExpr.BinaryData _) false]
-    [(ast.AstExpr.ProgramArgc) false]
-    [(ast.AstExpr.ProgramArgv) false]
-    [(ast.AstExpr.ProgramEnvp) false]
-    [(ast.AstExpr.SpmdProgramIndex) false]
-    [(ast.AstExpr.SpmdProgramCount) false]
-    [(ast.AstExpr.Spanned inner-box _)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          left-box)
-        (lower-rvo-node-has-early-return? ctx right-box))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(ast.AstExpr.Ann inner-box _)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(ast.AstExpr.Cast inner-box _)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(ast.AstExpr.Borrow _ _ inner-box)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(ast.AstExpr.Call func-box args)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          func-box)
-        (lower-rvo-expr-list-has-early-return? ctx args))]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          cond-box)
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          then-box)
-        (lower-rvo-node-has-early-return? ctx else-box))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (or
-            (lower-rvo-let-bindings-have-early-return?
-              (lower-global-shared-view ctx)
-              bindings)
-            (lower-rvo-node-has-early-return? ctx body-box))])]
-    [(ast.AstExpr.SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(ast.AstSpmdCompact.Compact
-            _
-            _
-            start-box
-            end-box
-            _
-            _
-            init-box
-            keep-box
-            body-box)
-          (or
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              start-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              end-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              init-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              keep-box)
-            (lower-rvo-node-has-early-return? ctx body-box))])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda _ _ body-box)
-          (lower-rvo-node-has-early-return? ctx body-box)])]
-    [(ast.AstExpr.Tuple exprs)
-      (lower-rvo-expr-list-has-early-return? ctx exprs)]
     [(ast.AstExpr.TupleRef tuple-box index-box)
       (or
         (lower-rvo-node-has-early-return?
           (lower-global-shared-view ctx)
           tuple-box)
         (lower-rvo-node-has-early-return? ctx index-box))]
-    [(ast.AstExpr.Array exprs)
-      (lower-rvo-expr-list-has-early-return? ctx exprs)]
-    [(ast.AstExpr.DynArray exprs)
-      (lower-rvo-expr-list-has-early-return? ctx exprs)]
-    [(ast.AstExpr.FixedMakeArray _ len-box)
-      (lower-rvo-node-has-early-return? ctx len-box)]
-    [(ast.AstExpr.MakeArray _ len-box)
-      (lower-rvo-node-has-early-return? ctx len-box)]
-    [(ast.AstExpr.ArrayRef arr-box index-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          arr-box)
-        (lower-rvo-node-has-early-return? ctx index-box))]
-    [(ast.AstExpr.ArraySet arr-box index-box value-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          arr-box)
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          index-box)
-        (lower-rvo-node-has-early-return? ctx value-box))]
-    [(ast.AstExpr.ArrayPush arr-box value-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          arr-box)
-        (lower-rvo-node-has-early-return? ctx value-box))]
-    [(ast.AstExpr.StringRef str-box index-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          str-box)
-        (lower-rvo-node-has-early-return? ctx index-box))]
-    [(ast.AstExpr.While cond-box body-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          cond-box)
-        (lower-rvo-node-has-early-return? ctx body-box))]
-    [(ast.AstExpr.Begin exprs)
-      (lower-rvo-expr-list-has-early-return? ctx exprs)]
-    [(ast.AstExpr.Unsafe exprs)
-      (lower-rvo-expr-list-has-early-return? ctx exprs)]
-    [(ast.AstExpr.Set _ rhs-box) (lower-rvo-node-has-early-return? ctx rhs-box)]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrut-box arms)
-          (or
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              scrut-box)
-            (lower-rvo-match-arms-have-early-return? ctx arms))])]
-    [(ast.AstExpr.Foreach foreach-box)
-      (match (__tl-box-place foreach-box)
-        [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
-          (or
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              start-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              end-box)
-            (lower-rvo-node-has-early-return? ctx body-box))])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
-          (or
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              start-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              end-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              init-box)
-            (lower-rvo-node-has-early-return? ctx value-box))])]
-    [(ast.AstExpr.SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(ast.AstSpmdScan.Scan
-            _
-            _
-            _
-            start-box
-            end-box
-            _
-            _
-            init-box
-            value-box
-            body-box)
-          (or
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              start-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              end-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              init-box)
-            (lower-rvo-node-has-early-return?
-              (lower-global-shared-view ctx)
-              value-box)
-            (lower-rvo-node-has-early-return? ctx body-box))])]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          value-box)
-        (lower-rvo-node-has-early-return? ctx lane-box))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          value-box)
-        (lower-rvo-node-has-early-return? ctx lane-box))]
-    [(ast.AstExpr.StructGet receiver-box _)
-      (lower-rvo-node-has-early-return? ctx receiver-box)]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          receiver-box)
-        (lower-rvo-node-has-early-return? ctx value-box))]
-    [(ast.AstExpr.WithRegion _ body)
-      (lower-rvo-expr-list-has-early-return? ctx body)]
-    [(ast.AstExpr.WithEscape scratch-box body)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          scratch-box)
-        (lower-rvo-expr-list-has-early-return? ctx body))]
-    [(ast.AstExpr.WithScratch body)
-      (lower-rvo-expr-list-has-early-return? ctx body)]
-    [(ast.AstExpr.InArena arena-box body)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          arena-box)
-        (lower-rvo-expr-list-has-early-return? ctx body))]
-    [(ast.AstExpr.WithResource wr-box)
-      (match (__tl-box-place wr-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (or
-            (lower-rvo-resource-bindings-have-early-return?
-              (lower-global-shared-view ctx)
-              bindings)
-            (lower-rvo-expr-list-has-early-return? ctx body))])]
-    [(ast.AstExpr.Box inner-box)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(ast.AstExpr.BoxGet inner-box)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(ast.AstExpr.BoxTake inner-box)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          inner-box)
-        (lower-rvo-node-has-early-return? ctx value-box))]
     [(ast.AstExpr.Comptime _) false]
     [(ast.AstExpr.Quote _) false]
     [(ast.AstExpr.Quasiquote _) false]
     [(ast.AstExpr.Unquote _) false]
     [(ast.AstExpr.UnquoteSplicing _) false]
-    [(ast.AstExpr.BracketClause items)
-      (lower-rvo-expr-list-has-early-return? ctx items)]
-    [(ast.AstExpr.PtrNullCheck inner-box)
-      (lower-rvo-node-has-early-return? ctx inner-box)]
-    [(ast.AstExpr.PtrRead ptr-box)
-      (lower-rvo-node-has-early-return? ctx ptr-box)]
-    [(ast.AstExpr.PtrWrite ptr-box value-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          ptr-box)
-        (lower-rvo-node-has-early-return? ctx value-box))]
-    [(ast.AstExpr.PtrOffset ptr-box offset-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          ptr-box)
-        (lower-rvo-node-has-early-return? ctx offset-box))]
-    [(ast.AstExpr.PtrCast ptr-box _)
-      (lower-rvo-node-has-early-return? ctx ptr-box)]
-    [(ast.AstExpr.PtrToInt ptr-box)
-      (lower-rvo-node-has-early-return? ctx ptr-box)]
-    [(ast.AstExpr.IntToPtr value-box _)
-      (lower-rvo-node-has-early-return? ctx value-box)]
-    [(ast.AstExpr.StringData str-box)
-      (lower-rvo-node-has-early-return? ctx str-box)]
-    [(ast.AstExpr.StringFromBytes ptr-box len-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          ptr-box)
-        (lower-rvo-node-has-early-return? ctx len-box))]
-    [(ast.AstExpr.ArrayData array-box)
-      (lower-rvo-node-has-early-return? ctx array-box)]
-    [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          leaf-box)
-        (lower-rvo-node-has-early-return? ctx subleaf-box))]
-    [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          leaf-box)
-        (lower-rvo-node-has-early-return? ctx subleaf-box))]
-    [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          leaf-box)
-        (lower-rvo-node-has-early-return? ctx subleaf-box))]
-    [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
-      (or
-        (lower-rvo-node-has-early-return?
-          (lower-global-shared-view ctx)
-          leaf-box)
-        (lower-rvo-node-has-early-return? ctx subleaf-box))]
-    [(ast.AstExpr.Xgetbv index-box)
-      (lower-rvo-node-has-early-return? ctx index-box)]
-    [(ast.AstExpr.Syscall args)
-      (lower-rvo-expr-list-has-early-return? ctx args)]
-    [_ true]))
+    [(ast.AstExpr.ArrayTake _ _ _) true]
+    [(ast.AstExpr.FixedArrayTake _ _) true]
+    [(ast.AstExpr.Replace _ _) true]
+    [(ast.AstExpr.Break) true]
+    [(ast.AstExpr.Continue) true]
+    [(ast.AstExpr.ForOwnedState _) true]
+    [(ast.AstExpr.ForOwnedStep _) true]
+    [(ast.AstExpr.MacroExpansion _ _ _) true]
+    [_
+      (ast.ast-expr-list-fold
+        (ast.ast-expr-child-ids
+          (lower-context-expr-get (lower-global-shared-view ctx) id))
+        ast.ast-fold-or
+        false
+        lower-rvo-child-has-early-return?
+        ctx)]))
 
 ;; Aliasing guard for sret-forwarding RVO. The forwarded sret is the
 ;; current function's result slot, which a CALLER may legally have aliased with
@@ -78546,95 +77289,6 @@
       [_ true])
     false))
 
-(define (lower-source-node-has-import-call?
-  [pools : (& pools ast.AstNodePoolContext)]
-  [id : i64]) : bool
-  (lower-source-expr-has-import-call?
-    pools
-    (ast.ast-node-pool-context-expr-get pools id)))
-
-(define (lower-source-expr-list-has-import-call?
-  [pools : (& pools ast.AstNodePoolContext)]
-  [exprs : ast.AstExprList]) : bool
-  (lower-source-expr-list-has-import-call-at? pools (& exprs) 0))
-
-(define (lower-source-expr-list-has-import-call-at?
-  [pools : (& pools ast.AstNodePoolContext)]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (lower-source-node-has-import-call?
-        pools
-        (ast.ast-expr-list-get exprs index 0))
-      (lower-source-expr-list-has-import-call-at? pools exprs (+ index 1)))))
-
-(define (lower-source-let-bindings-have-import-call?
-  [pools : (& pools ast.AstNodePoolContext)]
-  [bindings : ast.AstLetBindingList]) : bool
-  (lower-source-let-bindings-have-import-call-at? pools (& bindings) 0))
-
-(define (lower-source-let-bindings-have-import-call-at?
-  [pools : (& pools ast.AstNodePoolContext)]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (or
-      (match (ast.ast-let-binding-list-get
-        bindings
-        binding-index
-        (ast.ast-let-binding-fallback))
-        [(ast.AstLetBinding.Binding _ _ init-box)
-          (lower-source-node-has-import-call? pools init-box)])
-      (lower-source-let-bindings-have-import-call-at?
-        pools
-        bindings
-        (+ binding-index 1)))))
-
-(define (lower-source-match-arms-have-import-call?
-  [pools : (& pools ast.AstNodePoolContext)]
-  [arms : ast.AstMatchArmList]) : bool
-  (lower-source-match-arms-have-import-call-at? pools (& arms) 0))
-
-(define (lower-source-match-arms-have-import-call-at?
-  [pools : (& pools ast.AstNodePoolContext)]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : bool
-  (if (>= index arms.len)
-    false
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm _ body-box)
-        (or
-          (lower-source-node-has-import-call? pools body-box)
-          (lower-source-match-arms-have-import-call-at? pools arms (+ index 1)))])))
-
-(define (lower-source-resource-bindings-have-import-call?
-  [pools : (& pools ast.AstNodePoolContext)]
-  [bindings : ast.AstResourceBindingList]) : bool
-  (lower-source-resource-bindings-have-import-call-at? pools (& bindings) 0))
-
-(define (lower-source-resource-bindings-have-import-call-at?
-  [pools : (& pools ast.AstNodePoolContext)]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-resource-binding-list-len bindings))
-    false
-    (or
-      (match (ast.ast-resource-binding-list-get
-        bindings
-        binding-index
-        (ast.ast-resource-binding-fallback))
-        [(ast.AstResourceBinding.Binding _ acquire-box cleanup-box _)
-          (or
-            (lower-source-node-has-import-call? pools acquire-box)
-            (lower-source-node-has-import-call? pools cleanup-box))])
-      (lower-source-resource-bindings-have-import-call-at?
-        pools
-        bindings
-        (+ binding-index 1)))))
-
 (define (lower-source-call-head-import?
   [pools : (& pools ast.AstNodePoolContext)]
   [func-box : i64]) : bool
@@ -78644,126 +77298,28 @@
     [(ast.AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-import)]
     [_ false]))
 
-(define (lower-source-expr-has-import-call?
+(define (lower-source-node-has-import-call?
   [pools : (& pools ast.AstNodePoolContext)]
-  [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
+  [id : i64]) : bool
+  ;; The arms below check call heads, keep this scan's own operands for
+  ;; TupleRef (its index read as a node) and SpmdScan, and skip the forms it
+  ;; does not descend into; every other variant asks its expression children
+  ;; through the AstExpr child list.
+  (match (ast.ast-node-pool-context-expr-get pools id)
     [(ast.AstExpr.Call func-box args)
       (or
         (lower-source-call-head-import? pools func-box)
         (lower-source-node-has-import-call? pools func-box)
-        (lower-source-expr-list-has-import-call? pools args))]
-    [(ast.AstExpr.BracketClause items)
-      (lower-source-expr-list-has-import-call? pools items)]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (or
-        (lower-source-node-has-import-call? pools left-box)
-        (lower-source-node-has-import-call? pools right-box))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (or
-        (lower-source-node-has-import-call? pools cond-box)
-        (lower-source-node-has-import-call? pools then-box)
-        (lower-source-node-has-import-call? pools else-box))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (or
-            (lower-source-let-bindings-have-import-call? pools bindings)
-            (lower-source-node-has-import-call? pools body-box))])]
-    [(ast.AstExpr.SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(ast.AstSpmdCompact.Compact
-            _
-            _
-            start-box
-            end-box
-            _
-            _
-            init-box
-            keep-box
-            body-box)
-          (or
-            (lower-source-node-has-import-call? pools start-box)
-            (lower-source-node-has-import-call? pools end-box)
-            (lower-source-node-has-import-call? pools init-box)
-            (lower-source-node-has-import-call? pools keep-box)
-            (lower-source-node-has-import-call? pools body-box))])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda _ _ body-box)
-          (lower-source-node-has-import-call? pools body-box)])]
-    [(ast.AstExpr.Tuple exprs)
-      (lower-source-expr-list-has-import-call? pools exprs)]
+        (ast.ast-expr-list-fold
+          args
+          ast.ast-fold-or
+          false
+          lower-source-node-has-import-call?
+          pools))]
     [(ast.AstExpr.TupleRef tuple-box index-box)
       (or
         (lower-source-node-has-import-call? pools tuple-box)
         (lower-source-node-has-import-call? pools index-box))]
-    [(ast.AstExpr.Array exprs)
-      (lower-source-expr-list-has-import-call? pools exprs)]
-    [(ast.AstExpr.DynArray exprs)
-      (lower-source-expr-list-has-import-call? pools exprs)]
-    [(ast.AstExpr.FixedMakeArray _ len-box)
-      (lower-source-node-has-import-call? pools len-box)]
-    [(ast.AstExpr.MakeArray _ len-box)
-      (lower-source-node-has-import-call? pools len-box)]
-    [(ast.AstExpr.ArrayRef array-box index-box)
-      (or
-        (lower-source-node-has-import-call? pools array-box)
-        (lower-source-node-has-import-call? pools index-box))]
-    [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (or
-        (lower-source-node-has-import-call? pools array-box)
-        (lower-source-node-has-import-call? pools index-box)
-        (lower-source-node-has-import-call? pools value-box))]
-    [(ast.AstExpr.ArrayPush array-box value-box)
-      (or
-        (lower-source-node-has-import-call? pools array-box)
-        (lower-source-node-has-import-call? pools value-box))]
-    [(ast.AstExpr.StringRef string-box index-box)
-      (or
-        (lower-source-node-has-import-call? pools string-box)
-        (lower-source-node-has-import-call? pools index-box))]
-    [(ast.AstExpr.While cond-box body-box)
-      (or
-        (lower-source-node-has-import-call? pools cond-box)
-        (lower-source-node-has-import-call? pools body-box))]
-    [(ast.AstExpr.Begin exprs)
-      (lower-source-expr-list-has-import-call? pools exprs)]
-    [(ast.AstExpr.Unsafe exprs)
-      (lower-source-expr-list-has-import-call? pools exprs)]
-    [(ast.AstExpr.Set _ rhs-box)
-      (lower-source-node-has-import-call? pools rhs-box)]
-    [(ast.AstExpr.Ann inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.Cast inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.Borrow _ _ inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
-          (or
-            (lower-source-node-has-import-call? pools scrutinee-box)
-            (lower-source-match-arms-have-import-call? pools arms))])]
-    [(ast.AstExpr.Foreach foreach-box)
-      (match (__tl-box-place foreach-box)
-        [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
-          (or
-            (lower-source-node-has-import-call? pools start-box)
-            (lower-source-node-has-import-call? pools end-box)
-            (lower-source-node-has-import-call? pools body-box))])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
-          (or
-            (lower-source-node-has-import-call? pools start-box)
-            (lower-source-node-has-import-call? pools end-box)
-            (lower-source-node-has-import-call? pools init-box)
-            (lower-source-node-has-import-call? pools value-box))])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
@@ -78783,109 +77339,20 @@
             (lower-source-node-has-import-call? pools init-box)
             (lower-source-node-has-import-call? pools value-box)
             (lower-source-node-has-import-call? pools body-box))])]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (or
-        (lower-source-node-has-import-call? pools value-box)
-        (lower-source-node-has-import-call? pools lane-box))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (or
-        (lower-source-node-has-import-call? pools value-box)
-        (lower-source-node-has-import-call? pools lane-box))]
-    [(ast.AstExpr.StructGet target-box _)
-      (lower-source-node-has-import-call? pools target-box)]
-    [(ast.AstExpr.StructSet target-box _ value-box)
-      (or
-        (lower-source-node-has-import-call? pools target-box)
-        (lower-source-node-has-import-call? pools value-box))]
-    [(ast.AstExpr.WithRegion _ exprs)
-      (lower-source-expr-list-has-import-call? pools exprs)]
-    [(ast.AstExpr.WithEscape escape-box exprs)
-      (or
-        (lower-source-node-has-import-call? pools escape-box)
-        (lower-source-expr-list-has-import-call? pools exprs))]
-    [(ast.AstExpr.WithScratch exprs)
-      (lower-source-expr-list-has-import-call? pools exprs)]
-    [(ast.AstExpr.InArena arena-box exprs)
-      (or
-        (lower-source-node-has-import-call? pools arena-box)
-        (lower-source-expr-list-has-import-call? pools exprs))]
-    [(ast.AstExpr.WithResource resource-box)
-      (match (__tl-box-place resource-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (or
-            (lower-source-resource-bindings-have-import-call? pools bindings)
-            (lower-source-expr-list-has-import-call? pools body))])]
-    [(ast.AstExpr.Box inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.BoxGet inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.BoxTake inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.BoxSet inner-box value-box)
-      (or
-        (lower-source-node-has-import-call? pools inner-box)
-        (lower-source-node-has-import-call? pools value-box))]
-    [(ast.AstExpr.Comptime inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.Quote inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.Quasiquote inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.Unquote inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.UnquoteSplicing inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.Try inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.Return inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.PtrNullCheck inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.PtrRead inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.PtrWrite pointer-box value-box)
-      (or
-        (lower-source-node-has-import-call? pools pointer-box)
-        (lower-source-node-has-import-call? pools value-box))]
-    [(ast.AstExpr.PtrOffset pointer-box offset-box)
-      (or
-        (lower-source-node-has-import-call? pools pointer-box)
-        (lower-source-node-has-import-call? pools offset-box))]
-    [(ast.AstExpr.PtrCast inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.PtrToInt inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.IntToPtr inner-box _)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.StringData inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.StringFromBytes data-box len-box)
-      (or
-        (lower-source-node-has-import-call? pools data-box)
-        (lower-source-node-has-import-call? pools len-box))]
-    [(ast.AstExpr.ArrayData inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.CpuIdEax left-box right-box)
-      (or
-        (lower-source-node-has-import-call? pools left-box)
-        (lower-source-node-has-import-call? pools right-box))]
-    [(ast.AstExpr.CpuIdEbx left-box right-box)
-      (or
-        (lower-source-node-has-import-call? pools left-box)
-        (lower-source-node-has-import-call? pools right-box))]
-    [(ast.AstExpr.CpuIdEcx left-box right-box)
-      (or
-        (lower-source-node-has-import-call? pools left-box)
-        (lower-source-node-has-import-call? pools right-box))]
-    [(ast.AstExpr.CpuIdEdx left-box right-box)
-      (or
-        (lower-source-node-has-import-call? pools left-box)
-        (lower-source-node-has-import-call? pools right-box))]
-    [(ast.AstExpr.Xgetbv inner-box)
-      (lower-source-node-has-import-call? pools inner-box)]
-    [(ast.AstExpr.Syscall exprs)
-      (lower-source-expr-list-has-import-call? pools exprs)]
-    [_ false]))
+    [(ast.AstExpr.ArrayTake _ _ _) false]
+    [(ast.AstExpr.FixedArrayTake _ _) false]
+    [(ast.AstExpr.Replace _ _) false]
+    [(ast.AstExpr.PtrAddrOf _) false]
+    [(ast.AstExpr.ForOwnedState _) false]
+    [(ast.AstExpr.ForOwnedStep _) false]
+    [(ast.AstExpr.MacroExpansion _ _ _) false]
+    [_
+      (ast.ast-expr-list-fold
+        (ast.ast-expr-child-ids (ast.ast-node-pool-context-expr-get pools id))
+        ast.ast-fold-or
+        false
+        lower-source-node-has-import-call?
+        pools)]))
 
 (define (lower-source-decl-needs-loader?
   [pools : (& pools ast.AstNodePoolContext)]

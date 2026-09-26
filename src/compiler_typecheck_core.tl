@@ -101909,7 +101909,30 @@
                     binding-owner-module-id
                     tail-id
                     false))]
-              [(TcMaybeNameId.No) source-name-id])))))))
+              [(TcMaybeNameId.No)
+                ;; `Enum.Variant` names a variant of an enum the macro's module
+                ;; sees, wherever the macro is used.
+                (let
+                  [enum-owner-module-id : i64
+                    (if (csym.compiler-symbols-handle-found?
+                      (csym.compiler-symbols-lookup-type-in-module-id-or
+                        hygiene.symbols
+                        lookup-module-id
+                        alias-id
+                        (csym.compiler-symbols-missing-handle)))
+                      (macro-hygiene-binding-owner-module-id-or
+                        hygiene
+                        definition-module-id
+                        alias-id
+                        -2)
+                      -2)]
+                  (if (>= enum-owner-module-id -1)
+                    (macro-hygiene-global-id
+                      (tc-macro-state-structural-session state)
+                      enum-owner-module-id
+                      source-name-id
+                      false)
+                    source-name-id))])))))))
 
 (define (macro-hygiene-rename-var-id
   [env : MacroHygieneEnv]

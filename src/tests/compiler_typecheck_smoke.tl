@@ -3309,7 +3309,7 @@
         baseline-state
         (tc_core.tc-global-shared-view generated-import)
         (tc_core.tc-global-shared-view missing-import)
-        (tc_core.tc-global-shared-view pools))]
+        pools)]
     [_select-b : unit
       (load.compiler-load-session-state-use!
         (tc_core.tc-global-shared-view state-b))]

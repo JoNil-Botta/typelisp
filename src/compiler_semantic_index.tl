@@ -2106,18 +2106,13 @@
         [(ast.AstDecl.DefMacro _ _ params ret _)
           (tc.tc-type-render
             (ast.ast-ty-func
-              (tc.tc-macro-param-type-list
-                (owned_view.compiler-owned-shared-view ctx)
-                params)
+              (tc.tc-macro-param-type-list ctx params)
               (tc.tc-resolve-type ctx ret)))]
         [(ast.AstDecl.Unsafe inner)
           (compiler-semantic-decl-type ctx env (deref inner) kind name-id name)]
         [_ "macro"])]
     [_
-      (match (tc.tc-lookup-visible-id
-        (owned_view.compiler-owned-shared-view ctx)
-        env
-        name-id)
+      (match (tc.tc-lookup-visible-id ctx env name-id)
         [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
         [(tc.ResultTcType.Err _)
           (match (tc.tc-top-decl-type ctx decl)
@@ -2396,19 +2391,13 @@
     (match kind
       [(CompilerSemanticSymbolKind.Struct)
         (let
-          [handle : i64
-            (compiler-semantic-type-name-handle
-              (owned_view.compiler-owned-shared-view ctx)
-              name-id)]
+          [handle : i64 (compiler-semantic-type-name-handle ctx name-id)]
           (if (csym.compiler-symbols-handle-found? handle)
             (CompilerSemanticMaybeHandle.Some handle)
             CompilerSemanticMaybeHandle.None))]
       [(CompilerSemanticSymbolKind.Enum)
         (let
-          [handle : i64
-            (compiler-semantic-type-name-handle
-              (owned_view.compiler-owned-shared-view ctx)
-              name-id)]
+          [handle : i64 (compiler-semantic-type-name-handle ctx name-id)]
           (if (csym.compiler-symbols-handle-found? handle)
             (CompilerSemanticMaybeHandle.Some handle)
             CompilerSemanticMaybeHandle.None))]
@@ -2471,11 +2460,7 @@
   [fallback-ordinal : i64]
   [name-id : i64]
   [kind : CompilerSemanticSymbolKind]) : CompilerSemanticSymbolId
-  (match (compiler-semantic-decl-handle
-    (owned_view.compiler-owned-shared-view ctx)
-    module-id
-    name-id
-    kind)
+  (match (compiler-semantic-decl-handle ctx module-id name-id kind)
     [(CompilerSemanticMaybeHandle.Some handle)
       (CompilerSemanticSymbolId
         (compiler-semantic-handle-module-id ctx handle)
@@ -2862,15 +2847,9 @@
     [ctx : tc.TcContext state.ctx]
     [owner-handle : i64 (csym.compiler-registry-variant-owner-handle handle)]
     [display-name : String
-      (compiler-semantic-variant-display-name
-        (owned_view.compiler-owned-shared-view ctx)
-        lookup-id
-        handle)]
+      (compiler-semantic-variant-display-name ctx lookup-id handle)]
     [type-text : String
-      (match (tc.tc-lookup-visible-id
-        (owned_view.compiler-owned-shared-view ctx)
-        state.top-env
-        lookup-id)
+      (match (tc.tc-lookup-visible-id ctx state.top-env lookup-id)
         [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
         [(tc.ResultTcType.Err _) ""])]
     [symbol : CompilerSemanticSymbolId
@@ -2903,21 +2882,16 @@
     [env : tc.TcTypeEnv state.top-env]
     [name : String (tc.tc-hygiene-name-text-id name-id)]
     (match (tc.tc-source-name-lookup-key-with-field-check-lookup
-      (owned_view.compiler-owned-shared-view ctx)
+      ctx
       env
       name
       name-id
       true)
       [(tc.TcNameLookup.Ok _ lookup-id)
-        (match (compiler-semantic-use-handle
-          (owned_view.compiler-owned-shared-view ctx)
-          lookup-id)
+        (match (compiler-semantic-use-handle ctx lookup-id)
           [(CompilerSemanticMaybeHandle.Some handle)
             (let
-              [module-id : i64
-                (compiler-semantic-handle-module-id
-                  (owned_view.compiler-owned-shared-view ctx)
-                  handle)]
+              [module-id : i64 (compiler-semantic-handle-module-id ctx handle)]
               [handle-kind : i64 (csym.compiler-symbol-handle-kind handle)]
               [use-span : CompilerSemanticSpan
                 (compiler-semantic-value-use-span!
@@ -2938,9 +2912,7 @@
                   access)
                 (let
                   [decl : ast.AstDecl
-                    (compiler-semantic-handle-decl
-                      (owned_view.compiler-owned-shared-view ctx)
-                      handle)]
+                    (compiler-semantic-handle-decl ctx handle)]
                   (match (compiler-semantic-decl-symbol
                     (owned_view.compiler-owned-shared-view decl))
                     [(CompilerSemanticMaybeDecl.Some decl-name-id kind)
@@ -2948,11 +2920,11 @@
                         [decl-ctx : tc.TcContext
                           (if (= module-id cbi.compiler-builtin-id-fix-empty)
                             (tc.tc-context-with-module-id
-                              (owned_view.compiler-owned-shared-view ctx)
+                              ctx
                               ""
                               cbi.compiler-builtin-id-fix-empty)
                             (tc.tc-context-with-module-id
-                              (owned_view.compiler-owned-shared-view ctx)
+                              ctx
                               (tc.macro-decl-module-display module-id)
                               module-id))]
                         [display-name : String
@@ -3245,7 +3217,7 @@
     [in-module : i64
       (match (csym.compiler-symbols-lookup-type-in-module-id
         symbols
-        (tc.tc-context-module-id (owned_view.compiler-owned-shared-view ctx))
+        (tc.tc-context-module-id ctx)
         name-id)
         [(option_i64.Some handle) handle]
         [(option_i64.None) (csym.compiler-symbols-missing-handle)])]
@@ -3259,7 +3231,7 @@
       [(csym.compiler-symbols-handle-found? plain) plain]
       [else
         (match (tc.tc-dotted-type-name-lookup-from-id
-          (owned_view.compiler-owned-shared-view ctx)
+          ctx
           (tc.tc-env-key-name-text-for-session
             (tc.tc-context-structural-session ctx)
             name-id)
@@ -3281,17 +3253,11 @@
     [(CompilerSemanticMaybeOrigin.Some origin)
       (let
         [ctx : tc.TcContext state.ctx]
-        [handle : i64
-          (compiler-semantic-type-name-handle
-            (owned_view.compiler-owned-shared-view ctx)
-            name-id)]
+        [handle : i64 (compiler-semantic-type-name-handle ctx name-id)]
         (if (not (csym.compiler-symbols-handle-found? handle))
           unit
           (let
-            [decl : ast.AstDecl
-              (compiler-semantic-handle-decl
-                (owned_view.compiler-owned-shared-view ctx)
-                handle)]
+            [decl : ast.AstDecl (compiler-semantic-handle-decl ctx handle)]
             [module-id : i64 (compiler-semantic-handle-module-id ctx handle)]
             (match (compiler-semantic-decl-symbol
               (owned_view.compiler-owned-shared-view decl))
@@ -3330,12 +3296,9 @@
     [ctx : tc.TcContext state.ctx]
     [decl-ctx : tc.TcContext
       (if (= module-id cbi.compiler-builtin-id-fix-empty)
+        (tc.tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
         (tc.tc-context-with-module-id
-          (owned_view.compiler-owned-shared-view ctx)
-          ""
-          cbi.compiler-builtin-id-fix-empty)
-        (tc.tc-context-with-module-id
-          (owned_view.compiler-owned-shared-view ctx)
+          ctx
           (tc.macro-decl-module-display module-id)
           module-id))]
     [display-name : String
@@ -3389,18 +3352,14 @@
     [(ast.AstType.EnumArgs name-id _)
       (compiler-semantic-record-type-name-use! state name-id)]
     [(ast.AstType.Var name-id)
-      (match (tc.tc-resolve-type
-        (owned_view.compiler-owned-shared-view state.ctx)
-        ty)
+      (match (tc.tc-resolve-type state.ctx ty)
         [(ast.AstType.Struct resolved-name-id)
           (compiler-semantic-record-type-name-use! state resolved-name-id)]
         [(ast.AstType.Enum resolved-name-id)
           (compiler-semantic-record-type-name-use! state resolved-name-id)]
         [_ (compiler-semantic-record-type-name-use! state name-id)])]
     [(ast.AstType.VarArgs name-id _)
-      (match (tc.tc-resolve-type
-        (owned_view.compiler-owned-shared-view state.ctx)
-        ty)
+      (match (tc.tc-resolve-type state.ctx ty)
         [(ast.AstType.StructArgs resolved-name-id _)
           (compiler-semantic-record-type-name-use! state resolved-name-id)]
         [(ast.AstType.EnumArgs resolved-name-id _)
@@ -3535,10 +3494,9 @@
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
-    [ctx : tc.TcContext (owned_view.compiler-owned-shared-view state.ctx)]
+    [ctx : tc.TcContext state.ctx]
     [facts : tc.TcCheckedLetBindingFactState
-      (tc.tc-job-state-checked-let-binding-facts
-        (tc.tc-context-job-state (owned_view.compiler-owned-shared-view ctx)))]
+      (tc.tc-job-state-checked-let-binding-facts (tc.tc-context-job-state ctx))]
     (match (tc.tc-checked-let-binding-fact-lookup
       facts
       state.checked-declaration-ordinal
@@ -3551,7 +3509,7 @@
           [recorded-maybe-ty : ast.AstMaybeType
             (ast.AstMaybeType.Some
               (tc.tc-resolve-type
-                (owned_view.compiler-owned-shared-view ctx)
+                ctx
                 (owned_view.compiler-owned-shared-view binding-ty)))]
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-local!
@@ -3706,7 +3664,7 @@
                     CompilerSemanticSymbolKind.Parameter
                     (ast.AstMaybeType.Some
                       (tc.tc-resolve-type
-                        (owned_view.compiler-owned-shared-view state.ctx)
+                        state.ctx
                         (owned_view.compiler-owned-shared-view ty)))
                     cursor
                     search-limit)]
@@ -3755,7 +3713,7 @@
                     CompilerSemanticSymbolKind.Parameter
                     (ast.AstMaybeType.Some
                       (tc.tc-resolve-type
-                        (owned_view.compiler-owned-shared-view state.ctx)
+                        state.ctx
                         (owned_view.compiler-owned-shared-view ty)))
                     cursor
                     search-limit)]
@@ -3995,10 +3953,7 @@
           env
           name
           CompilerSemanticSymbolKind.Local
-          (ast.AstMaybeType.Some
-            (tc.tc-resolve-type
-              (owned_view.compiler-owned-shared-view state.ctx)
-              index-ty))
+          (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx index-ty))
           (compiler-semantic-form-head-end
             (owned_view.compiler-owned-shared-view state.source)
             form-start)
@@ -4042,7 +3997,7 @@
         CompilerSemanticSymbolKind.Local
         (ast.AstMaybeType.Some
           (tc.tc-resolve-type
-            (owned_view.compiler-owned-shared-view state.ctx)
+            state.ctx
             (owned_view.compiler-owned-shared-view index-ty)))
         (compiler-semantic-form-head-end
           (owned_view.compiler-owned-shared-view state.source)
@@ -4108,7 +4063,7 @@
         CompilerSemanticSymbolKind.Local
         (ast.AstMaybeType.Some
           (tc.tc-resolve-type
-            (owned_view.compiler-owned-shared-view state.ctx)
+            state.ctx
             (owned_view.compiler-owned-shared-view index-ty)))
         (compiler-semantic-form-head-end
           (owned_view.compiler-owned-shared-view state.source)
@@ -4128,7 +4083,7 @@
         CompilerSemanticSymbolKind.Local
         (ast.AstMaybeType.Some
           (tc.tc-resolve-type
-            (owned_view.compiler-owned-shared-view state.ctx)
+            state.ctx
             (owned_view.compiler-owned-shared-view state-ty)))
         (compiler-semantic-expr-end-offset
           (owned_view.compiler-owned-shared-view state)
@@ -4357,7 +4312,7 @@
             field-name-id)]
         [type-text : String
           (match (tc.tc-struct-field-type-id
-            (owned_view.compiler-owned-shared-view state.ctx)
+            state.ctx
             struct-name-id
             field-name-id)
             [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
@@ -4404,10 +4359,7 @@
       (let
         [owner-handle : i64 (compiler-semantic-field-owner-handle handle)]
         [symbol : CompilerSemanticSymbolId
-          (compiler-semantic-member-symbol
-            (owned_view.compiler-owned-shared-view state.ctx)
-            owner-handle
-            handle)]
+          (compiler-semantic-member-symbol state.ctx owner-handle handle)]
         [display-name : String
           (tc.tc-env-key-name-text-for-session
             (tc.tc-context-structural-session state.ctx)
@@ -4450,10 +4402,7 @@
       parse_core.CompilerParseSemanticOriginKind.StructFieldUse)
       [(CompilerSemanticMaybeOrigin.None) unit]
       [(CompilerSemanticMaybeOrigin.Some origin)
-        (match (tc.tc-expr-id
-          (owned_view.compiler-owned-shared-view state.ctx)
-          env
-          target-id)
+        (match (tc.tc-expr-id state.ctx env target-id)
           [(tc.ResultTcType.Ok receiver-ty)
             (compiler-semantic-record-field-use-for-type!
               (owned_view.compiler-owned-shared-view state)
@@ -4476,10 +4425,7 @@
         [(ast.AstMaybeType.No) unit]
         [(ast.AstMaybeType.Some scrutinee-ty)
           (let
-            [resolved : ast.AstType
-              (tc.tc-resolve-type
-                (owned_view.compiler-owned-shared-view state.ctx)
-                scrutinee-ty)]
+            [resolved : ast.AstType (tc.tc-resolve-type state.ctx scrutinee-ty)]
             [enum-name-id : i64
               (match resolved
                 [(ast.AstType.Enum name) name]
@@ -4490,7 +4436,7 @@
               (let
                 [handle : i64
                   (tc.tc-source-variant-handle-for-enum-id-or
-                    (owned_view.compiler-owned-shared-view state.ctx)
+                    state.ctx
                     enum-name-id
                     variant-name-id
                     (csym.compiler-symbols-missing-handle))]
@@ -4501,12 +4447,12 @@
                       (csym.compiler-registry-variant-owner-handle handle)]
                     [symbol : CompilerSemanticSymbolId
                       (compiler-semantic-member-symbol
-                        (owned_view.compiler-owned-shared-view state.ctx)
+                        state.ctx
                         owner-handle
                         handle)]
                     [display-name : String
                       (compiler-semantic-variant-display-name
-                        (owned_view.compiler-owned-shared-view state.ctx)
+                        state.ctx
                         variant-name-id
                         handle)]
                     [enum-text : String
@@ -4577,10 +4523,7 @@
                 (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))]
               [(ast.AstMaybeType.No)
                 (if facts-available
-                  (match (tc.tc-lookup-visible-id
-                    (owned_view.compiler-owned-shared-view state.ctx)
-                    fact-env
-                    name)
+                  (match (tc.tc-lookup-visible-id state.ctx fact-env name)
                     [(tc.ResultTcType.Ok ty)
                       (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))]
                     [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
@@ -4605,10 +4548,7 @@
             name
             CompilerSemanticSymbolKind.Local
             (if facts-available
-              (match (tc.tc-lookup-visible-id
-                (owned_view.compiler-owned-shared-view state.ctx)
-                fact-env
-                name)
+              (match (tc.tc-lookup-visible-id state.ctx fact-env name)
                 [(tc.ResultTcType.Ok ty)
                   (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))]
                 [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
@@ -4767,8 +4707,7 @@
                               fact-env
                               true
                               (compiler-semantic-pattern-bound-names
-                                (owned_view.compiler-owned-shared-view
-                                  state.ctx)
+                                state.ctx
                                 ty
                                 (owned_view.compiler-owned-shared-view pattern))
                               pattern
@@ -4904,20 +4843,17 @@
                   (let
                     [bound : CompilerSemanticBindResult
                       (let
-                        [ctx : tc.TcContext
-                          (owned_view.compiler-owned-shared-view state.ctx)]
-                        [expr-bases : i64
-                          (tc.tc-context-expr-bases
-                            (owned_view.compiler-owned-shared-view ctx))]
+                        [ctx : tc.TcContext state.ctx]
+                        [expr-bases : i64 (tc.tc-context-expr-bases ctx)]
                         [cleanup-expr : ast.AstExpr
                           (ast.ast-expr-segment-bases-get expr-bases cleanup)]
                         (match (tc.tc-resource-cleanup-resource-type
-                          (owned_view.compiler-owned-shared-view ctx)
+                          ctx
                           next-env
                           cleanup-expr)
                           [(tc.ResultTcType.Ok expected-init-ty)
                             (match (tc.tc-expr-with-expected-or-actual-id
-                              (owned_view.compiler-owned-shared-view ctx)
+                              ctx
                               next-env
                               init
                               expected-init-ty)
@@ -5011,9 +4947,7 @@
 (define (compiler-semantic-struct-name-for-type
   [state : CompilerSemanticWalkState]
   [ty : ast.AstType]) : i64
-  (match (tc.tc-resolve-type
-    (owned_view.compiler-owned-shared-view state.ctx)
-    ty)
+  (match (tc.tc-resolve-type state.ctx ty)
     [(ast.AstType.Struct name-id) name-id]
     [(ast.AstType.StructArgs name-id _) name-id]
     [(ast.AstType.Ref _ inner)
@@ -5089,10 +5023,7 @@
             root-source-id)]
         (if (< recv-id 0)
           false
-          (match (tc.tc-lookup-visible-id
-            (owned_view.compiler-owned-shared-view state.ctx)
-            env
-            recv-id)
+          (match (tc.tc-lookup-visible-id state.ctx env recv-id)
             [(tc.ResultTcType.Err _) false]
             [(tc.ResultTcType.Ok recv-ty)
               (>= (compiler-semantic-struct-name-for-type state recv-ty) 0)]))))))
@@ -5182,10 +5113,7 @@
                           start
                           (+ start (string.string-length recv-text))
                           0))
-                      (match (tc.tc-lookup-visible-id
-                        (owned_view.compiler-owned-shared-view state.ctx)
-                        env
-                        recv-id)
+                      (match (tc.tc-lookup-visible-id state.ctx env recv-id)
                         [(tc.ResultTcType.Err _) unit]
                         [(tc.ResultTcType.Ok first-ty)
                           (let
@@ -5337,10 +5265,7 @@
               (owned_view.compiler-owned-shared-view state)
               scope
               env
-              (match (tc.tc-expr-id
-                (owned_view.compiler-owned-shared-view state.ctx)
-                env
-                scrutinee)
+              (match (tc.tc-expr-id state.ctx env scrutinee)
                 [(tc.ResultTcType.Ok ty) (ast.AstMaybeType.Some ty)]
                 [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
               arms
@@ -5539,7 +5464,7 @@
     [(CompilerSemanticMaybeOrigin.None) unit]
     [(CompilerSemanticMaybeOrigin.Some origin)
       (match (compiler-semantic-decl-handle
-        (owned_view.compiler-owned-shared-view state.ctx)
+        state.ctx
         state.module-id
         struct-name-id
         CompilerSemanticSymbolKind.Struct)
@@ -5552,10 +5477,7 @@
                 (csym.compiler-symbol-handle-index owner-handle)
                 field-index)]
             [symbol : CompilerSemanticSymbolId
-              (compiler-semantic-member-symbol
-                (owned_view.compiler-owned-shared-view state.ctx)
-                owner-handle
-                handle)]
+              (compiler-semantic-member-symbol state.ctx owner-handle handle)]
             [display-name : String
               (tc.tc-env-key-name-text-for-session
                 (tc.tc-context-structural-session state.ctx)
@@ -5578,10 +5500,7 @@
                   CompilerSemanticAccess.None
                   CompilerSemanticSymbolKind.Field
                   (string.copy (& display-name))
-                  (tc.tc-type-render
-                    (tc.tc-resolve-type
-                      (owned_view.compiler-owned-shared-view state.ctx)
-                      ty))
+                  (tc.tc-type-render (tc.tc-resolve-type state.ctx ty))
                   ""
                   symbol.module-id
                   (owned_view.compiler-owned-shared-view span)
@@ -5624,7 +5543,7 @@
     [(CompilerSemanticMaybeOrigin.None) unit]
     [(CompilerSemanticMaybeOrigin.Some origin)
       (match (compiler-semantic-decl-handle
-        (owned_view.compiler-owned-shared-view state.ctx)
+        state.ctx
         state.module-id
         enum-name-id
         CompilerSemanticSymbolKind.Enum)
@@ -5637,10 +5556,7 @@
                 (csym.compiler-symbol-handle-index owner-handle)
                 variant-index)]
             [symbol : CompilerSemanticSymbolId
-              (compiler-semantic-member-symbol
-                (owned_view.compiler-owned-shared-view state.ctx)
-                owner-handle
-                handle)]
+              (compiler-semantic-member-symbol state.ctx owner-handle handle)]
             [display-name : String
               (tc.tc-env-key-name-text-for-session
                 (tc.tc-context-structural-session state.ctx)
@@ -5830,9 +5746,7 @@
             CompilerSemanticAccess.Read)
           (let
             [decl : ast.AstDecl
-              (compiler-semantic-handle-decl
-                (owned_view.compiler-owned-shared-view state.ctx)
-                handle)]
+              (compiler-semantic-handle-decl state.ctx handle)]
             (match (compiler-semantic-decl-symbol
               (owned_view.compiler-owned-shared-view decl))
               [(CompilerSemanticMaybeDecl.None) unit]
@@ -5887,9 +5801,7 @@
             [(ast.AstMaybeModuleName.No)
               (match maybe-alias
                 [(ast.AstMaybeImportAlias.Some alias-id)
-                  (tc.tc-qualified-access-target-module-id
-                    (owned_view.compiler-owned-shared-view state.ctx)
-                    alias-id)]
+                  (tc.tc-qualified-access-target-module-id state.ctx alias-id)]
                 [(ast.AstMaybeImportAlias.No) state.module-id])])]
         (match kind
           [(ast.AstImportKind.ModuleItem item-id)
@@ -6108,20 +6020,20 @@
           definition-module-id))]
     [symbol : CompilerSemanticSymbolId
       (compiler-semantic-symbol-for-decl
-        (owned_view.compiler-owned-shared-view decl-ctx)
+        decl-ctx
         definition-module-id
         declaration-id
         name-id
         CompilerSemanticSymbolKind.Macro)]
     [resolved-type : String
       (match (compiler-semantic-decl-handle
-        (owned_view.compiler-owned-shared-view decl-ctx)
+        decl-ctx
         definition-module-id
         name-id
         CompilerSemanticSymbolKind.Macro)
         [(CompilerSemanticMaybeHandle.Some handle)
           (compiler-semantic-decl-type
-            (owned_view.compiler-owned-shared-view decl-ctx)
+            decl-ctx
             env
             (compiler-semantic-handle-decl decl-ctx handle)
             CompilerSemanticSymbolKind.Macro
@@ -7073,8 +6985,7 @@
         (arena.Arena owner)
         (let
           [decls : ast.AstDeclList
-            (match (tc.tc-context-program
-              (owned_view.compiler-owned-shared-view ctx))
+            (match (tc.tc-context-program ctx)
               [(ast.AstProgram.Program decls-box) (deref decls-box)])]
           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
           [symbol-count : i64
@@ -7091,7 +7002,7 @@
             (__tl_make-array i64 symbol-count)]
           [walk-state : CompilerSemanticWalkState
             (CompilerSemanticWalkState
-              (owned_view.compiler-owned-shared-view ctx)
+              ctx
               env
               ""
               ""
@@ -7131,9 +7042,7 @@
                   (box 1)))
               (__tl_make-array
                 i64
-                (ast.ast-node-pool-context-expr-len
-                  (tc.tc-context-pools
-                    (owned_view.compiler-owned-shared-view ctx))))
+                (ast.ast-node-pool-context-expr-len (tc.tc-context-pools ctx)))
               (box 0)
               (box false)
               parse_core.CompilerParseMaybeSemanticOriginRun.None
@@ -7163,11 +7072,11 @@
                 [decl-ctx : tc.TcContext
                   (if (= module-id cbi.compiler-builtin-id-fix-empty)
                     (tc.tc-context-with-module-id
-                      (owned_view.compiler-owned-shared-view ctx)
+                      ctx
                       ""
                       cbi.compiler-builtin-id-fix-empty)
                     (tc.tc-context-with-module-id
-                      (owned_view.compiler-owned-shared-view ctx)
+                      ctx
                       (tc.macro-decl-module-display module-id)
                       module-id))]
                 [generated : bool
@@ -7399,7 +7308,7 @@
                                       -1))])])]
                         [symbol : CompilerSemanticSymbolId
                           (compiler-semantic-symbol-for-decl
-                            (owned_view.compiler-owned-shared-view decl-ctx)
+                            decl-ctx
                             module-id
                             index
                             name-id
@@ -7501,7 +7410,7 @@
               [top-candidate-count : i64
                 (if complete
                   (compiler-semantic-count-top-candidates!
-                    (owned_view.compiler-owned-shared-view ctx)
+                    ctx
                     (&mut modules-out)
                     module-count
                     decl-record-indices)

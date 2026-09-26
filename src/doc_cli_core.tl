@@ -223,7 +223,7 @@
               path
               docs
               (owned_view.compiler-owned-shared-view stdlib-roots)
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (owned_view.compiler-owned-shared-view intern-state))
               [(doc_expand.ResultDocExpandedModules.Ok head-modules)
                 (match (doc-generated-modules-from-source-paths-into
@@ -305,8 +305,7 @@
       (compiler_load.compiler-load-session-state-use-with-intern-state!
         (owned_view.compiler-owned-shared-view load-state)
         (owned_view.compiler-owned-shared-view intern-state))
-      (ast.ast-node-pool-context-install!
-        (owned_view.compiler-owned-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (ci.intern-compat-state-install!
         (owned_view.compiler-owned-shared-view intern-state))
       (let
@@ -324,7 +323,7 @@
             (sym_i64_env.sym-i64-empty)
             stdlib-roots
             (sym_i64_env.sym-i64-empty)
-            (owned_view.compiler-owned-shared-view pools))]
+            pools)]
         [_publish : unit
           (begin
             ;; The stateful loader extends the explicit segmented context. Do not
@@ -351,7 +350,7 @@
       (ci.intern-compat-state-capture-active)]
     (match (doc-load-file-with-all-import-paths
       (owned_view.compiler-owned-shared-view load-state)
-      (owned_view.compiler-owned-shared-view pools)
+      pools
       (owned_view.compiler-owned-shared-view intern-state)
       (owned_view.compiler-owned-shared-view input-path)
       (owned_view.compiler-owned-shared-view stdlib-roots))
@@ -359,7 +358,7 @@
         (match (doc-generated-modules-from-source-paths
           (owned_view.compiler-owned-shared-view load-state)
           job-state
-          (owned_view.compiler-owned-shared-view pools)
+          pools
           (owned_view.compiler-owned-shared-view intern-state)
           (ast.ast-decl-root-path-cons
             (owned_view.compiler-owned-shared-view input-path)

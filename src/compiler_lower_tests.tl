@@ -12915,11 +12915,11 @@
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 1)]
     [inner-a : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-a)
+        pools-a
         (compiler_ast_types.AstExpr.Literal (compiler_ast_types.ast-lit-int 1)))]
     [_inner-b : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-b)
+        pools-b
         (compiler_ast_types.AstExpr.Spanned
           0
           (compiler_ast_types.ast-source-span 99 1 99 2)))]
@@ -12948,15 +12948,14 @@
     (begin
       (ci.intern-compat-state-install!
         (owned_view.compiler-owned-shared-view intern-decoy))
-      (compiler_ast_types.ast-node-pool-context-install!
-        (owned_view.compiler-owned-shared-view pools-b))
+      (compiler_ast_types.ast-node-pool-context-install! pools-b)
       (let
         [stripped-a : i64
           (compiler_lower.lower-imported-spmd-ir-symbol (&mut intern-a) item-a)]
         [diagnostic-line : i64
           (match (compiler_lower.lower-imported-spmd-select
             (& intern-a)
-            (owned_view.compiler-owned-shared-view pools-a)
+            pools-a
             (ci.intern-id-from-renderable name-a)
             (& empty-callables)
             "(-> i64 i64)"
@@ -13115,7 +13114,7 @@
       (and
         (match (compiler_lower.lower-imported-spmd-select
           (& interns)
-          (owned_view.compiler-owned-shared-view pools)
+          pools
           canonical-name
           (& callables)
           (owned_view.compiler-owned-shared-view signature)
@@ -13140,7 +13139,7 @@
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Err _) false])
         (match (compiler_lower.lower-imported-spmd-select
           (& interns)
-          (owned_view.compiler-owned-shared-view pools)
+          pools
           canonical-name
           (& empty-callables)
           (owned_view.compiler-owned-shared-view signature)
@@ -13160,7 +13159,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             canonical-name
             (& callables)
             "(-> i64 u64)"
@@ -13174,7 +13173,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             canonical-name
             (& callables)
             (owned_view.compiler-owned-shared-view signature)
@@ -13189,7 +13188,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             canonical-name
             (& callables)
             (owned_view.compiler-owned-shared-view signature)
@@ -13203,7 +13202,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             canonical-name
             (& unsupported-callables)
             (owned_view.compiler-owned-shared-view signature)
@@ -13217,7 +13216,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             canonical-name
             (& duplicate-callables)
             (owned_view.compiler-owned-shared-view signature)
@@ -16318,11 +16317,11 @@
         when-id)]
     [when-var : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var when-id))]
     [hyg-when-var : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var hyg-when-id))]
     [x-var : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
@@ -16810,8 +16809,7 @@
     (begin
       (ci.intern-compat-state-install!
         (owned_view.compiler-owned-shared-view intern-b))
-      (compiler_ast_types.ast-node-pool-context-install!
-        (owned_view.compiler-owned-shared-view pools-b))
+      (compiler_ast_types.ast-node-pool-context-install! pools-b)
       (let
         [_active-generated-b : i64
           (ci.intern-compat-state-generated-name
@@ -16834,12 +16832,12 @@
             cleanup-a)]
         [_enum-call-a : i64
           (compiler_lower.lower-enum-cleanup-call-expr
-            (owned_view.compiler-owned-shared-view pools-a)
+            pools-a
             cleanup-a
             payload-a)]
         [_struct-call-a : i64
           (compiler_lower.lower-struct-cleanup-call-expr
-            (owned_view.compiler-owned-shared-view pools-a)
+            pools-a
             cleanup-a
             param-a
             cleanup-a)]
@@ -17865,35 +17863,35 @@
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 16)]
     [elem-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.I64))]
     [slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Slice elem-id))]
     [region-slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Region 7 slice-id))]
     [nested-ref-element-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Ref 1 elem-id))]
     [nested-slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Slice nested-ref-element-id))]
     [ordinary-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.I64))]
     [pointer-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Ptr elem-id))]
     [mutable-pointer-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (compiler_ast_types.AstType.MutPtr elem-id))]
     [ref : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Ref 1 slice-id)]
@@ -17916,131 +17914,125 @@
         (compiler_symbols.compiler-registries-empty)
         ""
         0
-        (owned_view.compiler-owned-shared-view pools))]
+        pools)]
     [layouts : compiler_ctfe.CtfeLayoutInfoList
       (compiler_ctfe.ctfe-layout-info-list-empty)]
     [ok : bool false]
     (begin
-      (compiler_ast_types.ast-node-pool-context-install!
-        (owned_view.compiler-owned-shared-view pools))
+      (compiler_ast_types.ast-node-pool-context-install! pools)
       (set!
         ok
         (and
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view ref))
             16)
           (=
             (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view ref))
             8)
           (compiler_lower.lower-type-register-resident?
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (owned_view.compiler-owned-shared-view ref))
           (=
             (compiler_lower.lower-type-register-words
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view ref))
             2)
           (compiler_typecheck_core.tc-type-eq
             (compiler_lower.lower-register-word-type
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view ref)
               0)
             (compiler_ast_types.AstType.U64))
           (compiler_typecheck_core.tc-type-eq
             (compiler_lower.lower-register-word-type
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view ref)
               1)
             (compiler_ast_types.AstType.I64))
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view mut-ref))
             16)
           (=
             (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view mut-ref))
             8)
           (compiler_lower.lower-type-register-resident?
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (owned_view.compiler-owned-shared-view mut-ref))
           (=
             (compiler_lower.lower-type-register-words
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view mut-ref))
             2)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view ordinary-ref))
             8)
           (not
             (compiler_lower.lower-type-register-resident?
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view ordinary-ref)))
           (=
             (compiler_lower.lower-type-register-words
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view ordinary-ref))
             0)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view pointer-ref))
             8)
           (not
             (compiler_lower.lower-type-register-resident?
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view pointer-ref)))
+          (compiler_lower.lower-supported-reference-type? ctx pointer-ref)
           (compiler_lower.lower-supported-reference-type?
-            (compiler_typecheck_core.tc-global-shared-view ctx)
-            pointer-ref)
-          (compiler_lower.lower-supported-reference-type?
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             mutable-pointer-ref)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view bare-slice))
             0)
           (not
             (compiler_lower.lower-type-register-resident?
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view bare-slice)))
           (compiler_lower.lower-supported-reference-type?
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (owned_view.compiler-owned-shared-view ref))
           (compiler_lower.lower-supported-reference-type?
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (owned_view.compiler-owned-shared-view mut-ref))
           (not
             (compiler_lower.lower-supported-reference-type?
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (owned_view.compiler-owned-shared-view bare-slice)))
-          (not
-            (compiler_lower.lower-supported-reference-type?
-              (compiler_typecheck_core.tc-global-shared-view ctx)
-              nested-ref))
+          (not (compiler_lower.lower-supported-reference-type? ctx nested-ref))
           (=
             (compiler_ctfe.ctfe-type-size-with-pools
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (owned_view.compiler-owned-shared-view layouts)
               (owned_view.compiler-owned-shared-view ref))
             16)
           (=
             (compiler_ctfe.ctfe-type-align-with-pools
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (owned_view.compiler-owned-shared-view layouts)
               mut-ref)
             8)
           (=
             (compiler_ctfe.ctfe-type-size-with-pools
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (owned_view.compiler-owned-shared-view layouts)
               ordinary-ref)
             8)
@@ -18048,7 +18040,7 @@
             (compiler_ctfe.ctfe-type-size-with-pools pools layouts bare-slice)
             -1)
           (match (compiler_typecheck_core.tc-inline-aggregate-type-layout
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             ref)
             [(compiler_typecheck_core.ResultTcLayoutInfo.Ok info)
               (and
@@ -18187,27 +18179,27 @@
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 64)]
     [u8-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstType.U8))]
     [u64-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstType.U64))]
     [f32-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstType.F32))]
     [f64-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstType.F64))]
     [string-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstType.String))]
     [slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Slice u8-id))]
     [empty-elements : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-list-new)]
@@ -18240,16 +18232,16 @@
     [slice-ref-elements : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-list-cons-id
         (compiler_ast_types.ast-node-pool-context-type-push
-          (compiler_ast_types.ast-global-shared-view pools)
+          pools
           (compiler_ast_types.AstType.Ref 1 slice-id))
         (compiler_ast_types.ast-type-list-new))]
     [nested-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Tuple (box u8-u64-elements)))]
     [array-u8-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        (compiler_ast_types.ast-global-shared-view pools)
+        pools
         (compiler_ast_types.AstType.Array u8-id 3))]
     [nested-elements : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-list-cons-id
@@ -18270,7 +18262,7 @@
         (compiler_symbols.compiler-registries-empty)
         ""
         0
-        (compiler_ast_types.ast-global-shared-view pools))]
+        pools)]
     [empty : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Tuple (box empty-elements))]
     [u8-tuple : compiler_ast_types.AstType
@@ -18303,108 +18295,100 @@
         (and
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view empty))
             0)
           (=
             (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view empty))
             1)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view u8-tuple))
             1)
           (=
             (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view u8-tuple))
             1)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view u8-u64))
             16)
           (=
             (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view u8-u64))
             8)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view f32-f32))
             8)
           (=
             (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view f32-f32))
             4)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view nested))
             24)
-          (=
-            (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
-              nested)
-            8)
+          (= (compiler_lower.lower-type-align ctx nested) 8)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view array-u8))
             3)
           (=
             (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view array-u8))
             1)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view array-nested))
             32)
           (=
             (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view array-nested))
             8)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view tuple-array))
             16)
-          (=
-            (compiler_lower.lower-type-align
-              (compiler_typecheck_core.tc-global-shared-view ctx)
-              tuple-array)
-            8)
+          (= (compiler_lower.lower-type-align ctx tuple-array) 8)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view tuple-string))
             8)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view array-string))
             16)
           (=
             (compiler_lower.lower-type-size
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view slice-ref-tuple))
             16)
           (compiler_lower.lower-type-inline-storage?
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_ast_types.ast-global-shared-view u8-u64))
           (not
             (compiler_lower.lower-type-register-resident?
-              (compiler_typecheck_core.tc-global-shared-view ctx)
+              ctx
               (compiler_ast_types.ast-global-shared-view u8-u64)))
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             u8-tuple)
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
@@ -18418,7 +18402,7 @@
                       (compiler_ast_types.AstType.U8))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             f32-f32)
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
@@ -18433,7 +18417,7 @@
                         (compiler_ast_types.AstType.F64)))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             u8-f64)
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
@@ -18454,7 +18438,7 @@
                       (compiler_ast_types.AstType.F64))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             (compiler_ast_types.ast-global-shared-view tuple-string))
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
@@ -18468,7 +18452,7 @@
                       (compiler_ast_types.AstType.U64))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             array-string)
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
@@ -18489,31 +18473,31 @@
                       (compiler_ast_types.AstType.U64))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             (compiler_ast_types.ast-global-shared-view array-nested))
             [(compiler_lower.LowerCAbiAggregate.Memory size) (= size 32)]
             [_ false])
           (match (compiler_lower.lower-internal-return-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             array-nested)
             [(compiler_lower.LowerCAbiAggregate.Sret size) (= size 32)]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.WindowsScalar)
             (compiler_ast_types.ast-global-shared-view array-u8))
             [(compiler_lower.LowerCAbiAggregate.ByRef size) (= size 3)]
             [_ false])
           (match (compiler_lower.lower-internal-return-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.WindowsScalar)
             (compiler_ast_types.ast-global-shared-view array-u8))
             [(compiler_lower.LowerCAbiAggregate.Sret size) (= size 3)]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.WindowsScalar)
             tuple-string)
             [(compiler_lower.LowerCAbiAggregate.Integer ty size)
@@ -18524,7 +18508,7 @@
                   (compiler_ast_types.AstType.U64)))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             slice-ref-tuple)
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
@@ -18545,32 +18529,32 @@
                       (compiler_ast_types.AstType.U64))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.WindowsScalar)
             (compiler_ast_types.ast-global-shared-view u8-u64))
             [(compiler_lower.LowerCAbiAggregate.ByRef size) (= size 16)]
             [_ false])
           (match (compiler_lower.lower-internal-return-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.WindowsScalar)
             (compiler_ast_types.ast-global-shared-view u8-u64))
             [(compiler_lower.LowerCAbiAggregate.Sret size) (= size 16)]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             empty)
             [(compiler_lower.LowerCAbiAggregate.Unsupported _) true]
             [_ false])
           ;; Extern C aggregate selection remains nominal-only.
           (match (compiler_lower.lower-c-abi-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             u8-u64)
             [(compiler_lower.LowerCAbiAggregate.No) true]
             [_ false])
           (match (compiler_lower.lower-c-abi-return-aggregate-class
-            (compiler_typecheck_core.tc-global-shared-view ctx)
+            ctx
             (compiler_lower.CompilerLowerMode.LinuxScalar)
             array-u8)
             [(compiler_lower.LowerCAbiAggregate.No) true]

@@ -182,12 +182,11 @@
           (__tl-project-field
             (compiler_lower.compiler-lower-state-new-with-intern-state-and-profile-state
               (owned_view.compiler-owned-shared-view intern-state)
-              (owned_view.compiler-owned-shared-view profile-state))
+              profile-state)
             address)
           (compiler_backend.compiler-backend-state-new-with-metrics
             (owned_view.compiler-owned-shared-view intern-state)
-            (profile_state.compiler-profile-state-metrics
-              (owned_view.compiler-owned-shared-view profile-state)))))]
+            (profile_state.compiler-profile-state-metrics profile-state))))]
     (match surface-state
       [(CompilerDriverSurfaceState.State
           typecheck-state
@@ -1011,8 +1010,7 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
-        (profile_state.compiler-profile-state-metrics
-          (owned_view.compiler-owned-shared-view profile-state)))]
+        (profile_state.compiler-profile-state-metrics profile-state))]
     (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
       program
       spans
@@ -1430,7 +1428,7 @@
     (any compile-profile test)
     (begin
       (compiler-driver-profile-set!
-        (profile_state.compiler-profile-state-shared-view _state)
+        _state
         compiler-driver-profile-prelude-source-pipeline-entries-metric
         0)
       (compiler-driver-profile-set!
@@ -1778,61 +1776,61 @@
     [surface-arena : i64]) : unit
     (begin
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-input-bytes-metric
         0)
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-start-total-metric
         (profile.alloc-total))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-start-live-metric
         (profile.alloc-live))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-start-peak-metric
         (profile.compile-wide-peak-current))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-token-start-metric
         (compiler-driver-profile-arena-bytes
           (compiler_load.compiler-load-lex-token-buffer-arena-handle)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-sexpr-start-metric
         (compiler-driver-profile-sexpr-bytes))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-origin-start-metric
         (compiler-driver-profile-arena-bytes
           (compiler_load.compiler-load-reader-node-pool-arena-handle)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-pool-base-start-metric
         (compiler-driver-profile-arena-bytes
           (compiler_ast_types.ast-node-pool-context-base-arena pools)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-expr-start-metric
         (compiler-driver-profile-arena-bytes
           (compiler_ast_types.ast-node-pool-context-expr-storage-arena pools)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-type-start-metric
         (compiler-driver-profile-arena-bytes
           (compiler_ast_types.ast-node-pool-context-type-storage-arena pools)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-surface-start-metric
         (compiler-driver-profile-arena-bytes surface-arena))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-intern-start-metric
         (compiler-driver-profile-arena-bytes
           (ci.intern-persistent-arena-handle)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-load-profile-enclosing-handle-metric
         (arena.tl_arena_current))
       (compiler-driver-profile-set!
@@ -1852,78 +1850,78 @@
         (-
           (profile.alloc-total)
           (compiler-driver-profile-value
-            (owned_view.compiler-owned-shared-view state)
+            state
             compiler-driver-load-profile-start-total-metric))]
       [live-delta : i64
         (compiler-driver-profile-nonnegative
           (-
             (profile.alloc-live)
             (compiler-driver-profile-value
-              (owned_view.compiler-owned-shared-view state)
+              state
               compiler-driver-load-profile-start-live-metric)))]
       [peak-delta : i64
         (compiler-driver-profile-nonnegative
           (-
             (profile.compile-wide-peak-current)
             (compiler-driver-profile-value
-              (owned_view.compiler-owned-shared-view state)
+              state
               compiler-driver-load-profile-start-peak-metric)))]
       [input-bytes : i64
         (compiler-driver-profile-value
-          (owned_view.compiler-owned-shared-view state)
+          state
           compiler-driver-load-profile-input-bytes-metric)]
       [tokens : i64
         (compiler-driver-profile-owner-delta
           (compiler_load.compiler-load-lex-token-buffer-arena-handle)
           (compiler-driver-profile-value
-            (owned_view.compiler-owned-shared-view state)
+            state
             compiler-driver-load-profile-token-start-metric))]
       [sexprs : i64
         (compiler-driver-profile-nonnegative
           (-
             (compiler-driver-profile-sexpr-bytes)
             (compiler-driver-profile-value
-              (owned_view.compiler-owned-shared-view state)
+              state
               compiler-driver-load-profile-sexpr-start-metric)))]
       [origins : i64
         (compiler-driver-profile-owner-delta
           (compiler_load.compiler-load-reader-node-pool-arena-handle)
           (compiler-driver-profile-value
-            (owned_view.compiler-owned-shared-view state)
+            state
             compiler-driver-load-profile-origin-start-metric))]
       [pool-base : i64
         (compiler-driver-profile-owner-delta
           (compiler_ast_types.ast-node-pool-context-base-arena pools)
           (compiler-driver-profile-value
-            (owned_view.compiler-owned-shared-view state)
+            state
             compiler-driver-load-profile-pool-base-start-metric))]
       [expr-pool : i64
         (compiler-driver-profile-owner-delta
           (compiler_ast_types.ast-node-pool-context-expr-storage-arena pools)
           (compiler-driver-profile-value
-            (owned_view.compiler-owned-shared-view state)
+            state
             compiler-driver-load-profile-expr-start-metric))]
       [type-pool : i64
         (compiler-driver-profile-owner-delta
           (compiler_ast_types.ast-node-pool-context-type-storage-arena pools)
           (compiler-driver-profile-value
-            (owned_view.compiler-owned-shared-view state)
+            state
             compiler-driver-load-profile-type-start-metric))]
       [surface : i64
         (compiler-driver-profile-owner-delta
           surface-arena
           (compiler-driver-profile-value
-            (owned_view.compiler-owned-shared-view state)
+            state
             compiler-driver-load-profile-surface-start-metric))]
       [interns : i64
         (compiler-driver-profile-owner-delta
           (ci.intern-persistent-arena-handle)
           (compiler-driver-profile-value
-            (owned_view.compiler-owned-shared-view state)
+            state
             compiler-driver-load-profile-intern-start-metric))]
       [enclosing-handle : i64
         (compiler-driver-profile-value
-          (owned_view.compiler-owned-shared-view state)
+          state
           compiler-driver-load-profile-enclosing-handle-metric)]
       [enclosing : i64
         (if (or
@@ -2084,11 +2082,11 @@
     [state : profile_state.CompilerProfileState]) : unit
     (begin
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-batch-profile-start-ms-metric
         (profile.now-ms))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-batch-profile-start-total-metric
         (profile.alloc-total))
       (compiler-driver-profile-set!
@@ -2110,16 +2108,15 @@
             (io.print-error
               "compile-batch-profile|entry_ordinal|marker|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes|live_bytes|entry0_baseline_delta_bytes\n")
             (compiler-driver-profile-set!
-              (owned_view.compiler-owned-shared-view state)
+              state
               compiler-driver-batch-profile-first-live-metric
               live-bytes))
           unit)
         (compiler-driver-profile-set!
-          (owned_view.compiler-owned-shared-view state)
+          state
           compiler-driver-batch-profile-best-peak-metric
           0)
-        (compiler-driver-batch-profile-reset-baseline!
-          (owned_view.compiler-owned-shared-view state))
+        (compiler-driver-batch-profile-reset-baseline! state)
         (io.print-error
           (compiler-driver-batch-profile-line
             ordinal
@@ -2148,13 +2145,13 @@
       [peak-delta : i64
         (compiler-driver-profile-max
           (compiler-driver-profile-value
-            (owned_view.compiler-owned-shared-view state)
+            state
             compiler-driver-batch-profile-best-peak-metric)
           (compiler-driver-profile-nonnegative
             (-
               (profile.alloc-peak)
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-batch-profile-start-live-metric))))]
       (begin
         (io.print-error
@@ -2164,27 +2161,27 @@
             (-
               end-ms
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-batch-profile-start-ms-metric))
             (-
               end-total
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-batch-profile-start-total-metric))
             (-
               end-live
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-batch-profile-start-live-metric))
             peak-delta
             end-live
             (-
               end-live
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-batch-profile-first-live-metric))))
         (compiler-driver-profile-set!
-          (owned_view.compiler-owned-shared-view state)
+          state
           compiler-driver-batch-profile-best-peak-metric
           0)
         (compiler-driver-batch-profile-reset-baseline! state)))))
@@ -2195,39 +2192,39 @@
     [state : profile_state.CompilerProfileState]) : unit
     (begin
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-phase-start-ms-metric
         (profile.now-ms))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-phase-start-total-metric
         (profile.alloc-total))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-phase-start-live-metric
         (profile.alloc-live))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-phase-start-intern-metric
         (ci.intern-profile-intern-value
           (compiler-driver-profile-intern-metrics-address state)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-phase-start-intern-slice-metric
         (ci.intern-profile-slice-value
           (compiler-driver-profile-intern-metrics-address state)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-phase-start-intern-generated-metric
         (ci.intern-profile-generated-value
           (compiler-driver-profile-intern-metrics-address state)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-phase-start-intern-render-metric
         (ci.intern-profile-render-value
           (compiler-driver-profile-intern-metrics-address state)))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-phase-start-intern-lookup-metric
         (ci.intern-profile-lookup-value
           (compiler-driver-profile-intern-metrics-address state)))
@@ -2264,15 +2261,15 @@
           (-
             end-peak
             (compiler-driver-profile-value
-              (owned_view.compiler-owned-shared-view state)
+              state
               compiler-driver-profile-phase-start-live-metric)))]
       (begin
         (compiler-driver-profile-set!
-          (owned_view.compiler-owned-shared-view state)
+          state
           compiler-driver-batch-profile-best-peak-metric
           (compiler-driver-profile-max
             (compiler-driver-profile-value
-              (owned_view.compiler-owned-shared-view state)
+              state
               compiler-driver-batch-profile-best-peak-metric)
             peak-delta))
         (io.print-error
@@ -2281,17 +2278,17 @@
             (-
               end-ms
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-profile-phase-start-ms-metric))
             (-
               end-total
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-profile-phase-start-total-metric))
             (-
               end-live
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-profile-phase-start-live-metric))
             peak-delta))
         (cfg
@@ -2306,7 +2303,7 @@
                 (-
                   end-intern
                   (compiler-driver-profile-value
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     compiler-driver-profile-phase-start-intern-metric)))
               "\n")))
         (cfg
@@ -2321,7 +2318,7 @@
                 (-
                   end-intern-slice
                   (compiler-driver-profile-value
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     compiler-driver-profile-phase-start-intern-slice-metric)))
               "\n")))
         (cfg
@@ -2336,7 +2333,7 @@
                 (-
                   end-intern-generated
                   (compiler-driver-profile-value
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     compiler-driver-profile-phase-start-intern-generated-metric)))
               "\n")))
         (cfg
@@ -2351,7 +2348,7 @@
                 (-
                   end-intern-render
                   (compiler-driver-profile-value
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     compiler-driver-profile-phase-start-intern-render-metric)))
               "\n")))
         (cfg
@@ -2366,7 +2363,7 @@
                 (-
                   end-intern-lookup
                   (compiler-driver-profile-value
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     compiler-driver-profile-phase-start-intern-lookup-metric)))
               "\n")))
         (cfg
@@ -2401,18 +2398,17 @@
   (define (compiler-driver-profile-start-total
     [state : profile_state.CompilerProfileState]) : unit
     (begin
-      (compiler-driver-profile-reset-prelude!
-        (owned_view.compiler-owned-shared-view state))
+      (compiler-driver-profile-reset-prelude! state)
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-total-start-ms-metric
         (profile.now-ms))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-total-start-total-metric
         (profile.alloc-total))
       (compiler-driver-profile-set!
-        (owned_view.compiler-owned-shared-view state)
+        state
         compiler-driver-profile-total-start-live-metric
         (profile.alloc-live))
       (profile.compile-wide-peak-start!)
@@ -2422,10 +2418,8 @@
       (cfg
         compile-profile-summary
         (begin
-          (compiler_optimize.compiler-opt-profile-summary-reset!
-            (owned_view.compiler-owned-shared-view state))
-          (compiler_backend.compiler-backend-profile-summary-reset!
-            (owned_view.compiler-owned-shared-view state)))
+          (compiler_optimize.compiler-opt-profile-summary-reset! state)
+          (compiler_backend.compiler-backend-profile-summary-reset! state))
         unit)
       (io.print-error
         "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
@@ -2451,7 +2445,7 @@
             "compile-profile-detail|prelude.source_pipeline_entries|"
             (string.int->string
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-profile-prelude-source-pipeline-entries-metric))
             "\n"))
         (io.print-error
@@ -2499,12 +2493,12 @@
             (-
               (profile.now-ms)
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-profile-total-start-ms-metric))
             (-
               (profile.alloc-total)
               (compiler-driver-profile-value
-                (owned_view.compiler-owned-shared-view state)
+                state
                 compiler-driver-profile-total-start-total-metric))
             (-
               (profile.alloc-live)
@@ -2774,8 +2768,7 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
-        (profile_state.compiler-profile-state-metrics
-          (owned_view.compiler-owned-shared-view profile-state)))]
+        (profile_state.compiler-profile-state-metrics profile-state))]
     [result : ResultCompilerDriver
       (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
         (compiler_ast_types.ast-node-pool-reader-context-current)
@@ -2891,16 +2884,13 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
         pools
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
+        profile-state
         (compiler-driver-representation-index-for-backend
           pools
           program
@@ -2912,9 +2902,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase
-                (owned_view.compiler-owned-shared-view profile-state)
-                "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriver.Err
@@ -2927,8 +2915,7 @@
                   (>= opt-level 2))
                 (cfg
                   compile-profile
-                  (compiler-driver-profile-start-phase
-                    (owned_view.compiler-owned-shared-view profile-state)))
+                  (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
                   (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
@@ -2939,7 +2926,7 @@
                     optimized-spans
                     emit-entry
                     crt-entry
-                    (owned_view.compiler-owned-shared-view profile-state))
+                    profile-state)
                   (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
                     pools
@@ -2949,7 +2936,7 @@
                     optimized-spans
                     emit-entry
                     crt-entry
-                    (owned_view.compiler-owned-shared-view profile-state)))
+                    profile-state))
                   [(compiler_backend.ResultCompilerBackend.Ok asm)
                     (begin
                       (cfg
@@ -2996,16 +2983,13 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
         pools
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
+        profile-state
         (compiler-driver-representation-index-for-backend
           pools
           program
@@ -3017,9 +3001,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase
-                (owned_view.compiler-owned-shared-view profile-state)
-                "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-allocation-profile-snapshot-for-job!
               typecheck-state
               "optimize")
@@ -3035,8 +3017,7 @@
                   (>= opt-level 2))
                 (cfg
                   compile-profile
-                  (compiler-driver-profile-start-phase
-                    (owned_view.compiler-owned-shared-view profile-state)))
+                  (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
                   (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
@@ -3047,7 +3028,7 @@
                     optimized-spans
                     emit-entry
                     crt-entry
-                    (owned_view.compiler-owned-shared-view profile-state))
+                    profile-state)
                   (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
                     pools
@@ -3057,7 +3038,7 @@
                     optimized-spans
                     emit-entry
                     crt-entry
-                    (owned_view.compiler-owned-shared-view profile-state)))
+                    profile-state))
                   [(compiler_backend.ResultCompilerBackendBuffer.Ok asm)
                     (begin
                       (cfg
@@ -3114,16 +3095,13 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
         pools
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
+        profile-state
         (compiler-driver-representation-index-for-backend
           pools
           program
@@ -3135,9 +3113,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase
-                (owned_view.compiler-owned-shared-view profile-state)
-                "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
               (begin
                 (compiler-driver-release-lowered-ir! opt-level)
@@ -3157,7 +3133,7 @@
                   (if has-target
                     target
                     (compiler_backend.CompilerBackendTarget.Linux))
-                  (owned_view.compiler-owned-shared-view profile-state))
+                  profile-state)
                   [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
                       category)
                     ;; Preserve the original lowered program for the caller's
@@ -3171,8 +3147,7 @@
                       (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-start-phase
-                          (owned_view.compiler-owned-shared-view profile-state)))
+                        (compiler-driver-profile-start-phase profile-state))
                       (match (if has-target
                         (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                           backend-state
@@ -3183,7 +3158,7 @@
                           optimized-spans
                           emit-entry
                           crt-entry
-                          (owned_view.compiler-owned-shared-view profile-state))
+                          profile-state)
                         (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                           backend-state
                           pools
@@ -3193,7 +3168,7 @@
                           optimized-spans
                           emit-entry
                           crt-entry
-                          (owned_view.compiler-owned-shared-view profile-state)))
+                          profile-state))
                         [(compiler_backend.ResultCompilerBackendObject.Ok image)
                           (begin
                             (cfg
@@ -3236,8 +3211,7 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
-        (profile_state.compiler-profile-state-metrics
-          (owned_view.compiler-owned-shared-view profile-state)))]
+        (profile_state.compiler-profile-state-metrics profile-state))]
     [result : ResultCompilerDriverObject
       (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
         pools
@@ -3279,16 +3253,13 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
         pools
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
+        profile-state
         (compiler-driver-representation-index-for-backend
           pools
           program
@@ -3300,9 +3271,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase
-                (owned_view.compiler-owned-shared-view profile-state)
-                "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
               (begin
                 (compiler-driver-release-lowered-ir! opt-level)
@@ -3320,15 +3289,14 @@
                   pools
                   (owned_view.compiler-owned-shared-view optimized)
                   target
-                  (owned_view.compiler-owned-shared-view profile-state))
+                  profile-state)
                   [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
                       category)
                     (begin
                       (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-start-phase
-                          (owned_view.compiler-owned-shared-view profile-state)))
+                        (compiler-driver-profile-start-phase profile-state))
                       (match (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                         backend-state
                         pools
@@ -3338,7 +3306,7 @@
                         optimized-spans
                         emit-entry
                         crt-entry
-                        (owned_view.compiler-owned-shared-view profile-state))
+                        profile-state)
                         [(compiler_backend.ResultCompilerBackend.Ok asm)
                           (begin
                             (cfg
@@ -3370,8 +3338,7 @@
                       (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-start-phase
-                          (owned_view.compiler-owned-shared-view profile-state)))
+                        (compiler-driver-profile-start-phase profile-state))
                       (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                         backend-state
                         pools
@@ -3381,22 +3348,20 @@
                         (owned_view.compiler-owned-shared-view optimized-spans)
                         emit-entry
                         crt-entry
-                        (owned_view.compiler-owned-shared-view profile-state))
+                        profile-state)
                         [(compiler_backend.ResultCompilerBackendObject.Ok image)
                           (begin
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
-                                (owned_view.compiler-owned-shared-view
-                                  profile-state)
+                                profile-state
                                 "backend.object-image"))
                             (let
                               [side-backend-state : compiler_backend.CompilerBackendState
                                 (compiler_backend.compiler-backend-state-new-with-metrics
                                   (ci.intern-compat-state-capture-active)
                                   (profile_state.compiler-profile-state-metrics
-                                    (owned_view.compiler-owned-shared-view
-                                      profile-state)))]
+                                    profile-state))]
                               (begin
                                 (compiler_backend.compiler-backend-state-set-advisory-sink!
                                   side-backend-state
@@ -3408,8 +3373,7 @@
                                 (cfg
                                   compile-profile
                                   (compiler-driver-profile-start-phase
-                                    (owned_view.compiler-owned-shared-view
-                                      profile-state)))
+                                    profile-state))
                                 (let
                                   [side-result : compiler_backend.ResultCompilerBackend
                                     (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
@@ -3421,8 +3385,7 @@
                                       optimized-spans
                                       emit-entry
                                       crt-entry
-                                      (owned_view.compiler-owned-shared-view
-                                        profile-state))]
+                                      profile-state)]
                                   [_release-side-state : unit
                                     (compiler_backend.compiler-backend-state-release-final-arenas!
                                       side-backend-state)]
@@ -3492,16 +3455,13 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-phase
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
         pools
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
+        profile-state
         (compiler-driver-representation-index-for-backend
           pools
           program
@@ -3513,9 +3473,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase
-                (owned_view.compiler-owned-shared-view profile-state)
-                "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriverPic.Err
@@ -3528,8 +3486,7 @@
                   (>= opt-level 2))
                 (cfg
                   compile-profile
-                  (compiler-driver-profile-start-phase
-                    (owned_view.compiler-owned-shared-view profile-state)))
+                  (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
                   (compiler_backend.compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
@@ -3540,7 +3497,7 @@
                     optimized-spans
                     emit-entry
                     crt-entry
-                    (owned_view.compiler-owned-shared-view profile-state))
+                    profile-state)
                   (compiler_backend.compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
                     pools
@@ -3550,7 +3507,7 @@
                     optimized-spans
                     emit-entry
                     crt-entry
-                    (owned_view.compiler-owned-shared-view profile-state)))
+                    profile-state))
                   [(compiler_backend.ResultCompilerBackendPic.Ok output)
                     (begin
                       (cfg
@@ -4816,13 +4773,10 @@
       (begin
         (cfg
           compile-profile
-          (compiler-driver-profile-finish-phase
-            (owned_view.compiler-owned-shared-view profile-state)
-            "load"))
+          (compiler-driver-profile-finish-phase profile-state "load"))
         (cfg
           compile-profile
-          (compiler-driver-profile-start-phase
-            (owned_view.compiler-owned-shared-view profile-state)))
+          (compiler-driver-profile-start-phase profile-state))
         (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache
           (owned_view.compiler-owned-shared-view input-path)
           (compiler_ast_types.ast-program decls)
@@ -4838,9 +4792,7 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-finish-phase
-                  (owned_view.compiler-owned-shared-view profile-state)
-                  "lower"))
+                (compiler-driver-profile-finish-phase profile-state "lower"))
               (if (compiler_ast_types.ast-node-pool-reader-type-exhausted?)
                 (ResultCompilerDriverLowered.Err
                   (box
@@ -4897,13 +4849,10 @@
       (begin
         (cfg
           compile-profile
-          (compiler-driver-profile-finish-phase
-            (owned_view.compiler-owned-shared-view profile-state)
-            "load"))
+          (compiler-driver-profile-finish-phase profile-state "load"))
         (cfg
           compile-profile
-          (compiler-driver-profile-start-phase
-            (owned_view.compiler-owned-shared-view profile-state)))
+          (compiler-driver-profile-start-phase profile-state))
         (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache
           (owned_view.compiler-owned-shared-view input-path)
           (compiler_ast_types.ast-program decls)
@@ -4919,9 +4868,7 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-finish-phase
-                  (owned_view.compiler-owned-shared-view profile-state)
-                  "lower"))
+                (compiler-driver-profile-finish-phase profile-state "lower"))
               (if (compiler_ast_types.ast-node-pool-reader-type-exhausted?)
                 (ResultCompilerDriverLowered.Err
                   (box
@@ -5660,10 +5607,7 @@
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
     (begin
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-total
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-total profile-state))
       ;; The lowering provenance side table is remapped after
       ;; optimization so backend diagnostics report surviving instruction
       ;; locations when a rewrite can preserve them.
@@ -5695,10 +5639,7 @@
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
     (begin
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-total
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-total profile-state))
       (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
         (owned_view.compiler-owned-shared-view input-path)
         (compiler-driver-load-and-lower-escaping-and-profile-state
@@ -5727,10 +5668,7 @@
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
     (begin
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-total
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-total profile-state))
       (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
         (owned_view.compiler-owned-shared-view input-path)
         (compiler-driver-load-and-lower-escaping-and-profile-state
@@ -5759,10 +5697,7 @@
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
     (begin
-      (cfg
-        compile-profile
-        (compiler-driver-profile-start-total
-          (owned_view.compiler-owned-shared-view profile-state)))
+      (cfg compile-profile (compiler-driver-profile-start-total profile-state))
       (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
         (owned_view.compiler-owned-shared-view input-path)
         (compiler-driver-load-and-lower-pic-image-and-profile-state
@@ -6709,14 +6644,11 @@
         (compiler-driver-print-advisories (& advisories))
         (cfg
           compile-profile
-          (compiler-driver-profile-start-phase
-            (owned_view.compiler-owned-shared-view _profile-state)))
+          (compiler-driver-profile-start-phase _profile-state))
         (io.write-file output-path (byte_buf.str-as-bytes (& asm)))
         (cfg
           compile-profile
-          (compiler-driver-profile-finish-phase
-            (owned_view.compiler-owned-shared-view _profile-state)
-            "write"))
+          (compiler-driver-profile-finish-phase _profile-state "write"))
         (cfg
           compile-profile
           (compiler-driver-profile-finish-total _profile-state))
@@ -6743,8 +6675,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-start-phase
-                (owned_view.compiler-owned-shared-view _profile-state)))
+              (compiler-driver-profile-start-phase _profile-state))
             (compiler-driver-write-text-buf
               (owned_view.compiler-owned-shared-view output-path)
               buf))]
@@ -6752,9 +6683,7 @@
           (compiler-driver-print-advisories (& advisories))
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase
-              (owned_view.compiler-owned-shared-view _profile-state)
-              "write"))
+            (compiler-driver-profile-finish-phase _profile-state "write"))
           (compiler-driver-allocation-profile-snapshot-for-job!
             typecheck-state
             "write")
@@ -6795,8 +6724,7 @@
           (compiler-driver-print-advisories (& advisories))
           (cfg
             compile-profile
-            (compiler-driver-profile-start-phase
-              (owned_view.compiler-owned-shared-view _profile-state)))
+            (compiler-driver-profile-start-phase _profile-state))
           (let
             [asm : String output.asm]
             [fixups : String output.fixups]
@@ -6805,9 +6733,7 @@
               (io.write-file fixups-path (byte_buf.str-as-bytes (& fixups)))))
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase
-              (owned_view.compiler-owned-shared-view _profile-state)
-              "write"))
+            (compiler-driver-profile-finish-phase _profile-state "write"))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-total _profile-state))

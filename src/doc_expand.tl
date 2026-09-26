@@ -1325,8 +1325,7 @@
               (compiler_load.compiler-load-session-state-use-with-intern-state!
                 (owned_view.compiler-owned-shared-view load-state)
                 (owned_view.compiler-owned-shared-view intern-state))
-              (ast.ast-node-pool-context-install!
-                (owned_view.compiler-owned-shared-view pools))
+              (ast.ast-node-pool-context-install! pools)
               (ci.intern-compat-state-install!
                 (owned_view.compiler-owned-shared-view intern-state))
               (let
@@ -1339,12 +1338,11 @@
                     (owned_view.compiler-owned-shared-view stdlib-roots)
                     ast.AstMaybeModuleName.No
                     (parser.compiler-cfg-empty)
-                    (owned_view.compiler-owned-shared-view pools))]
+                    pools)]
                 (begin
                   ;; Preserve segments appended through the explicit loader and
                   ;; publish that completed owner for legacy expansion readers.
-                  (ast.ast-node-pool-context-install!
-                    (owned_view.compiler-owned-shared-view pools))
+                  (ast.ast-node-pool-context-install! pools)
                   (ci.intern-compat-state-capture-from-globals!
                     (&mut intern-state))
                   (match loaded

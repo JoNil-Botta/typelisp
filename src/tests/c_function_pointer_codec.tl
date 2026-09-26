@@ -103,17 +103,14 @@
   (let
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 1)]
-    [scalar : i64
-      (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
-        ast.AstType.I64)]
+    [scalar : i64 (ast.ast-node-pool-context-type-push pools ast.AstType.I64)]
     [_function : i64
       (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (ast.AstType.Func (box (ast.ast-type-list-new)) scalar))]
     [_pointer : i64
       (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (ast.AstType.CFunc 1 ast.AstCFunctionMode.NonNull))]
     [reader : codec.SurfaceAstReader
       (codec.surface-ast-reader-new

@@ -7275,7 +7275,9 @@
         (ci.intern-compat-state-intern
           (&mut intern-state)
           "lower-structural-module")]
-      [_install : unit (ci.intern-compat-state-install! intern-state)]
+      [_install : unit
+        (ci.intern-compat-state-install!
+          (lower-global-shared-view intern-state))]
       [lower-state : CompilerLowerState
         (compiler-lower-state-new-with-intern-state intern-state)]
       [owner-module-id : i64

@@ -1820,15 +1820,12 @@
   (let
     [index : i64 0]
     (begin
-      (ast.ast-node-pool-context-reset-to!
-        (owned_view.compiler-owned-shared-view pools)
-        0
-        0)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
       (while (< index type-count)
         (let
           [new-id : i64
             (ast.ast-node-pool-context-type-push
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (codec.surface-ast-read-type! reader))]
           (begin
             (if (= new-id index)
@@ -1842,7 +1839,7 @@
         (let
           [new-id : i64
             (ast.ast-node-pool-context-expr-push
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (expr_codec.surface-ast-read-expr! reader))]
           (begin
             (if (= new-id index)
@@ -1874,11 +1871,7 @@
       (ResultSurfaceAstHydration.Err
         "surface ast: bad magic, schema, or identity binding")
       (begin
-        (surface-ast-decode-pools!
-          (&mut reader)
-          (owned_view.compiler-owned-shared-view pools)
-          type-count
-          expr-count)
+        (surface-ast-decode-pools! (&mut reader) pools type-count expr-count)
         (let
           [decls : ast.AstDeclList (surface-ast-read-decl-list! (&mut reader))]
           [paths : ast.AstDeclPathList (surface-ast-read-paths! (&mut reader))]
@@ -1888,7 +1881,7 @@
           [_c-signatures : unit
             (codec.surface-ast-validate-c-function-signatures!
               (&mut reader)
-              (owned_view.compiler-owned-shared-view pools))]
+              pools)]
           (cond
             [(not (codec.surface-ast-reader-valid? (& reader)))
               (ResultSurfaceAstHydration.Err

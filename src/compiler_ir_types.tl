@@ -3996,9 +3996,7 @@
             (CompilerIrSpmdPrivateParamRole.Source
               source
               (compiler-ir-clone-spmd-value-class class)
-              (compiler-ir-clone-type
-                (compiler-ir-global-shared-view pools)
-                source-ty))]
+              (compiler-ir-clone-type pools source-ty))]
           [(CompilerIrSpmdPrivateParamRole.IndexBase)
             (CompilerIrSpmdPrivateParamRole.IndexBase)])
         (compiler-ir-clone-type pools ty))]))
@@ -4016,7 +4014,7 @@
           (compiler-ir-spmd-private-param-seq-push!
             (&mut params)
             (compiler-ir-clone-spmd-private-param
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-spmd-private-param-seq-ref abi.params index)))
           (set! index (+ index 1))))
       (CompilerIrSpmdPrivateAbi
@@ -6211,7 +6209,7 @@
       (set!
         (array-ref dst index)
         (compiler-ir-clone-spmd-call-arg
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-array-shared-view src index)))
       (compiler-ir-clone-spmd-call-arg-seq-fill pools src dst (+ index 1) count))))
 
@@ -6275,14 +6273,11 @@
   (match (ast.ast-global-shared-view ty)
     [(ast.AstType.Func args ret)
       (ast.AstType.Func
-        (box
-          (compiler-ir-clone-type-list
-            (compiler-ir-global-shared-view pools)
-            (deref args)))
+        (box (compiler-ir-clone-type-list pools (deref args)))
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) ret))))]
     [(ast.AstType.Tuple elems)
       (ast.AstType.Tuple
@@ -6290,69 +6285,69 @@
     [(ast.AstType.Array elem len)
       (ast.AstType.Array
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem)))
         len)]
     [(ast.AstType.DynArray elem)
       (ast.AstType.DynArray
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [(ast.AstType.Slice elem)
       (ast.AstType.Slice
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [(ast.AstType.Box elem)
       (ast.AstType.Box
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [(ast.AstType.Region region inner)
       (ast.AstType.Region
         region
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) inner))))]
     [(ast.AstType.Ref region inner)
       (ast.AstType.Ref
         region
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) inner))))]
     [(ast.AstType.MutRef region inner)
       (ast.AstType.MutRef
         region
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) inner))))]
     [(ast.AstType.Ptr elem)
       (ast.AstType.Ptr
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [(ast.AstType.MutPtr elem)
       (ast.AstType.MutPtr
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [_ (clone ty)]))
 
@@ -6367,9 +6362,9 @@
       (ast.ast-type-list-push
         out
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get
               (& pools)
               (ast.ast-type-list-get tys index (ast.ast-type-id-fallback))))))
@@ -6420,12 +6415,8 @@
           (compiler-ir-clone-spmd-backend backend)
           lanes
           (compiler-ir-clone-value active-mask)
-          (compiler-ir-clone-spmd-call-arg-seq
-            (compiler-ir-global-shared-view pools)
-            args)
-          (compiler-ir-clone-spmd-call-result
-            (compiler-ir-global-shared-view pools)
-            result)
+          (compiler-ir-clone-spmd-call-arg-seq pools args)
+          (compiler-ir-clone-spmd-call-result pools result)
           (compiler-ir-clone-spmd-call-origin pools origin)))]
     [_
       (compiler-ir-instr-map
@@ -6450,7 +6441,7 @@
           (set!
             (array-ref dst cursor)
             (compiler-ir-clone-instr
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-array-shared-view src cursor)))
           (set! cursor (+ cursor 1))))
       unit)))
@@ -6482,7 +6473,7 @@
     [(CompilerIrBlockList.Nil) acc]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-clone-block-list-acc
-        (compiler-ir-global-shared-view pools)
+        pools
         (deref rest)
         (compiler-ir-block-cons (compiler-ir-clone-block pools block) acc))]
     ;; Same forward order the cons walk used, so the accumulated (reversed)
@@ -6499,7 +6490,7 @@
                 out
                 (compiler-ir-block-cons
                   (compiler-ir-clone-block
-                    (compiler-ir-global-shared-view pools)
+                    pools
                     (compiler-ir-block-seq-ref seq index))
                   out))
               (set! index (+ index 1))))
@@ -6549,7 +6540,7 @@
           (compiler-ir-param-builder-push!
             (&mut builder)
             (compiler-ir-clone-param
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-param-seq-ref
                 (compiler-ir-global-shared-view params)
                 index)))
@@ -6563,15 +6554,11 @@
     [(CompilerIrFunction.Function name params ret vars blocks function-abi)
       (CompilerIrFunction.Function
         (compiler-ir-symbol-clone name)
-        (compiler-ir-clone-param-seq
-          (compiler-ir-global-shared-view pools)
-          params)
-        (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ret)
+        (compiler-ir-clone-param-seq pools params)
+        (compiler-ir-clone-type pools ret)
         vars
         (compiler-ir-block-list-compact
-          (compiler-ir-clone-block-list
-            (compiler-ir-global-shared-view pools)
-            blocks))
+          (compiler-ir-clone-block-list pools blocks))
         (compiler-ir-clone-function-abi pools function-abi))]))
 
 (define (compiler-ir-clone-function-seq
@@ -6587,7 +6574,7 @@
           (set!
             (array-ref slots index)
             (compiler-ir-clone-function
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-array-shared-view functions.slots index)))
           (set! index (+ index 1))))
       (CompilerIrFunctionSeq slots functions.len))))
@@ -6615,7 +6602,7 @@
           (set!
             (array-ref slots index)
             (compiler-ir-clone-global
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-global-seq-ref
                 (compiler-ir-global-shared-view globals)
                 index)))
@@ -6658,7 +6645,7 @@
           (set!
             (array-ref slots index)
             (compiler-ir-clone-extern
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-extern-seq-ref
                 (compiler-ir-global-shared-view externs)
                 index)))
@@ -6688,9 +6675,7 @@
   (match program
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrProgram.Program
-        (compiler-ir-clone-global-seq
-          (compiler-ir-global-shared-view pools)
-          globals)
+        (compiler-ir-clone-global-seq pools globals)
         (compiler-ir-clone-function-seq-shell functions)
         (compiler-ir-clone-extern-seq pools externs))]))
 
@@ -11778,7 +11763,7 @@
       (set!
         cloned
         (compiler-ir-clone-param-seq
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-global-shared-view params)))
       (set!
         func

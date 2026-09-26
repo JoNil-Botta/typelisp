@@ -37,11 +37,7 @@
 (define (lint-test-source-view [inner : i64] [span : ast.AstSourceSpan]) : i64
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-active-live)]
-    [view : i64
-      (ast.ast-expr-source-view-with-pools
-        (owned_view.compiler-owned-shared-view pools)
-        inner
-        span)]
+    [view : i64 (ast.ast-expr-source-view-with-pools pools inner span)]
     (begin
       (ast.ast-node-pool-context-expr-sync-installed! pools)
       view)))

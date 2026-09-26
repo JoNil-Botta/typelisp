@@ -1451,7 +1451,7 @@
           code
           (owned_view.compiler-owned-shared-view stdlib-roots)
           cfgs
-          (owned_view.compiler-owned-shared-view pools))
+          pools)
           [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
             (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools
               (owned_view.compiler-owned-shared-view virtual-path)

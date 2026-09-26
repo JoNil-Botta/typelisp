@@ -1361,19 +1361,12 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [lifetime : i64 (ci.intern "ir-slice")]
-    [slice : ast.AstType
-      (ast.ast-ty-slice-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
-        ast.AstType.I64)]
-    [borrowed : ast.AstType
-      (ast.ast-ty-ref-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
-        lifetime
-        slice)]
+    [slice : ast.AstType (ast.ast-ty-slice-with-pools pools ast.AstType.I64)]
+    [borrowed : ast.AstType (ast.ast-ty-ref-with-pools pools lifetime slice)]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     [clone : ast.AstType
       (compiler_ir_types.compiler-ir-clone-type
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
+        pools
         (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
     [render-original : String
       (compiler_ir_types.compiler-ir-type-render
@@ -1446,13 +1439,10 @@
           7
           source))]
     [borrowed : ast.AstType
-      (ast.ast-ty-ref-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
-        lifetime
-        ast.AstType.I64)]
+      (ast.ast-ty-ref-with-pools pools lifetime ast.AstType.I64)]
     [arithmetic-borrowed : ast.AstType
       (ast.ast-ty-ref-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
+        pools
         (cis.intern-fresh-local-identity-raw
           (cis.intern-structural-session-fresh-local-identity session 8 source))
         ast.AstType.I64)]
@@ -1461,10 +1451,7 @@
       (cis.intern-structural-session-handle-from-source-names
         (ci.intern-source-name-session-handle-from-state (& other-intern)))]
     [invalid : ast.AstType
-      (ast.ast-ty-ref-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
-        (ci.intern-capacity)
-        ast.AstType.I64)]
+      (ast.ast-ty-ref-with-pools pools (ci.intern-capacity) ast.AstType.I64)]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     (and
       (string.eq
@@ -2934,7 +2921,7 @@
             bases
             (pabi-function-private-abi
               (compiler_ir_types.compiler-ir-clone-function
-                (compiler_ir_types.compiler-ir-global-shared-view pools)
+                pools
                 (pabi-private-helper)))
             (pabi-base)))
         52]
@@ -2955,7 +2942,7 @@
           (string.eq
             (pabi-render-function
               (compiler_ir_types.compiler-ir-clone-function
-                (compiler_ir_types.compiler-ir-global-shared-view pools)
+                pools
                 (pabi-private-helper)))
             (pabi-render-function (pabi-private-helper))))
         55]

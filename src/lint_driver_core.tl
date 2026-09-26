@@ -2996,9 +2996,7 @@
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit
-      (ast.ast-node-pool-compat-context-use!
-        (owned_view.compiler-owned-shared-view pools))]
+    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
     [source-scan : SelfhostLintDeadScan
       (with-scratch
         (let
@@ -3021,13 +3019,9 @@
     [next : SelfhostLintDeadScan
       (selfhost-lint-dead-scan-append-owned scan source-scan)]
     (begin
-      (ast.ast-node-pool-context-reset-to!
-        (owned_view.compiler-owned-shared-view pools)
-        0
-        0)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
       (ast.ast-node-pool-compat-context-clear!)
-      (ast.ast-node-pool-context-destroy-storage!
-        (owned_view.compiler-owned-shared-view pools))
+      (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
@@ -3620,7 +3614,7 @@
                         preload-candidate
                         alias
                         (owned_view.compiler-owned-shared-view rest)
-                        (owned_view.compiler-owned-shared-view pools))]
+                        pools)]
                     [preload-summary-needed : bool
                       (and
                         preload-candidate
@@ -3635,7 +3629,7 @@
                           expected-module
                           manifest-dir
                           (selfhost-lint-package-dead-cfgs)
-                          (owned_view.compiler-owned-shared-view pools))
+                          pools)
                         unit)]
                     [preload-skip : bool
                       (and
@@ -3648,7 +3642,7 @@
                           expected-module
                           alias
                           (owned_view.compiler-owned-shared-view rest)
-                          (owned_view.compiler-owned-shared-view pools)
+                          pools
                           preload-demand
                           (owned_view.compiler-owned-shared-view stdlib-roots)))]
                     [next : lint_svec.Vec
@@ -3682,7 +3676,7 @@
             (owned_view.compiler-owned-shared-view source-set)
             (owned_view.compiler-owned-shared-view root-sources)
             (owned_view.compiler-owned-shared-view stdlib-roots)
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             package-imports
             items)
             [(ResultSelfhostLintDeadImportList.Err diag)
@@ -3728,9 +3722,7 @@
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit
-      (ast.ast-node-pool-compat-context-use!
-        (owned_view.compiler-owned-shared-view pools))]
+    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
     [result : ResultSelfhostLintDeadImportList
       (with-scratch
         (let
@@ -3752,20 +3744,16 @@
                       source-set
                       root-sources
                       stdlib-roots
-                      (owned_view.compiler-owned-shared-view pools)
+                      pools
                       package-imports
                       (lint_svec.new))])])]
           (begin
             (in-arena home (selfhost-lint-reset-file-state!))
             scratch-result)))]
     (begin
-      (ast.ast-node-pool-context-reset-to!
-        (owned_view.compiler-owned-shared-view pools)
-        0
-        0)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
       (ast.ast-node-pool-compat-context-clear!)
-      (ast.ast-node-pool-context-destroy-storage!
-        (owned_view.compiler-owned-shared-view pools))
+      (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
@@ -4125,9 +4113,7 @@
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit
-      (ast.ast-node-pool-compat-context-use!
-        (owned_view.compiler-owned-shared-view pools))]
+    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
     [status : i64
       (with-scratch
         (let
@@ -4153,13 +4139,9 @@
             (in-arena home (selfhost-lint-reset-file-state!))
             file-status)))]
     (begin
-      (ast.ast-node-pool-context-reset-to!
-        (owned_view.compiler-owned-shared-view pools)
-        0
-        0)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
       (ast.ast-node-pool-compat-context-clear!)
-      (ast.ast-node-pool-context-destroy-storage!
-        (owned_view.compiler-owned-shared-view pools))
+      (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
@@ -4183,9 +4165,7 @@
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit
-      (ast.ast-node-pool-compat-context-use!
-        (owned_view.compiler-owned-shared-view pools))]
+    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
     [status : i64
       (with-scratch
         (let
@@ -4208,13 +4188,9 @@
             (in-arena home (selfhost-lint-reset-file-state!))
             file-status)))]
     (begin
-      (ast.ast-node-pool-context-reset-to!
-        (owned_view.compiler-owned-shared-view pools)
-        0
-        0)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
       (ast.ast-node-pool-compat-context-clear!)
-      (ast.ast-node-pool-context-destroy-storage!
-        (owned_view.compiler-owned-shared-view pools))
+      (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)

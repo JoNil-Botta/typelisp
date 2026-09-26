@@ -285,7 +285,9 @@
         [c : char (string.string-ref source idx)]
         (or (source_text.source-text-space? c) (= c ')'))))))
 
-(define (selfhost-lint-line-start-index [source : String] [target-line : i64]) : i64
+(define (selfhost-lint-line-start-index
+  [source : (& source str)]
+  [target-line : i64]) : i64
   (let
     [source-len : i64 (string.string-length source)]
     [idx : i64 0]
@@ -304,7 +306,7 @@
         source-len))))
 
 (define (selfhost-lint-span-start-index
-  [source : String]
+  [source : (& source str)]
   [span : ast.AstSourceSpan]) : i64
   (+
     (selfhost-lint-line-start-index
@@ -401,13 +403,10 @@
           [else (selfhost-lint-skip-atom source j n)])))))
 
 (define (selfhost-lint-begin-source-form-count
-  [source : String]
+  [source : (& source str)]
   [span : ast.AstSourceSpan]) : i64
   (let
-    [start : i64
-      (selfhost-lint-span-start-index
-        (owned_view.compiler-owned-shared-view source)
-        span)]
+    [start : i64 (selfhost-lint-span-start-index source span)]
     [n : i64 (string.string-length source)]
     [needle : String "(begin"]
     [needle-len : i64 (string.string-length needle)]
@@ -439,16 +438,13 @@
 ;; stops at its newline; `and`/`or` are not short-circuiting, so the `string.string-ref`
 ;; is guarded by the loop's `stop` flag rather than the bounds test.
 (define (selfhost-lint-line-allows?
-  [source : String]
+  [source : (& source str)]
   [line : i64]
   [rule-id : String]) : bool
   (let
     [needle : String (str_cat.str-cat "lint-allow: " rule-id)]
     [source-len : i64 (string.string-length source)]
-    [line-start : i64
-      (selfhost-lint-line-start-index
-        (owned_view.compiler-owned-shared-view source)
-        line)]
+    [line-start : i64 (selfhost-lint-line-start-index source line)]
     [found : bool false]
     [idx : i64 line-start]
     [stop : bool false]
@@ -467,7 +463,7 @@
 ;; carries `;; lint-allow: <its-rule-id>`. Findings on line 1 have no line above
 ;; and cannot be suppressed this way.
 (define (selfhost-lint-suppressed?
-  [source : String]
+  [source : (& source str)]
   [finding : lint_core.LintFinding]) : bool
   (let
     [span : ast.AstSourceSpan finding.span]
@@ -478,7 +474,7 @@
       (selfhost-lint-line-allows? source (- line 1) rule-id))))
 
 (define (selfhost-lint-form-origin?
-  [source : String]
+  [source : (& source str)]
   [span : ast.AstSourceSpan]
   [form-name : String]) : bool
   (let
@@ -488,10 +484,7 @@
       false
       (let
         [needle : String (str_cat.str-cat "(" form-name)]
-        [line-start : i64
-          (selfhost-lint-line-start-index
-            (owned_view.compiler-owned-shared-view source)
-            line)]
+        [line-start : i64 (selfhost-lint-line-start-index source line)]
         [idx : i64 (+ line-start (- col 1))]
         (and
           (string.is-string-prefix-at source needle idx)
@@ -500,21 +493,15 @@
             (+ idx (string.string-length needle))))))))
 
 (define (selfhost-lint-derived-form-origin?
-  [source : String]
+  [source : (& source str)]
   [span : ast.AstSourceSpan]) : bool
   (or
-    (selfhost-lint-form-origin?
-      (owned_view.compiler-owned-shared-view source)
-      span
-      "cond")
-    (selfhost-lint-form-origin?
-      (owned_view.compiler-owned-shared-view source)
-      span
-      "when")
+    (selfhost-lint-form-origin? source span "cond")
+    (selfhost-lint-form-origin? source span "when")
     (selfhost-lint-form-origin? source span "unless")))
 
 (define (selfhost-lint-source-multiform-single-begin?
-  [source : String]
+  [source : (& source str)]
   [finding : lint_core.LintFinding]) : bool
   (and
     (string.eq finding.rule-id (lint_core.lint-rule-single-begin-id))
@@ -644,7 +631,7 @@
 
 (define (selfhost-lint-filter-derived-origins-from
   [path : (& path str)]
-  [source : String]
+  [source : (& source str)]
   [items : lint_core.LintFindings]
   [index : i64]
   [raw-arena-allowlisted : bool]
@@ -661,14 +648,12 @@
           index)]
       [next : lint_core.LintFindings
         (if (or
-          (selfhost-lint-derived-form-origin?
-            (owned_view.compiler-owned-shared-view source)
-            finding.span)
+          (selfhost-lint-derived-form-origin? source finding.span)
           (selfhost-lint-source-multiform-single-begin?
-            (owned_view.compiler-owned-shared-view source)
+            source
             (owned_view.compiler-owned-shared-view finding))
           (selfhost-lint-suppressed?
-            (owned_view.compiler-owned-shared-view source)
+            source
             (owned_view.compiler-owned-shared-view finding))
           (and
             (string.eq finding.rule-id (lint_core.lint-rule-raw-arena-op-id))
@@ -2479,7 +2464,7 @@
   [scan : SelfhostLintDeadScan]
   [path : String]
   [module : String]
-  [source : String]
+  [source : (& source str)]
   [name : String]
   [span : ast.AstSourceSpan]
   [refs : lint_svec.Vec]
@@ -2513,7 +2498,7 @@
   [scan : SelfhostLintDeadScan]
   [path : String]
   [module : String]
-  [source : String]
+  [source : (& source str)]
   [decl : ast.AstDecl]
   [visible-root : bool]
   [requested-report : bool]) : SelfhostLintDeadScan
@@ -2729,7 +2714,7 @@
   [scan : SelfhostLintDeadScan]
   [path : String]
   [module : String]
-  [source : String]
+  [source : (& source str)]
   [visible-root : bool]
   [reportable : bool]
   [decls : ast.AstDeclList]) : SelfhostLintDeadScan
@@ -2752,7 +2737,7 @@
               scan
               (owned_view.compiler-owned-shared-view path)
               (ci.intern-str name)
-              (owned_view.compiler-owned-shared-view source)
+              source
               visible-root
               reportable
               (ast.ast-decl-list-box-shared-view body-box))
@@ -2768,7 +2753,7 @@
               scan
               (owned_view.compiler-owned-shared-view path)
               (owned_view.compiler-owned-shared-view module)
-              (owned_view.compiler-owned-shared-view source)
+              source
               decl
               visible-root
               reportable)
@@ -3874,7 +3859,7 @@
     (selfhost-lint-dead-mark-roots-from scan.decls scan.roots 0)))
 
 (define (selfhost-lint-package-dead-finding-active?
-  [source : String]
+  [source : (& source str)]
   [decl : SelfhostLintDeadDecl]) : bool
   (if (not decl.reportable)
     false
@@ -3887,7 +3872,7 @@
 
 (define (selfhost-lint-package-dead-count-for-source-from
   [path : String]
-  [source : String]
+  [source : (& source str)]
   [items : SelfhostLintDeadDecls]
   [index : i64]
   [count : i64]) : i64
@@ -3901,9 +3886,7 @@
       [next-count : i64
         (if (and
           (string.eq decl.path path)
-          (selfhost-lint-package-dead-finding-active?
-            (owned_view.compiler-owned-shared-view source)
-            decl))
+          (selfhost-lint-package-dead-finding-active? source decl))
           (+ count 1)
           count)]
       (selfhost-lint-package-dead-count-for-source-from
@@ -3936,7 +3919,7 @@
         (if (and
           (string.eq decl.path path)
           (selfhost-lint-package-dead-finding-active?
-            (owned_view.compiler-owned-shared-view source)
+            source
             (owned_view.compiler-owned-shared-view decl)))
           (begin
             (io.print-format

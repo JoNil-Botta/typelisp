@@ -147,10 +147,10 @@
 (define (format-token-at [stream : FormatTokenStream] [idx : i64]) : FormatToken
   (array-ref stream.tokens idx))
 
-(define (format-token-start [stream : FormatTokenStream] [idx : i64]) : i64
+(define (format-token-start [stream : (& stream FormatTokenStream)] [idx : i64]) : i64
   (array-ref stream.starts idx))
 
-(define (format-token-count [stream : FormatTokenStream]) : i64
+(define (format-token-count [stream : (& stream FormatTokenStream)]) : i64
   stream.count)
 
 (define (fmt-position-line [pos : FormatPosition]) : i64
@@ -213,12 +213,10 @@
         (fmt-position-line pos)
         (fmt-position-col pos)))))
 
-(define (format-token-span [stream : FormatTokenStream] [idx : i64]) : FormatSourceSpan
+(define (format-token-span [stream : (& stream FormatTokenStream)] [idx : i64]) : FormatSourceSpan
   (let
     [pos : FormatPosition
-      (fmt-source-position-at
-        stream.source
-        (format-token-start (owned_view.compiler-owned-shared-view stream) idx))]
+      (fmt-source-position-at stream.source (format-token-start stream idx))]
     (FormatSourceSpan
       (fmt-position-line pos)
       (fmt-position-col pos)

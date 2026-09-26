@@ -411,8 +411,8 @@
 
 (define (package-cache-finalize-staged
   [staged-path : String]
-  [entry-path : String]) : io.ResultIoUnit
-  (fs.try-rename (& staged-path) (& entry-path)))
+  [entry-path : (& entry-path str)]) : io.ResultIoUnit
+  (fs.try-rename (& staged-path) entry-path))
 
 (define (package-cache-write-complete-marker
   [entry-path : (& entry_path str)]

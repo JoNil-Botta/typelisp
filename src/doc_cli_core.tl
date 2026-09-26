@@ -122,7 +122,7 @@
 
 (define (doc-modules-from-package-sources-relative-from
   [paths : (& paths doc_svec.Vec)]
-  [root : String]
+  [root : (& root str)]
   [index : i64]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
   (if (>= index (doc_svec.len (& paths)))
@@ -130,9 +130,7 @@
     (let
       [path : String (doc_svec.get (& paths) index "")]
       [relative : String
-        (compiler_load.compiler-load-root-relative-path
-          (owned_view.compiler-owned-shared-view root)
-          (owned_view.compiler-owned-shared-view path))]
+        (compiler_load.compiler-load-root-relative-path root path)]
       (begin
         (doc_module_vec.push-ref!
           modules
@@ -295,7 +293,7 @@
   [load-state : compiler_load.CompilerLoadSessionState]
   [pools : ast.AstNodePoolContext]
   [intern-state : ci.InternCompatState]
-  [input-path : String]
+  [input-path : (& input-path str)]
   [stdlib-roots : doc_svec.Vec]) : compiler_load.ResultCompilerLoadWithPaths
   (let
     [intern-state : ci.InternCompatState intern-state]
@@ -350,7 +348,7 @@
       (owned_view.compiler-owned-shared-view load-state)
       pools
       (owned_view.compiler-owned-shared-view intern-state)
-      (owned_view.compiler-owned-shared-view input-path)
+      input-path
       (owned_view.compiler-owned-shared-view stdlib-roots))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (match (doc-generated-modules-from-source-paths
@@ -520,9 +518,9 @@
               (doc-write-text
                 search-path
                 (doc_local_site.doc-local-site-search-index
-                  (owned_view.compiler-owned-shared-view compiler-identity)
-                  (owned_view.compiler-owned-shared-view source-identity)
-                  (owned_view.compiler-owned-shared-view package-identity)
+                  compiler-identity
+                  source-identity
+                  package-identity
                   (owned_view.compiler-owned-shared-view modules)))
               (doc-write-text
                 index-path

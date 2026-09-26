@@ -152,7 +152,7 @@
 
 (define (package-lock-entry-list-lookup-from
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [alias : String]
+  [alias : (& alias str)]
   [index : i64]) : PackageLockMaybeEntry
   (if (>= index (package_lock_entry_vec.len entries))
     (PackageLockMaybeEntry.No)
@@ -167,9 +167,9 @@
         (package-lock-entry-list-lookup-from entries alias (+ index 1))))))
 
 (define (package-lock-entry-list-lookup
-  [entries : package_lock_entry_vec.Vec]
-  [alias : String]) : PackageLockMaybeEntry
-  (package-lock-entry-list-lookup-from (& entries) alias 0))
+  [entries : (& entries package_lock_entry_vec.Vec)]
+  [alias : (& alias str)]) : PackageLockMaybeEntry
+  (package-lock-entry-list-lookup-from entries alias 0))
 
 (define (package-lock-entry-list-insert-position
   [entries : (& entries package_lock_entry_vec.Vec)]
@@ -1210,15 +1210,13 @@
     (string.eq entry.commit commit)))
 
 (define (package-lock-list-has-entry?
-  [entries : package_lock_entry_vec.Vec]
+  [entries : (& entries package_lock_entry_vec.Vec)]
   [alias : String]
   [url : String]
   [kind : package_cache_core.PackageCachePinKind]
   [pin-value : String]
   [commit : String]) : bool
-  (match (package-lock-entry-list-lookup
-    entries
-    (owned_view.compiler-owned-shared-view alias))
+  (match (package-lock-entry-list-lookup entries alias)
     [(PackageLockMaybeEntry.No) false]
     [(PackageLockMaybeEntry.Some entry)
       (package-lock-entry-matches? entry alias url kind pin-value commit)]))
@@ -1233,7 +1231,7 @@
           (string.eq lock.version package-lock-version)
           (= (package_lock_entry_vec.len (& entries)) 2)
           (package-lock-list-has-entry?
-            (owned_view.compiler-owned-shared-view entries)
+            entries
             "alpha"
             "https://github.com/owner/alpha.git"
             (package_cache_core.PackageCachePinKind.Branch)
@@ -1265,7 +1263,7 @@
             (and
               (= (package_lock_entry_vec.len (& entries)) 2)
               (package-lock-list-has-entry?
-                (owned_view.compiler-owned-shared-view entries)
+                entries
                 "alpha"
                 "https://github.com/owner/alpha.git"
                 (package_cache_core.PackageCachePinKind.Branch)

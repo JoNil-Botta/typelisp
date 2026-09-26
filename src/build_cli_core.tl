@@ -804,7 +804,7 @@
     (ResultBuildManifest.Err
       (str_cat.str-cat "cannot read package manifest '" manifest-path "'"))))
 
-(define (build-package-output-dir [manifest-dir : String] [name : String]) : String
+(define (build-package-output-dir [manifest-dir : String] [name : (& name str)]) : String
   (build-package-output-dir-profile manifest-dir name (build-default-profile)))
 
 (define (build-package-output-dir-profile
@@ -1263,9 +1263,7 @@
   [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : BuildMaybeLockEntry
-  (match (package_lock_core.package-lock-entry-list-lookup
-    entries
-    (owned_view.compiler-owned-shared-view alias))
+  (match (package_lock_core.package-lock-entry-list-lookup entries alias)
     [(package_lock_core.PackageLockMaybeEntry.No) (BuildMaybeLockEntry.No)]
     [(package_lock_core.PackageLockMaybeEntry.Some entry)
       (if (build-package-lock-entry-matches?
@@ -1279,9 +1277,7 @@
   [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : BuildPackageLockEntryStatus
-  (match (package_lock_core.package-lock-entry-list-lookup
-    entries
-    (owned_view.compiler-owned-shared-view alias))
+  (match (package_lock_core.package-lock-entry-list-lookup entries alias)
     [(package_lock_core.PackageLockMaybeEntry.No)
       (BuildPackageLockEntryStatus.Missing)]
     [(package_lock_core.PackageLockMaybeEntry.Some entry)
@@ -1544,9 +1540,9 @@
 
 (define (build-package-cache-hit-result
   [alias : String]
-  [entry-path : String]
+  [entry-path : (& entry-path str)]
   [relative-entry-root : String]) : ResultBuildString
-  (if (io.file-exists? (build-package-cache-manifest-path (& entry-path)))
+  (if (io.file-exists? (build-package-cache-manifest-path entry-path))
     (ResultBuildString.Ok relative-entry-root)
     (ResultBuildString.Err
       (build-git-dep-error alias "cached package is missing typelisp.pkg"))))
@@ -1554,12 +1550,12 @@
 (define (build-package-cache-finalize-staged
   [alias : String]
   [staged-path : String]
-  [entry-path : String]
+  [entry-path : (& entry-path str)]
   [relative-entry-root : String]
   [key : (& key package_cache_core.PackageCacheKey)]) : ResultBuildString
   (match (package_cache_core.package-cache-finalize-staged
     staged-path
-    (owned_view.compiler-owned-shared-view entry-path))
+    entry-path)
     [(io.OkIoUnit) (ResultBuildString.Ok relative-entry-root)]
     [(io.ErrIoUnit error)
       (match (package_cache_core.package-cache-entry-state entry-path key)
@@ -1966,7 +1962,7 @@
       (package_lock_core.package-lock-entry-list-insert entries entry)]))
 
 (define (build-package-lock-list-has-exact-entry?
-  [entries : package_lock_entry_vec.Vec]
+  [entries : (& entries package_lock_entry_vec.Vec)]
   [entry : package_lock_core.PackageLockEntry]) : bool
   (package_lock_core.package-lock-list-has-entry?
     entries
@@ -1982,14 +1978,14 @@
   (build-package-lock-list-contains-all-from haystack (& needles) 0))
 
 (define (build-package-lock-list-contains-all-from
-  [haystack : package_lock_entry_vec.Vec]
+  [haystack : (& haystack package_lock_entry_vec.Vec)]
   [needles : (& needles package_lock_entry_vec.Vec)]
   [index : i64]) : bool
   (if (>= index (package_lock_entry_vec.len needles))
     true
     (and
       (build-package-lock-list-has-exact-entry?
-        (owned_view.compiler-owned-shared-view haystack)
+        haystack
         (package_lock_entry_vec.get
           needles
           index
@@ -2420,7 +2416,7 @@
             [else
               (match (build_run_core.source-tool-write-file
                 identity-path
-                (owned_view.compiler-owned-shared-view identity)
+                identity
                 "build: failed to write root compiler identity")
                 [(build_run_core.SourceToolCommandStatus.Err message)
                   (ResultBuildString.Err message)]
@@ -3719,7 +3715,7 @@
         (let
           [order : i64
             (tlci.tlci-spmd-specialization-compare
-              (owned_view.compiler-owned-shared-view item)
+              item
               (tlci.tlci-spmd-specializations-ref items scan))]
           (cond
             [(= order 0)
@@ -3767,7 +3763,7 @@
       (while (< scan count)
         (if (<
           (tlci.tlci-spmd-callable-compare
-            (owned_view.compiler-owned-shared-view item)
+            item
             (tlci.tlci-spmd-callables-ref items scan))
           0)
           (begin
@@ -4290,7 +4286,7 @@
                   (set! path-cursor path-rest)])))]))))
 
 (define (build-package-tlci-macro-collector
-  [source-set : package_source_core.PackageSourceSet]
+  [source-set : (& source-set package_source_core.PackageSourceSet)]
   [manifest : load.CompilerPkgManifest]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : BuildPackageTlciMacroCollector
@@ -4565,7 +4561,7 @@
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [source-set : package_source_core.PackageSourceSet]) : ResultBuildPackageTlciExports
+  [source-set : (& source-set package_source_core.PackageSourceSet)]) : ResultBuildPackageTlciExports
   (let
     [home : arena.Arena (arena.current)]
     (with-scratch
@@ -4603,7 +4599,7 @@
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [source-set : package_source_core.PackageSourceSet]) : ResultBuildPackageTlciExports
+  [source-set : (& source-set package_source_core.PackageSourceSet)]) : ResultBuildPackageTlciExports
   (let
     [collector : BuildPackageTlciCallableCollector
       (build-package-tlci-callable-collector
@@ -6191,19 +6187,19 @@
       (build-package-commit-success-cleanup-test-ok?)
       (io.panic "build package commit success cleanup test failed"))))
 
-(define (build-package-write-tlci [path : String] [text : String]) : build_run_core.SourceToolCommandStatus
+(define (build-package-write-tlci [path : (& path str)] [text : String]) : build_run_core.SourceToolCommandStatus
   (build_run_core.source-tool-write-file
     path
     text
     "build: failed to write package tlci"))
 
 (define (build-package-write-assembly
-  [path : String]
+  [path : (& path str)]
   [asm : String]
   [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolCommandStatus
   (match (build_run_core.source-tool-write-file
-    (owned_view.compiler-owned-shared-view path)
-    (owned_view.compiler-owned-shared-view asm)
+    path
+    asm
     "build: failed to write package assembly")
     [(build_run_core.SourceToolCommandStatus.Err message)
       (build_run_core.SourceToolCommandStatus.Err message)]
@@ -6215,7 +6211,7 @@
         (if (and
           (backend.compiler-backend-target-linux? target)
           (not (string.contains (& haystack) (& needle))))
-          (match (io.try-append-file (& path) (byte_buf.str-as-bytes (& note)))
+          (match (io.try-append-file path (byte_buf.str-as-bytes (& note)))
             [(io.OkIoUnit) build_run_core.SourceToolCommandStatus.Ok]
             [(io.ErrIoUnit error)
               (build_run_core.SourceToolCommandStatus.Err
@@ -6280,7 +6276,7 @@
               (set! error message))]
           [(ResultBuildString.Ok fingerprint)
             (match (build_run_core.source-tool-write-file
-              (owned_view.compiler-owned-shared-view stage.fingerprint)
+              stage.fingerprint
               fingerprint
               "build: failed to stage package runtime fingerprint")
               [(build_run_core.SourceToolCommandStatus.Err message)
@@ -6315,9 +6311,7 @@
                       (owned_view.compiler-owned-shared-view stage.fingerprint))))])])
         unit)
       (if (and ok tlci-dirty)
-        (match (build-package-write-tlci
-          (owned_view.compiler-owned-shared-view stage.tlci)
-          tlci-text)
+        (match (build-package-write-tlci stage.tlci tlci-text)
           [(build_run_core.SourceToolCommandStatus.Err message)
             (begin
               (set! ok false)
@@ -6459,7 +6453,7 @@
                         [asm-status : build_run_core.SourceToolCommandStatus
                           (if runtime-dirty
                             (build-package-write-assembly
-                              (owned_view.compiler-owned-shared-view stage.asm)
+                              stage.asm
                               side-assembly
                               target)
                             build_run_core.SourceToolCommandStatus.Ok)]
@@ -6571,7 +6565,7 @@
                   [runtime-status : build_run_core.SourceToolCommandStatus
                     (if runtime-dirty
                       (match (build-package-write-assembly
-                        (owned_view.compiler-owned-shared-view stage.asm)
+                        stage.asm
                         augmented-asm
                         target)
                         [(build_run_core.SourceToolCommandStatus.Err message)
@@ -6818,7 +6812,7 @@
             mode
             (owned_view.compiler-owned-shared-view decls)
             source-paths
-            (owned_view.compiler-owned-shared-view source-inputs.source-set))]
+            source-inputs.source-set)]
         [prepared : ResultBuildPackagePreparedRuntime
           (build-package-prepare-owned-runtime
             (owned_view.compiler-owned-shared-view scope)
@@ -7099,8 +7093,7 @@
                   emit-entry
                   (build_run_core.source-tool-linux-crt-entry?
                     target
-                    (owned_view.compiler-owned-shared-view
-                      effective-link-inputs)))]
+                    effective-link-inputs))]
               (build-package-finish-fresh-artifacts-with-surface
                 scope
                 (owned_view.compiler-owned-shared-view manifest)
@@ -7559,8 +7552,7 @@
       stdlib-roots))
     [(process.OkProcessOutput output)
       (begin
-        (build_run_core.source-tool-forward-output
-          (owned_view.compiler-owned-shared-view output))
+        (build_run_core.source-tool-forward-output output)
         (process.output-status output))]
     [(process.ErrProcessOutput error)
       (if (or
@@ -7954,8 +7946,7 @@
       [(process.OkProcessOutput output)
         (begin
           (if (or announce (not (process.success? output)))
-            (build_run_core.source-tool-forward-output
-              (owned_view.compiler-owned-shared-view output))
+            (build_run_core.source-tool-forward-output output)
             unit)
           (if (process.success? output)
             (let

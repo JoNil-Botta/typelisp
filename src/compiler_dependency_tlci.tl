@@ -145,7 +145,7 @@
       (load.CompilerLoadDependencyCatalogImage.Some
         (owned_view.compiler-owned-shared-view image))
       (load.compiler-load-dependency-surface-copy-spmd-callables
-        (owned_view.compiler-owned-shared-view image.metadata.spmd-callables))
+        image.metadata.spmd-callables)
       status)))
 
 (define (compiler-dependency-tlci-base-key
@@ -391,7 +391,7 @@
                       (compiler-dependency-tlci-admit-parsed!
                         (owned_view.compiler-owned-shared-view state)
                         (load.compiler-load-dependency-catalog-owner-arena
-                          (owned_view.compiler-owned-shared-view state))
+                          state)
                         source-set
                         artifact-path
                         source-digest

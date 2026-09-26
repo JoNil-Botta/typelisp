@@ -790,7 +790,9 @@
 ;; manifest at the root. It exists for tooling such as the LSP workspace index
 ;; that receives roots from its protocol while still needing exactly the same
 ;; deterministic traversal, exclusion, regular-file, and nested-package rules.
-(define (package-source-discover-root-for [command : String] [root : String]) : ResultPackageSourceList
+(define (package-source-discover-root-for
+  [command : String]
+  [root : (& root str)]) : ResultPackageSourceList
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     (match (fs.try-read-dir (& normalized-root))
@@ -864,15 +866,15 @@
 ;; require the file itself to exist so an unsaved open document can still be
 ;; associated with its workspace root.
 (define (package-source-path-location-eligible-for-root?
-  [root : String]
-  [path : String]) : bool
+  [root : (& root str)]
+  [path : (& path str)]) : bool
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     [relative : String
       (compiler_load.compiler-load-root-relative-path
-        (owned_view.compiler-owned-shared-view normalized-root)
-        (owned_view.compiler-owned-shared-view normalized-path))]
+        normalized-root
+        normalized-path)]
     (and
       (not (string.eq relative normalized-path))
       (fs.path-safe-relative? (& relative))
@@ -881,13 +883,13 @@
 
 ;; Fast single-path counterpart to root discovery for file-watcher events.
 ;; The path must additionally be a current regular file.
-(define (package-source-path-eligible-for-root? [root : String] [path : String]) : bool
+(define (package-source-path-eligible-for-root?
+  [root : (& root str)]
+  [path : (& path str)]) : bool
   (let
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     (and
-      (package-source-path-location-eligible-for-root?
-        root
-        (owned_view.compiler-owned-shared-view normalized-path))
+      (package-source-path-location-eligible-for-root? root normalized-path)
       (match (fs.try-file-kind-no-follow (& normalized-path))
         [(fs.OkFsFileKind kind)
           (package-source-include-kind? normalized-path kind)]
@@ -1006,8 +1008,8 @@
       (if (= normalized-root ".")
         normalized-path
         (compiler_load.compiler-load-root-relative-path
-          (owned_view.compiler-owned-shared-view normalized-root)
-          (owned_view.compiler-owned-shared-view normalized-path)))]
+          normalized-root
+          normalized-path))]
     (if (and
       (> (string.string-length relative) 0)
       (not (string.eq relative "."))

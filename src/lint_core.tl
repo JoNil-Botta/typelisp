@@ -4299,7 +4299,7 @@
         [_ state]))))
 
 (define (lint-copy-on-update-init-type-name
-  [state : LintCopyOnUpdateState]
+  [state : (& state LintCopyOnUpdateState)]
   [expr : ast.AstExpr]) : String
   (match expr
     [(ast.AstExpr.Spanned inner _)
@@ -4334,7 +4334,7 @@
     [_ ""]))
 
 (define (lint-copy-on-update-local-type-from-binding
-  [state : LintCopyOnUpdateState]
+  [state : (& state LintCopyOnUpdateState)]
   [maybe-ty : ast.AstMaybeType]
   [init : i64]) : String
   (let
@@ -4388,7 +4388,7 @@
             (lint-copy-on-update-expr init state (lint-no-effect-span-id init))]
           [type-name : String
             (lint-copy-on-update-local-type-from-binding
-              (owned_view.compiler-owned-shared-view after-init)
+              after-init
               maybe-ty
               init)]
           [with-local : LintCopyOnUpdateState
@@ -6263,7 +6263,7 @@
       (LintUnusedUnsafeExactLookup.Unknown))))
 
 (define (lint-unused-unsafe-exact-name-lookup
-  [state : LintUnusedVariableState]
+  [state : (& state LintUnusedVariableState)]
   [name : String]
   [facts : LintUnusedUnsafeExactNames]) : LintUnusedUnsafeExactLookup
   (let
@@ -6282,10 +6282,10 @@
       (lint-unused-unsafe-exact-name-lookup-from name facts false false 0))))
 
 (define (lint-unused-unsafe-note-value-name!
-  [state : LintUnusedVariableState]
+  [state : (& state LintUnusedVariableState)]
   [name : String]) : unit
   (match (lint-unused-unsafe-exact-name-lookup
-    (owned_view.compiler-owned-shared-view state)
+    state
     (owned_view.compiler-owned-shared-view name)
     (unsafe
       (ptr-read (ptr-addr-of lint-unused-unsafe-exact-names))))
@@ -6307,7 +6307,7 @@
       (lint-unused-unsafe-block-mark-required!)]))
 
 (define (lint-unused-unsafe-note-call-target!
-  [state : LintUnusedVariableState]
+  [state : (& state LintUnusedVariableState)]
   [expr : ast.AstExpr]) : unit
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
@@ -8355,15 +8355,11 @@
       (lint-unused-variable-expr inner state inner-span)]
     [(ast.AstExpr.Var name)
       (begin
-        (lint-unused-unsafe-note-value-name!
-          (owned_view.compiler-owned-shared-view state)
-          (ci.intern-str name))
+        (lint-unused-unsafe-note-value-name! state (ci.intern-str name))
         (lint-unused-variable-read-var-id state name))]
     [(ast.AstExpr.Call func args)
       (begin
-        (lint-unused-unsafe-note-call-target!
-          (owned_view.compiler-owned-shared-view state)
-          (ast.ast-node-get func))
+        (lint-unused-unsafe-note-call-target! state (ast.ast-node-get func))
         (lint-unused-variable-expr-list
           args
           (lint-unused-variable-expr func state span)))]

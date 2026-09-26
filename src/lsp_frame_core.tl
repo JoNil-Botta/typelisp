@@ -1516,7 +1516,7 @@
 
 (define (lsp-documents-set-semantic-index
   [docs : lsp_document_vec.Vec]
-  [uri : String]
+  [uri : (& uri str)]
   [version : i64]
   [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex]) : lsp_document_vec.Vec
   (let
@@ -2106,7 +2106,7 @@
                                   (lsp_vector_families.LspCheckCacheErr
                                     (cdiag.compiler-diagnostic-message
                                       first-diagnostic)))
-                                (owned_view.compiler-owned-shared-view uri)
+                                uri
                                 2
                                 current))
                             (let
@@ -2695,7 +2695,7 @@
       (lsp-read-file-text-or (& path) ""))))
 
 (define (lsp-position-from-byte-line-col
-  [text : String]
+  [text : (& text str)]
   [line : i64]
   [col : i64]) : json.Json
   (let
@@ -2710,7 +2710,7 @@
 (define (lsp-range-from-compiler-span
   [fallback-path : String]
   [fallback-text : String]
-  [span : cdiag.CompilerDiagnosticSpan]) : json.Json
+  [span : (& span cdiag.CompilerDiagnosticSpan)]) : json.Json
   (let
     [text : String
       (lsp-source-for-compiler-span fallback-path fallback-text span)]
@@ -2728,10 +2728,7 @@
         raw-end-col)]
     (lsp-json-object2
       "start"
-      (lsp-position-from-byte-line-col
-        (owned_view.compiler-owned-shared-view text)
-        start-line
-        start-col)
+      (lsp-position-from-byte-line-col text start-line start-col)
       "end"
       (lsp-position-from-byte-line-col text safe-end-line safe-end-col))))
 
@@ -2864,7 +2861,7 @@
   (lsp-diagnostic-with-range (lsp-range line col) message code))
 
 (define (lsp-one-codepoint-range-from-byte-position
-  [text : String]
+  [text : (& text str)]
   [line : i64]
   [col : i64]) : json.Json
   (let
@@ -2886,9 +2883,7 @@
         (set! end (+ end 1)))
       (lsp-json-object2
         "start"
-        (lsp-offset-position-json
-          (owned_view.compiler-owned-shared-view text)
-          start)
+        (lsp-offset-position-json text start)
         "end"
         (lsp-offset-position-json text end)))))
 
@@ -3238,7 +3233,7 @@
             (owned_view.compiler-owned-shared-view findings))
           i)]
       (if (lint_driver_core.selfhost-lint-suppressed?
-        (owned_view.compiler-owned-shared-view text)
+        text
         (owned_view.compiler-owned-shared-view finding))
         (lsp-lint-findings-to-json text version findings (+ i 1) acc)
         (lsp-lint-findings-to-json
@@ -4162,7 +4157,7 @@
 (define (lsp-code-action-workspace-edit
   [docs : (& docs lsp_document_vec.Vec)]
   [fallback-path : String]
-  [edits : cdiag.CompilerDiagnosticTextEditSeq]) : json.Json
+  [edits : (& edits cdiag.CompilerDiagnosticTextEditSeq)]) : json.Json
   (lsp-json-object1
     "documentChanges"
     (lsp-json-array
@@ -4320,12 +4315,9 @@
         0
         acc)]))
 
-(define (lsp-code-action-leading-indent [text : String] [line : i64]) : String
+(define (lsp-code-action-leading-indent [text : (& text str)] [line : i64]) : String
   (let
-    [start : i64
-      (lint_driver_core.selfhost-lint-line-start-index
-        (owned_view.compiler-owned-shared-view text)
-        line)]
+    [start : i64 (lint_driver_core.selfhost-lint-line-start-index text line)]
     [length : i64 (string.string-length text)]
     [end : i64 start]
     (begin
@@ -4377,10 +4369,7 @@
   (let
     [span : ast.AstSourceSpan finding.span]
     [line : i64 (ast.ast-source-span-start-line span)]
-    [indent : String
-      (lsp-code-action-leading-indent
-        (owned_view.compiler-owned-shared-view text)
-        line)]
+    [indent : String (lsp-code-action-leading-indent text line)]
     [replacement : String
       (lsp-str4
         indent
@@ -4430,7 +4419,7 @@
       [next : json.JsonSeq
         (if (or
           (lint_driver_core.selfhost-lint-suppressed?
-            (owned_view.compiler-owned-shared-view text)
+            text
             (owned_view.compiler-owned-shared-view finding))
           (lsp-code-action-lint-duplicate-before?
             (owned_view.compiler-owned-shared-view findings)
@@ -4728,7 +4717,10 @@
   (not lsp-position-encoding-utf8))
 
 ;; Byte offset of a negotiated 0-based LSP position, clamped to the line.
-(define (lsp-offset-at-position [text : String] [line0 : i64] [char0 : i64]) : i64
+(define (lsp-offset-at-position
+  [text : (& text str)]
+  [line0 : i64]
+  [char0 : i64]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -6060,7 +6052,7 @@
     (io.panic "lsp-call-context-lexical-and-malformed failed")))
 
 ;; 1-based negotiated LSP line/column of a byte offset.
-(define (lsp-line-col-at-offset [text : String] [off : i64]) : LspLineCol
+(define (lsp-line-col-at-offset [text : (& text str)] [off : i64]) : LspLineCol
   (let
     [position : source_text.SourceTextLineCol
       (source_text.source-text-line-col-at-offset
@@ -6078,7 +6070,7 @@
 
 (define (lsp-line-col-cache-at-offset!
   [cache : (&mut cache LspLineColCache)]
-  [text : String]
+  [text : (& text str)]
   [off : i64]) : LspLineCol
   (if (= off cache.offset)
     (LspLineCol cache.line cache.col)
@@ -6391,11 +6383,7 @@
             "line"
             0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
-        [off : i64
-          (lsp-offset-at-position
-            (owned_view.compiler-owned-shared-view text)
-            line0
-            char0)]
+        [off : i64 (lsp-offset-at-position text line0 char0)]
         [import-target : LspImportTarget
           (lsp-import-target-at-offset text path stdlib-roots off)]
         (match import-target
@@ -8162,13 +8150,10 @@
 
 (define (lsp-completion-text-edit
   [candidate : (& candidate LspCompletionCandidate)]
-  [text : String]
+  [text : (& text str)]
   [context : (& context LspCompletionContext)]) : json.Json
   (let
-    [start : LspLineCol
-      (lsp-line-col-at-offset
-        (owned_view.compiler-owned-shared-view text)
-        context.replace-start)]
+    [start : LspLineCol (lsp-line-col-at-offset text context.replace-start)]
     [end : LspLineCol (lsp-line-col-at-offset text context.replace-end)]
     (lsp-json-object2
       "range"
@@ -8182,7 +8167,7 @@
 
 (define (lsp-completion-item-json
   [candidate : (& candidate LspCompletionCandidate)]
-  [text : String]
+  [text : (& text str)]
   [context : (& context LspCompletionContext)]) : json.Json
   (lsp-json-object
     (lsp-json-member
@@ -8230,7 +8215,7 @@
     (lsp-json-list-cons
       (lsp-completion-item-json
         (& (array-ref results.slots index))
-        (owned_view.compiler-owned-shared-view text)
+        text
         context)
       (lsp-completion-items-json results text context (+ index 1)))))
 
@@ -8482,7 +8467,7 @@
     [(json.JsonMissing) fallback]))
 
 (define (lsp-inlay-hint-json
-  [text : String]
+  [text : (& text str)]
   [line : i64]
   [col : i64]
   [ty : String]) : json.Json
@@ -8505,7 +8490,7 @@
 
 (define (lsp-inlay-build
   [inlay-state : tc.TcInlayHintState]
-  [text : String]
+  [text : (& text str)]
   [start-line : i64]
   [end-line : i64]) : json.JsonSeq
   (let
@@ -8534,7 +8519,7 @@
                 acc
                 (lsp-json-list-cons
                   (lsp-inlay-hint-json
-                    (owned_view.compiler-owned-shared-view text)
+                    text
                     line1
                     col1
                     (tc.tc-inlay-hint-type-at-for-state inlay-state i))
@@ -8632,12 +8617,9 @@
 ;; error the document is left untouched (empty edit list) so saving never
 ;; mangles in-progress code.
 ;; --------------------------------------------------------------------------
-(define (lsp-formatting-edit [text : String] [formatted : String]) : json.Json
+(define (lsp-formatting-edit [text : (& text str)] [formatted : String]) : json.Json
   (let
-    [end : LspLineCol
-      (lsp-line-col-at-offset
-        (owned_view.compiler-owned-shared-view text)
-        (string.string-length text))]
+    [end : LspLineCol (lsp-line-col-at-offset text (string.string-length text))]
     (lsp-json-object2
       "range"
       (lsp-json-object2
@@ -9311,11 +9293,7 @@
             "line"
             0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
-        [off : i64
-          (lsp-offset-at-position
-            (owned_view.compiler-owned-shared-view text)
-            line0
-            char0)]
+        [off : i64 (lsp-offset-at-position text line0 char0)]
         (match (lsp-document-semantic-symbol-query (& doc) off)
           [(LspSemanticSymbolQuery.Found cursor definition)
             (let
@@ -9387,15 +9365,12 @@
 ;; navigating to the resolved module file.
 ;; --------------------------------------------------------------------------
 (define (lsp-document-link-json
-  [text : String]
+  [text : (& text str)]
   [resolved : String]
   [content-start : i64]
   [content-end : i64]) : json.Json
   (let
-    [start-lc : LspLineCol
-      (lsp-line-col-at-offset
-        (owned_view.compiler-owned-shared-view text)
-        content-start)]
+    [start-lc : LspLineCol (lsp-line-col-at-offset text content-start)]
     [end-lc : LspLineCol (lsp-line-col-at-offset text content-end)]
     (lsp-json-object2
       "range"
@@ -9408,7 +9383,7 @@
       (json.JsonString (lsp-resolved-path-to-file-uri resolved)))))
 
 (define (lsp-document-links
-  [text : String]
+  [text : (& text str)]
   [path : String]
   [stdlib-roots : lsp_svec.Vec]) : json.JsonSeq
   (let
@@ -9447,11 +9422,7 @@
                           (set!
                             acc
                             (lsp-json-list-cons
-                              (lsp-document-link-json
-                                (owned_view.compiler-owned-shared-view text)
-                                resolved
-                                start
-                                end)
+                              (lsp-document-link-json text resolved start end)
                               acc))
                           (set! i end))]
                       [(LspImportTarget.Missing) (set! i (+ i 1))]))
@@ -9571,19 +9542,16 @@
                         [symbol-kind : i64 (lsp-decl-symbol-kind-at text i n)]
                         [form-end : i64 (lsp-skip-paren-group text i n)]
                         [form-start-lc : LspLineCol
-                          (lsp-line-col-cache-at-offset!
-                            (&mut lc-cache)
-                            (owned_view.compiler-owned-shared-view text)
-                            i)]
+                          (lsp-line-col-cache-at-offset! (&mut lc-cache) text i)]
                         [name-lc : LspLineCol
                           (lsp-line-col-cache-at-offset!
                             (&mut lc-cache)
-                            (owned_view.compiler-owned-shared-view text)
+                            text
                             name-off)]
                         [form-end-lc : LspLineCol
                           (lsp-line-col-cache-at-offset!
                             (&mut lc-cache)
-                            (owned_view.compiler-owned-shared-view text)
+                            text
                             form-end)]
                         (lsp_decl_vec.push-ref!
                           (&mut result)
@@ -9912,7 +9880,7 @@
 
 (define (lsp-workspace-root-for-path
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]
-  [path : String]
+  [path : (& path str)]
   [require-file : bool]) : lsp_vector_families.LspWorkspaceRootLookup
   (let
     [index : i64 0]
@@ -9927,11 +9895,11 @@
           [eligible : bool
             (if require-file
               (package_source_core.package-source-path-eligible-for-root?
-                (owned_view.compiler-owned-shared-view root.path)
-                (owned_view.compiler-owned-shared-view path))
+                root.path
+                path)
               (package_source_core.package-source-path-location-eligible-for-root?
                 root.path
-                (owned_view.compiler-owned-shared-view path)))]
+                path))]
           (if eligible
             (begin
               (set!
@@ -9943,8 +9911,8 @@
       found)))
 
 (define (lsp-workspace-source-module
-  [root-path : String]
-  [path : String]
+  [root-path : (& root-path str)]
+  [path : (& path str)]
   [text : (& text str)]) : String
   (let
     [explicit : String (lsp-explicit-module-name text)]
@@ -9953,7 +9921,7 @@
       (compiler_load.compiler-load-canonical-module-id-from-path
         (if (> (string.string-length root-path) 0)
           (compiler_load.compiler-load-root-relative-path root-path path)
-          (fs.basename (& path)))))))
+          (fs.basename path))))))
 
 (define (lsp-workspace-source-from-text
   [root : lsp_vector_families.LspWorkspaceRootLookup]
@@ -9977,10 +9945,7 @@
     [module : String
       (if (> (string.string-length explicit) 0)
         explicit
-        (lsp-workspace-source-module
-          (owned_view.compiler-owned-shared-view root-path)
-          (owned_view.compiler-owned-shared-view normalized-path)
-          text))]
+        (lsp-workspace-source-module root-path normalized-path text))]
     (lsp_vector_families.LspWorkspaceSource
       (string.copy (& root-uri))
       (string.copy (& root-path))
@@ -10045,9 +10010,7 @@
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
   [root : lsp_vector_families.LspWorkspaceRoot]) : unit
-  (match (package_source_core.package-source-discover-root-for
-    "lsp"
-    (owned_view.compiler-owned-shared-view root.path))
+  (match (package_source_core.package-source-discover-root-for "lsp" root.path)
     [(package_source_core.ResultPackageSourceList.Err _) unit]
     [(package_source_core.ResultPackageSourceList.Ok paths)
       (let
@@ -10106,7 +10069,7 @@
       (lsp-workspace-index-add-rootless-overlays! index docs))))
 
 (define (lsp-server-state-copy-in-current
-  [state : lsp_vector_families.LspServerState]) : lsp_vector_families.LspServerState
+  [state : (& state lsp_vector_families.LspServerState)]) : lsp_vector_families.LspServerState
   (lsp_vector_families.LspServerState
     0
     (lsp-documents-copy state.documents)
@@ -10114,7 +10077,7 @@
     (lsp-workspace-semantic-cache-copy state.semantic-cache)))
 
 (define (lsp-server-state-finish-swap
-  [old-state : lsp_vector_families.LspServerState]
+  [old-state : (& old-state lsp_vector_families.LspServerState)]
   [draft : lsp_vector_families.LspServerState]
   [owner : i64]
   [previous-arena : i64]) : lsp_vector_families.LspServerState
@@ -10496,7 +10459,7 @@
 ;; stale unopened entry once; a warm call performs fingerprint validation but
 ;; reports zero source checks and retains the same bounded owners.
 (define (lsp-server-state-refresh-semantic-cache
-  [state : lsp_vector_families.LspServerState]
+  [state : (& state lsp_vector_families.LspServerState)]
   [stdlib-roots : lsp_svec.Vec]) : lsp_vector_families.LspServerState
   (let
     [previous : i64 (arena.tl_arena_current)]
@@ -10505,7 +10468,7 @@
       (unsafe
         (arena.tl_arena_set owner))]
     [draft : lsp_vector_families.LspServerState
-      (lsp-server-state-copy-in-current (lsp-global-shared-view state))]
+      (lsp-server-state-copy-in-current state)]
     [source-checks : i64
       (lsp-workspace-semantic-cache-refresh!
         (&mut draft.semantic-cache)
@@ -10770,7 +10733,7 @@
 (define (lsp-workspace-semantic-query
   [state : (& state lsp_vector_families.LspServerState)]
   [stdlib-roots : (& stdlib-roots lsp_svec.Vec)]
-  [canonical-key : String]) : LspWorkspaceSemanticQuery
+  [canonical-key : (& canonical-key str)]) : LspWorkspaceSemanticQuery
   (let
     [facts : LspWorkspaceSemanticQuery
       (LspWorkspaceSemanticQuery
@@ -11200,7 +11163,7 @@
           (LspRenameModuleMoveLookup.Ok LspRenameModuleMove.Missing)
           (match (lsp-workspace-root-for-path
             (& state.workspace.roots)
-            (lsp-global-shared-view new-path)
+            new-path
             false)
             [(lsp_vector_families.LspWorkspaceRootLookup.Missing)
               (lsp-rename-module-move-from-probe
@@ -11292,8 +11255,8 @@
 (define (lsp-rename-fact-collision-in-index?
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [fact : lsp_vector_families.LspWorkspaceSemanticFact]
-  [canonical-key : String]
-  [new-name : String]) : bool
+  [canonical-key : (& canonical-key str)]
+  [new-name : (& new-name str)]) : bool
   (compiler_semantic_index.compiler-semantic-source-index-rename-collision?
     index
     canonical-key
@@ -11305,8 +11268,8 @@
 (define (lsp-rename-fact-collision?
   [state : (& state lsp_vector_families.LspServerState)]
   [fact : lsp_vector_families.LspWorkspaceSemanticFact]
-  [canonical-key : String]
-  [new-name : String]) : bool
+  [canonical-key : (& canonical-key str)]
+  [new-name : (& new-name str)]) : bool
   (let
     [doc-index : i64 0]
     [cache-index : i64 0]
@@ -11323,8 +11286,8 @@
               (lsp-rename-fact-collision-in-index?
                 (& doc.semantic.index)
                 (lsp-global-shared-view fact)
-                (lsp-global-shared-view canonical-key)
-                (lsp-global-shared-view new-name))
+                canonical-key
+                new-name)
               (return true))
             (set! doc-index (+ doc-index 1)))))
       (while (< cache-index state.semantic-cache.len)
@@ -11333,8 +11296,8 @@
             (lsp-rename-fact-collision-in-index?
               (& (array-ref state.semantic-cache.slots cache-index).index)
               (lsp-global-shared-view fact)
-              (lsp-global-shared-view canonical-key)
-              (lsp-global-shared-view new-name))
+              canonical-key
+              new-name)
             (return true))
           (set! cache-index (+ cache-index 1))))
       false)))
@@ -11399,7 +11362,7 @@
                               state
                               fact
                               target.canonical-key
-                              (lsp-global-shared-view new-name)))
+                              new-name))
                           (set!
                             error
                             "New name collides with a visible binding")]
@@ -11920,10 +11883,7 @@
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
         [root : lsp_vector_families.LspWorkspaceRootLookup
-          (lsp-workspace-root-for-path
-            (& index.roots)
-            (owned_view.compiler-owned-shared-view normalized)
-            false)]
+          (lsp-workspace-root-for-path (& index.roots) normalized false)]
         (lsp-workspace-index-set-text-source!
           index
           root
@@ -11934,10 +11894,7 @@
         (if (>= existing 0)
           (lsp-workspace-sources-remove-index! (&mut index.sources) existing)
           unit)
-        (match (lsp-workspace-root-for-path
-          (& index.roots)
-          (owned_view.compiler-owned-shared-view normalized)
-          true)
+        (match (lsp-workspace-root-for-path (& index.roots) normalized true)
           [(lsp_vector_families.LspWorkspaceRootLookup.Missing)
             (if (>= existing 0)
               (lsp-workspace-sources-remove-index!
@@ -12101,7 +12058,7 @@
         (set! index (+ index 1))))))
 
 (define (lsp-server-state-did-change-watched-files
-  [state : lsp_vector_families.LspServerState]
+  [state : (& state lsp_vector_families.LspServerState)]
   [params : json.Json]) : lsp_vector_families.LspServerState
   (let
     [previous : i64 (arena.tl_arena_current)]
@@ -12110,8 +12067,7 @@
       (unsafe
         (arena.tl_arena_set owner))]
     [draft : lsp_vector_families.LspServerState
-      (lsp-server-state-copy-in-current
-        (owned_view.compiler-owned-shared-view state))]
+      (lsp-server-state-copy-in-current state)]
     [changes-key : String "changes"]
     [_refresh : unit
       (match (json.object-get params (& changes-key))
@@ -12208,7 +12164,7 @@
               (string.eq source.root-uri "")
               (package_source_core.package-source-path-location-eligible-for-root?
                 root.path
-                (owned_view.compiler-owned-shared-view source.path)))
+                source.path))
               (lsp_svec.push-ref! (&mut paths) (string.copy (& source.path)))
               unit)
             (set! source-index (+ source-index 1)))))
@@ -12310,7 +12266,7 @@
             [_ unit])]))))
 
 (define (lsp-server-state-did-change-workspace-folders
-  [state : lsp_vector_families.LspServerState]
+  [state : (& state lsp_vector_families.LspServerState)]
   [params : json.Json]) : lsp_vector_families.LspServerState
   (let
     [previous : i64 (arena.tl_arena_current)]
@@ -12319,8 +12275,7 @@
       (unsafe
         (arena.tl_arena_set owner))]
     [draft : lsp_vector_families.LspServerState
-      (lsp-server-state-copy-in-current
-        (owned_view.compiler-owned-shared-view state))]
+      (lsp-server-state-copy-in-current state)]
     [event-key : String "event"]
     [_update : unit
       (match (json.object-get params (& event-key))
@@ -12541,15 +12496,9 @@
     ;; bindings, so only `else` is a keyword in their head position.
     [head-position : i64 0]
     (begin
-      (while (<
-        index
-        (format_tokens.format-token-count
-          (owned_view.compiler-owned-shared-view stream)))
+      (while (< index (format_tokens.format-token-count stream))
         (let
-          [start : i64
-            (format_tokens.format-token-start
-              (owned_view.compiler-owned-shared-view stream)
-              index)]
+          [start : i64 (format_tokens.format-token-start stream index)]
           [tok : format_tokens.FormatToken
             (format_tokens.format-token-at
               (owned_view.compiler-owned-shared-view stream)
@@ -12850,12 +12799,12 @@
                 [start : LspLineCol
                   (lsp-line-col-cache-at-offset!
                     (&mut cache)
-                    (owned_view.compiler-owned-shared-view source-text)
+                    source-text
                     candidate.start-byte)]
                 [end : LspLineCol
                   (lsp-line-col-cache-at-offset!
                     (&mut cache)
-                    (owned_view.compiler-owned-shared-view source-text)
+                    source-text
                     candidate.end-byte)]
                 [line : i64 (- start.line 1)]
                 [start-character : i64 (- start.col 1)]
@@ -13153,16 +13102,8 @@
   [ec : i64]
   [new-text : String]) : String
   (let
-    [start-off : i64
-      (lsp-offset-at-position
-        (owned_view.compiler-owned-shared-view text)
-        (- sl 1)
-        (- sc 1))]
-    [end-off : i64
-      (lsp-offset-at-position
-        (owned_view.compiler-owned-shared-view text)
-        (- el 1)
-        (- ec 1))]
+    [start-off : i64 (lsp-offset-at-position text (- sl 1) (- sc 1))]
+    [end-off : i64 (lsp-offset-at-position text (- el 1) (- ec 1))]
     (lsp-edit-range-at-offset text start-off end-off new-text)))
 
 ;; tl/listFunctions - List all top-level function names in a document
@@ -13248,7 +13189,7 @@
 ;; tl/replace - Replace a top-level declaration by name, with position fallback
 ;; Helper: get offset from LspDeclEntry start position
 (define (lsp-offset-from-entry-start
-  [text : String]
+  [text : (& text str)]
   [entry : (& entry lsp_vector_families.LspDeclEntry)]) : i64
   (lsp-offset-at-position
     text
@@ -13257,26 +13198,14 @@
 
 ;; Helper: move a form after another form
 (define (lsp-move-form-after
-  [text : String]
+  [text : (& text str)]
   [source : lsp_vector_families.LspDeclEntry]
   [dest : lsp_vector_families.LspDeclEntry]) : String
   (let
-    [source-start : i64
-      (lsp-offset-from-entry-start
-        (owned_view.compiler-owned-shared-view text)
-        source)]
-    [source-end : i64
-      (lsp-offset-from-entry-end
-        (owned_view.compiler-owned-shared-view text)
-        source)]
-    [dest-start : i64
-      (lsp-offset-from-entry-start
-        (owned_view.compiler-owned-shared-view text)
-        dest)]
-    [dest-end : i64
-      (lsp-offset-from-entry-end
-        (owned_view.compiler-owned-shared-view text)
-        dest)]
+    [source-start : i64 (lsp-offset-from-entry-start text source)]
+    [source-end : i64 (lsp-offset-from-entry-end text source)]
+    [dest-start : i64 (lsp-offset-from-entry-start text dest)]
+    [dest-end : i64 (lsp-offset-from-entry-end text dest)]
     [source-text : String
       (string.substring text source-start (- source-end source-start))]
     [text-without-source : String
@@ -13301,7 +13230,7 @@
 
 ;; Helper: get offset from LspDeclEntry end position
 (define (lsp-offset-from-entry-end
-  [text : String]
+  [text : (& text str)]
   [entry : lsp_vector_families.LspDeclEntry]) : i64
   (lsp-offset-at-position
     text
@@ -13309,30 +13238,23 @@
     (- entry.form-end-col 1)))
 
 (define (lsp-decl-entry-contains-offset?
-  [text : String]
+  [text : (& text str)]
   [entry : lsp_vector_families.LspDeclEntry]
   [offset : i64]) : bool
   (let
-    [start : i64
-      (lsp-offset-from-entry-start
-        (owned_view.compiler-owned-shared-view text)
-        entry)]
+    [start : i64 (lsp-offset-from-entry-start text entry)]
     [end : i64 (lsp-offset-from-entry-end text entry)]
     (and (>= offset start) (< offset end))))
 
 (define (lsp-decl-index-at-position
-  [text : String]
+  [text : (& text str)]
   [decls : (& decls lsp_decl_vec.Vec)]
   [line : i64]
   [col : i64]) : i64
   (if (or (< line 0) (< col 0))
     -1
     (let
-      [offset : i64
-        (lsp-offset-at-position
-          (owned_view.compiler-owned-shared-view text)
-          line
-          col)]
+      [offset : i64 (lsp-offset-at-position text line col)]
       (if (>= offset (string.string-length text))
         -1
         (let
@@ -13344,10 +13266,7 @@
               (let
                 [entry : lsp_vector_families.LspDeclEntry
                   (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-                (if (lsp-decl-entry-contains-offset?
-                  (owned_view.compiler-owned-shared-view text)
-                  entry
-                  offset)
+                (if (lsp-decl-entry-contains-offset? text entry offset)
                   (set! found i)
                   (set! i (+ i 1)))))
             found))))))
@@ -13447,7 +13366,7 @@
       0)))
 
 (define (lsp-nearest-decl-index
-  [text : String]
+  [text : (& text str)]
   [decls : (& decls lsp_decl_vec.Vec)]
   [offset : i64]) : i64
   (let
@@ -13460,14 +13379,8 @@
         (let
           [entry : lsp_vector_families.LspDeclEntry
             (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-          [start : i64
-            (lsp-offset-from-entry-start
-              (owned_view.compiler-owned-shared-view text)
-              entry)]
-          [end : i64
-            (lsp-offset-from-entry-end
-              (owned_view.compiler-owned-shared-view text)
-              entry)]
+          [start : i64 (lsp-offset-from-entry-start text entry)]
+          [end : i64 (lsp-offset-from-entry-end text entry)]
           [distance : i64 (lsp-decl-range-distance offset start end)]
           (begin
             (if (< distance best-distance)
@@ -13493,15 +13406,8 @@
     [offset : i64
       (if (or (< line 0) (< col 0))
         -1
-        (lsp-offset-at-position
-          (owned_view.compiler-owned-shared-view text)
-          line
-          col))]
-    [nearest-index : i64
-      (lsp-nearest-decl-index
-        (owned_view.compiler-owned-shared-view text)
-        decls
-        offset)]
+        (lsp-offset-at-position text line col))]
+    [nearest-index : i64 (lsp-nearest-decl-index text decls offset)]
     [nearest-line : i64 -1]
     [nearest-col : i64 -1]
     [nearest-name : String ""]
@@ -14121,12 +14027,12 @@
                       (lsp-decl-entry-fallback))]
                   [start-off : i64
                     (lsp-offset-at-position
-                      (owned_view.compiler-owned-shared-view text)
+                      text
                       (- entry.form-start-line 1)
                       (- entry.form-start-col 1))]
                   [end-off : i64
                     (lsp-offset-at-position
-                      (owned_view.compiler-owned-shared-view text)
+                      text
                       (- entry.form-end-line 1)
                       (- entry.form-end-col 1))]
                   [result : String
@@ -14329,7 +14235,7 @@
 
 (define (lsp-nearest-inlay-hint-index
   [inlay-state : tc.TcInlayHintState]
-  [text : String]
+  [text : (& text str)]
   [line1 : i64]
   [col1 : i64]) : i64
   (let
@@ -14395,11 +14301,7 @@
                   "line"
                   0)]
               [char0 : i64 (lsp-json-int-field-default position "character" 0)]
-              [position-off : i64
-                (lsp-offset-at-position
-                  (owned_view.compiler-owned-shared-view text)
-                  line0
-                  char0)]
+              [position-off : i64 (lsp-offset-at-position text line0 char0)]
               [byte-lc : LspLineCol
                 (lsp-byte-line-col-at-offset text position-off)]
               [line1 : i64 byte-lc.line]
@@ -14418,21 +14320,13 @@
                   [(compiler_check_core.ResultCompilerCheck.Err _ _) unit])
                 (let
                   [found-idx : i64
-                    (lsp-nearest-inlay-hint-index
-                      inlay-state
-                      (owned_view.compiler-owned-shared-view text)
-                      line1
-                      col1)]
+                    (lsp-nearest-inlay-hint-index inlay-state text line1 col1)]
                   (begin
                     (tc.tc-inlay-hints-disable-for-state! inlay-state)
                     (if (= found-idx -1)
                       ;; Fallback: try to find explicit type annotation
                       (let
-                        [off : i64
-                          (lsp-offset-at-position
-                            (owned_view.compiler-owned-shared-view text)
-                            line0
-                            char0)]
+                        [off : i64 (lsp-offset-at-position text line0 char0)]
                         [sym : String (lsp-symbol-at-offset text off)]
                         [bind-type : String
                           (if (string.eq sym "")
@@ -15865,14 +15759,11 @@
   [id : json.Json]
   [state : lsp_vector_families.LspServerState]
   [stdlib-roots : lsp_svec.Vec]
-  [canonical-key : String]
+  [canonical-key : (& canonical-key str)]
   [include-declaration : bool]) : lsp_vector_families.LspServerState
   (let
     [query : LspWorkspaceSemanticQuery
-      (lsp-workspace-semantic-query
-        (& state)
-        stdlib-roots
-        (lsp-global-shared-view canonical-key))]
+      (lsp-workspace-semantic-query (& state) stdlib-roots canonical-key)]
     (if (= query.completeness 1)
       (let
         [refreshed : lsp_vector_families.LspServerState
@@ -16121,7 +16012,7 @@
                         (lsp-workspace-semantic-query
                           (& state)
                           stdlib-roots
-                          (lsp-global-shared-view target.canonical-key))]
+                          target.canonical-key)]
                       (if (= query.completeness 1)
                         (let
                           [refreshed : lsp_vector_families.LspServerState
@@ -16132,7 +16023,7 @@
                             (lsp-workspace-semantic-query
                               (& refreshed)
                               stdlib-roots
-                              (lsp-global-shared-view target.canonical-key))]
+                              target.canonical-key)]
                           (begin
                             (lsp-rename-write-result!
                               method
@@ -16982,7 +16873,7 @@
                   (let
                     [form-start-off : i64
                       (lsp-offset-at-position
-                        (owned_view.compiler-owned-shared-view text)
+                        text
                         (- entry.form-start-line 1)
                         (- entry.form-start-col 1))]
                     [after-kw : i64
@@ -17002,18 +16893,14 @@
                         [body-end-off : i64
                           (-
                             (lsp-offset-at-position
-                              (owned_view.compiler-owned-shared-view text)
+                              text
                               (- entry.form-end-line 1)
                               (- entry.form-end-col 1))
                             1)]
                         [body-start-lc : LspLineCol
-                          (lsp-line-col-at-offset
-                            (owned_view.compiler-owned-shared-view text)
-                            body-start-off)]
+                          (lsp-line-col-at-offset text body-start-off)]
                         [body-end-lc : LspLineCol
-                          (lsp-line-col-at-offset
-                            (owned_view.compiler-owned-shared-view text)
-                            body-end-off)]
+                          (lsp-line-col-at-offset text body-end-off)]
                         (if (not
                           (lsp-text-is-valid-forms
                             (owned_view.compiler-owned-shared-view new-body)))
@@ -17080,7 +16967,7 @@
                     (let
                       [form-start-off : i64
                         (lsp-offset-at-position
-                          (owned_view.compiler-owned-shared-view text)
+                          text
                           (- entry.form-start-line 1)
                           (- entry.form-start-col 1))]
                       [after-kw : i64
@@ -17100,18 +16987,14 @@
                           [body-end-off : i64
                             (-
                               (lsp-offset-at-position
-                                (owned_view.compiler-owned-shared-view text)
+                                text
                                 (- entry.form-end-line 1)
                                 (- entry.form-end-col 1))
                               1)]
                           [body-start-lc : LspLineCol
-                            (lsp-line-col-at-offset
-                              (owned_view.compiler-owned-shared-view text)
-                              body-start-off)]
+                            (lsp-line-col-at-offset text body-start-off)]
                           [body-end-lc : LspLineCol
-                            (lsp-line-col-at-offset
-                              (owned_view.compiler-owned-shared-view text)
-                              body-end-off)]
+                            (lsp-line-col-at-offset text body-end-off)]
                           [body-text : String
                             (string.substring
                               text
@@ -17491,25 +17374,14 @@
   [col : i64]
   [new-text : String]) : LspEditResult
   (let
-    [idx : i64
-      (lsp-decl-index-at-position
-        (owned_view.compiler-owned-shared-view text)
-        decls
-        line
-        col)]
+    [idx : i64 (lsp-decl-index-at-position text decls line col)]
     (if (= idx -1)
       (LspEditResult.Err "No form found at position")
       (let
         [entry : lsp_vector_families.LspDeclEntry
           (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-        [start : i64
-          (lsp-offset-from-entry-start
-            (owned_view.compiler-owned-shared-view text)
-            entry)]
-        [end : i64
-          (lsp-offset-from-entry-end
-            (owned_view.compiler-owned-shared-view text)
-            entry)]
+        [start : i64 (lsp-offset-from-entry-start text entry)]
+        [end : i64 (lsp-offset-from-entry-end text entry)]
         (if (or (< start 0) (<= end start) (> end (string.string-length text)))
           (LspEditResult.Err "Declaration range is invalid")
           (LspEditResult.Ok (lsp-edit-range-at-offset text start end new-text)))))))
@@ -17645,11 +17517,7 @@
   (if (or (< line 0) (< col 0))
     ""
     (let
-      [offset : i64
-        (lsp-offset-at-position
-          (owned_view.compiler-owned-shared-view text)
-          line
-          col)]
+      [offset : i64 (lsp-offset-at-position text line col)]
       (if (>= offset (string.string-length text))
         ""
         (let
@@ -17704,17 +17572,11 @@
         (LspStringResult.Err "Missing name or position parameter")])))
 
 (define (lsp-form-text-by-entry
-  [text : String]
+  [text : (& text str)]
   [entry : lsp_vector_families.LspDeclEntry]) : LspStringResult
   (let
-    [start : i64
-      (lsp-offset-from-entry-start
-        (owned_view.compiler-owned-shared-view text)
-        entry)]
-    [end : i64
-      (lsp-offset-from-entry-end
-        (owned_view.compiler-owned-shared-view text)
-        entry)]
+    [start : i64 (lsp-offset-from-entry-start text entry)]
+    [end : i64 (lsp-offset-from-entry-end text entry)]
     (if (or (< start 0) (<= end start) (> end (string.string-length text)))
       (LspStringResult.Err "Declaration range is invalid")
       (LspStringResult.Ok (string.substring text start (- end start))))))
@@ -17807,7 +17669,7 @@
               (string.substring text head-start (- head-end head-start)))
             ""))))))
 
-(define (lsp-offset-position-json [text : String] [off : i64]) : json.Json
+(define (lsp-offset-position-json [text : (& text str)] [off : i64]) : json.Json
   (let
     [lc : LspLineCol (lsp-line-col-at-offset text off)]
     (lsp-json-object2
@@ -17816,12 +17678,10 @@
       "character"
       (lsp-json-number (- lc.col 1)))))
 
-(define (lsp-offset-range-json [text : String] [start : i64] [end : i64]) : json.Json
+(define (lsp-offset-range-json [text : (& text str)] [start : i64] [end : i64]) : json.Json
   (lsp-json-object2
     "start"
-    (lsp-offset-position-json
-      (owned_view.compiler-owned-shared-view text)
-      start)
+    (lsp-offset-position-json text start)
     "end"
     (lsp-offset-position-json text end)))
 
@@ -17890,7 +17750,7 @@
         [_ (LspPathLookup.Err "path entries must be strings")])]))
 
 (define (lsp-lookup-form-path
-  [text : String]
+  [text : (& text str)]
   [decls : lsp_decl_vec.Vec]
   [path : json.JsonSeq]) : LspPathLookup
   (match (json.list-get-index (owned_view.compiler-owned-shared-view path) 0)
@@ -17908,14 +17768,8 @@
               (let
                 [entry : lsp_vector_families.LspDeclEntry
                   (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-                [start : i64
-                  (lsp-offset-from-entry-start
-                    (owned_view.compiler-owned-shared-view text)
-                    entry)]
-                [end : i64
-                  (lsp-offset-from-entry-end
-                    (owned_view.compiler-owned-shared-view text)
-                    entry)]
+                [start : i64 (lsp-offset-from-entry-start text entry)]
+                [end : i64 (lsp-offset-from-entry-end text entry)]
                 (if (or
                   (< start 0)
                   (<= end start)
@@ -17944,10 +17798,7 @@
       (lsp-str2
         "newText is not valid form(s): "
         (lsp-validate-forms-error new-text)))
-    (match (lsp-lookup-form-path
-      (owned_view.compiler-owned-shared-view text)
-      decls
-      path)
+    (match (lsp-lookup-form-path text decls path)
       [(LspPathLookup.Found start end _)
         (LspEditResult.Ok (lsp-edit-range-at-offset text start end new-text))]
       [(LspPathLookup.Err message) (LspEditResult.Err message)])))
@@ -17978,10 +17829,7 @@
           (lsp-str2
             "newBody is not a valid form: "
             (lsp-validate-forms-error new-body)))
-        (match (lsp-lookup-form-path
-          (owned_view.compiler-owned-shared-view text)
-          decls
-          path)
+        (match (lsp-lookup-form-path text decls path)
           [(LspPathLookup.Found start end _)
             (let
               [body-start : i64 (lsp-generic-form-body-start text start end)]
@@ -17998,25 +17846,14 @@
   [line : i64]
   [col : i64]) : LspEditResult
   (let
-    [idx : i64
-      (lsp-decl-index-at-position
-        (owned_view.compiler-owned-shared-view text)
-        decls
-        line
-        col)]
+    [idx : i64 (lsp-decl-index-at-position text decls line col)]
     (if (= idx -1)
       (LspEditResult.Err "No form found at position")
       (let
         [entry : lsp_vector_families.LspDeclEntry
           (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-        [start : i64
-          (lsp-offset-from-entry-start
-            (owned_view.compiler-owned-shared-view text)
-            entry)]
-        [end : i64
-          (lsp-offset-from-entry-end
-            (owned_view.compiler-owned-shared-view text)
-            entry)]
+        [start : i64 (lsp-offset-from-entry-start text entry)]
+        [end : i64 (lsp-offset-from-entry-end text entry)]
         (if (or (< start 0) (<= end start) (> end (string.string-length text)))
           (LspEditResult.Err "Declaration range is invalid")
           (LspEditResult.Ok (lsp-edit-range-at-offset text start end "")))))))
@@ -18051,27 +17888,18 @@
       (let
         [entry : lsp_vector_families.LspDeclEntry
           (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-        [start : i64
-          (lsp-offset-from-entry-start
-            (owned_view.compiler-owned-shared-view text)
-            entry)]
-        [end : i64
-          (lsp-offset-from-entry-end
-            (owned_view.compiler-owned-shared-view text)
-            entry)]
+        [start : i64 (lsp-offset-from-entry-start text entry)]
+        [end : i64 (lsp-offset-from-entry-end text entry)]
         (if (or (< start 0) (<= end start) (> end (string.string-length text)))
           (LspEditResult.Err "Declaration range is invalid")
           (LspEditResult.Ok (lsp-edit-range-at-offset text start end "")))))))
 
 (define (lsp-insert-after-entry
-  [text : String]
+  [text : (& text str)]
   [entry : lsp_vector_families.LspDeclEntry]
   [new-text : String]) : LspEditResult
   (let
-    [form-end : i64
-      (lsp-offset-from-entry-end
-        (owned_view.compiler-owned-shared-view text)
-        entry)]
+    [form-end : i64 (lsp-offset-from-entry-end text entry)]
     (if (or (< form-end 0) (> form-end (string.string-length text)))
       (LspEditResult.Err "Declaration range is invalid")
       (let
@@ -18084,18 +17912,13 @@
         (LspEditResult.Ok (lsp-str4 before "\n" new-text after))))))
 
 (define (lsp-insert-after-position-with-decls
-  [text : String]
+  [text : (& text str)]
   [decls : lsp_decl_vec.Vec]
   [line : i64]
   [col : i64]
   [new-text : String]) : LspEditResult
   (let
-    [idx : i64
-      (lsp-decl-index-at-position
-        (owned_view.compiler-owned-shared-view text)
-        decls
-        line
-        col)]
+    [idx : i64 (lsp-decl-index-at-position text decls line col)]
     (if (= idx -1)
       (LspEditResult.Err "No form found at position")
       (lsp-insert-after-entry
@@ -18308,11 +18131,7 @@
   (if (or (< line 0) (< col 0))
     ""
     (let
-      [offset : i64
-        (lsp-offset-at-position
-          (owned_view.compiler-owned-shared-view text)
-          line
-          col)]
+      [offset : i64 (lsp-offset-at-position text line col)]
       (if (>= offset (string.string-length text))
         ""
         (lsp-find-define-name-outward text offset)))))
@@ -18480,7 +18299,7 @@
           (LspEditResult.Ok (lsp-move-form-after text found-entry dest-entry)))])))
 
 (define (lsp-structural-move-direction-text
-  [text : String]
+  [text : (& text str)]
   [decls : (& decls lsp_decl_vec.Vec)]
   [name : String]
   [direction : String]) : LspEditResult
@@ -18512,22 +18331,10 @@
             (if found-first
               target-entry
               found-entry)]
-          [first-start : i64
-            (lsp-offset-from-entry-start
-              (owned_view.compiler-owned-shared-view text)
-              first-entry)]
-          [first-end : i64
-            (lsp-offset-from-entry-end
-              (owned_view.compiler-owned-shared-view text)
-              first-entry)]
-          [second-start : i64
-            (lsp-offset-from-entry-start
-              (owned_view.compiler-owned-shared-view text)
-              second-entry)]
-          [second-end : i64
-            (lsp-offset-from-entry-end
-              (owned_view.compiler-owned-shared-view text)
-              second-entry)]
+          [first-start : i64 (lsp-offset-from-entry-start text first-entry)]
+          [first-end : i64 (lsp-offset-from-entry-end text first-entry)]
+          [second-start : i64 (lsp-offset-from-entry-start text second-entry)]
+          [second-end : i64 (lsp-offset-from-entry-end text second-entry)]
           [text-before : String (string.substring text 0 first-start)]
           [second-text : String
             (string.substring text second-start (- second-end second-start))]
@@ -19018,15 +18825,13 @@
   (let
     [text : String "(define (foo) : i64\n  (+ 1 2))\n(define (bar) : i64 3)"]
     [text-length : i64 (string.string-length text)]
-    [nested-offset : i64
-      (lsp-offset-at-position (lsp-global-shared-view text) 1 4)]
-    [second-offset : i64
-      (lsp-offset-at-position (lsp-global-shared-view text) 2 9)]
+    [nested-offset : i64 (lsp-offset-at-position text 1 4)]
+    [second-offset : i64 (lsp-offset-at-position text 2 9)]
     (and
       (= (lsp-find-top-level-form-at-offset text nested-offset) 0)
       (=
         (lsp-find-top-level-form-at-offset text second-offset)
-        (lsp-offset-at-position (lsp-global-shared-view text) 2 0))
+        (lsp-offset-at-position text 2 0))
       (= (lsp-find-top-level-form-at-offset text -1) -1)
       (= (lsp-find-top-level-form-at-offset text text-length) -1))))
 
@@ -19123,10 +18928,7 @@
     [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
     [path : json.JsonSeq (lsp-test-path4 "foo" "let" "match" "Ok")]
     [needle : String "(Ok value)"]
-    (match (lsp-lookup-form-path
-      (owned_view.compiler-owned-shared-view text)
-      decls
-      path)
+    (match (lsp-lookup-form-path text decls path)
       [(LspPathLookup.Found start end name)
         (let
           [form-text : String (string.substring text start (- end start))]

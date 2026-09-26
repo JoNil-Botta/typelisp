@@ -7678,7 +7678,7 @@
             ast.AstMaybeModuleName.No)]
         [loaded : cload.ResultCompilerLoadWithPaths
           (cload.compiler-load-program-with-paths-and-roots-expect-cfg
-            (owned_view.compiler-owned-shared-view path)
+            path
             program
             prelude-seen
             (owned_view.compiler-owned-shared-view stdlib-roots)
@@ -7968,11 +7968,11 @@
 ;; share one canonical declaration identity.
 (define (compiler-semantic-source-index-rename-collision?
   [index : (& index CompilerSemanticSourceIndex)]
-  [canonical-key : String]
+  [canonical-key : (& canonical-key str)]
   [path : String]
   [start-byte : i64]
   [end-byte : i64]
-  [new-name : String]) : bool
+  [new-name : (& new-name str)]) : bool
   (let
     [record-index : i64 0]
     [target-index : i64 -1]

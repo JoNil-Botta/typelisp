@@ -752,8 +752,7 @@
   [metadata : ast.AstTestMetadata]
   [include-ignored : bool]
   [include-slow : bool]) : InlineTestSelection
-  (match (ast.ast-test-metadata-ignore-reason
-    (owned_view.compiler-owned-shared-view metadata))
+  (match (ast.ast-test-metadata-ignore-reason metadata)
     [(ast.AstTestIgnoreReason.Some reason)
       (if include-ignored
         (if (and (ast.ast-test-metadata-slow? metadata) (not include-slow))
@@ -4308,10 +4307,7 @@
   [temp-dir : String]) : i64
   (let
     [files : build_run_core.SourceToolTempFiles
-      (build_run_core.source-tool-temp-files
-        temp-dir
-        (owned_view.compiler-owned-shared-view source)
-        target)]
+      (build_run_core.source-tool-temp-files temp-dir source target)]
     [legacy-roots : cli_svec.Vec (clone roots)]
     ;; Generated inline harnesses reserve status 1 for recoverable assertion
     ;; failures, so a harness that cannot be built, cannot start, or aborts or
@@ -4359,8 +4355,7 @@
               [status : i64 (process.output-status output)]
               (begin
                 (driver.compiler-driver-reset-analysis-state!)
-                (build_run_core.source-tool-forward-output
-                  (owned_view.compiler-owned-shared-view output))
+                (build_run_core.source-tool-forward-output output)
                 (if (or (= status 0) (and inline-harness (= status 1)))
                   unit
                   (tltest-report-child-status output))

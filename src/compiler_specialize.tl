@@ -3021,12 +3021,10 @@
         [_ false])]))
 
 (define (gen-test-metadata-eq?
-  [a : ast.AstTestMetadata]
-  [b : ast.AstTestMetadata]) : bool
+  [a : (& a ast.AstTestMetadata)]
+  [b : (& b ast.AstTestMetadata)]) : bool
   (and
-    (=
-      (ast.ast-test-metadata-slow? (owned_view.compiler-owned-shared-view a))
-      (ast.ast-test-metadata-slow? (owned_view.compiler-owned-shared-view b)))
+    (= (ast.ast-test-metadata-slow? a) (ast.ast-test-metadata-slow? b))
     (match (ast.ast-test-metadata-ignore-reason a)
       [(ast.AstTestIgnoreReason.No)
         (match (ast.ast-test-metadata-ignore-reason b)

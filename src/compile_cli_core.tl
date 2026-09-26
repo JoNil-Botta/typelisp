@@ -630,8 +630,7 @@
     ;; process-level parser caches from CLI startup can mistake generation zero
     ;; for their owner and reuse ids from the bootstrap compatibility table.
     (if (=
-      (compiler_driver_core.compiler-driver-state-intern-generation
-        (owned_view.compiler-owned-shared-view state))
+      (compiler_driver_core.compiler-driver-state-intern-generation state)
       0)
       (ci.intern-compat-state-reset!
         (compiler_driver_core.compiler-driver-state-owned-interns-mut
@@ -919,8 +918,7 @@
     ;; driver boundary. The selected bytes are written before the caller tears
     ;; down this entry's scratch arena.
     (if (=
-      (compiler_driver_core.compiler-driver-state-intern-generation
-        (owned_view.compiler-owned-shared-view state))
+      (compiler_driver_core.compiler-driver-state-intern-generation state)
       0)
       (ci.intern-compat-state-reset!
         (compiler_driver_core.compiler-driver-state-owned-interns-mut
@@ -1177,7 +1175,7 @@
       (ResultCompileCliBatchEntryList.Err status))))
 
 (define (compile-cli-windows-batch-parse-entries-into!
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [line : i64]
   [n : i64]
@@ -1284,7 +1282,7 @@
                                     entries))))))))))))))))))
 
 (define (compile-cli-windows-batch-parse-entries-from
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [line : i64]
   [n : i64]) : ResultCompileCliWindowsBatchEntryList
@@ -1792,7 +1790,7 @@
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-windows-batch-parse-entries-from
-    (owned_view.compiler-owned-shared-view text)
+    text
     start
     line
     (string.string-length text))
@@ -1857,9 +1855,9 @@
           [status : i64
             (begin
               (compiler_driver_core.compiler-driver-state-prefix-cache-enable!
-                (owned_view.compiler-owned-shared-view state))
+                state)
               (compiler_driver_core.compiler-driver-state-prefix-cache-clear!
-                (owned_view.compiler-owned-shared-view state))
+                state)
               (if has-windows-coff-plan
                 (let
                   [remove-status : i64
@@ -1893,11 +1891,11 @@
           (begin
             (if prefix-cache-stats
               (compiler_driver_core.compiler-driver-state-prefix-cache-print-stats
-                (owned_view.compiler-owned-shared-view state)
+                state
                 "compile-batch")
               unit)
             (compiler_driver_core.compiler-driver-state-prefix-cache-clear!
-              (owned_view.compiler-owned-shared-view state))
+              state)
             (compiler_driver_core.compiler-driver-state-prefix-cache-disable!
               state)
             status))])))

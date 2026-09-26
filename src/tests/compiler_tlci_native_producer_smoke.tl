@@ -3688,7 +3688,7 @@
           (set! equal false)))
       equal)))
 
-(define (producer-test-string-count [text : String] [needle : String]) : i64
+(define (producer-test-string-count [text : (& text str)] [needle : String]) : i64
   (let
     [needle-len : i64 (string.string-length needle)]
     [limit : i64 (string.string-length text)]
@@ -3748,12 +3748,12 @@
               "package.multi/multi\ttemplate-node:in-arena\n")
             (=
               (producer-test-string-count
-                (owned_view.compiler-owned-shared-view full-report)
+                full-report
                 "package.multi/multi\tblocked\ttemplate-node:in-arena\n")
               1)
             (=
               (producer-test-string-count
-                (owned_view.compiler-owned-shared-view full-report)
+                full-report
                 "package.multi/multi\tblocked\ttemplate-node:with-arena\n")
               1)
             (=

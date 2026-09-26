@@ -931,15 +931,15 @@
       unit)))
 
 (define (compiler-parse-decl-origin-copy-direct-records!
-  [source : ast.AstDeclList]
+  [source : (& source ast.AstDeclList)]
   [dest : (& dest ast.AstDeclList)]
   [dest-slot : i64]
   [scan-start : i64]
   [scan-end : i64]) : unit
   (let
-    [source-key : i64 (compiler-parse-decl-list-storage-key (& source))]
+    [source-key : i64 (compiler-parse-decl-list-storage-key source)]
     [source-start : i64 source.offset]
-    [source-end : i64 (+ source-start (ast.ast-decl-list-len (& source)))]
+    [source-end : i64 (+ source-start (ast.ast-decl-list-len source))]
     [dest-key : i64 (compiler-parse-decl-list-storage-key dest)]
     [dest-start : i64 (+ dest.offset dest-slot)]
     [cursor : i64 scan-start]
@@ -14939,8 +14939,7 @@
                   (and
                     (= name (reader.stable-symbol-id "parser-basic"))
                     (= (ast.ast-source-span-start-line span) 1)
-                    (match (ast.ast-test-metadata-ignore-reason
-                      (compiler-parse-place-shared-view metadata))
+                    (match (ast.ast-test-metadata-ignore-reason metadata)
                       [(ast.AstTestIgnoreReason.No) true]
                       [_ false])
                     (not (ast.ast-test-metadata-slow? metadata))
@@ -14964,8 +14963,7 @@
               (and
                 (= name (reader.stable-symbol-id "parser-metadata"))
                 (= (ast.ast-source-span-start-line span) 1)
-                (ast.ast-test-metadata-slow?
-                  (compiler-parse-place-shared-view metadata))
+                (ast.ast-test-metadata-slow? metadata)
                 (match (ast.ast-test-metadata-ignore-reason metadata)
                   [(ast.AstTestIgnoreReason.Some reason)
                     (string.eq reason "not on CI")]

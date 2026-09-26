@@ -355,7 +355,7 @@
     (compiler-driver-state-source-name-session-in-current state)))
 
 (define (compiler-driver-state-prefix-cache-enable!
-  [state : CompilerDriverState]) : unit
+  [state : (& state CompilerDriverState)]) : unit
   (compiler_typecheck_core.tc-prefix-snapshot-cache-enable-for-state!
     state.typecheck-prefix-cache))
 
@@ -365,12 +365,12 @@
     state.typecheck-prefix-cache))
 
 (define (compiler-driver-state-prefix-cache-clear!
-  [state : CompilerDriverState]) : unit
+  [state : (& state CompilerDriverState)]) : unit
   (compiler_typecheck_core.tc-prefix-snapshot-cache-clear-for-state!
     state.typecheck-prefix-cache))
 
 (define (compiler-driver-state-prefix-cache-print-stats
-  [state : CompilerDriverState]
+  [state : (& state CompilerDriverState)]
   [label : String]) : unit
   (compiler_typecheck_core.tc-prefix-snapshot-cache-print-stats-for-state
     state.typecheck-prefix-cache
@@ -594,7 +594,7 @@
   (not (= (compiler-driver-state-owned-pool-arena state) 0)))
 
 (define (compiler-driver-state-adopt-pools!
-  [state : CompilerDriverState]
+  [state : (& state CompilerDriverState)]
   [pools : compiler_ast_types.AstNodePoolContext]) : unit
   (begin
     (set!
@@ -658,9 +658,7 @@
     [retained : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-clone-types-only pools)]
     (begin
-      (compiler-driver-state-adopt-pools!
-        (owned_view.compiler-owned-shared-view state)
-        retained)
+      (compiler-driver-state-adopt-pools! state retained)
       ;; Optimizer/backend type reads use the explicit retained reader below.
       ;; Detach only when the active compatibility pool is the retiring source;
       ;; if another driver state owns it, leave that state's writer pool intact.
@@ -835,11 +833,12 @@
 
 ;; Legacy/test capture paired with `compiler-driver-state-install-interns!`.
 (define (compiler-driver-state-capture-active-interns!
-  [state : CompilerDriverState]) : unit
+  [state : (& state CompilerDriverState)]) : unit
   (ci.intern-compat-state-capture-from-globals!
     (&mut (array-ref state.intern-state 0))))
 
-(define (compiler-driver-state-intern-generation [state : CompilerDriverState]) : i64
+(define (compiler-driver-state-intern-generation
+  [state : (& state CompilerDriverState)]) : i64
   (ci.intern-compat-state-generation (array-ref state.intern-state 0)))
 
 (define (compiler-driver-state-owned-interns [state : CompilerDriverState]) : ci.InternCompatState
@@ -941,7 +940,7 @@
           "intern owner shares the driver profile metric array")))))
 
 (define (compiler-driver-state-capture-active-builtins!
-  [state : CompilerDriverState]) : unit
+  [state : (& state CompilerDriverState)]) : unit
   (cbi.state-capture-from-globals! (&mut (array-ref state.builtin-ids 0))))
 
 ;; State-owned builtin reset: clears the state's own metadata and, only when
@@ -974,8 +973,7 @@
 (define (compiler-driver-state-capture-active-transients!
   [state : CompilerDriverState]) : unit
   (begin
-    (compiler-driver-state-capture-active-builtins!
-      (owned_view.compiler-owned-shared-view state))
+    (compiler-driver-state-capture-active-builtins! state)
     (compiler-driver-state-capture-active-lower-arenas! state)))
 
 (define (compiler-driver-state-capture-session-floors!
@@ -985,8 +983,7 @@
     ;; not overwrite them from whichever compatibility pool happens to be
     ;; installed when a batch entry finishes, and do not install the loader's
     ;; serial/test selector as a compile-job handoff.
-    (compiler-driver-state-capture-active-interns!
-      (owned_view.compiler-owned-shared-view state))
+    (compiler-driver-state-capture-active-interns! state)
     (compiler-driver-state-capture-active-transients! state)))
 
 (define (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
@@ -1042,7 +1039,7 @@
 ;; Helpers in this section that omit `load-state` are serial/test compatibility
 ;; adapters. Driver-owned compile paths call the explicit state-taking forms.
 (define (compiler-driver-runtime-prelude-cache-lookup
-  [key : compiler_load.CompilerLoadPreludeCacheKey]) : compiler_load.CompilerLoadPreludeCacheLookup
+  [key : (& key compiler_load.CompilerLoadPreludeCacheKey)]) : compiler_load.CompilerLoadPreludeCacheLookup
   (compiler-driver-runtime-prelude-cache-lookup-with-state
     (compiler_load.compiler-load-active-session-state-shared-view)
     key))
@@ -4258,8 +4255,7 @@
         (compiler_load.compiler-load-runtime-prelude-cache-key
           (owned_view.compiler-owned-shared-view stdlib-roots)
           cfgs)]
-      (match (compiler-driver-runtime-prelude-cache-lookup
-        (owned_view.compiler-owned-shared-view key))
+      (match (compiler-driver-runtime-prelude-cache-lookup key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
           (compiler_load.ResultCompilerLoadWithPaths.Ok
             decls
@@ -4582,7 +4578,7 @@
 
 (define (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
   [load-state : compiler_load.CompilerLoadSessionState]
-  [input-path : String]
+  [input-path : (& input-path str)]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -4712,7 +4708,7 @@
 
 (define (compiler-driver-load-file-for-pic-image-with-pools
   [load-state : compiler_load.CompilerLoadSessionState]
-  [input-path : String]
+  [input-path : (& input-path str)]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
@@ -5012,9 +5008,7 @@
         pools)]
     [_adopt-dest : unit
       (if dest-committed?
-        (compiler-driver-state-adopt-pools!
-          (owned_view.compiler-owned-shared-view state)
-          result-pools)
+        (compiler-driver-state-adopt-pools! state result-pools)
         unit)]
     [_destroy-unused-dest : unit
       (if (and release-source-pools? (not dest-committed?))
@@ -5056,7 +5050,7 @@
                 (compiler-driver-state-release-owned-pool-arena-if-uncached!
                   (owned_view.compiler-owned-shared-view state))
                 (compiler-driver-state-adopt-pools!
-                  (owned_view.compiler-owned-shared-view state)
+                  state
                   (compiler-driver-state-new-checked-lower-pools)))
               (set!
                 result-pools
@@ -5120,7 +5114,7 @@
       (compiler_parse_core.compiler-parse-state-cfgs parser-state cfgs)]
     (match (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
       (owned_view.compiler-owned-shared-view state.load-session)
-      (owned_view.compiler-owned-shared-view input-path)
+      input-path
       (owned_view.compiler-owned-shared-view stdlib-roots)
       parse-cfgs
       pools
@@ -5187,16 +5181,14 @@
           ;; Parsing initialized builtin IDs for this state's active intern
           ;; table. Preserve that snapshot instead of reinstalling the stale
           ;; pre-parse builtin state; only lowerer arenas need restoration here.
-          (compiler-driver-state-capture-active-builtins!
-            (owned_view.compiler-owned-shared-view state))
+          (compiler-driver-state-capture-active-builtins! state)
           (compiler-driver-state-install-lower-arenas!
             (owned_view.compiler-owned-shared-view state))
           (compiler-driver-state-install-pools!
             (owned_view.compiler-owned-shared-view state))
           (let
             [_capture-source-names : unit
-              (compiler-driver-state-capture-active-interns!
-                (owned_view.compiler-owned-shared-view state))]
+              (compiler-driver-state-capture-active-interns! state)]
             [source-names : ci.InternSourceNameSessionHandle
               (compiler-driver-state-entry-source-name-session
                 (owned_view.compiler-owned-shared-view state))]
@@ -5390,7 +5382,7 @@
       (compiler_parse_core.compiler-parse-state-cfgs parser-state cfgs)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
       (owned_view.compiler-owned-shared-view state.load-session)
-      (owned_view.compiler-owned-shared-view input-path)
+      input-path
       (owned_view.compiler-owned-shared-view stdlib-roots)
       parse-cfgs
       pools)
@@ -5440,16 +5432,14 @@
             (compiler-driver-profile-start-phase
               (compiler-driver-state-profile
                 (owned_view.compiler-owned-shared-view state))))
-          (compiler-driver-state-capture-active-builtins!
-            (owned_view.compiler-owned-shared-view state))
+          (compiler-driver-state-capture-active-builtins! state)
           (compiler-driver-state-install-lower-arenas!
             (owned_view.compiler-owned-shared-view state))
           (compiler-driver-state-install-pools!
             (owned_view.compiler-owned-shared-view state))
           (let
             [_capture-source-names : unit
-              (compiler-driver-state-capture-active-interns!
-                (owned_view.compiler-owned-shared-view state))]
+              (compiler-driver-state-capture-active-interns! state)]
             [intern-state : ci.InternCompatState
               (compiler-driver-state-owned-interns
                 (owned_view.compiler-owned-shared-view state))]
@@ -5881,8 +5871,7 @@
             (compiler-driver-retire-frontend-arena!)
             (compiler-driver-state-release-file-state!
               (owned_view.compiler-owned-shared-view state))
-            (compiler-driver-state-prefix-cache-clear!
-              (owned_view.compiler-owned-shared-view state))
+            (compiler-driver-state-prefix-cache-clear! state)
             (compiler_backend.compiler-backend-state-release-final-arenas!
               (compiler-driver-state-backend
                 (owned_view.compiler-owned-shared-view state)))
@@ -5937,10 +5926,9 @@
     [state : CompilerDriverState scope.state]
     (begin
       (compiler-driver-state-adopt-pools!
-        (owned_view.compiler-owned-shared-view state)
+        state
         (compiler_ast_types.ast-node-pool-context-capture-active))
-      (compiler-driver-state-capture-active-interns!
-        (owned_view.compiler-owned-shared-view state))
+      (compiler-driver-state-capture-active-interns! state)
       (compiler-driver-state-capture-active-builtins! state))))
 
 (define (compiler-driver-package-runtime-load

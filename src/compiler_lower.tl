@@ -6682,7 +6682,7 @@
       (lower-logical-symbol-id-direct? logical-id source-id))))
 
 (define (lower-decl-function-symbol-id
-  [names : LowerNameCache]
+  [names : (& names LowerNameCache)]
   [logical-id : i64]
   [source-id : i64]
   [logical-name : String]) : i64
@@ -12887,7 +12887,7 @@
                 [augmented-decls : ast.AstDeclList
                   (clone_support.clone-decl-list-append
                     source-decls
-                    (lower-global-shared-view handoff-decls))]
+                    handoff-decls)]
                 (ResultLowerCloneAugment.Ok
                   (ast.ast-program augmented-decls)
                   handoff-decls
@@ -22972,21 +22972,20 @@
 (define (lower-pattern-list-refutable-for-types?
   [ctx : tc_core.TcContext]
   [patterns : (& patterns ast.AstPatternList)]
-  [types : ast.AstTypeList]) : bool
+  [types : (& types ast.AstTypeList)]) : bool
   (lower-pattern-list-refutable-for-types-at? ctx (& patterns) 0 types))
 
 (define (lower-pattern-list-refutable-for-types-at?
   [ctx : tc_core.TcContext]
   [patterns : (& patterns ast.AstPatternList)]
   [index : i64]
-  [types : ast.AstTypeList]) : bool
+  [types : (& types ast.AstTypeList)]) : bool
   (if (>= index (ast.ast-pattern-list-len patterns))
-    (not (ast.ast-type-list-empty? (& types)))
-    (if (ast.ast-type-list-empty? (& types))
+    (not (ast.ast-type-list-empty? types))
+    (if (ast.ast-type-list-empty? types)
       true
       (let
-        [ty-id : i64
-          (ast.ast-type-list-get (& types) 0 (ast.ast-type-id-fallback))]
+        [ty-id : i64 (ast.ast-type-list-get types 0 (ast.ast-type-id-fallback))]
         [rest-types : ast.AstTypeList (ast.ast-type-list-slice types 1)]
         [ty : ast.AstType (tc_core.tc-context-type-get ctx ty-id)]
         (if (lower-pattern-refutable-for-type?
@@ -67828,10 +67827,7 @@
         ;; The final arm has no next-arm continuation, so a refutable
         ;; payload subpattern here would have nowhere to fall through to;
         ;; require a trailing catch-all instead.
-        (if (lower-pattern-list-refutable-for-types?
-          ctx
-          args
-          (lower-global-shared-view resolved-fields))
+        (if (lower-pattern-list-refutable-for-types? ctx args resolved-fields)
           (ResultLowerExpr.Err
             (box
               (lower-diagnostic
@@ -70210,14 +70206,15 @@
       (CompilerLowerArenaState scratch ir))))
 
 (define (compiler-lower-arena-state-scratch-arena
-  [state : CompilerLowerArenaState]) : i64
+  [state : (& state CompilerLowerArenaState)]) : i64
   (array-ref state.scratch-arena 0))
 
-(define (compiler-lower-arena-state-ir-arena [state : CompilerLowerArenaState]) : i64
+(define (compiler-lower-arena-state-ir-arena
+  [state : (& state CompilerLowerArenaState)]) : i64
   (array-ref state.ir-arena 0))
 
 (define (compiler-lower-arena-state-set!
-  [state : CompilerLowerArenaState]
+  [state : (& state CompilerLowerArenaState)]
   [scratch : i64]
   [ir : i64]) : unit
   (begin
@@ -70230,10 +70227,7 @@
 
 (define (compiler-lower-arena-state-install! [state : CompilerLowerArenaState]) : unit
   (begin
-    (set!
-      lower-scratch-arena
-      (compiler-lower-arena-state-scratch-arena
-        (lower-global-shared-view state)))
+    (set! lower-scratch-arena (compiler-lower-arena-state-scratch-arena state))
     (set! lower-ir-arena (compiler-lower-arena-state-ir-arena state))))
 
 ;; State-owned release: destroy the arenas named by the state's own cells and
@@ -70246,11 +70240,9 @@
 ;; (post-emission session-floor capture), so a stored head never trails the
 ;; installed selector by the time a release runs.
 (define (compiler-lower-arena-state-release-scratch!
-  [state : CompilerLowerArenaState]) : unit
+  [state : (& state CompilerLowerArenaState)]) : unit
   (let
-    [scratch : i64
-      (compiler-lower-arena-state-scratch-arena
-        (lower-global-shared-view state))]
+    [scratch : i64 (compiler-lower-arena-state-scratch-arena state)]
     (if (= scratch 0)
       unit
       (begin
@@ -70262,10 +70254,9 @@
           (arena.tl_arena_destroy scratch))))))
 
 (define (compiler-lower-arena-state-release-ir!
-  [state : CompilerLowerArenaState]) : unit
+  [state : (& state CompilerLowerArenaState)]) : unit
   (let
-    [ir : i64
-      (compiler-lower-arena-state-ir-arena (lower-global-shared-view state))]
+    [ir : i64 (compiler-lower-arena-state-ir-arena state)]
     (if (= ir 0)
       unit
       (begin
@@ -70278,8 +70269,7 @@
 
 (define (compiler-lower-arena-state-release! [state : CompilerLowerArenaState]) : unit
   (begin
-    (compiler-lower-arena-state-release-scratch!
-      (lower-global-shared-view state))
+    (compiler-lower-arena-state-release-scratch! state)
     (compiler-lower-arena-state-release-ir! state)))
 
 (define (lower-function-seq-escape-to-ir-arena
@@ -72752,7 +72742,7 @@
                           name))]
                     [function-symbol : i64
                       (lower-decl-function-symbol-id
-                        (lower-global-shared-view decl-name-cache)
+                        decl-name-cache
                         logical-id
                         name
                         (lower-global-shared-view logical-name))]

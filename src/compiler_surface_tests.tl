@@ -1232,8 +1232,7 @@
                                             hydrated-test-span)
                                           50)
                                         (ast.ast-test-metadata-slow?
-                                          (owned_view.compiler-owned-shared-view
-                                            hydrated-metadata))
+                                          hydrated-metadata)
                                         (match (ast.ast-test-metadata-ignore-reason
                                           hydrated-metadata)
                                           [(ast.AstTestIgnoreReason.Some reason)

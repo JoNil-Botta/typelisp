@@ -1728,8 +1728,7 @@
             (owned_view.compiler-owned-shared-view second))
             (match (cst.fmt-cst-list-step after-second)
               [(cst.FormatCstListStep.Item typ body)
-                (if (cst.fmt-cst-list-empty?
-                  (owned_view.compiler-owned-shared-view body))
+                (if (cst.fmt-cst-list-empty? body)
                   (format-rules-layout-first-or-line-form
                     "define"
                     rest
@@ -1772,8 +1771,7 @@
                     (owned_view.compiler-owned-shared-view colon))
                     (match (cst.fmt-cst-list-step after-colon)
                       [(cst.FormatCstListStep.Item typ body)
-                        (if (cst.fmt-cst-list-empty?
-                          (owned_view.compiler-owned-shared-view body))
+                        (if (cst.fmt-cst-list-empty? body)
                           (format-rules-layout-first-or-line-form
                             "define"
                             rest
@@ -1879,8 +1877,7 @@
             (owned_view.compiler-owned-shared-view colon))
             (match (cst.fmt-cst-list-step after-colon)
               [(cst.FormatCstListStep.Item typ body)
-                (if (cst.fmt-cst-list-empty?
-                  (owned_view.compiler-owned-shared-view body))
+                (if (cst.fmt-cst-list-empty? body)
                   (format-rules-layout-first-or-line-form
                     "defmacro"
                     rest
@@ -1965,8 +1962,7 @@
             (owned_view.compiler-owned-shared-view colon))
             (match (cst.fmt-cst-list-step after-colon)
               [(cst.FormatCstListStep.Item typ body)
-                (if (cst.fmt-cst-list-empty?
-                  (owned_view.compiler-owned-shared-view body))
+                (if (cst.fmt-cst-list-empty? body)
                   (format-rules-layout-first-or-line-form
                     "lambda"
                     rest

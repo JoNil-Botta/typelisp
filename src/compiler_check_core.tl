@@ -316,7 +316,7 @@
             ast.AstMaybeModuleName.No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-program-with-paths-and-roots-expect-cfg
-            (owned_view.compiler-owned-shared-view path)
+            path
             program
             prelude-seen
             (owned_view.compiler-owned-shared-view stdlib-roots)
@@ -411,7 +411,7 @@
             ast.AstMaybeModuleName.No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-package-program-with-paths-and-roots-expect
-            (owned_view.compiler-owned-shared-view path)
+            path
             program
             prelude-seen
             (owned_view.compiler-owned-shared-view stdlib-roots)

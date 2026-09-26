@@ -132,7 +132,7 @@
 (define (doc-newline? [c : char]) : bool
   (or (= c '\n') (= c '\r')))
 
-(define (doc-first-nonspace [src : String] [start : i64] [end : i64]) : i64
+(define (doc-first-nonspace [src : (& src str)] [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
     [keep : bool true]
@@ -205,7 +205,7 @@
           (set! keep false)))
       i)))
 
-(define (doc-scan-form-end [src : String] [start : i64] [n : i64]) : i64
+(define (doc-scan-form-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
     [i : i64 start]
     [depth : i64 0]
@@ -420,11 +420,7 @@
       (while (< i n)
         (let
           [line-end : i64 (source_text.line-end src i)]
-          [line-start : i64
-            (doc-first-nonspace
-              (owned_view.compiler-owned-shared-view src)
-              i
-              line-end)]
+          [line-start : i64 (doc-first-nonspace src i line-end)]
           (if (= line-start line-end)
             (set! i (source_text.next-line-start src line-end))
             (let
@@ -472,11 +468,7 @@
                           (set! i (source_text.next-line-start src line-end)))))))
                 (if (= c '(')
                   (let
-                    [form-end : i64
-                      (doc-scan-form-end
-                        (owned_view.compiler-owned-shared-view src)
-                        line-start
-                        n)]
+                    [form-end : i64 (doc-scan-form-end src line-start n)]
                     [signature : String
                       (string.substring src line-start (- form-end line-start))]
                     (begin

@@ -8971,7 +8971,7 @@
           0)))))
 
 ;; Length of the one trailing clone suffix `text` carries, or 0.
-(define (compiler-source-spans-bounds-clone-suffix-len [text : String]) : i64
+(define (compiler-source-spans-bounds-clone-suffix-len [text : (& text str)]) : i64
   (let
     [fast : String "__bce_fast"]
     [fast-len : i64 (compiler-source-spans-label-suffix-len text fast)]
@@ -9000,9 +9000,7 @@
         (CompilerMaybeSourceLocation.No)
         (let
           [text : String (compiler-ir-label-text ok-label)]
-          [drop : i64
-            (compiler-source-spans-bounds-clone-suffix-len
-              (compiler-ir-global-shared-view text))]
+          [drop : i64 (compiler-source-spans-bounds-clone-suffix-len text)]
           (if (= drop 0)
             (CompilerMaybeSourceLocation.No)
             (let

@@ -1045,15 +1045,13 @@
     (ptr-read (int->ptr (cast handle.generation-address : u64) : (Ptr i64)))))
 
 (define (compiler-load-dependency-catalog-owner-arena
-  [state : CompilerLoadSessionState]) : i64
+  [state : (& state CompilerLoadSessionState)]) : i64
   (array-ref state.dependency-catalog.owner-arena 0))
 
 (define (compiler-load-dependency-catalog-owner-arena-ensure!
   [state : CompilerLoadSessionState]) : i64
   (let
-    [owner : i64
-      (compiler-load-dependency-catalog-owner-arena
-        (owned_view.compiler-owned-shared-view state))]
+    [owner : i64 (compiler-load-dependency-catalog-owner-arena state)]
     (if (> owner 0)
       owner
       (let
@@ -1677,7 +1675,7 @@
       out)))
 
 (define (compiler-load-dependency-surface-copy-spmd-callables
-  [source : tlci.TlciSpmdCallables]) : tlci.TlciSpmdCallables
+  [source : (& source tlci.TlciSpmdCallables)]) : tlci.TlciSpmdCallables
   (let
     [count : i64 (tlci.tlci-spmd-callables-len source)]
     [out : tlci.TlciSpmdCallables
@@ -5213,7 +5211,9 @@
 (define (compiler-load-canonical-module-id-from-path [path : (& path str)]) : String
   (compiler-load-module-id-from-path-text path))
 
-(define (compiler-load-root-relative-path [root : String] [path : String]) : String
+(define (compiler-load-root-relative-path
+  [root : (& root str)]
+  [path : (& path str)]) : String
   (let
     [normalized-path : String (compiler-load-normalize-path path)]
     [prefix : String (compiler-load-root-prefix root)]
@@ -10535,7 +10535,7 @@
       result)))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg
-  [path : String]
+  [path : (& path str)]
   [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
@@ -10878,7 +10878,7 @@
   [records-end : i64]) : unit
   (begin
     (parser.compiler-parse-decl-origin-copy-direct-records!
-      (ast.ast-place-shared-view source)
+      source
       (& dest)
       0
       records-start
@@ -11510,7 +11510,7 @@
 
 (define (compiler-load-file-with-paths-and-roots-cfg-with-pools
   [load-state : CompilerLoadSessionState]
-  [path : String]
+  [path : (& path str)]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
@@ -11568,7 +11568,7 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
   [load-state : CompilerLoadSessionState]
-  [path : String]
+  [path : (& path str)]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [expected-module : ast.AstMaybeModuleName]
@@ -11992,7 +11992,7 @@
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
   [load-state : CompilerLoadSessionState]
-  [path : String]
+  [path : (& path str)]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
@@ -13910,7 +13910,7 @@
         loaded))))
 
 (define (compiler-load-package-program-with-paths-and-roots-expect
-  [path : String]
+  [path : (& path str)]
   [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
@@ -20749,10 +20749,7 @@
         (and
           (array-ref checks 0)
           release-ok
-          (=
-            (compiler-load-dependency-catalog-owner-arena
-              (compiler-load-global-shared-view state))
-            0)
+          (= (compiler-load-dependency-catalog-owner-arena state) 0)
           (= (array-ref state.dependency-catalog.entries 0).len 0))))))
 
 (define (compiler-load-self-test) : i64

@@ -590,7 +590,7 @@
       (let
         [source-path : String (repl-path-join temp-dir "repl_expr.tl")]
         (match (build_run_core.source-tool-write-file
-          (owned_view.compiler-owned-shared-view source-path)
+          source-path
           source
           "repl: failed to write scratch source")
           [(build_run_core.SourceToolCommandStatus.Err message)

@@ -1181,36 +1181,31 @@
       found)))
 
 (define (doc-expand-fence-line-start
-  [text : String]
+  [text : (& text str)]
   [line-start : i64]
   [line-end : i64]) : i64
   (let
-    [first : i64
-      (doc_extract.doc-first-nonspace
-        (owned_view.compiler-owned-shared-view text)
-        line-start
-        line-end)]
+    [first : i64 (doc_extract.doc-first-nonspace text line-start line-end)]
     (if (string.is-string-prefix-at text "```" first)
       first
       line-end)))
 
 (define (doc-expand-ignored-fence-line?
-  [text : String]
+  [text : (& text str)]
   [line-start : i64]
   [line-end : i64]) : bool
   (let
-    [fence : i64
-      (doc-expand-fence-line-start
-        (owned_view.compiler-owned-shared-view text)
-        line-start
-        line-end)]
+    [fence : i64 (doc-expand-fence-line-start text line-start line-end)]
     (if (< fence line-end)
       (string.contains
         (string.substring text fence (- line-end fence))
         "test=ignore")
       false)))
 
-(define (doc-expand-next-ignored-fence [text : String] [cursor : i64] [n : i64]) : i64
+(define (doc-expand-next-ignored-fence
+  [text : (& text str)]
+  [cursor : i64]
+  [n : i64]) : i64
   (let
     [pos : i64 cursor]
     [found : i64 n]
@@ -1219,16 +1214,13 @@
         (let
           [line-end : i64 (source_text.line-end text pos)]
           (begin
-            (if (doc-expand-ignored-fence-line?
-              (owned_view.compiler-owned-shared-view text)
-              pos
-              line-end)
+            (if (doc-expand-ignored-fence-line? text pos line-end)
               (set! found pos)
               unit)
             (set! pos (source_text.next-line-start text line-end)))))
       found)))
 
-(define (doc-expand-skip-fence [text : String] [cursor : i64] [n : i64]) : i64
+(define (doc-expand-skip-fence [text : (& text str)] [cursor : i64] [n : i64]) : i64
   (let
     [open-end : i64 (source_text.line-end text cursor)]
     [pos : i64 (source_text.next-line-start text open-end)]
@@ -1237,19 +1229,14 @@
       (while (and (< pos n) (not done))
         (let
           [line-end : i64 (source_text.line-end text pos)]
-          (if (<
-            (doc-expand-fence-line-start
-              (owned_view.compiler-owned-shared-view text)
-              pos
-              line-end)
-            line-end)
+          (if (< (doc-expand-fence-line-start text pos line-end) line-end)
             (begin
               (set! pos (source_text.next-line-start text line-end))
               (set! done true))
             (set! pos (source_text.next-line-start text line-end)))))
       pos)))
 
-(define (doc-import-forms-from-doc-text [doc-text : String]) : DocImportFormScan
+(define (doc-import-forms-from-doc-text [doc-text : (& doc-text str)]) : DocImportFormScan
   (let
     [cursor : i64 0]
     [n : i64 (string.string-length doc-text)]
@@ -1259,25 +1246,13 @@
       (while (< cursor n)
         (let
           [ignored-fence : i64
-            (doc-expand-next-ignored-fence
-              (owned_view.compiler-owned-shared-view doc-text)
-              cursor
-              n)]
+            (doc-expand-next-ignored-fence doc-text cursor n)]
           [start : i64 (doc-expand-find-prefix doc-text "(import " cursor)]
           (if (< ignored-fence start)
-            (set!
-              cursor
-              (doc-expand-skip-fence
-                (owned_view.compiler-owned-shared-view doc-text)
-                ignored-fence
-                n))
+            (set! cursor (doc-expand-skip-fence doc-text ignored-fence n))
             (if (< start n)
               (let
-                [end : i64
-                  (doc_extract.doc-scan-form-end
-                    (owned_view.compiler-owned-shared-view doc-text)
-                    start
-                    n)]
+                [end : i64 (doc_extract.doc-scan-form-end doc-text start n)]
                 [form : String (string.substring doc-text start (- end start))]
                 (begin
                   (doc-import-form-list-push-unique! (&mut forms) form)

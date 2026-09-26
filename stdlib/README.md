@@ -728,6 +728,24 @@ Vec bang place macros as available yet.
   `core_macros.tl` so importing it does not shadow core guard/boolean macro
   forms. Import it with `(import stdlib.str_cat)` and call `str_cat.str-cat`;
   imported definitions are not added to the caller's unqualified namespace.
+- `string_utf8.tl`: checked, allocation-free UTF-8 scalar decoding and validation
+  over borrowed `str`. `decode-at text offset` returns `Scalar UnicodeScalar
+  next-byte-offset`, `End` at exactly the input length, or `Error DecodeError`.
+  `UnicodeScalar.value` is a `u32`; decoder results exclude surrogates and values
+  above U+10FFFF. Direct aggregate construction does not validate that invariant.
+  `validate text` returns `Valid` or the first `Invalid DecodeError` using the
+  same decoder. Error records contain `kind`, `sequence-start`, and
+  `failure-offset`, all offsets measured in bytes in the original input.
+  `InvalidOffset` preserves a negative or past-end caller offset in both fields;
+  `InvalidLead` (C0/C1, F5..FF) and `UnexpectedContinuation` use the current byte
+  for both. `Truncated` uses input length as its failure offset, while
+  `InvalidContinuation` uses the offending byte. `Overlong` (E0/F0), `Surrogate`
+  (ED), and `OutOfRange` (F4) point at the second byte. Bytes are checked in
+  order, so a conclusive earlier error wins over later truncation. There is no
+  replacement, normalization, locale dependence, or implicit validation of
+  existing byte-string APIs. NUL, noncharacters, and unassigned scalars are
+  accepted. Import it with `(import stdlib.string_utf8)`; consumers #7107,
+  #7222, #7261, #7269, and #6967 own their higher-level policies and APIs.
 - `string_caller_result.tl`: lifetime-preserving string replacement
   caller-result surface. It exposes `string-replace-result`, which selects
   between no-match borrowed results and replacement-owned results. Import it

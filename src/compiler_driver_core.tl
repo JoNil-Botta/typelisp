@@ -2895,17 +2895,18 @@
         compile-profile
         (compiler-driver-profile-start-phase
           (owned_view.compiler-owned-shared-view profile-state)))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
-        pools
+      (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
-        opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
-        (compiler-driver-representation-index-for-backend
+        (compiler_optimize.OptimizeRequest
           pools
-          program
-          backend-state)
-        (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
+          opt-level
+          (owned_view.compiler-owned-shared-view profile-state)
+          true
+          (compiler-driver-representation-index-for-backend
+            pools
+            program
+            backend-state)))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -3000,17 +3001,18 @@
         compile-profile
         (compiler-driver-profile-start-phase
           (owned_view.compiler-owned-shared-view profile-state)))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
-        pools
+      (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
-        opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
-        (compiler-driver-representation-index-for-backend
+        (compiler_optimize.OptimizeRequest
           pools
-          program
-          backend-state)
-        (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
+          opt-level
+          (owned_view.compiler-owned-shared-view profile-state)
+          true
+          (compiler-driver-representation-index-for-backend
+            pools
+            program
+            backend-state)))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -3118,17 +3120,18 @@
         compile-profile
         (compiler-driver-profile-start-phase
           (owned_view.compiler-owned-shared-view profile-state)))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
-        pools
+      (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
-        opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
-        (compiler-driver-representation-index-for-backend
+        (compiler_optimize.OptimizeRequest
           pools
-          program
-          backend-state)
-        (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
+          opt-level
+          (owned_view.compiler-owned-shared-view profile-state)
+          true
+          (compiler-driver-representation-index-for-backend
+            pools
+            program
+            backend-state)))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -3283,17 +3286,18 @@
         compile-profile
         (compiler-driver-profile-start-phase
           (owned_view.compiler-owned-shared-view profile-state)))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
-        pools
+      (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
-        opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
-        (compiler-driver-representation-index-for-backend
+        (compiler_optimize.OptimizeRequest
           pools
-          program
-          backend-state)
-        (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
+          opt-level
+          (owned_view.compiler-owned-shared-view profile-state)
+          true
+          (compiler-driver-representation-index-for-backend
+            pools
+            program
+            backend-state)))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -3496,17 +3500,18 @@
         compile-profile
         (compiler-driver-profile-start-phase
           (owned_view.compiler-owned-shared-view profile-state)))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
-        pools
+      (match (compiler_optimize.optimize-program
         (owned_view.compiler-owned-shared-view program)
         spans
-        opt-level
-        (owned_view.compiler-owned-shared-view profile-state)
-        (compiler-driver-representation-index-for-backend
+        (compiler_optimize.OptimizeRequest
           pools
-          program
-          backend-state)
-        (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
+          opt-level
+          (owned_view.compiler-owned-shared-view profile-state)
+          true
+          (compiler-driver-representation-index-for-backend
+            pools
+            program
+            backend-state)))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -6419,13 +6424,15 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-advisory-sink
-        pools
+      (match (compiler_optimize.optimize-program
         program
         spans
-        opt-level
-        profile-state
-        (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
+        (compiler_optimize.OptimizeRequest
+          pools
+          opt-level
+          profile-state
+          false
+          (compiler_ir_types.compiler-ir-representation-index-empty)))
         [(compiler_optimize.CompilerOptimizedProgram.Program optimized _)
           (begin
             (compiler-driver-release-lowered-ir! opt-level)
@@ -6570,13 +6577,15 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-advisory-sink
-        pools
+      (match (compiler_optimize.optimize-program
         program
         spans
-        opt-level
-        profile-state
-        (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
+        (compiler_optimize.OptimizeRequest
+          pools
+          opt-level
+          profile-state
+          false
+          (compiler_ir_types.compiler-ir-representation-index-empty)))
         [(compiler_optimize.CompilerOptimizedProgram.Program optimized _)
           (begin
             (compiler-driver-release-lowered-ir! opt-level)

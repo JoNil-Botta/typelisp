@@ -411,13 +411,15 @@
       (cfg
         compile-profile
         (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-advisory-sink
-        pools
+      (match (compiler_optimize.optimize-program
         program
         spans
-        opt-level
-        profile-state
-        (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
+        (compiler_optimize.OptimizeRequest
+          (owned_view.compiler-owned-shared-view pools)
+          opt-level
+          profile-state
+          false
+          (compiler_ir_types.compiler-ir-representation-index-empty)))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)

@@ -4549,168 +4549,60 @@
       (compiler-typecheck-error-ok?
         "(define (main [s : (&mut text str)]) : unit unit)"
         (tc_core.tc-source-str-mut-ref-policy-message))]
-    [ok : bool true]
-    (begin
-      (if render-ok
-        unit
-        (set! ok false))
-      (if local-ok
-        unit
-        (set! ok false))
-      (if param-ok
-        unit
-        (set! ok false))
-      (if projection-ok
-        unit
-        (set! ok false))
-      (if str-ok
-        unit
-        (set! ok false))
-      (if str-auto-borrow-ok
-        unit
-        (set! ok false))
-      (if str-region-ok
-        unit
-        (set! ok false))
-      (if temp-error-ok
-        unit
-        (set! ok false))
-      (if mismatch-error-ok
-        unit
-        (set! ok false))
-      (if return-ok
-        unit
-        (set! ok false))
-      (if return-param-ref-ok
-        unit
-        (set! ok false))
-      (if return-untied-error-ok
-        unit
-        (set! ok false))
-      (if return-local-escape-error-ok
-        unit
-        (set! ok false))
-      (if struct-field-ok
-        unit
-        (set! ok false))
-      (if enum-payload-ok
-        unit
-        (set! ok false))
-      (if lifetime-struct-return-ok
-        unit
-        (set! ok false))
-      (if lifetime-struct-field-ok
-        unit
-        (set! ok false))
-      (if lifetime-enum-match-ok
-        unit
-        (set! ok false))
-      (if borrowed-enum-match-scalar-ok
-        unit
-        (set! ok false))
-      (if borrowed-enum-match-str-ok
-        unit
-        (set! ok false))
-      (if borrowed-enum-match-array-ok
-        unit
-        (set! ok false))
-      (if borrowed-enum-match-ref-struct-array-ok
-        unit
-        (set! ok false))
-      (if borrowed-enum-match-nested-ok
-        unit
-        (set! ok false))
-      (if borrowed-enum-match-temp-error-ok
-        unit
-        (set! ok false))
-      (if borrowed-enum-match-escape-error-ok
-        unit
-        (set! ok false))
-      (if returned-borrowed-lookup-assign-error-ok
-        unit
-        (set! ok false))
-      (if returned-borrowed-lookup-array-set-error-ok
-        unit
-        (set! ok false))
-      (if regular-call-lifetime-subst-ok
-        unit
-        (set! ok false))
-      (if lifetime-iterator-mut-borrow-ok
-        unit
-        (set! ok false))
-      (if regular-call-lifetime-conflict-error-ok
-        unit
-        (set! ok false))
-      (if lifetime-duplicate-error-ok
-        unit
-        (set! ok false))
-      (if lifetime-missing-args-error-ok
-        unit
-        (set! ok false))
-      (if lifetime-arity-error-ok
-        unit
-        (set! ok false))
-      (if lifetime-unknown-decl-error-ok
-        unit
-        (set! ok false))
-      (if lifetime-untied-return-error-ok
-        unit
-        (set! ok false))
-      (if lifetime-local-escape-error-ok
-        unit
-        (set! ok false))
-      (if array-stored-ok
-        unit
-        (set! ok false))
-      (if tuple-borrow-ok
-        unit
-        (set! ok false))
-      (if struct-return-error-ok
-        unit
-        (set! ok false))
-      (if struct-local-escape-error-ok
-        unit
-        (set! ok false))
-      (if lambda-return-ok
-        unit
-        (set! ok false))
-      (if mut-ref-ok
-        unit
-        (set! ok false))
-      (if mut-borrow-ok
-        unit
-        (set! ok false))
-      (if mut-array-set-ok
-        unit
-        (set! ok false))
-      (if mut-array-push-ok
-        unit
-        (set! ok false))
-      (if immut-array-set-error-ok
-        unit
-        (set! ok false))
-      (if str-value-error-ok
-        unit
-        (set! ok false))
-      (if str-return-error-ok
-        unit
-        (set! ok false))
-      (if str-local-error-ok
-        unit
-        (set! ok false))
-      (if str-global-error-ok
-        unit
-        (set! ok false))
-      (if str-field-error-ok
-        unit
-        (set! ok false))
-      (if str-variant-error-ok
-        unit
-        (set! ok false))
-      (if str-mut-ref-error-ok
-        unit
-        (set! ok false))
-      ok)))
+    (and
+      render-ok
+      local-ok
+      param-ok
+      projection-ok
+      str-ok
+      str-auto-borrow-ok
+      str-region-ok
+      temp-error-ok
+      mismatch-error-ok
+      return-ok
+      return-param-ref-ok
+      return-untied-error-ok
+      return-local-escape-error-ok
+      struct-field-ok
+      enum-payload-ok
+      lifetime-struct-return-ok
+      lifetime-struct-field-ok
+      lifetime-enum-match-ok
+      borrowed-enum-match-scalar-ok
+      borrowed-enum-match-str-ok
+      borrowed-enum-match-array-ok
+      borrowed-enum-match-ref-struct-array-ok
+      borrowed-enum-match-nested-ok
+      borrowed-enum-match-temp-error-ok
+      borrowed-enum-match-escape-error-ok
+      returned-borrowed-lookup-assign-error-ok
+      returned-borrowed-lookup-array-set-error-ok
+      regular-call-lifetime-subst-ok
+      lifetime-iterator-mut-borrow-ok
+      regular-call-lifetime-conflict-error-ok
+      lifetime-duplicate-error-ok
+      lifetime-missing-args-error-ok
+      lifetime-arity-error-ok
+      lifetime-unknown-decl-error-ok
+      lifetime-untied-return-error-ok
+      lifetime-local-escape-error-ok
+      array-stored-ok
+      tuple-borrow-ok
+      struct-return-error-ok
+      struct-local-escape-error-ok
+      lambda-return-ok
+      mut-ref-ok
+      mut-borrow-ok
+      mut-array-set-ok
+      mut-array-push-ok
+      immut-array-set-error-ok
+      str-value-error-ok
+      str-return-error-ok
+      str-local-error-ok
+      str-global-error-ok
+      str-field-error-ok
+      str-variant-error-ok
+      str-mut-ref-error-ok)))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 ;; the diagnostic must locate it there (not at the 1:1 fallback), proving the

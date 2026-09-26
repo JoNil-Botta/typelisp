@@ -55920,8 +55920,14 @@
           [(ResultTcExprId.Err _) false])
         (tc-cleanup-owner-active-id? env name))]
     [_
+      ;; A projection root may itself be a dotted field such as `holder.items`;
+      ;; resolve it like a direct place so the owning root's state applies.
       (match (tc-move-root-projection-var-id (tc-context-expr-bases ctx) array)
-        [(TcMaybeNameId.Some root-id) (tc-cleanup-owner-active-id? env root-id)]
+        [(TcMaybeNameId.Some root-id)
+          (tc-fixed-array-take-active-cleanup-owner-place?
+            ctx
+            env
+            (ast.AstExpr.Var root-id))]
         [(TcMaybeNameId.No) false])]))
 
 (define (tc-fixed-array-take-type

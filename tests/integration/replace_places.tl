@@ -18,6 +18,17 @@
   (left (Box i64))
   (right (Box i64)))
 
+(defstruct Grid
+  (items (Array i64 2))
+  (pair (Tuple i64 i64)))
+
+(define (cleanup-items [_items : (Array i64 1)]) : unit
+  unit)
+
+(defstruct CleanupHolder
+  (:cleanup cleanup-holder)
+  (items (Array i64 1) (:cleanup cleanup-items)))
+
 (define evaluation-trace : i64
   0)
 (define global-counter : i64
@@ -47,6 +58,17 @@
 
 (define (pair-score [value : Pair]) : i64
   (+ value.left value.right))
+
+;; Only an active cleanup owner's own places are protected: a projection
+;; through an ordinary local's field stays replaceable inside that scope.
+(define (replace-beside-owner) : i64
+  (let
+    [grid : Grid (Grid (array 1 2) (tuple 3 4))]
+    [old : i64
+      (with
+        ([_holder (CleanupHolder (array 7)) cleanup-holder])
+        (replace! (array-ref grid.items 0) 9))]
+    (+ (* old 100) (array-ref grid.items 0))))
 
 (define (main) : i64
   (let
@@ -87,6 +109,9 @@
     [disjoint : OwnedPair (OwnedPair (box 25) (box 26))]
     [old-disjoint-right : (Box i64) (replace! disjoint.right disjoint.left)]
     [old-global : i64 (replace! global-counter 41)]
+    [grid : Grid (Grid (array 50 51) (tuple 52 53))]
+    [old-grid-item : i64 (replace! (array-ref grid.items 1) 54)]
+    [old-grid-slot : i64 (replace! (tuple-ref grid.pair 0) 55)]
     (begin
       (test.assert-i64-eq compile-score 49 "comptime replace")
       (test.assert-i64-eq old-scalar 4 "scalar old")
@@ -123,4 +148,19 @@
       (test.assert-i64-eq (deref disjoint.right) 25 "disjoint move replacement")
       (test.assert-i64-eq old-global 40 "Copy global old")
       (test.assert-i64-eq global-counter 41 "Copy global replacement")
+      (test.assert-i64-eq old-grid-item 51 "field element old")
+      (test.assert-i64-eq
+        (array-ref grid.items 1)
+        54
+        "field element replacement")
+      (test.assert-i64-eq (array-ref grid.items 0) 50 "field element sibling")
+      (test.assert-i64-eq old-grid-slot 52 "field tuple slot old")
+      (test.assert-i64-eq
+        (tuple-ref grid.pair 0)
+        55
+        "field tuple slot replacement")
+      (test.assert-i64-eq
+        (replace-beside-owner)
+        109
+        "replace beside active owner")
       42)))

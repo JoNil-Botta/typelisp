@@ -700,15 +700,98 @@
       raw-arena-allowlisted
       (lint_core.lint-findings-empty))))
 
+;; `(import m.item)` parses like the dotted module path `m.item`; the loader
+;; tells them apart by resolving it. Selected items are rewritten to the
+;; loader's classification, so the unused-import rule counts their bare uses.
+;; An import the loader cannot resolve keeps its parsed form.
+(defenum SelfhostLintMaybeImport
+  (No)
+  (Some ast.AstDecl))
+
+(define (selfhost-lint-selected-item-import
+  [importer-path : String]
+  [import-root : String]
+  [stdlib-roots : lint_svec.Vec]
+  [decl : ast.AstDecl]) : SelfhostLintMaybeImport
+  (match decl
+    [(ast.AstDecl.Import
+        decl-meta
+        (ast.AstImportSpec.Spec
+          (ast.AstImportKind.Module)
+          import-path
+          expected
+          alias
+          span))
+      (match (compiler_load.compiler-load-resolve-import-spec-with-roots-classified
+        importer-path
+        import-root
+        (ast.AstImportKind.Module)
+        (owned_view.compiler-owned-shared-view import-path)
+        expected
+        alias
+        stdlib-roots)
+        [(compiler_load.ResultCompilerLoadResolvedImport.Ok resolved)
+          (match resolved.kind
+            [(ast.AstImportKind.ModuleItem _)
+              (SelfhostLintMaybeImport.Some
+                (ast.AstDecl.Import
+                  decl-meta
+                  (ast.AstImportSpec.Spec
+                    resolved.kind
+                    import-path
+                    resolved.expected-module
+                    resolved.alias
+                    span)))]
+            [_ SelfhostLintMaybeImport.No])]
+        [(compiler_load.ResultCompilerLoadResolvedImport.Err _)
+          SelfhostLintMaybeImport.No])]
+    [_ SelfhostLintMaybeImport.No]))
+
+(define (selfhost-lint-program-with-selected-items
+  [path : (& path str)]
+  [stdlib-roots : lint_svec.Vec]
+  [program : ast.AstProgram]) : ast.AstProgram
+  (match (owned_view.compiler-owned-shared-view program)
+    [(ast.AstProgram.Program decls-box)
+      (let
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [importer-path : String (string.copy path)]
+        [import-root : String (compiler_load.compiler-load-dirname path)]
+        [n : i64 (ast.ast-decl-list-len (& decls))]
+        [out : ast.AstDeclList (ast.ast-decl-list-with-capacity n)]
+        [rewritten : bool false]
+        [index : i64 0]
+        (begin
+          (while (< index n)
+            (let
+              [decl : ast.AstDecl (ast.ast-decl-list-ref (& decls) index)]
+              (begin
+                (match (selfhost-lint-selected-item-import
+                  (owned_view.compiler-owned-shared-view importer-path)
+                  (owned_view.compiler-owned-shared-view import-root)
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (owned_view.compiler-owned-shared-view decl))
+                  [(SelfhostLintMaybeImport.Some item-import)
+                    (begin
+                      (ast.ast-decl-list-push (&mut out) item-import)
+                      (set! rewritten true))]
+                  [(SelfhostLintMaybeImport.No)
+                    (ast.ast-decl-list-push (&mut out) decl)])
+                (set! index (+ index 1)))))
+          (if rewritten
+            (ast.ast-program out)
+            program)))]))
+
 (define (selfhost-lint-program-findings-with-all-options
   [path : (& path str)]
   [source : String]
-  [program : ast.AstProgram]
+  [parsed : ast.AstProgram]
+  [stdlib-roots : lint_svec.Vec]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : lint_core.LintFindings
-  (match program
+  (match (selfhost-lint-program-with-selected-items path stdlib-roots parsed)
     [(ast.AstProgram.Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
@@ -1345,6 +1428,7 @@
           path
           (owned_view.compiler-owned-shared-view source)
           program
+          (owned_view.compiler-owned-shared-view stdlib-roots)
           deprecated-string-concat
           redundant-function-name
           prefer-dotted-field
@@ -1414,6 +1498,7 @@
                   path
                   (owned_view.compiler-owned-shared-view source)
                   (owned_view.compiler-owned-shared-view program)
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
                   deprecated-string-concat
                   redundant-function-name
                   prefer-dotted-field

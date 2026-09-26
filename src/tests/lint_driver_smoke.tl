@@ -1775,6 +1775,8 @@
       [core-result : i64 (driver_tests.compiler-lint-driver-self-test)]
       [unused-import-result : i64
         (driver_tests.selfhost-lint-unused-imports-self-test)]
+      [import-forms-result : i64
+        (driver_tests.selfhost-lint-import-forms-self-test)]
       [bare-import-result : i64
         (lint-driver-smoke-bare-self-named-import-macro-unused-test)]
       [redundant-import-result : i64
@@ -1806,6 +1808,7 @@
       (cond
         [(not (= core-result 42)) core-result]
         [(not (= unused-import-result 42)) unused-import-result]
+        [(not (= import-forms-result 42)) import-forms-result]
         [(not (= bare-import-result 42)) bare-import-result]
         [(not (= redundant-import-result 42)) redundant-import-result]
         [(not (= redundant-name-result 42)) redundant-name-result]

@@ -154,9 +154,7 @@
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
-          (reg.compiler-reg-fill-i64-array
-            (reg.compiler-reg-global-shared-view counts)
-            0)
+          (reg.compiler-reg-fill-i64-array (&mut counts) 0)
           (reg.compiler-reg-ref-counts-blocks!
             (reg.compiler-reg-global-shared-view counts)
             blocks)
@@ -177,15 +175,9 @@
         [allow-invariant-loads : bool
           (reg.compiler-reg-remat-invariant-loads-ok? func)]
         (begin
-          (reg.compiler-reg-fill-i64-array
-            (reg.compiler-reg-global-shared-view counts)
-            0)
-          (reg.compiler-reg-fill-i64-array
-            (reg.compiler-reg-global-shared-view def-status)
-            0)
-          (reg.compiler-reg-fill-i64-array
-            (reg.compiler-reg-global-shared-view rebates)
-            0)
+          (reg.compiler-reg-fill-i64-array (&mut counts) 0)
+          (reg.compiler-reg-fill-i64-array (&mut def-status) 0)
+          (reg.compiler-reg-fill-i64-array (&mut rebates) 0)
           (reg.compiler-reg-ref-counts-blocks-weighted-remat!
             (&mut counts)
             (&mut def-status)
@@ -968,10 +960,13 @@
       [(ir.CompilerIrFunction.Function self-name _ _ _ blocks _)
         (let
           [arms : reg.CompilerRegCallHoleWeights
-            (reg.compiler-reg-call-hole-cold-arm-weights
-              (ast.ast-node-pool-reader-type-segment-bases)
-              self-name
-              (live.compiler-live-ir-block-list-to-seq blocks))]
+            (let
+              [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+              [seq (live.compiler-live-ir-block-list-to-seq blocks)]
+              (reg.compiler-reg-call-hole-cold-arm-weights
+                type-segment-bases
+                self-name
+                seq))]
           [weights : (__tl_dyn-array i64) arms.weights]
           [cold : (__tl_dyn-array bool) arms.cold]
           (and
@@ -1063,10 +1058,13 @@
       [(ir.CompilerIrFunction.Function self-name _ _ _ blocks _)
         (let
           [arms : reg.CompilerRegCallHoleWeights
-            (reg.compiler-reg-call-hole-cold-arm-weights
-              (ast.ast-node-pool-reader-type-segment-bases)
-              self-name
-              (live.compiler-live-ir-block-list-to-seq blocks))]
+            (let
+              [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+              [seq (live.compiler-live-ir-block-list-to-seq blocks)]
+              (reg.compiler-reg-call-hole-cold-arm-weights
+                type-segment-bases
+                self-name
+                seq))]
           (and
             (= (array-length arms.weights) 4)
             ;; `slow` is the loop, so `fast` keeps its full depth-0 weight
@@ -1174,10 +1172,13 @@
       [(ir.CompilerIrFunction.Function self-name _ _ _ blocks _)
         (let
           [arms : reg.CompilerRegCallHoleWeights
-            (reg.compiler-reg-call-hole-cold-arm-weights
-              (ast.ast-node-pool-reader-type-segment-bases)
-              self-name
-              (live.compiler-live-ir-block-list-to-seq blocks))]
+            (let
+              [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+              [seq (live.compiler-live-ir-block-list-to-seq blocks)]
+              (reg.compiler-reg-call-hole-cold-arm-weights
+                type-segment-bases
+                self-name
+                seq))]
           [vars : i64 2]
           [flags : (__tl_dyn-array bool) (__tl_make-array bool vars)]
           [csr : (__tl_dyn-array bool) (__tl_make-array bool vars)]
@@ -1480,9 +1481,7 @@
               (reg.compiler-reg-global-shared-view func))]
           [index : i64 0]
           (begin
-            (reg.compiler-reg-fill-i64-array
-              (reg.compiler-reg-global-shared-view carrier)
-              (- 0 1))
+            (reg.compiler-reg-fill-i64-array (&mut carrier) (- 0 1))
             (while (< index selected-count)
               (begin
                 (set!
@@ -1500,7 +1499,7 @@
                 selected-count
                 (reg.compiler-reg-call-hole-flow-build
                   (ast.ast-node-pool-reader-type-segment-bases)
-                  (reg.compiler-reg-global-shared-view seq)
+                  seq
                   liveness
                   selected
                   selected-count)
@@ -1957,7 +1956,7 @@
           [empty : reg.CompilerRegCallHoleFlow
             (reg.compiler-reg-call-hole-flow-build
               (ast.ast-node-pool-reader-type-segment-bases)
-              (reg.compiler-reg-global-shared-view seq)
+              seq
               (live.compiler-live-analyze-function-edge-precise
                 (reg.compiler-reg-global-shared-view func))
               selected
@@ -2702,10 +2701,13 @@
   (define (compiler-reg-call-hole-recursive-arm-weights [callee : i64]) : reg.CompilerRegCallHoleWeights
     (match (compiler-reg-call-hole-cold-arms-function 1 callee)
       [(ir.CompilerIrFunction.Function self-name _ _ _ blocks _)
-        (reg.compiler-reg-call-hole-cold-arm-weights
-          (ast.ast-node-pool-reader-type-segment-bases)
-          self-name
-          (live.compiler-live-ir-block-list-to-seq blocks))])))
+        (let
+          [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+          [seq (live.compiler-live-ir-block-list-to-seq blocks)]
+          (reg.compiler-reg-call-hole-cold-arm-weights
+            type-segment-bases
+            self-name
+            seq))])))
 
 (cfg
   test
@@ -3059,8 +3061,7 @@
             (live.compiler-live-ir-block-list-to-seq blocks)]
           [count : i64 (ir.compiler-ir-block-seq-count seq)]
           [nest : reg.CompilerRegLoopNest
-            (reg.compiler-reg-loop-nest-build-seq
-              (ir.compiler-ir-global-shared-view seq))]
+            (reg.compiler-reg-loop-nest-build-seq seq)]
           [header : i64
             (compiler-reg-loop-park-block-index
               (ir.compiler-ir-global-shared-view seq)
@@ -3074,10 +3075,7 @@
               (ir.compiler-ir-global-shared-view seq)
               "preheader")]
           [total : i64
-            (reg.compiler-reg-loop-nest-header-members!
-              (reg.compiler-reg-global-shared-view nest)
-              header
-              1)]
+            (reg.compiler-reg-loop-nest-header-members! nest header 1)]
           [depths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
           [weights : (__tl_dyn-array i64) (__tl_make-array i64 count)]
           [stamp : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -3105,12 +3103,7 @@
             (and
               ;; the loop is {header, body, latch}, entered only at the header
               (= total 2)
-              (=
-                (reg.compiler-reg-loop-nest-outside-pred
-                  (reg.compiler-reg-global-shared-view nest)
-                  header
-                  1)
-                pre)
+              (= (reg.compiler-reg-loop-nest-outside-pred nest header 1) pre)
               (reg.compiler-reg-loop-park-dedicated-preheader?
                 seq
                 pre
@@ -3224,11 +3217,9 @@
           (match (reg.compiler-reg-global-shared-view splice-func)
             [(ir.CompilerIrFunction.Function _ _ _ _ blocks _) blocks]))]
       [direct-nest : reg.CompilerRegLoopNest
-        (reg.compiler-reg-loop-nest-build-seq
-          (ir.compiler-ir-global-shared-view direct-seq))]
+        (reg.compiler-reg-loop-nest-build-seq direct-seq)]
       [splice-nest : reg.CompilerRegLoopNest
-        (reg.compiler-reg-loop-nest-build-seq
-          (ir.compiler-ir-global-shared-view splice-seq))]
+        (reg.compiler-reg-loop-nest-build-seq splice-seq)]
       [direct-live : live.CompilerFunctionLiveness
         (live.compiler-live-analyze-function-edge-precise direct-func)]
       [splice-live : live.CompilerFunctionLiveness
@@ -3264,10 +3255,7 @@
           (ir.compiler-ir-global-shared-view splice-seq)
           "ret_blk")]
       [direct-total : i64
-        (reg.compiler-reg-loop-nest-header-members!
-          (reg.compiler-reg-global-shared-view direct-nest)
-          dh
-          1)]
+        (reg.compiler-reg-loop-nest-header-members! direct-nest dh 1)]
       [direct-count : i64
         (reg.compiler-reg-loop-park-collect-sites!
           direct-seq
@@ -3285,10 +3273,7 @@
       [direct-kind : i64 (array-ref kind 0)]
       [direct-to : i64 (array-ref to 0)]
       [splice-total : i64
-        (reg.compiler-reg-loop-nest-header-members!
-          (reg.compiler-reg-global-shared-view splice-nest)
-          sh
-          1)]
+        (reg.compiler-reg-loop-nest-header-members! splice-nest sh 1)]
       [splice-count : i64
         (reg.compiler-reg-loop-park-collect-sites!
           splice-seq
@@ -3481,8 +3466,7 @@
           [pk : reg.CompilerRegLoopParkPlan
             (reg.compiler-reg-loop-park-plan-make count vars)]
           (begin
-            (reg.compiler-reg-loop-park-plan-reset!
-              (reg.compiler-reg-global-shared-view pk))
+            (reg.compiler-reg-loop-park-plan-reset! pk)
             (set! (array-ref pk.park-var 0) 1)
             (set! (array-ref pk.park-carrier 0) vars)
             (set! (array-ref pk.park-loop 0) 0)
@@ -3566,8 +3550,7 @@
           [pk : reg.CompilerRegLoopParkPlan
             (reg.compiler-reg-loop-park-plan-make count vars)]
           (begin
-            (reg.compiler-reg-loop-park-plan-reset!
-              (reg.compiler-reg-global-shared-view pk))
+            (reg.compiler-reg-loop-park-plan-reset! pk)
             (set! (array-ref pk.park-var 0) 1)
             (set! (array-ref pk.park-carrier 0) vars)
             (set! (array-ref pk.park-loop 0) 0)
@@ -3677,8 +3660,7 @@
           (reg.compiler-reg-split-plan-empty))]
       [dropped : (__tl_dyn-array bool) (__tl_make-array bool 8)]
       (begin
-        (reg.compiler-reg-loop-park-plan-reset!
-          (reg.compiler-reg-global-shared-view pk))
+        (reg.compiler-reg-loop-park-plan-reset! pk)
         ;; loop 0 targets var 2, which the replan registerised; loop 1 targets
         ;; var 4, which it did not
         (set! (array-ref pk.resident-mask 2) 1)
@@ -9376,9 +9358,7 @@
           3
           (reg.compiler-reg-call-region-kind-loop))]
       (begin
-        (reg.compiler-reg-fill-i64-array
-          (reg.compiler-reg-global-shared-view ends)
-          1073741824)
+        (reg.compiler-reg-fill-i64-array (&mut ends) 1073741824)
         (and
           ;; one use, one entry mov: no static win, so the block row is refused
           (not (reg.compiler-reg-call-region-stat-eligible? one-use-block ends))
@@ -9571,12 +9551,8 @@
       [starts : (__tl_dyn-array i64) (__tl_make-array i64 7)]
       [ends : (__tl_dyn-array i64) (__tl_make-array i64 7)]
       (begin
-        (reg.compiler-reg-fill-i64-array
-          (reg.compiler-reg-global-shared-view starts)
-          (- 0 1))
-        (reg.compiler-reg-fill-i64-array
-          (reg.compiler-reg-global-shared-view ends)
-          (- 0 1))
+        (reg.compiler-reg-fill-i64-array (&mut starts) (- 0 1))
+        (reg.compiler-reg-fill-i64-array (&mut ends) (- 0 1))
         (set! (array-ref starts 3) 2)
         (set! (array-ref ends 3) victim-end)
         (set! (array-ref starts 5) 12)
@@ -9989,8 +9965,7 @@
             (live.compiler-live-ir-block-list-to-seq blocks)]
           [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
           [points : (__tl_dyn-array i64)
-            (reg.compiler-reg-loop-phi-mb-block-points
-              (reg.compiler-reg-global-shared-view bslots))]
+            (reg.compiler-reg-loop-phi-mb-block-points bslots)]
           [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
           [class-parents : (__tl_dyn-array i64)
             (compiler-reg-evict-test-parents)]
@@ -10047,7 +10022,7 @@
           [split : reg.CompilerRegCallSplit
             (begin
               (reg.compiler-reg-fill-i64-array
-                (reg.compiler-reg-global-shared-view shadow-regs)
+                (&mut shadow-regs)
                 cabi.compiler-reg-id-invalid)
               (set! (array-ref shadow-regs 0) cabi.compiler-reg-id-r12)
               (reg.CompilerRegCallSplit
@@ -12049,14 +12024,14 @@
       [shadow-regs : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       (begin
         (reg.compiler-reg-fill-i64-array
-          (reg.compiler-reg-global-shared-view shadow-regs)
+          (&mut shadow-regs)
           cabi.compiler-reg-id-invalid)
         (set! (array-ref members 0) 0)
         ;; Greedy worklist keys, not bare weights: the pair pass reads them
         ;; through compiler-reg-group-pair-weight, which strips the priority band
         ;; (compiler-reg-priority-keys!). Weights 1 and 10 on that scale.
         (reg.compiler-reg-fill-i64-array
-          (reg.compiler-reg-global-shared-view weights)
+          (&mut weights)
           (reg.compiler-reg-priority-band-span))
         (set!
           (array-ref weights 0)
@@ -12143,7 +12118,7 @@
           [pair-conflicts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [pair-conflict-count : i64
             (reg.compiler-reg-group-pair-conflict-vars!
-              (reg.compiler-reg-global-shared-view interval-index)
+              interval-index
               members
               1
               vars
@@ -13728,12 +13703,8 @@
     [registers : (__tl_dyn-array i64)
       (compiler-reg-test-register-array (cabi.CompilerRegTargetAbi.Linux))]
     (begin
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view starts)
-        -1)
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view ends)
-        -1)
+      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
       (reg.compiler-reg-fill-interval-seq-array! (&mut segments) 0)
       ;; 0: resident [0,4)   1: touch at 4   2: overlaps   3: point-0 touch
       ;; 4: two segments past the resident  5: no segments (coarse [4,8))
@@ -13773,7 +13744,7 @@
               ;; touch at 4 is half-open, so [4,8) may share the register
               (reg.compiler-reg-greedy-reg-free?
                 (reg.compiler-reg-global-shared-view occupancy)
-                (reg.compiler-reg-global-shared-view index)
+                index
                 ref-counts
                 1
                 0)
@@ -13781,7 +13752,7 @@
               (not
                 (reg.compiler-reg-greedy-reg-free?
                   (reg.compiler-reg-global-shared-view occupancy)
-                  (reg.compiler-reg-global-shared-view index)
+                  index
                   ref-counts
                   2
                   0))
@@ -13789,21 +13760,21 @@
               (not
                 (reg.compiler-reg-greedy-reg-free?
                   (reg.compiler-reg-global-shared-view occupancy)
-                  (reg.compiler-reg-global-shared-view index)
+                  index
                   ref-counts
                   3
                   0))
               ;; both of var 4's segments clear [0,4)
               (reg.compiler-reg-greedy-reg-free?
                 (reg.compiler-reg-global-shared-view occupancy)
-                (reg.compiler-reg-global-shared-view index)
+                index
                 ref-counts
                 4
                 0)
               ;; var 5 has no segments: coarse [4,8) vs [0,4) via the fallback
               (reg.compiler-reg-greedy-reg-free?
                 (reg.compiler-reg-global-shared-view occupancy)
-                (reg.compiler-reg-global-shared-view index)
+                index
                 ref-counts
                 5
                 0)))
@@ -13813,13 +13784,13 @@
             (and
               (reg.compiler-reg-greedy-reg-free?
                 (reg.compiler-reg-global-shared-view occupancy)
-                (reg.compiler-reg-global-shared-view index)
+                index
                 ref-counts
                 2
                 0)
               (reg.compiler-reg-greedy-reg-free?
                 (reg.compiler-reg-global-shared-view occupancy)
-                (reg.compiler-reg-global-shared-view index)
+                index
                 ref-counts
                 3
                 0)))
@@ -13829,7 +13800,7 @@
             (and
               (reg.compiler-reg-greedy-reg-free?
                 (reg.compiler-reg-global-shared-view occupancy)
-                (reg.compiler-reg-global-shared-view index)
+                index
                 ref-counts
                 1
                 0)
@@ -13837,7 +13808,7 @@
               (not
                 (reg.compiler-reg-greedy-reg-free?
                   (reg.compiler-reg-global-shared-view occupancy)
-                  (reg.compiler-reg-global-shared-view index)
+                  index
                   ref-counts
                   6
                   0))))
@@ -13850,7 +13821,7 @@
               ;; coarse [0,4) clears var 5's coarse [4,8) ...
               (reg.compiler-reg-greedy-reg-free?
                 (reg.compiler-reg-global-shared-view occupancy)
-                (reg.compiler-reg-global-shared-view index)
+                index
                 ref-counts
                 0
                 0)
@@ -13932,30 +13903,37 @@
           1
           1
           scratch-weights))
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view hints)
-        -1)
-      (match (reg.compiler-reg-greedy-state
-        intervals
-        (reg.compiler-reg-id-seq-prepend
-          cabi.compiler-reg-id-r12
-          (reg.compiler-reg-id-seq-empty))
-        assignments
-        index
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (__tl_make-array reg.CompilerRegIdSeq 0)
-        (reg.compiler-reg-global-shared-view weights)
-        (reg.compiler-reg-global-shared-view hints)
-        hints
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (reg.compiler-reg-id-seq-prepend
-          cabi.compiler-reg-id-r12
-          (reg.compiler-reg-id-seq-empty))
-        0
-        1)
+      (reg.compiler-reg-fill-i64-array (&mut hints) -1)
+      (match (let
+        [regs
+          (reg.compiler-reg-id-seq-prepend
+            cabi.compiler-reg-id-r12
+            (reg.compiler-reg-id-seq-empty))]
+        [group-vars (live.compiler-live-set-empty)]
+        [param-roots (live.compiler-live-set-empty)]
+        [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
+        [call-points (live.compiler-live-set-empty)]
+        [div-points (live.compiler-live-set-empty)]
+        [shift-points (live.compiler-live-set-empty)]
+        (reg.compiler-reg-greedy-state
+          intervals
+          regs
+          assignments
+          index
+          group-vars
+          param-roots
+          param-entry-forbidden
+          (reg.compiler-reg-global-shared-view weights)
+          hints
+          (reg.compiler-reg-global-shared-view hints)
+          call-points
+          div-points
+          shift-points
+          (reg.compiler-reg-id-seq-prepend
+            cabi.compiler-reg-id-r12
+            (reg.compiler-reg-id-seq-empty))
+          0
+          1))
         [(reg.CompilerRegAssignState.State _ out)
           (and
             (= (array-ref weights 0) 3)
@@ -14004,9 +13982,7 @@
       ;; the eviction gate strips the band with compiler-reg-priority-key-weight.
       (set! (array-ref weights 0) (reg.compiler-reg-priority-band-span))
       (set! (array-ref weights 1) (* 2 (reg.compiler-reg-priority-band-span)))
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view hints)
-        -1)
+      (reg.compiler-reg-fill-i64-array (&mut hints) -1)
       ;; %r10 is free but is the instruction operand home. The scratch pseudo
       ;; must instead evict the colder, CSR-only real value from %r12; when that
       ;; value is requeued it has no legal register and receives a real spill.
@@ -14015,30 +13991,40 @@
         (reg.compiler-reg-id-seq-prepend
           cabi.compiler-reg-id-r10
           (reg.compiler-reg-id-seq-empty)))
-      (match (reg.compiler-reg-greedy-state-with-scratch-exclusions
-        intervals
-        (reg.compiler-reg-id-seq-prepend
-          cabi.compiler-reg-id-r10
+      (match (let
+        [regs
+          (reg.compiler-reg-id-seq-prepend
+            cabi.compiler-reg-id-r10
+            (reg.compiler-reg-id-seq-prepend
+              cabi.compiler-reg-id-r12
+              (reg.compiler-reg-id-seq-empty)))]
+        [group-vars (live.compiler-live-set-empty)]
+        [param-roots
+          (live.compiler-live-set-insert (live.compiler-live-set-empty) 0)]
+        [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
+        [call-points (live.compiler-live-set-empty)]
+        [div-points (live.compiler-live-set-empty)]
+        [shift-points (live.compiler-live-set-empty)]
+        (reg.compiler-reg-greedy-state-with-scratch-exclusions
+          intervals
+          regs
+          assignments
+          index
+          group-vars
+          param-roots
+          param-entry-forbidden
+          weights
+          hints
+          (reg.compiler-reg-global-shared-view hints)
+          call-points
+          div-points
+          shift-points
           (reg.compiler-reg-id-seq-prepend
             cabi.compiler-reg-id-r12
-            (reg.compiler-reg-id-seq-empty)))
-        assignments
-        index
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-insert (live.compiler-live-set-empty) 0)
-        (__tl_make-array reg.CompilerRegIdSeq 0)
-        weights
-        (reg.compiler-reg-global-shared-view hints)
-        hints
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (reg.compiler-reg-id-seq-prepend
-          cabi.compiler-reg-id-r12
-          (reg.compiler-reg-id-seq-empty))
-        1
-        1
-        excluded)
+            (reg.compiler-reg-id-seq-empty))
+          1
+          1
+          excluded))
         [(reg.CompilerRegAssignState.State _ out)
           (and
             (compiler-reg-location-spill-offset?
@@ -15201,9 +15187,7 @@
     [clobber-eligible : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [clobber-moves : reg.CompilerRegMoveSeq
       (begin
-        (reg.compiler-reg-fill-i64-array
-          (reg.compiler-reg-global-shared-view clobber-eligible)
-          1)
+        (reg.compiler-reg-fill-i64-array (&mut clobber-eligible) 1)
         (set! (array-ref clobber-eligible 1) 0)
         (reg.compiler-reg-function-moves-with-destructive-and-casts-eligible
           (ir.compiler-ir-global-shared-view straight)
@@ -15437,9 +15421,7 @@
     [flags : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [index : i64 0]
     (begin
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view hints)
-        -1)
+      (reg.compiler-reg-fill-i64-array (&mut hints) -1)
       (while (< index 8)
         (begin
           (set! (array-ref parents index) index)
@@ -17156,12 +17138,8 @@
         (reg.compiler-reg-global-shared-view ends)
         (reg.compiler-reg-global-shared-view segments))]
     (begin
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view starts)
-        -1)
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view ends)
-        -1)
+      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
       (set! (array-ref starts 0) 0)
       (set! (array-ref ends 0) 8)
       (set! (array-ref starts 1) 0)
@@ -17189,18 +17167,9 @@
           (reg.compiler-reg-interval-seq-empty)))
       (and
         (not
-          (reg.compiler-reg-vars-interfere-segmented-index?
-            (reg.compiler-reg-global-shared-view segment-index)
-            1
-            3))
-        (reg.compiler-reg-vars-interfere-segmented-index?
-          (reg.compiler-reg-global-shared-view segment-index)
-          1
-          4)
-        (reg.compiler-reg-vars-interfere-segmented-index?
-          (reg.compiler-reg-global-shared-view segment-index)
-          0
-          3)
+          (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 3))
+        (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 4)
+        (reg.compiler-reg-vars-interfere-segmented-index? segment-index 0 3)
         (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 2)))))
 
 (define (compiler-reg-hole-aware-register-reuse-ok?) : bool
@@ -17229,12 +17198,8 @@
     [hole-aware : live.CompilerLiveI64Set (live.compiler-live-set3 0 2 3)]
     [parents : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     (begin
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view starts)
-        -1)
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view ends)
-        -1)
+      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
       (set! (array-ref starts 0) 0)
       (set! (array-ref ends 0) 10)
       (set! (array-ref starts 1) 4)
@@ -17392,12 +17357,8 @@
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
       (__tl_make-array reg.CompilerRegIntervalSeq 2)]
     (begin
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view starts)
-        -1)
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view ends)
-        -1)
+      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
       (set! (array-ref starts 0) 0)
       (set! (array-ref ends 0) 10)
       (set! (array-ref starts 1) 0)
@@ -17587,12 +17548,8 @@
       (__tl_make-array reg.CompilerRegIntervalSeq 3)]
     [parents : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     (begin
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view starts)
-        -1)
-      (reg.compiler-reg-fill-i64-array
-        (reg.compiler-reg-global-shared-view ends)
-        -1)
+      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
       (set! (array-ref segments 0) (reg.compiler-reg-interval-seq-empty))
       (set! (array-ref segments 1) (reg.compiler-reg-interval-seq-empty))
       (set! (array-ref segments 2) (reg.compiler-reg-interval-seq-empty))
@@ -18518,29 +18475,43 @@
         (live.compiler-live-set-insert (live.compiler-live-set-empty) 5)
         (live.compiler-live-set-empty))]
     [state : reg.CompilerRegAssignState
-      (reg.compiler-reg-greedy-state
-        (clone intervals)
-        (if vector
-          (reg.compiler-reg-vector-registers-for-abi target-abi)
-          (reg.compiler-reg-xmm-registers-for-abi target-abi))
-        (reg.compiler-reg-assignment-table-make 1)
-        (reg.compiler-reg-interval-index-build intervals 1)
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (__tl_make-array reg.CompilerRegIdSeq 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        call-points
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (if vector
-          (reg.compiler-reg-vector-callee-registers-for-abi target-abi)
-          (reg.compiler-reg-xmm-callee-registers-for-abi target-abi))
-        (if vector
-          (reg.compiler-reg-vector-caller-register-count-for-abi target-abi)
-          (reg.compiler-reg-xmm-caller-register-count-for-abi target-abi))
-        -1)]
+      (let
+        [candidates (clone intervals)]
+        [regs
+          (if vector
+            (reg.compiler-reg-vector-registers-for-abi target-abi)
+            (reg.compiler-reg-xmm-registers-for-abi target-abi))]
+        [assignments (reg.compiler-reg-assignment-table-make 1)]
+        [interval-index (reg.compiler-reg-interval-index-build intervals 1)]
+        [group-vars (live.compiler-live-set-empty)]
+        [param-roots (live.compiler-live-set-empty)]
+        [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
+        [ref-counts (__tl_make-array i64 0)]
+        [copy-hints (__tl_make-array i64 0)]
+        [arg-prefs (__tl_make-array i64 0)]
+        [div-points (live.compiler-live-set-empty)]
+        [shift-points (live.compiler-live-set-empty)]
+        (reg.compiler-reg-greedy-state
+          candidates
+          regs
+          assignments
+          interval-index
+          group-vars
+          param-roots
+          param-entry-forbidden
+          ref-counts
+          copy-hints
+          arg-prefs
+          call-points
+          div-points
+          shift-points
+          (if vector
+            (reg.compiler-reg-vector-callee-registers-for-abi target-abi)
+            (reg.compiler-reg-xmm-callee-registers-for-abi target-abi))
+          (if vector
+            (reg.compiler-reg-vector-caller-register-count-for-abi target-abi)
+            (reg.compiler-reg-xmm-caller-register-count-for-abi target-abi))
+          -1))]
     (match state
       [(reg.CompilerRegAssignState.State _ assignments) assignments])))
 
@@ -18607,45 +18578,71 @@
     [interval-index : reg.CompilerRegIntervalIndex
       (reg.compiler-reg-interval-index-build all-intervals 2)]
     [scalar-state : reg.CompilerRegAssignState
-      (reg.compiler-reg-greedy-state
-        scalar-candidates
-        (reg.compiler-reg-id-seq-prepend
-          (cabi.compiler-abi-xmm-register-id 6)
-          (reg.compiler-reg-id-seq-empty))
-        (reg.compiler-reg-assignment-table-make 2)
-        (clone interval-index)
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (__tl_make-array reg.CompilerRegIdSeq 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (live.compiler-live-set-empty)
-        (reg.compiler-reg-id-seq-empty)
-        1
-        -1)]
+      (let
+        [regs
+          (reg.compiler-reg-id-seq-prepend
+            (cabi.compiler-abi-xmm-register-id 6)
+            (reg.compiler-reg-id-seq-empty))]
+        [assignments (reg.compiler-reg-assignment-table-make 2)]
+        [interval-index-2 (clone interval-index)]
+        [group-vars (live.compiler-live-set-empty)]
+        [param-roots (live.compiler-live-set-empty)]
+        [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
+        [ref-counts (__tl_make-array i64 0)]
+        [copy-hints (__tl_make-array i64 0)]
+        [arg-prefs (__tl_make-array i64 0)]
+        [call-points (live.compiler-live-set-empty)]
+        [div-points (live.compiler-live-set-empty)]
+        [shift-points (live.compiler-live-set-empty)]
+        (reg.compiler-reg-greedy-state
+          scalar-candidates
+          regs
+          assignments
+          interval-index-2
+          group-vars
+          param-roots
+          param-entry-forbidden
+          ref-counts
+          copy-hints
+          arg-prefs
+          call-points
+          div-points
+          shift-points
+          (reg.compiler-reg-id-seq-empty)
+          1
+          -1))]
     (match scalar-state
       [(reg.CompilerRegAssignState.State _ scalar-assignments)
-        (match (reg.compiler-reg-greedy-state
-          vector-candidates
-          (reg.compiler-reg-vector-registers-for-abi
-            cabi.CompilerRegTargetAbi.Linux)
-          scalar-assignments
-          interval-index
-          (live.compiler-live-set-empty)
-          (live.compiler-live-set-empty)
-          (__tl_make-array reg.CompilerRegIdSeq 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (live.compiler-live-set-empty)
-          (live.compiler-live-set-empty)
-          (live.compiler-live-set-empty)
-          (reg.compiler-reg-id-seq-empty)
-          14
-          -1)
+        (match (let
+          [regs
+            (reg.compiler-reg-vector-registers-for-abi
+              cabi.CompilerRegTargetAbi.Linux)]
+          [group-vars (live.compiler-live-set-empty)]
+          [param-roots (live.compiler-live-set-empty)]
+          [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
+          [ref-counts (__tl_make-array i64 0)]
+          [copy-hints (__tl_make-array i64 0)]
+          [arg-prefs (__tl_make-array i64 0)]
+          [call-points (live.compiler-live-set-empty)]
+          [div-points (live.compiler-live-set-empty)]
+          [shift-points (live.compiler-live-set-empty)]
+          (reg.compiler-reg-greedy-state
+            vector-candidates
+            regs
+            scalar-assignments
+            interval-index
+            group-vars
+            param-roots
+            param-entry-forbidden
+            ref-counts
+            copy-hints
+            arg-prefs
+            call-points
+            div-points
+            shift-points
+            (reg.compiler-reg-id-seq-empty)
+            14
+            -1))
           [(reg.CompilerRegAssignState.State _ assignments)
             (let
               [items : reg.CompilerRegAssignmentTable assignments]
@@ -18674,24 +18671,36 @@
       (reg.compiler-reg-unassign-special-candidates!
         assignments
         (reg.compiler-reg-global-shared-view candidates))]
-    (match (reg.compiler-reg-greedy-state
-      candidates
-      (reg.compiler-reg-vector-registers-for-abi
-        cabi.CompilerRegTargetAbi.Linux)
-      assignments
-      index
-      (live.compiler-live-set-empty)
-      (live.compiler-live-set-empty)
-      (__tl_make-array reg.CompilerRegIdSeq 0)
-      (__tl_make-array i64 0)
-      (__tl_make-array i64 0)
-      (__tl_make-array i64 0)
-      (live.compiler-live-set-empty)
-      (live.compiler-live-set-empty)
-      (live.compiler-live-set-empty)
-      (reg.compiler-reg-id-seq-empty)
-      14
-      -1)
+    (match (let
+      [regs
+        (reg.compiler-reg-vector-registers-for-abi
+          cabi.CompilerRegTargetAbi.Linux)]
+      [group-vars (live.compiler-live-set-empty)]
+      [param-roots (live.compiler-live-set-empty)]
+      [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
+      [ref-counts (__tl_make-array i64 0)]
+      [copy-hints (__tl_make-array i64 0)]
+      [arg-prefs (__tl_make-array i64 0)]
+      [call-points (live.compiler-live-set-empty)]
+      [div-points (live.compiler-live-set-empty)]
+      [shift-points (live.compiler-live-set-empty)]
+      (reg.compiler-reg-greedy-state
+        candidates
+        regs
+        assignments
+        index
+        group-vars
+        param-roots
+        param-entry-forbidden
+        ref-counts
+        copy-hints
+        arg-prefs
+        call-points
+        div-points
+        shift-points
+        (reg.compiler-reg-id-seq-empty)
+        14
+        -1))
       [(reg.CompilerRegAssignState.State _ out)
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-table-lookup out 0)
@@ -20124,63 +20133,29 @@
   (let
     [nest : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build (compiler-reg-loop-nest-rotated-blocks))]
-    [total : i64
-      (reg.compiler-reg-loop-nest-header-members!
-        (reg.compiler-reg-global-shared-view nest)
-        3
-        1)]
+    [total : i64 (reg.compiler-reg-loop-nest-header-members! nest 3 1)]
     [depths : (__tl_dyn-array i64)
       (reg.compiler-reg-function-loop-depths
         (compiler-reg-loop-nest-rotated-blocks))]
     (and
-      (=
-        (reg.compiler-reg-loop-nest-header-count
-          (reg.compiler-reg-global-shared-view nest))
-        1)
+      (= (reg.compiler-reg-loop-nest-header-count nest) 1)
       (=
         (reg.compiler-reg-loop-nest-header
           (reg.compiler-reg-global-shared-view nest)
           0)
         3)
       (= total 2)
-      (reg.compiler-reg-loop-nest-member?
-        (reg.compiler-reg-global-shared-view nest)
-        1
-        1)
-      (reg.compiler-reg-loop-nest-member?
-        (reg.compiler-reg-global-shared-view nest)
-        2
-        1)
-      (reg.compiler-reg-loop-nest-member?
-        (reg.compiler-reg-global-shared-view nest)
-        3
-        1)
-      (not
-        (reg.compiler-reg-loop-nest-member?
-          (reg.compiler-reg-global-shared-view nest)
-          0
-          1))
-      (not
-        (reg.compiler-reg-loop-nest-member?
-          (reg.compiler-reg-global-shared-view nest)
-          4
-          1))
+      (reg.compiler-reg-loop-nest-member? nest 1 1)
+      (reg.compiler-reg-loop-nest-member? nest 2 1)
+      (reg.compiler-reg-loop-nest-member? nest 3 1)
+      (not (reg.compiler-reg-loop-nest-member? nest 0 1))
+      (not (reg.compiler-reg-loop-nest-member? nest 4 1))
       ;; The preheader, named without consulting the layout: `entry` is the
       ;; header's only predecessor that is not itself in the loop.
-      (=
-        (reg.compiler-reg-loop-nest-outside-pred
-          (reg.compiler-reg-global-shared-view nest)
-          3
-          1)
-        0)
+      (= (reg.compiler-reg-loop-nest-outside-pred nest 3 1) 0)
       ;; The span the members occupy is still what an instruction-point hull
       ;; has to be written in, and it does NOT start at the header.
-      (=
-        (reg.compiler-reg-loop-nest-member-lo
-          (reg.compiler-reg-global-shared-view nest)
-          3
-          total)
-        1)
+      (= (reg.compiler-reg-loop-nest-member-lo nest 3 total) 1)
       (= (reg.compiler-reg-loop-nest-member-hi nest 3 total) 3)
       ;; And the rotation costs the frequency ranking nothing either.
       (= (compiler-reg-loop-nest-depth-at depths 0) 0)
@@ -20248,11 +20223,7 @@
     [two : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build
         (compiler-reg-loop-nest-two-entry-blocks))]
-    [two-total : i64
-      (reg.compiler-reg-loop-nest-header-members!
-        (reg.compiler-reg-global-shared-view two)
-        1
-        1)]
+    [two-total : i64 (reg.compiler-reg-loop-nest-header-members! two 1 1)]
     [side : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build
         (compiler-reg-loop-nest-side-entry-blocks))]
@@ -20264,23 +20235,13 @@
         (reg.compiler-reg-global-shared-view side)
         0)]
     [side-total : i64
-      (reg.compiler-reg-loop-nest-header-members!
-        (reg.compiler-reg-global-shared-view side)
-        side-header
-        1)]
+      (reg.compiler-reg-loop-nest-header-members! side side-header 1)]
     (and
       ;; Two entries into the header: header + body + latch, and `second`
       ;; stays outside, so the header keeps two predecessors from outside.
-      (=
-        (reg.compiler-reg-loop-nest-header-count
-          (reg.compiler-reg-global-shared-view two))
-        1)
+      (= (reg.compiler-reg-loop-nest-header-count two) 1)
       (= two-total 2)
-      (not
-        (reg.compiler-reg-loop-nest-member?
-          (reg.compiler-reg-global-shared-view two)
-          4
-          1))
+      (not (reg.compiler-reg-loop-nest-member? two 4 1))
       (= (reg.compiler-reg-loop-nest-outside-pred two 1 1) (- 0 2))
       ;; An entry into the BODY instead. The walk stops only at the header, and
       ;; this header does not dominate its own latch, so it runs back past the
@@ -20290,14 +20251,8 @@
       ;; predecessor at all, so no injection dominates the set however few
       ;; edges cross into it. The guard is the entry itself being a member
       ;; under a header that is not the entry.
-      (=
-        (reg.compiler-reg-loop-nest-header-count
-          (reg.compiler-reg-global-shared-view side))
-        1)
-      (reg.compiler-reg-loop-nest-member?
-        (reg.compiler-reg-global-shared-view side)
-        0
-        1)
+      (= (reg.compiler-reg-loop-nest-header-count side) 1)
+      (reg.compiler-reg-loop-nest-member? side 0 1)
       (not (= side-header 0))
       (= (reg.compiler-reg-loop-nest-member-lo side side-header side-total) 0))))
 
@@ -20312,50 +20267,23 @@
     [nest : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build
         (compiler-reg-loop-nest-early-exit-blocks))]
-    [total : i64
-      (reg.compiler-reg-loop-nest-header-members!
-        (reg.compiler-reg-global-shared-view nest)
-        1
-        1)]
+    [total : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 1)]
     [sunk : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build
         (compiler-reg-loop-nest-sunk-cold-blocks))]
     (and
-      (=
-        (reg.compiler-reg-loop-nest-header-count
-          (reg.compiler-reg-global-shared-view nest))
-        1)
+      (= (reg.compiler-reg-loop-nest-header-count nest) 1)
       (=
         (reg.compiler-reg-loop-nest-header
           (reg.compiler-reg-global-shared-view nest)
           0)
         1)
       (= total 2)
-      (reg.compiler-reg-loop-nest-member?
-        (reg.compiler-reg-global-shared-view nest)
-        2
-        1)
-      (reg.compiler-reg-loop-nest-member?
-        (reg.compiler-reg-global-shared-view nest)
-        4
-        1)
-      (not
-        (reg.compiler-reg-loop-nest-member?
-          (reg.compiler-reg-global-shared-view nest)
-          3
-          1))
-      (=
-        (reg.compiler-reg-loop-nest-member-lo
-          (reg.compiler-reg-global-shared-view nest)
-          1
-          total)
-        1)
-      (=
-        (reg.compiler-reg-loop-nest-member-hi
-          (reg.compiler-reg-global-shared-view nest)
-          1
-          total)
-        4)
+      (reg.compiler-reg-loop-nest-member? nest 2 1)
+      (reg.compiler-reg-loop-nest-member? nest 4 1)
+      (not (reg.compiler-reg-loop-nest-member? nest 3 1))
+      (= (reg.compiler-reg-loop-nest-member-lo nest 1 total) 1)
+      (= (reg.compiler-reg-loop-nest-member-hi nest 1 total) 4)
       (= (reg.compiler-reg-loop-nest-outside-pred nest 1 1) 0)
       (= (reg.compiler-reg-loop-nest-header-count sunk) 0))))
 
@@ -20374,10 +20302,7 @@
     [index : i64 0]
     [ok : bool true]
     (begin
-      (while (<
-        index
-        (reg.compiler-reg-loop-nest-header-count
-          (reg.compiler-reg-global-shared-view nest)))
+      (while (< index (reg.compiler-reg-loop-nest-header-count nest))
         (let
           [header : i64
             (reg.compiler-reg-loop-nest-header
@@ -20385,18 +20310,12 @@
               index)]
           [generation : i64 (+ index 1)]
           [_total : i64
-            (reg.compiler-reg-loop-nest-header-members!
-              (reg.compiler-reg-global-shared-view nest)
-              header
-              generation)]
+            (reg.compiler-reg-loop-nest-header-members! nest header generation)]
           [block : i64 0]
           (begin
             (while (< block count)
               (begin
-                (if (reg.compiler-reg-loop-nest-member?
-                  (reg.compiler-reg-global-shared-view nest)
-                  block
-                  generation)
+                (if (reg.compiler-reg-loop-nest-member? nest block generation)
                   (set! (array-ref mine block) (+ (array-ref mine block) 1))
                   unit)
                 (set! block (+ block 1))))
@@ -20430,42 +20349,17 @@
   (let
     [nest : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build (compiler-reg-loop-nest-nested-blocks))]
-    [outer : i64
-      (reg.compiler-reg-loop-nest-header-members!
-        (reg.compiler-reg-global-shared-view nest)
-        1
-        1)]
-    [inner : i64
-      (reg.compiler-reg-loop-nest-header-members!
-        (reg.compiler-reg-global-shared-view nest)
-        2
-        2)]
-    [again : i64
-      (reg.compiler-reg-loop-nest-header-members!
-        (reg.compiler-reg-global-shared-view nest)
-        1
-        3)]
+    [outer : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 1)]
+    [inner : i64 (reg.compiler-reg-loop-nest-header-members! nest 2 2)]
+    [again : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 3)]
     (and
       (= outer 3)
       (= inner 1)
       (= again outer)
-      (reg.compiler-reg-loop-nest-member?
-        (reg.compiler-reg-global-shared-view nest)
-        2
-        3)
-      (reg.compiler-reg-loop-nest-member?
-        (reg.compiler-reg-global-shared-view nest)
-        3
-        3)
-      (reg.compiler-reg-loop-nest-member?
-        (reg.compiler-reg-global-shared-view nest)
-        4
-        3)
-      (not
-        (reg.compiler-reg-loop-nest-member?
-          (reg.compiler-reg-global-shared-view nest)
-          0
-          3))
+      (reg.compiler-reg-loop-nest-member? nest 2 3)
+      (reg.compiler-reg-loop-nest-member? nest 3 3)
+      (reg.compiler-reg-loop-nest-member? nest 4 3)
+      (not (reg.compiler-reg-loop-nest-member? nest 0 3))
       (not (reg.compiler-reg-loop-nest-member? nest 5 3)))))
 
 ;; --- CFG loop nest: the layout span, and the preheader spliced on it --------
@@ -20500,7 +20394,7 @@
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq blocks)]
     (reg.compiler-reg-loop-nest-spans-seq
-      (reg.compiler-reg-global-shared-view seq)
+      seq
       (ir.compiler-ir-block-seq-count seq))))
 
 (define (compiler-reg-loop-nest-spans-ok?) : bool

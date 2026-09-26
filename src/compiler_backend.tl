@@ -5684,8 +5684,8 @@
     [move : String (compiler-backend-vector-move-for-width "ymm" elem-ty)]
     [dword-move : String
       (let
-        [bound-1 (compiler_ast_types.AstType.I32)]
-        (compiler-backend-vector-move-for-width "ymm" bound-1))]
+        [elem-ty (compiler_ast_types.AstType.I32)]
+        (compiler-backend-vector-move-for-width "ymm" elem-ty))]
     [widen : String (compiler-backend-word-vector-widen-mnemonic elem-ty)]
     [shift : String (compiler-backend-word-vector-shift-mnemonic op elem-ty)]
     [tmp0 : String "%ymm0"]
@@ -5896,8 +5896,8 @@
     [move : String (compiler-backend-vector-move-for-width width elem-ty)]
     [dword-move : String
       (let
-        [bound-2 (compiler_ast_types.AstType.I32)]
-        (compiler-backend-vector-move-for-width width bound-2))]
+        [elem-ty (compiler_ast_types.AstType.I32)]
+        (compiler-backend-vector-move-for-width width elem-ty))]
     [widen : String (compiler-backend-byte-vector-widen-mnemonic elem-ty)]
     [shift : String (compiler-backend-byte-vector-shift-mnemonic op elem-ty)]
     [tmp0 : String
@@ -6953,26 +6953,26 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (let
-    [bound-3 (compiler_ast_types.AstType.I64)]
+    [elem-ty (compiler_ast_types.AstType.I64)]
     (compiler-backend-vector-register-use
       assignments
       lhs
       "lhs"
       "ymm"
-      bound-3
+      elem-ty
       (compiler-backend-vector-spill-scratch "ymm" 0)
       backend-state))
     [(ResultBackendVectorUse.Ok lhs-use)
       (match lhs-use
         [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
           (match (let
-            [bound-4 (compiler_ast_types.AstType.I64)]
+            [elem-ty (compiler_ast_types.AstType.I64)]
             (compiler-backend-vector-register-use
               assignments
               rhs
               "rhs"
               "ymm"
-              bound-4
+              elem-ty
               (compiler-backend-vector-spill-scratch "ymm" 1)
               backend-state))
             [(ResultBackendVectorUse.Ok rhs-use)
@@ -7047,26 +7047,26 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (let
-    [bound-5 (compiler_ast_types.AstType.I64)]
+    [elem-ty (compiler_ast_types.AstType.I64)]
     (compiler-backend-vector-register-use
       assignments
       lhs
       "lhs"
       "ymm"
-      bound-5
+      elem-ty
       (compiler-backend-vector-spill-scratch "ymm" 0)
       backend-state))
     [(ResultBackendVectorUse.Ok lhs-use)
       (match lhs-use
         [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
           (match (let
-            [bound-6 (compiler_ast_types.AstType.I64)]
+            [elem-ty (compiler_ast_types.AstType.I64)]
             (compiler-backend-vector-register-use
               assignments
               rhs
               "rhs"
               "ymm"
-              bound-6
+              elem-ty
               (compiler-backend-vector-spill-scratch "ymm" 1)
               backend-state))
             [(ResultBackendVectorUse.Ok rhs-use)
@@ -10195,13 +10195,13 @@
       (match (compiler-backend-global-shared-view selector-high)
         [(compiler_ir_types.CompilerIrMaybeValue.Some high-value)
           (match (let
-            [bound-7 (compiler_ast_types.AstType.I64)]
+            [elem-ty (compiler_ast_types.AstType.I64)]
             (compiler-backend-vector-register-use
               assignments
               high-value
               "shuffle selector high"
               (compiler-backend-global-shared-view width)
-              bound-7
+              elem-ty
               (compiler-backend-global-shared-view selector-scratch)
               program-index.backend-state))
             [(ResultBackendVectorUse.Ok _) ""]
@@ -10224,14 +10224,9 @@
       (compiler-backend-shuffle-label function current-label dst "_permute")]
     [call-space : i64
       (let
-        [bound-8 (compiler_ir_types.CompilerIrCallArgs.Nil)]
-        [bound-9 (compiler_ast_types.ast-type-list-new)]
-        (compiler-backend-call-arg-space
-          target
-          bound-8
-          bound-9
-          false
-          program-index))]
+        [args (compiler_ir_types.CompilerIrCallArgs.Nil)]
+        [types (compiler_ast_types.ast-type-list-new)]
+        (compiler-backend-call-arg-space target args types false program-index))]
     (if (not shape-ok)
       (compiler-backend-avx2-shape-diagnostic
         type-segment-bases
@@ -10264,13 +10259,13 @@
             (match source-use
               [(CompilerBackendVectorUse.Use source-asm source-reg)
                 (match (let
-                  [bound-10 (compiler_ast_types.AstType.I64)]
+                  [elem-ty (compiler_ast_types.AstType.I64)]
                   (compiler-backend-vector-register-use
                     assignments
                     selector-low
                     "shuffle selector low"
                     (compiler-backend-global-shared-view width)
-                    bound-10
+                    elem-ty
                     (compiler-backend-global-shared-view selector-scratch)
                     program-index.backend-state))
                   [(ResultBackendVectorUse.Ok low-use)
@@ -10296,7 +10291,7 @@
                                       [(compiler_ir_types.CompilerIrMaybeValue.Some
                                           high-value)
                                         (match (let
-                                          [bound-11
+                                          [elem-ty
                                             (compiler_ast_types.AstType.I64)]
                                           (compiler-backend-vector-register-use
                                             assignments
@@ -10304,7 +10299,7 @@
                                             "shuffle selector high"
                                             (compiler-backend-global-shared-view
                                               width)
-                                            bound-11
+                                            elem-ty
                                             selector-scratch
                                             program-index.backend-state))
                                           [(ResultBackendVectorUse.Ok high-use)
@@ -10316,11 +10311,11 @@
                                                   load-asm
                                                   "    "
                                                   (let
-                                                    [bound-12
+                                                    [elem-ty
                                                       (compiler_ast_types.AstType.I64)]
                                                     (compiler-backend-vector-move-for-width
                                                       width
-                                                      bound-12))
+                                                      elem-ty))
                                                   " "
                                                   high-reg
                                                   ", "
@@ -10399,11 +10394,11 @@
                                       low-asm
                                       "    "
                                       (let
-                                        [bound-13
+                                        [elem-ty
                                           (compiler_ast_types.AstType.I64)]
                                         (compiler-backend-vector-move-for-width
                                           width
-                                          bound-13))
+                                          elem-ty))
                                       " "
                                       low-reg
                                       ", (%rsp)\n"
@@ -10444,11 +10439,11 @@
                                       permute-label
                                       ":\n    "
                                       (let
-                                        [bound-14
+                                        [elem-ty
                                           (compiler_ast_types.AstType.I64)]
                                         (compiler-backend-vector-move-for-width
                                           width
-                                          bound-14))
+                                          elem-ty))
                                       " "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
@@ -13447,26 +13442,26 @@
       (compiler_ast_types.AstType.Bool)
       lanes)
     (match (let
-      [bound-15 (compiler_ast_types.AstType.I8)]
+      [elem-ty (compiler_ast_types.AstType.I8)]
       (compiler-backend-vector-register-use
         assignments
         lhs
         "mask lhs"
         "ymm"
-        bound-15
+        elem-ty
         "%ymm14"
         backend-state))
       [(ResultBackendVectorUse.Ok lhs-use)
         (match lhs-use
           [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
             (match (let
-              [bound-16 (compiler_ast_types.AstType.I8)]
+              [elem-ty (compiler_ast_types.AstType.I8)]
               (compiler-backend-vector-register-use
                 assignments
                 rhs
                 "mask rhs"
                 "ymm"
-                bound-16
+                elem-ty
                 "%ymm15"
                 backend-state))
               [(ResultBackendVectorUse.Ok rhs-use)
@@ -13567,13 +13562,13 @@
       (compiler_ast_types.AstType.Bool)
       lanes)
     (match (let
-      [bound-17 (compiler_ast_types.AstType.I8)]
+      [elem-ty (compiler_ast_types.AstType.I8)]
       (compiler-backend-vector-register-use
         assignments
         src
         "mask not source"
         "ymm"
-        bound-17
+        elem-ty
         "%ymm14"
         backend-state))
       [(ResultBackendVectorUse.Ok src-use)
@@ -13658,13 +13653,13 @@
       (compiler_ast_types.AstType.Bool)
       lanes)
     (match (let
-      [bound-18 (compiler_ast_types.AstType.I8)]
+      [elem-ty (compiler_ast_types.AstType.I8)]
       (compiler-backend-vector-register-use
         assignments
         src
         "mask reduce source"
         "ymm"
-        bound-18
+        elem-ty
         "%ymm14"
         backend-state))
       [(ResultBackendVectorUse.Ok src-use)
@@ -13743,13 +13738,13 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
     (match (let
-      [bound-19 (compiler_ast_types.AstType.I8)]
+      [elem-ty (compiler_ast_types.AstType.I8)]
       (compiler-backend-vector-register-use
         assignments
         mask
         "select mask"
         "ymm"
-        bound-19
+        elem-ty
         "%ymm0"
         backend-state))
       [(ResultBackendVectorUse.Ok mask-use)
@@ -14689,13 +14684,13 @@
     (compiler-backend-avx2-mask-shape-ok? lanes)
     (compiler-backend-avx2-shape-ok? elem-ty lanes))
     (match (let
-      [bound-20 (compiler_ast_types.AstType.I8)]
+      [elem-ty (compiler_ast_types.AstType.I8)]
       (compiler-backend-vector-register-use
         assignments
         mask
         "load mask"
         "ymm"
-        bound-20
+        elem-ty
         "%ymm15"
         backend-state))
       [(ResultBackendVectorUse.Ok mask-use)
@@ -14815,13 +14810,13 @@
     (compiler-backend-avx2-mask-shape-ok? lanes)
     (compiler-backend-avx2-shape-ok? elem-ty lanes))
     (match (let
-      [bound-21 (compiler_ast_types.AstType.I8)]
+      [elem-ty (compiler_ast_types.AstType.I8)]
       (compiler-backend-vector-register-use
         assignments
         mask
         "store mask"
         "ymm"
-        bound-21
+        elem-ty
         "%ymm15"
         backend-state))
       [(ResultBackendVectorUse.Ok mask-use)
@@ -14844,13 +14839,13 @@
                       [_ false])]
                   (if bool-store?
                     (match (let
-                      [bound-22 (compiler_ast_types.AstType.I8)]
+                      [elem-ty (compiler_ast_types.AstType.I8)]
                       (compiler-backend-vector-register-use
                         assignments
                         value
                         "bool store value"
                         "ymm"
-                        bound-22
+                        elem-ty
                         "%ymm14"
                         backend-state))
                       [(ResultBackendVectorUse.Ok value-use)
@@ -19876,8 +19871,8 @@
 
 (define (compiler-backend-f64-label [bits : u64]) : String
   (let
-    [bound-41 (compiler_ast_types.AstType.F64)]
-    (compiler-backend-float-label bound-41 bits)))
+    [ty (compiler_ast_types.AstType.F64)]
+    (compiler-backend-float-label ty bits)))
 
 (define (compiler-backend-f64-sign-bit-label) : String
   ".L_tl_f64_sign_bit")
@@ -25116,8 +25111,7 @@
             [nest : compiler_regalloc.CompilerRegLoopNest
               (compiler_regalloc.compiler-reg-loop-nest-build dense-blocks)]
             [points : (__tl_dyn-array i64)
-              (compiler_regalloc.compiler-reg-loop-phi-mb-block-points
-                (compiler-backend-global-shared-view orig))]
+              (compiler_regalloc.compiler-reg-loop-phi-mb-block-points orig)]
             [interval-index : compiler_regalloc.CompilerRegIntervalIndex
               (compiler_regalloc.compiler-reg-interval-index-build
                 intervals
@@ -25166,8 +25160,7 @@
             (begin
               (while (<
                 hx
-                (compiler_regalloc.compiler-reg-loop-nest-header-count
-                  (compiler-backend-global-shared-view nest)))
+                (compiler_regalloc.compiler-reg-loop-nest-header-count nest))
                 (let
                   [h : i64
                     (compiler_regalloc.compiler-reg-loop-nest-header
@@ -25185,19 +25178,19 @@
                     (set!
                       total
                       (compiler_regalloc.compiler-reg-loop-nest-header-members!
-                        (compiler-backend-global-shared-view nest)
+                        nest
                         h
                         generation))
                     (set!
                       rlo
                       (compiler_regalloc.compiler-reg-loop-nest-member-lo
-                        (compiler-backend-global-shared-view nest)
+                        nest
                         h
                         total))
                     (set!
                       le
                       (compiler_regalloc.compiler-reg-loop-nest-member-hi
-                        (compiler-backend-global-shared-view nest)
+                        nest
                         h
                         total))
                     (if (and
@@ -25215,7 +25208,7 @@
                               h))]
                         [p : i64
                           (compiler_regalloc.compiler-reg-loop-nest-outside-pred
-                            (compiler-backend-global-shared-view nest)
+                            nest
                             h
                             generation)]
                         ;; Two qualifying shapes:
@@ -25313,7 +25306,7 @@
                                 (while (<= b le)
                                   (begin
                                     (if (compiler_regalloc.compiler-reg-loop-nest-member?
-                                      (compiler-backend-global-shared-view nest)
+                                      nest
                                       b
                                       generation)
                                       (match (compiler-backend-global-array-element-shared-view
@@ -25399,24 +25392,28 @@
                                         (if (and
                                           (< synth-count synth-cap)
                                           (< inject-count synth-cap))
-                                          (match (compiler_regalloc.compiler-reg-loop-split-first-register
-                                            (compiler-backend-const-hoist-free-candidates
-                                              (compiler-backend-const-hoist-candidate-regs
-                                                target)
-                                              synth-regs
-                                              synth-lo
-                                              synth-hi
-                                              synth-count
-                                              lo
-                                              hi)
-                                            assignments
-                                            (compiler-backend-global-shared-view
-                                              interval-index)
-                                            (compiler_regalloc.compiler-reg-loop-split-region-interval
-                                              (- 0 1)
-                                              lo
-                                              hi)
-                                            (- 0 1))
+                                          (match (let
+                                            [regs
+                                              (compiler-backend-const-hoist-free-candidates
+                                                (compiler-backend-const-hoist-candidate-regs
+                                                  target)
+                                                synth-regs
+                                                synth-lo
+                                                synth-hi
+                                                synth-count
+                                                lo
+                                                hi)]
+                                            [region-intervals
+                                              (compiler_regalloc.compiler-reg-loop-split-region-interval
+                                                (- 0 1)
+                                                lo
+                                                hi)]
+                                            (compiler_regalloc.compiler-reg-loop-split-first-register
+                                              regs
+                                              assignments
+                                              interval-index
+                                              region-intervals
+                                              (- 0 1)))
                                             [(compiler_regalloc.CompilerRegMaybeId.No)
                                               unit]
                                             [(compiler_regalloc.CompilerRegMaybeId.Some
@@ -31783,10 +31780,10 @@
               "\n"
               rhs-asm
               (let
-                [bound-23 (compiler-backend-compare-swapped-op op)]
+                [op-2 (compiler-backend-compare-swapped-op op)]
                 (compiler-backend-binop-compare-set-reg-asm
                   type-segment-bases
-                  bound-23
+                  op-2
                   (compiler-backend-global-shared-view operand-ty)
                   frame
                   (compiler-backend-sized-reg
@@ -31913,12 +31910,12 @@
                     (str_cat.str-cat
                       rhs-asm
                       (let
-                        [bound-24
+                        [op-2
                           (compiler-backend-compare-swapped-op
                             (compiler-backend-global-shared-view op))]
                         (compiler-backend-binop-compare-set-reg-asm
                           type-segment-bases
-                          bound-24
+                          op-2
                           (compiler-backend-global-shared-view operand-ty)
                           lhs-address
                           (compiler-backend-sized-reg
@@ -33733,14 +33730,9 @@
   (let
     [call-space : i64
       (let
-        [bound-25 (compiler_ir_types.CompilerIrCallArgs.Nil)]
-        [bound-26 (compiler_ast_types.ast-type-list-new)]
-        (compiler-backend-call-arg-space
-          target
-          bound-25
-          bound-26
-          false
-          program-index))]
+        [args (compiler_ir_types.CompilerIrCallArgs.Nil)]
+        [types (compiler_ast_types.ast-type-list-new)]
+        (compiler-backend-call-arg-space target args types false program-index))]
     [ok-symbol : String (compiler-backend-asm-label function ok-label)]
     [index-reg : String
       (compiler-backend-value-scalar-register-home
@@ -52409,12 +52401,12 @@
             (let
               [default-needs-edge : bool
                 (let
-                  [bound-29
+                  [items
                     (compiler-backend-function-state-phi-targets
                       (compiler-backend-state-function-state
                         program-index.backend-state))]
                   (compiler-backend-symbol-list-contains-id?
-                    bound-29
+                    items
                     default-label))]
               (match (if default-needs-edge
                 (match (compiler-backend-emit-phi-edge-copies
@@ -57023,12 +57015,12 @@
         length-operand
         index-operand
         (let
-          [bound-84 (compiler_ir_types.CompilerIrCallArgs.Nil)]
-          [bound-86 (compiler_ast_types.ast-type-list-new)]
+          [args (compiler_ir_types.CompilerIrCallArgs.Nil)]
+          [types (compiler_ast_types.ast-type-list-new)]
           (compiler-backend-call-arg-space
             ctx.target-policy.target
-            bound-84
-            bound-86
+            args
+            types
             false
             ctx.program-index))
         (compiler-backend-asm-label ctx.function ok-label)
@@ -67017,12 +67009,8 @@
     [v : i64 0]
     [event-used : i64 0]
     (begin
-      (compiler_regalloc.compiler-reg-fill-i64-array
-        (compiler-backend-global-shared-view heads)
-        (- 0 1))
-      (compiler_regalloc.compiler-reg-fill-i64-array
-        (compiler-backend-global-shared-view event-next)
-        (- 0 1))
+      (compiler_regalloc.compiler-reg-fill-i64-array (&mut heads) (- 0 1))
+      (compiler_regalloc.compiler-reg-fill-i64-array (&mut event-next) (- 0 1))
       (while (< v vars)
         (begin
           (if (and
@@ -73655,7 +73643,7 @@
               (array-ref size h)
               (+
                 (compiler_regalloc.compiler-reg-loop-nest-header-members!
-                  (compiler-backend-global-shared-view nest)
+                  nest
                   h
                   generation)
                 1))
@@ -73670,7 +73658,7 @@
             (let
               [total : i64
                 (compiler_regalloc.compiler-reg-loop-nest-header-members!
-                  (compiler-backend-global-shared-view nest)
+                  nest
                   h
                   generation)]
               [m : i64 0]
@@ -74209,7 +74197,7 @@
       (while (< edge stop)
         (begin
           (if (compiler_regalloc.compiler-reg-loop-nest-member?
-            (compiler-backend-global-shared-view nest)
+            nest
             (array-ref st.succ-buf edge)
             generation)
             unit
@@ -74230,7 +74218,7 @@
       (while (< edge stop)
         (begin
           (if (compiler_regalloc.compiler-reg-loop-nest-member?
-            (compiler-backend-global-shared-view nest)
+            nest
             (array-ref st.succ-buf edge)
             generation)
             (set! found true)
@@ -74284,7 +74272,7 @@
             (let
               [total : i64
                 (compiler_regalloc.compiler-reg-loop-nest-header-members!
-                  (compiler-backend-global-shared-view nest)
+                  nest
                   h
                   generation)]
               [lo : i64 (array-ref st.pos h)]
@@ -74620,7 +74608,7 @@
             (&mut succ-off)
             (&mut succ-buf)
             (compiler_regalloc.compiler-reg-loop-depth-block-ids-seq
-              (compiler-backend-global-shared-view seq)
+              seq
               (backend_label_i64_map.with-capacity
                 (compiler_regalloc.compiler-reg-bits-map-capacity n))
               0)
@@ -74631,11 +74619,9 @@
           (CompilerBackendMaybePlacement.No)
           (let
             [nest : compiler_regalloc.CompilerRegLoopNest
-              (compiler_regalloc.compiler-reg-loop-nest-build-seq
-                (compiler-backend-global-shared-view seq))]
+              (compiler_regalloc.compiler-reg-loop-nest-build-seq seq)]
             [header-count : i64
-              (compiler_regalloc.compiler-reg-loop-nest-header-count
-                (compiler-backend-global-shared-view nest))]
+              (compiler_regalloc.compiler-reg-loop-nest-header-count nest)]
             (if (= header-count 0)
               (CompilerBackendMaybePlacement.No)
               (let
@@ -87617,14 +87603,14 @@
           (when
             (not
               (let
-                [bound-40
+                [ty
                   (compiler_ast_types.ast-type-segment-bases-get
                     type-segment-bases
                     (compiler_ast_types.ast-type-list-get
                       (& types)
                       index
                       (compiler_ast_types.ast-type-id-fallback)))]
-                (compiler-backend-object-abi-type-supported? bound-40)))
+                (compiler-backend-object-abi-type-supported? ty)))
             (return false))
           (set! index (+ index 1))))
       true)))

@@ -233,8 +233,8 @@
             (begin
               (if (> count 0)
                 (compiler_regalloc.compiler-reg-extend-set-words
-                  (owned_view.compiler-owned-shared-view starts)
-                  (owned_view.compiler-owned-shared-view ends)
+                  starts
+                  ends
                   (if (> (array-length after-items) 0)
                     (array-ref after-items 0)
                     (compiler_liveness.compiler-live-set-empty))
@@ -294,18 +294,14 @@
               assignment-index
               plan-mask)
             (begin
-              (compiler_regalloc.compiler-reg-fill-i64-array
-                (owned_view.compiler-owned-shared-view starts)
-                -1)
-              (compiler_regalloc.compiler-reg-fill-i64-array
-                (owned_view.compiler-owned-shared-view ends)
-                -1)
+              (compiler_regalloc.compiler-reg-fill-i64-array (&mut starts) -1)
+              (compiler_regalloc.compiler-reg-fill-i64-array (&mut ends) -1)
               (compiler_regalloc.compiler-reg-live-intervals-blocks-with-live
                 (owned_view.compiler-owned-shared-view emit-blocks)
                 (owned_view.compiler-owned-shared-view liveness)
                 0
-                (owned_view.compiler-owned-shared-view starts)
-                (owned_view.compiler-owned-shared-view ends))
+                starts
+                ends)
               (compiler-backend-test-scavenge-seed-block-liveins
                 emit-blocks
                 liveness
@@ -1417,15 +1413,15 @@
 (define (compiler-backend-call-or-jmp-ok? [asm : String] [symbol : String]) : bool
   (or
     (let
-      [bound-1
+      [needle
         (str_cat.str-cat
           "    call "
           (owned_view.compiler-owned-shared-view symbol)
           "\n")]
-      (compiler_backend.compiler-backend-string-contains? asm bound-1))
+      (compiler_backend.compiler-backend-string-contains? asm needle))
     (let
-      [bound-2 (str_cat.str-cat "    jmp " symbol "\n")]
-      (compiler_backend.compiler-backend-string-contains? asm bound-2))))
+      [needle (str_cat.str-cat "    jmp " symbol "\n")]
+      (compiler_backend.compiler-backend-string-contains? asm needle))))
 
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
@@ -1474,16 +1470,16 @@
   (if (compiler_backend.compiler-backend-fast-alloc-supported-size? size)
     (and
       (let
-        [bound-3
+        [needle
           (str_cat.str-cat "    leaq " (string.int->string size) "(%rax), ")]
-        (compiler_backend.compiler-backend-string-contains? asm bound-3))
+        (compiler_backend.compiler-backend-string-contains? asm needle))
       (let
-        [bound-4
+        [needle
           (str_cat.str-cat
             "_slow:\n    call .L_tl_alloc"
             (string.int->string size)
             "\n")]
-        (compiler_backend.compiler-backend-string-contains? asm bound-4)))
+        (compiler_backend.compiler-backend-string-contains? asm needle)))
     false))
 
 (define (compiler-backend-string-contains-alloc-size?
@@ -1491,14 +1487,14 @@
   [size : i64]) : bool
   (or
     (let
-      [bound-5 (compiler-backend-alloc-generic-call-text size "%rdi")]
-      (compiler_backend.compiler-backend-string-contains? asm bound-5))
+      [needle (compiler-backend-alloc-generic-call-text size "%rdi")]
+      (compiler_backend.compiler-backend-string-contains? asm needle))
     (let
-      [bound-6 (compiler-backend-alloc-generic-call-text size "%rcx")]
-      (compiler_backend.compiler-backend-string-contains? asm bound-6))
+      [needle (compiler-backend-alloc-generic-call-text size "%rcx")]
+      (compiler_backend.compiler-backend-string-contains? asm needle))
     (let
-      [bound-7 (compiler-backend-alloc-fixed-call-text size)]
-      (compiler_backend.compiler-backend-string-contains? asm bound-7))
+      [needle (compiler-backend-alloc-fixed-call-text size)]
+      (compiler_backend.compiler-backend-string-contains? asm needle))
     (compiler-backend-string-contains-inline-alloc-size? asm size)))
 
 (define (compiler-backend-alloc-call-count [asm : String]) : i64
@@ -1982,26 +1978,22 @@
       (compiler_backend.backend-and4
         (not
           (let
-            [bound-8 (compiler_ast_types.AstType.F64)]
-            (compiler_backend.compiler-backend-object-abi-type-supported?
-              bound-8)))
+            [ty (compiler_ast_types.AstType.F64)]
+            (compiler_backend.compiler-backend-object-abi-type-supported? ty)))
         (not
           (let
-            [bound-9 (compiler_ast_types.AstType.Unit)]
-            (compiler_backend.compiler-backend-object-abi-type-supported?
-              bound-9)))
+            [ty (compiler_ast_types.AstType.Unit)]
+            (compiler_backend.compiler-backend-object-abi-type-supported? ty)))
         (not
           (let
-            [bound-10 (compiler_ast_types.AstType.String)]
-            (compiler_backend.compiler-backend-object-abi-type-supported?
-              bound-10)))
+            [ty (compiler_ast_types.AstType.String)]
+            (compiler_backend.compiler-backend-object-abi-type-supported? ty)))
         (not
           (let
-            [bound-11
+            [ty
               (compiler_ast_types.AstType.Struct
                 (ci.intern "object_abi_aggregate"))]
-            (compiler_backend.compiler-backend-object-abi-type-supported?
-              bound-11)))))))
+            (compiler_backend.compiler-backend-object-abi-type-supported? ty)))))))
 
 (define (compiler-backend-object-image-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
@@ -2359,12 +2351,12 @@
         (and
           (compiler_backend.backend-and8
             (let
-              [bound-12
+              [needle
                 (str_cat.str-cat
                   (owned_view.compiler-owned-shared-view base-label)
                   ":\n"
                   "")]
-              (compiler_backend.compiler-backend-string-contains? asm bound-12))
+              (compiler_backend.compiler-backend-string-contains? asm needle))
             (>=
               (compiler_backend.compiler-backend-string-count
                 (owned_view.compiler-owned-shared-view asm)
@@ -2372,25 +2364,19 @@
               2)
             (not
               (let
-                [bound-13 (str_cat.str-cat " - " base-label "\n")]
-                (compiler_backend.compiler-backend-string-contains?
-                  asm
-                  bound-13)))
+                [needle (str_cat.str-cat " - " base-label "\n")]
+                (compiler_backend.compiler-backend-string-contains? asm needle)))
             (not
               (let
-                [bound-14
+                [needle
                   (compiler_backend.compiler-backend-pic-quad-pattern
                     data-label)]
-                (compiler_backend.compiler-backend-string-contains?
-                  asm
-                  bound-14)))
+                (compiler_backend.compiler-backend-string-contains? asm needle)))
             (not
               (let
-                [bound-15
+                [needle
                   (compiler_backend.compiler-backend-pic-quad-pattern fat-label)]
-                (compiler_backend.compiler-backend-string-contains?
-                  asm
-                  bound-15)))
+                (compiler_backend.compiler-backend-string-contains? asm needle)))
             (compiler_backend.compiler-backend-string-contains?
               fixups
               "typelisp-pic-fixups v1\n")
@@ -2408,11 +2394,11 @@
     [(compiler_backend.ResultCompilerBackendPic.Ok _) false]
     [(compiler_backend.ResultCompilerBackendPic.Err diag)
       (let
-        [bound-16
+        [text
           (compiler_diagnostic.compiler-diagnostic-render
             (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))]
         (compiler_backend.compiler-backend-string-contains?
-          bound-16
+          text
           "backend: --pic supports only internal references"))]))
 
 (define (compiler-backend-pic-object-helper-ok?) : bool
@@ -3427,8 +3413,8 @@
             (set! ok false)
             unit)
           (if (let
-            [bound-17 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-17))
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))
             (set! ok false)
             unit)
           ok))]
@@ -3530,8 +3516,8 @@
             "    call tl_string_concat\n"))
         (not
           (let
-            [bound-18 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-18))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-windows-external-call-source) : String
@@ -3579,8 +3565,8 @@
             ".extern _write\n"))
         (not
           (let
-            [bound-19 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-19))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-varargs-ffi-common-source [symbol : String]) : String
@@ -3657,8 +3643,8 @@
           "    call tl_cabi_color_make\n")
         (or
           (let
-            [bound-20 (compiler-backend-alloc-generic-call-text 4 "%rdi")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-20))
+            [needle (compiler-backend-alloc-generic-call-text 4 "%rdi")]
+            (compiler_backend.compiler-backend-string-contains? asm needle))
           (compiler-backend-string-contains-alloc-size?
             (owned_view.compiler-owned-shared-view asm)
             8))
@@ -3674,8 +3660,8 @@
         (and
           (not
             (let
-              [bound-21 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-21)))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -3703,8 +3689,8 @@
           "    call tl_cabi_color_make\n")
         (or
           (let
-            [bound-22 (compiler-backend-alloc-generic-call-text 4 "%rcx")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-22))
+            [needle (compiler-backend-alloc-generic-call-text 4 "%rcx")]
+            (compiler_backend.compiler-backend-string-contains? asm needle))
           (compiler-backend-string-contains-alloc-size?
             (owned_view.compiler-owned-shared-view asm)
             8))
@@ -3720,8 +3706,8 @@
         (and
           (not
             (let
-              [bound-23 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-23)))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -3799,8 +3785,8 @@
             "unsupported windows-x86_64 C aggregate ABI"))
         (not
           (let
-            [bound-24 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-24)))
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle)))
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -3856,8 +3842,8 @@
             "lower: unsupported windows-x86_64 C aggregate ABI"))
         (not
           (let
-            [bound-25 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-25))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-win64-enum-aggregate-source) : String
@@ -3963,8 +3949,8 @@
               "unsupported windows-x86_64 C aggregate ABI"))
           (not
             (let
-              [bound-26 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-26)))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))
           (= (compiler-backend-alloc-call-count asm) 2))
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -4031,10 +4017,8 @@
                 "two-register aggregate return ABI"))
             (not
               (let
-                [bound-27 (compiler-backend-todo-marker)]
-                (compiler_backend.compiler-backend-string-contains?
-                  asm
-                  bound-27))))))]
+                [needle (compiler-backend-todo-marker)]
+                (compiler_backend.compiler-backend-string-contains? asm needle))))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-sysv-memory-aggregate-source) : String
@@ -4144,10 +4128,8 @@
                 "unsupported linux-x86_64 C aggregate ABI"))
             (not
               (let
-                [bound-28 (compiler-backend-todo-marker)]
-                (compiler_backend.compiler-backend-string-contains?
-                  asm
-                  bound-28))))))]
+                [needle (compiler-backend-todo-marker)]
+                (compiler_backend.compiler-backend-string-contains? asm needle))))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-sysv-two-register-return-source) : String
@@ -4212,8 +4194,8 @@
               "two-register aggregate return ABI"))
           (not
             (let
-              [bound-29 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-29)))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))
           true
           true
           true)
@@ -4413,8 +4395,8 @@
             "    call tl_test_raw_fn\n"))
         (not
           (let
-            [bound-30 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-30))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-extern-value-fnptr-ok?) : bool
@@ -5192,8 +5174,8 @@
             "    jge .Lf0_str_bounds_ok"))
         (not
           (let
-            [bound-31 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-31))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-aggregate-ok?) : bool
@@ -5235,8 +5217,8 @@
               "    call _tl_Pair\n")))
         (not
           (let
-            [bound-32 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-32))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-pack-immediate-word-shape-ok?) : bool
@@ -5436,8 +5418,8 @@
           true)
         (not
           (let
-            [bound-33 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-33))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-aggregate-global-init-source) : String
@@ -5474,73 +5456,73 @@
         ;; size; an 8-byte handle/scalar global reserves 8. Accept any of them.
         (or
           (let
-            [bound-34
+            [needle
               (str_cat.str-cat
                 "    .comm "
                 (owned_view.compiler-owned-shared-view symbol)
                 ", 8, 8\n")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-34))
+            (compiler_backend.compiler-backend-string-contains? asm needle))
           (let
-            [bound-35
+            [needle
               (str_cat.str-cat
                 "    .comm "
                 (owned_view.compiler-owned-shared-view symbol)
                 ", 16, 8\n")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-35))
+            (compiler_backend.compiler-backend-string-contains? asm needle))
           (let
-            [bound-36
+            [needle
               (str_cat.str-cat
                 "    .comm "
                 (owned_view.compiler-owned-shared-view symbol)
                 ", 24, 8\n")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-36)))
+            (compiler_backend.compiler-backend-string-contains? asm needle)))
         (let
-          [bound-37
+          [needle
             (str_cat.str-cat
               "    call "
               (owned_view.compiler-owned-shared-view init-symbol)
               "\n")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-37))
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         ;; The startup sequence installs the initializer result: a pointer
         ;; store for a boxed cell, or the IAG-1 byte copy for an inline
         ;; aggregate cell.
         (or
           (let
-            [bound-38
+            [needle
               (str_cat.str-cat
                 "    movq %rax, "
                 (owned_view.compiler-owned-shared-view symbol)
                 "(%rip)\n")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-38))
+            (compiler_backend.compiler-backend-string-contains? asm needle))
           (let
-            [bound-39
+            [needle
               (str_cat.str-cat
                 "    movups (%rax), %xmm0\n    movups %xmm0, "
                 (owned_view.compiler-owned-shared-view symbol)
                 "(%rip)\n")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-39)))
+            (compiler_backend.compiler-backend-string-contains? asm needle)))
         (let
-          [bound-40 (str_cat.str-cat init-symbol ":\n" "")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-40)))
+          [needle (str_cat.str-cat init-symbol ":\n" "")]
+          (compiler_backend.compiler-backend-string-contains? asm needle)))
       (or
         (let
-          [bound-41
+          [needle
             (str_cat.str-cat
               "    movq "
               (owned_view.compiler-owned-shared-view symbol)
               "(%rip), %rax\n")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-41))
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (let
-          [bound-42
+          [needle
             (str_cat.str-cat
               "    movq "
               (owned_view.compiler-owned-shared-view symbol)
               "(%rip), %r10\n")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-42))
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         ;; A register-group global is read via its address.
         (let
-          [bound-43 (str_cat.str-cat "    leaq " symbol "(%rip), %r10\n")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-43))))))
+          [needle (str_cat.str-cat "    leaq " symbol "(%rip), %r10\n")]
+          (compiler_backend.compiler-backend-string-contains? asm needle))))))
 
 (define (compiler-backend-aggregate-global-init-shape-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source
@@ -5578,8 +5560,8 @@
               ".L_tl_main_stack_abort:\n    movq $1, %rax\n"))
           (not
             (let
-              [bound-44 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-44))))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle))))
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -5664,8 +5646,8 @@
             "*(%r11)"))
         (not
           (let
-            [bound-45 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-45))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-closure-inferred-shape-ok?) : bool
@@ -5682,8 +5664,8 @@
           "*(%r10)")
         (not
           (let
-            [bound-46 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-46))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-closure-aggregate-return-shape-ok?) : bool
@@ -5772,8 +5754,8 @@
               0))
           (not
             (let
-              [bound-47 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-47)))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))
           true
           true
           true)
@@ -5917,10 +5899,8 @@
             "    movsd -16(%rsp), %xmm0\n"))
         (not
           (let
-            [bound-48 (compiler-backend-asm-function-body asm "main")]
-            (compiler_backend.compiler-backend-string-contains?
-              bound-48
-              "%xmm3"))))]
+            [text (compiler-backend-asm-function-body asm "main")]
+            (compiler_backend.compiler-backend-string-contains? text "%xmm3"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-test-global-builder-push!
@@ -6504,14 +6484,14 @@
 
 (define (compiler-backend-compare-self-operand? [body : String] [reg : String]) : bool
   (let
-    [bound-49
+    [needle
       (str_cat.str-cat
         "    cmpq "
         (owned_view.compiler-owned-shared-view reg)
         ", "
         reg
         "\n")]
-    (compiler_backend.compiler-backend-string-contains? body bound-49)))
+    (compiler_backend.compiler-backend-string-contains? body needle)))
 
 (define (compiler-backend-immediate-lhs-r9-compare-win64-ok?) : bool
   (let
@@ -8194,13 +8174,13 @@
             backend-state)
           9)
         (let
-          [bound-50
+          [text
             (compiler_backend.compiler-backend-emit-save-callee-regs
               assignments
               1
               backend-state)]
           (compiler_backend.compiler-backend-string-contains?
-            bound-50
+            text
             "    movq %rbp, -72(%rbp)\n"))
         (=
           (compiler_backend.compiler-backend-string-count
@@ -11021,11 +11001,11 @@
           ty))]
     (and
       (let
-        [bound-51
+        [items
           (compiler_backend.compiler-backend-program-collections-functions
             (owned_view.compiler-owned-shared-view worded))]
         (compiler_backend.compiler-backend-symbol-list-contains-id?
-          bound-51
+          items
           (ci.intern "walked_fn")))
       (compiler_backend.compiler-backend-string-list-contains?
         (compiler_backend.compiler-backend-program-collections-strings
@@ -11114,18 +11094,18 @@
               (compiler_ir_types.compiler-ir-extern-seq-empty)))]
         (and
           (let
-            [bound-52
+            [items
               (compiler_backend.compiler-backend-program-collections-functions
                 (owned_view.compiler-owned-shared-view collections))]
             (compiler_backend.compiler-backend-symbol-list-contains-id?
-              bound-52
+              items
               (ci.intern "call_fn")))
           (let
-            [bound-53
+            [items
               (compiler_backend.compiler-backend-program-collections-functions
                 (owned_view.compiler-owned-shared-view collections))]
             (compiler_backend.compiler-backend-symbol-list-contains-id?
-              bound-53
+              items
               (ci.intern "indirect_fn")))
           (compiler_backend.compiler-backend-string-list-contains?
             (compiler_backend.compiler-backend-program-collections-strings
@@ -13611,15 +13591,13 @@
                   "    movq -16(%rbp), %r9\n"))
               (string.eq
                 (let
-                  [bound-54 (compiler_ir_types.CompilerIrBinOp.And)]
-                  (compiler_backend.compiler-backend-binop-direct-mnemonic
-                    bound-54))
+                  [op (compiler_ir_types.CompilerIrBinOp.And)]
+                  (compiler_backend.compiler-backend-binop-direct-mnemonic op))
                 "and")
               (string.eq
                 (let
-                  [bound-55 (compiler_ir_types.CompilerIrBinOp.Or)]
-                  (compiler_backend.compiler-backend-binop-direct-mnemonic
-                    bound-55))
+                  [op (compiler_ir_types.CompilerIrBinOp.Or)]
+                  (compiler_backend.compiler-backend-binop-direct-mnemonic op))
                 "or"))]
           [(compiler_backend.ResultCompilerBackend.Err _) false])]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
@@ -15596,14 +15574,14 @@ g:
         "%r13")
       "    addq %r13, %r12\n")
     (let
-      [bound-56
+      [text
         (compiler_backend.compiler-backend-gep-index-base-asm-disp
           16
           "%r12"
           24
           "%r13")]
       (compiler_backend.compiler-backend-string-contains?
-        bound-56
+        text
         "    addq $16, %r12\n"))))
 
 ;; SS-P5(b)/(c) fixtures. var 0 and var 1 are the comparison's operands (and,
@@ -18042,19 +18020,17 @@ g:
         (compiler_backend.CompilerBackendTarget.Windows))
       32)
     (let
-      [bound-57
+      [text
         (compiler_backend.compiler-backend-target-entry-text
           (compiler_backend.CompilerBackendTarget.Linux)
           true)]
-      (compiler_backend.compiler-backend-string-contains? bound-57 "_tl_start"))
+      (compiler_backend.compiler-backend-string-contains? text "_tl_start"))
     (let
-      [bound-58
+      [text
         (compiler_backend.compiler-backend-target-entry-text
           (compiler_backend.CompilerBackendTarget.Windows)
           true)]
-      (compiler_backend.compiler-backend-string-contains?
-        bound-58
-        ".globl main"))
+      (compiler_backend.compiler-backend-string-contains? text ".globl main"))
     (compiler-backend-target-linux-no-entry-ok?
       (owned_view.compiler-owned-shared-view src))
     (compiler-backend-target-linux-crt-entry-ok?)
@@ -18120,13 +18096,13 @@ g:
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (let
-              [bound-59
+              [text
                 (compiler_backend.compiler-backend-target-entry-text-with-crt
                   (compiler_backend.CompilerBackendTarget.Linux)
                   true
                   true)]
               (compiler_backend.compiler-backend-string-contains?
-                bound-59
+                text
                 ".globl main"))
             (compiler_backend.compiler-backend-string-contains? asm "main:\n")
             (compiler_backend.compiler-backend-string-contains?
@@ -19680,11 +19656,11 @@ g:
       (match duplicate-result
         [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
           (let
-            [bound-60
+            [text
               (compiler_diagnostic.compiler-diagnostic-message
                 (__tl-box-place diag))]
             (compiler_backend.compiler-backend-string-contains?
-              bound-60
+              text
               "duplicate emitted function symbol"))]
         [(compiler_backend.ResultCompilerBackendBuffer.Ok _) false])]
     [duplicate-stream-retired : bool
@@ -19711,9 +19687,9 @@ g:
       (match valid-result
         [(compiler_backend.ResultCompilerBackendBuffer.Ok buf)
           (let
-            [bound-61 (text_buf.render buf)]
+            [text (text_buf.render buf)]
             (compiler_backend.compiler-backend-string-contains?
-              bound-61
+              text
               "_tl_dup_abort"))]
         [(compiler_backend.ResultCompilerBackendBuffer.Err _) false])]
     (begin
@@ -20790,15 +20766,13 @@ g:
           (and
             (compiler_backend.backend-and4
               (let
-                [bound-62
+                [needle
                   (str_cat.str-cat
                     "    .section .rodata\n"
                     align
                     (owned_view.compiler-owned-shared-view label)
                     ":\n")]
-                (compiler_backend.compiler-backend-string-contains?
-                  asm
-                  bound-62))
+                (compiler_backend.compiler-backend-string-contains? asm needle))
               (=
                 (compiler_backend.compiler-backend-string-count
                   (owned_view.compiler-owned-shared-view asm)
@@ -20817,10 +20791,10 @@ g:
                 2)
               (not
                 (let
-                  [bound-63 (str_cat.str-cat label ":\n" load)]
+                  [needle (str_cat.str-cat label ":\n" load)]
                   (compiler_backend.compiler-backend-string-contains?
                     asm
-                    bound-63))))
+                    needle))))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -21336,38 +21310,38 @@ g:
     (and
       (string.eq
         (let
-          [bound-64 (compiler_ast_types.AstType.I32)]
-          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-64))
+          [elem-ty (compiler_ast_types.AstType.I32)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic elem-ty))
         "vpmaskmovd")
       (string.eq
         (let
-          [bound-65 (compiler_ast_types.AstType.U32)]
-          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-65))
+          [elem-ty (compiler_ast_types.AstType.U32)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic elem-ty))
         "vpmaskmovd")
       (string.eq
         (let
-          [bound-66 (compiler_ast_types.AstType.I64)]
-          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-66))
+          [elem-ty (compiler_ast_types.AstType.I64)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic elem-ty))
         "vpmaskmovq")
       (string.eq
         (let
-          [bound-67 (compiler_ast_types.AstType.U64)]
-          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-67))
+          [elem-ty (compiler_ast_types.AstType.U64)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic elem-ty))
         "vpmaskmovq")
       (string.eq
         (let
-          [bound-68 (compiler_ast_types.AstType.F32)]
-          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-68))
+          [elem-ty (compiler_ast_types.AstType.F32)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic elem-ty))
         "vmaskmovps")
       (string.eq
         (let
-          [bound-69 (compiler_ast_types.AstType.F64)]
-          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-69))
+          [elem-ty (compiler_ast_types.AstType.F64)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic elem-ty))
         "vmaskmovpd")
       (string.eq
         (let
-          [bound-70 (compiler_ast_types.AstType.I16)]
-          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic bound-70))
+          [elem-ty (compiler_ast_types.AstType.I16)]
+          (compiler_backend.compiler-backend-avx2-masked-move-mnemonic elem-ty))
         "")
       (match (compiler_backend.compiler-backend-emit-avx2-predicated-load
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -22561,14 +22535,12 @@ g:
                 asm
                 "    vpaddq ")
               (let
-                [bound-71
+                [needle
                   (str_cat.str-cat
                     "    vmovdqa64 "
                     (compiler_backend.compiler-backend-avx512-i64-lane-id-label)
                     "(%rip), ")]
-                (compiler_backend.compiler-backend-string-contains?
-                  asm
-                  bound-71)))
+                (compiler_backend.compiler-backend-string-contains? asm needle)))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -22612,14 +22584,12 @@ g:
                 asm
                 "    vpandq ")
               (let
-                [bound-72
+                [needle
                   (str_cat.str-cat
                     "    vmovdqa64 "
                     (compiler_backend.compiler-backend-avx512-i64-lane-id-label)
                     "(%rip), ")]
-                (compiler_backend.compiler-backend-string-contains?
-                  asm
-                  bound-72)))
+                (compiler_backend.compiler-backend-string-contains? asm needle)))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -23951,12 +23921,12 @@ g:
               asm
               "    vpbroadcastq %xmm0, %ymm0\n")
             (let
-              [bound-73
+              [needle
                 (str_cat.str-cat
                   "    vpaddq "
                   (compiler_backend.compiler-backend-avx2-i64-lane-id-label)
                   "(%rip), %ymm0, %ymm0\n")]
-              (compiler_backend.compiler-backend-string-contains? asm bound-73))
+              (compiler_backend.compiler-backend-string-contains? asm needle))
             (compiler_backend.compiler-backend-string-contains?
               asm
               "    vpcmpgtq %ymm0, %ymm1, %ymm6\n")
@@ -23982,11 +23952,9 @@ g:
               "    movl $-1, ")
             (not
               (let
-                [bound-74
+                [needle
                   (compiler_backend.compiler-backend-avx2-i64-lane-id-label)]
-                (compiler_backend.compiler-backend-string-contains?
-                  asm
-                  bound-74))))
+                (compiler_backend.compiler-backend-string-contains? asm needle))))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -24801,20 +24769,20 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (let
-          [bound-75
+          [needle
             (str_cat.str-cat
               "    "
               (owned_view.compiler-owned-shared-view mnemonic)
               " (%r8), ")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-75))
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    vmovdqu (%r8), "))
         (not
           (let
-            [bound-76 (str_cat.str-cat "    " mnemonic " (%rax), ")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-76))))]
+            [needle (str_cat.str-cat "    " mnemonic " (%rax), ")]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-vector-load-binop-does-not-fold?
@@ -24834,8 +24802,8 @@ g:
           "    vmovdqu (%r8), ")
         (not
           (let
-            [bound-77 (str_cat.str-cat "    " mnemonic " (%r8), ")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-77)))
+            [needle (str_cat.str-cat "    " mnemonic " (%r8), ")]
+            (compiler_backend.compiler-backend-string-contains? asm needle)))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -25025,19 +24993,19 @@ g:
               "vpermd")
             1)
           (let
-            [bound-78
+            [needle
               (str_cat.str-cat
                 "    subq $"
                 (string.int->string stack-bytes)
                 ", %rsp\n")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-78))
+            (compiler_backend.compiler-backend-string-contains? asm needle))
           (let
-            [bound-79
+            [needle
               (str_cat.str-cat
                 "    addq $"
                 (string.int->string stack-bytes)
                 ", %rsp\n")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-79))
+            (compiler_backend.compiler-backend-string-contains? asm needle))
           (=
             (compiler_backend.compiler-backend-string-count
               (owned_view.compiler-owned-shared-view asm)
@@ -25208,15 +25176,15 @@ g:
             asm
             "    vpermq $216, %ymm1, %ymm8\n"))
         (let
-          [bound-80
+          [needle
             (str_cat.str-cat
               "    "
               (owned_view.compiler-owned-shared-view widen)
               " (%rsp), %ymm0\n")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-80))
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (let
-          [bound-81 (str_cat.str-cat "    " widen " 16(%rsp), %ymm0\n")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-81)))]
+          [needle (str_cat.str-cat "    " widen " 16(%rsp), %ymm0\n")]
+          (compiler_backend.compiler-backend-string-contains? asm needle)))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-word-vector-shift-spill-ok? [avx512 : bool]) : bool
@@ -25975,12 +25943,8 @@ g:
     [test-id : i64 (ci.intern "test")]
     [_ctx : unit
       (begin
-        (compiler_regalloc.compiler-reg-fill-i64-array
-          (owned_view.compiler-owned-shared-view starts)
-          -1)
-        (compiler_regalloc.compiler-reg-fill-i64-array
-          (owned_view.compiler-owned-shared-view ends)
-          -1)
+        (compiler_regalloc.compiler-reg-fill-i64-array (&mut starts) -1)
+        (compiler_regalloc.compiler-reg-fill-i64-array (&mut ends) -1)
         (compiler_backend.compiler-backend-set-scavenge-ctx!
           (compiler_backend.compiler-backend-state-function-state backend-state)
           starts
@@ -27238,8 +27202,8 @@ g:
   [asm : String]
   [name : String]) : bool
   (let
-    [bound-82 (str_cat.str-cat "    .globl " name "\n")]
-    (compiler_backend.compiler-backend-string-contains? asm bound-82)))
+    [needle (str_cat.str-cat "    .globl " name "\n")]
+    (compiler_backend.compiler-backend-string-contains? asm needle)))
 
 (define (compiler-backend-runtime-common-global-symbols-ok? [asm : String]) : bool
   (and
@@ -29064,8 +29028,8 @@ g:
           (< bad-r8-pos 0)
           (not
             (let
-              [bound-83 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-83)))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))
           true))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -29128,8 +29092,8 @@ g:
               "    movq %r12, %r10\n"))
           (not
             (let
-              [bound-84 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-84))))]
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-gep-load-live-through-home-asm) : compiler_backend.ResultCompilerBackend
@@ -30404,8 +30368,8 @@ g:
               "    movq (%r12,%r8,8)"))
           (not
             (let
-              [bound-85 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-85))))]
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 ;; GAP8-B: the mirrored operand order. A COMMUTATIVE op whose LEFT operand is
@@ -30476,16 +30440,16 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (let
-          [bound-86 (str_cat.str-cat "    " mnem "q (%r12,%r8,8), %r14\n")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-86))
+          [needle (str_cat.str-cat "    " mnem "q (%r12,%r8,8), %r14\n")]
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    movq (%r12,%r8,8)"))
         (not
           (let
-            [bound-87 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-87))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Sub is NOT commutative: `MEM - x` is not `x - MEM`, so the mirrored order
@@ -30812,14 +30776,14 @@ g:
         "%rcx")
       "")
     (let
-      [bound-88
+      [text
         (compiler_backend.compiler-backend-gep-index-base-asm-disp
           24
           "%rax"
           32
           "%rcx")]
       (compiler_backend.compiler-backend-string-contains?
-        bound-88
+        text
         "    addq $24, %rax\n"))))
 
 ;; Consuming an ordinal with the wrong shape poisons the function (the
@@ -31442,8 +31406,8 @@ g:
             "    movq (%r13,%r8,8)"))
         (not
           (let
-            [bound-89 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-89))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; The mirror: a spilled INDEX stages into the same home and the register-homed
@@ -31463,8 +31427,8 @@ g:
             "    movq (%r12,%r13,8)"))
         (not
           (let
-            [bound-90 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-90))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Both components spilled would need two staging registers; the fold owns one,
@@ -31619,8 +31583,8 @@ g:
           "    cmpq 32(%rbp), %r13\n")
         (not
           (let
-            [bound-91 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-91))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; M6-E must read scratch registers from the Branch's real plan slot when the
@@ -31728,8 +31692,8 @@ g:
             "    movq _tl_m6i_gen(%rip)"))
         (not
           (let
-            [bound-92 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-92))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; The mirror: the read is the compare's RIGHT operand, so the rip-relative
@@ -33181,11 +33145,11 @@ g:
       (and
         (compiler_backend.compiler-backend-string-contains? asm load)
         (let
-          [bound-93 (str_cat.str-cat "    ucomi" (clone op) " .L_tl_f")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-93))
+          [needle (str_cat.str-cat "    ucomi" (clone op) " .L_tl_f")]
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (let
-          [bound-94 (str_cat.str-cat "    sub" op " .L_tl_f")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-94))
+          [needle (str_cat.str-cat "    sub" op " .L_tl_f")]
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    jae .Ltest_cast_cast_float_u64_entry_v1_high\n")
@@ -33797,8 +33761,8 @@ g:
               "tl_oob_abort:\n")))
         (not
           (let
-            [bound-95 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-95)))
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle)))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -33831,8 +33795,8 @@ g:
           "    call tl_oob_abort_at\n")
         (not
           (let
-            [bound-96 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-96))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-make-array-source) : String
@@ -34230,16 +34194,16 @@ g:
   (and
     (not
       (let
-        [bound-97
+        [needle
           (str_cat.str-cat
             ".globl "
             (owned_view.compiler-owned-shared-view name)
             "\n")]
-        (compiler_backend.compiler-backend-string-contains? asm bound-97)))
+        (compiler_backend.compiler-backend-string-contains? asm needle)))
     (not
       (let
-        [bound-98 (str_cat.str-cat "\n" name ":\n")]
-        (compiler_backend.compiler-backend-string-contains? asm bound-98)))))
+        [needle (str_cat.str-cat "\n" name ":\n")]
+        (compiler_backend.compiler-backend-string-contains? asm needle)))))
 
 (define (compiler-backend-no-public-io-fs-runtime-symbols? [asm : String]) : bool
   (and
@@ -34755,11 +34719,11 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (let
-          [bound-99
+          [needle
             (compiler_backend.compiler-backend-float-bits-directive
               (compiler_ast_types.AstType.F64)
               (compiler-backend-test-f64-bits "1.5"))]
-          (compiler_backend.compiler-backend-string-contains? asm bound-99))
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -35377,11 +35341,11 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (let
-          [bound-100
+          [needle
             (compiler_backend.compiler-backend-float-bits-directive
               (compiler_ast_types.AstType.F32)
               (compiler-backend-test-f32-bits "11.0"))]
-          (compiler_backend.compiler-backend-string-contains? asm bound-100))
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    .float "))
         ;; FPO red-zone frame slot: lifetime coloring compacts b:f32 from its
@@ -36909,8 +36873,8 @@ g:
             "    addq %r8, %rax\n"))
         (not
           (let
-            [bound-101 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-101)))
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle)))
         true
         true)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -37777,8 +37741,8 @@ g:
             ".globl tl_div_abort\n"))
         (not
           (let
-            [bound-102 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-102))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-constant-divisor-strength-source) : String
@@ -37836,8 +37800,8 @@ g:
               ".globl tl_div_abort\n"))
           (not
             (let
-              [bound-103 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-103)))))]
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Signed i64 magic div/mod must keep the pre-shift quotient sign in %rax and
@@ -38585,8 +38549,8 @@ g:
           true)
         (not
           (let
-            [bound-104 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-104))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-divrem-rax-rhs-preserved-ok?) : bool
@@ -38629,8 +38593,8 @@ g:
               "    movq %r12, %rax\n    movq %rax, %r8\n"))
           (not
             (let
-              [bound-105 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-105))))]
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-safe-divrem-guard-elision-ok?) : bool
@@ -38965,8 +38929,8 @@ g:
               "    call tl_shift_abort\n"))
           (not
             (let
-              [bound-106 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-106)))))]
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-narrow-binop-types
@@ -39007,8 +38971,8 @@ g:
           (not (compiler_backend.compiler-backend-string-contains? asm bad)))
         (not
           (let
-            [bound-107 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-107))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Backend-owned narrow integer instruction selection coverage. These
@@ -39307,8 +39271,8 @@ g:
           "    movsd %xmm0, ")
         (not
           (let
-            [bound-108 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-108)))
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle)))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -39396,8 +39360,8 @@ g:
             "    movq %r11, 32(%rsp)\n"))
         (not
           (let
-            [bound-109 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-109))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-register-f64-aggregate-source) : String
@@ -39447,8 +39411,8 @@ g:
               ", %rdx\n    movsd")))
         (not
           (let
-            [bound-110 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-110))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-register-f64-aggregate-ok?) : bool
@@ -39505,8 +39469,8 @@ g:
               "unsupported bitcast"))
           (not
             (let
-              [bound-111 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-111))))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle))))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -40765,28 +40729,28 @@ g:
           "    call _tl_finish\n"))
       (not
         (let
-          [bound-112
+          [needle
             (compiler-backend-direct-tail-call-param-store
               (owned_view.compiler-owned-shared-view reg0)
               "-8(%rbp)")]
-          (compiler_backend.compiler-backend-string-contains? body bound-112)))
+          (compiler_backend.compiler-backend-string-contains? body needle)))
       (not
         (let
-          [bound-113
+          [needle
             (compiler-backend-direct-tail-call-param-store
               (owned_view.compiler-owned-shared-view reg1)
               "-16(%rbp)")]
-          (compiler_backend.compiler-backend-string-contains? body bound-113)))
+          (compiler_backend.compiler-backend-string-contains? body needle)))
       (not
         (let
-          [bound-114
+          [needle
             (compiler-backend-direct-tail-call-param-load "-8(%rbp)" reg0)]
-          (compiler_backend.compiler-backend-string-contains? body bound-114)))
+          (compiler_backend.compiler-backend-string-contains? body needle)))
       (not
         (let
-          [bound-115
+          [needle
             (compiler-backend-direct-tail-call-param-load "-16(%rbp)" reg1)]
-          (compiler_backend.compiler-backend-string-contains? body bound-115))))))
+          (compiler_backend.compiler-backend-string-contains? body needle))))))
 
 (define (compiler-backend-direct-tail-call-target-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -40831,17 +40795,14 @@ g:
             body
             "    jmp _tl_finish\n")
           (let
-            [bound-116
-              (compiler-backend-direct-tail-call-param-store reg0 slot0)]
-            (compiler_backend.compiler-backend-string-contains? body bound-116))
+            [needle (compiler-backend-direct-tail-call-param-store reg0 slot0)]
+            (compiler_backend.compiler-backend-string-contains? body needle))
           (if (string.eq slot1 "")
             true
             (let
-              [bound-117
+              [needle
                 (compiler-backend-direct-tail-call-param-store reg1 slot1)]
-              (compiler_backend.compiler-backend-string-contains?
-                body
-                bound-117)))))]
+              (compiler_backend.compiler-backend-string-contains? body needle)))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Under FPO the f64 params spill to rsp-relative slots (offsets differ by
@@ -40861,13 +40822,13 @@ g:
             body
             "    jmp _tl_finishf\n")
           (let
-            [bound-118
+            [needle
               (str_cat.str-cat "    movsd %xmm0, " (str_cat.str-cat slot0 "\n"))]
-            (compiler_backend.compiler-backend-string-contains? body bound-118))
+            (compiler_backend.compiler-backend-string-contains? body needle))
           (let
-            [bound-119
+            [needle
               (str_cat.str-cat "    movsd %xmm1, " (str_cat.str-cat slot1 "\n"))]
-            (compiler_backend.compiler-backend-string-contains? body bound-119))))]
+            (compiler_backend.compiler-backend-string-contains? body needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-call-stack-slot
@@ -40897,8 +40858,8 @@ g:
             asm
             "    pushq %r11\n"))
         (let
-          [bound-120 (compiler-backend-direct-tail-call-stack-slot target)]
-          (compiler_backend.compiler-backend-string-contains? asm bound-120)))]
+          [needle (compiler-backend-direct-tail-call-stack-slot target)]
+          (compiler_backend.compiler-backend-string-contains? asm needle)))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-immediate-stack-target-ok?
@@ -40967,8 +40928,8 @@ g:
               body
               "    subq $8, %rsp\n"))
           (let
-            [bound-121 (compiler-backend-direct-tail-call-mixed-slot target)]
-            (compiler_backend.compiler-backend-string-contains? body bound-121))))]
+            [needle (compiler-backend-direct-tail-call-mixed-slot target)]
+            (compiler_backend.compiler-backend-string-contains? body needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-call-ok?) : bool
@@ -41214,14 +41175,14 @@ g:
           asm
           "    movq %r11, %r10\n")
         (let
-          [bound-122
+          [needle
             (str_cat.str-cat
               "    movq 8(%r10), "
               (match (compiler_backend.compiler-backend-target-arg-reg target 0)
                 [(compiler_backend.ResultBackendReg.Ok reg) reg]
                 [(compiler_backend.ResultBackendReg.Err _) ""])
               "\n")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-122))
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    jmp *(%r10)\n")
@@ -41571,30 +41532,30 @@ g:
       (and
         (compiler_backend.backend-and4
           (let
-            [bound-123 (compiler-backend-known-function-call-env-zero target)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-123))
+            [needle (compiler-backend-known-function-call-env-zero target)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))
           (let
-            [bound-124
+            [needle
               (str_cat.str-cat
                 "    call "
                 (compiler_backend.compiler-backend-closure-entry-label
                   "known_target")
                 "\n")]
-            (compiler_backend.compiler-backend-string-contains? asm bound-124))
+            (compiler_backend.compiler-backend-string-contains? asm needle))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
               "    call *(%r11)\n"))
           (not
             (let
-              [bound-125
+              [needle
                 (compiler_backend.compiler-backend-closure-descriptor-label
                   "known_target")]
-              (compiler_backend.compiler-backend-string-contains? asm bound-125))))
+              (compiler_backend.compiler-backend-string-contains? asm needle))))
         (not
           (let
-            [bound-126 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-126))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-dynamic-indirect-call-target-ok?
@@ -41603,14 +41564,14 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (let
-          [bound-127
+          [needle
             (str_cat.str-cat
               "    movq 8(%r10), "
               (match (compiler_backend.compiler-backend-target-arg-reg target 0)
                 [(compiler_backend.ResultBackendReg.Ok reg) reg]
                 [(compiler_backend.ResultBackendReg.Err _) ""])
               "\n")]
-          (compiler_backend.compiler-backend-string-contains? asm bound-127))
+          (compiler_backend.compiler-backend-string-contains? asm needle))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    call *(%r10)\n")
@@ -41664,42 +41625,42 @@ g:
             (let
               [callee-load : i64
                 (let
-                  [bound-128
+                  [needle
                     (str_cat.str-cat
                       "    movq "
                       (owned_view.compiler-owned-shared-view arg-reg)
                       ", %r10\n")]
                   (compiler_backend.compiler-backend-string-find-from
                     asm
-                    bound-128
+                    needle
                     0))]
               [save : i64
                 (let
-                  [bound-129
+                  [needle
                     (str_cat.str-cat
                       "    movq %r10, "
                       (owned_view.compiler-owned-shared-view slot)
                       "\n")]
                   (compiler_backend.compiler-backend-string-find-from
                     asm
-                    bound-129
+                    needle
                     0))]
               [arg-load : i64
                 (let
-                  [bound-130
+                  [needle
                     (compiler_backend.compiler-backend-emit-load-i64-immediate
                       3
                       arg-reg)]
                   (compiler_backend.compiler-backend-string-find-from
                     asm
-                    bound-130
+                    needle
                     0))]
               [restore : i64
                 (let
-                  [bound-131 (str_cat.str-cat "    movq " slot ", %r10\n")]
+                  [needle (str_cat.str-cat "    movq " slot ", %r10\n")]
                   (compiler_backend.compiler-backend-string-find-from
                     asm
-                    bound-131
+                    needle
                     0))]
               [call : i64
                 (compiler_backend.compiler-backend-string-find-from
@@ -41754,13 +41715,13 @@ g:
             (let
               [arg-load : i64
                 (let
-                  [bound-132
+                  [needle
                     (compiler_backend.compiler-backend-emit-load-i64-immediate
                       3
                       arg-reg)]
                   (compiler_backend.compiler-backend-string-find-from
                     asm
-                    bound-132
+                    needle
                     0))]
               [callee-load : i64
                 (compiler_backend.compiler-backend-string-find-from
@@ -41833,8 +41794,8 @@ g:
         (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (not
           (let
-            [bound-133 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-133))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-export-symbol-fixed-fault-source) : String
@@ -42048,8 +42009,8 @@ g:
         (and
           (not
             (let
-              [bound-134 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-134)))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -42088,8 +42049,8 @@ g:
             "    movq (%r10), %r8\n")
           (not
             (let
-              [bound-135 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-135))))
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle))))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -42795,8 +42756,8 @@ g:
               "    movq %rax, 8(%r10)\n")))
         (not
           (let
-            [bound-136 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-136))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-struct-ok?) : bool
@@ -42813,8 +42774,8 @@ g:
         (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (not
           (let
-            [bound-137 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-137))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-enum-ok?) : bool
@@ -42833,8 +42794,8 @@ g:
           ".Lf0_match_arm.")
         (not
           (let
-            [bound-138 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-138))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-boxed-recursive-ok?) : bool
@@ -42856,8 +42817,8 @@ g:
         (compiler_backend.compiler-backend-string-contains? asm "    leaq -")
         (not
           (let
-            [bound-139 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-139))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-hot-loop-struct-ok?) : bool
@@ -42877,8 +42838,8 @@ g:
         true
         (not
           (let
-            [bound-140 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-140))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-call-source) : String
@@ -42927,8 +42888,8 @@ g:
           0)
         (not
           (let
-            [bound-141 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-141))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-call-ok?) : bool
@@ -42961,8 +42922,8 @@ g:
             "%rax, (%r10)"))
         (not
           (let
-            [bound-142 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-142))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-copy-ok?) : bool
@@ -43040,8 +43001,8 @@ g:
           "    .comm _tl___tl_dispatch_cache_dot, 8, 8\n")
         (not
           (let
-            [bound-143 (compiler-backend-todo-marker)]
-            (compiler_backend.compiler-backend-string-contains? asm bound-143))))]
+            [needle (compiler-backend-todo-marker)]
+            (compiler_backend.compiler-backend-string-contains? asm needle))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-dispatch-variant-mode-ok?) : bool
@@ -45747,8 +45708,8 @@ g:
 
 (define (compiler-backend-swb-fix-prologue-mask) : i64
   (let
-    [bound-144 (string.copy (& compiler-backend-swb-fix-prologue-source))]
-    (compiler_backend.compiler-backend-swb-text-reg-mask bound-144)))
+    [text (string.copy (& compiler-backend-swb-fix-prologue-source))]
+    (compiler_backend.compiler-backend-swb-text-reg-mask text)))
 
 (define (compiler-backend-swb-fix-block-list [labels : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerIrBlockList
   (let
@@ -46605,12 +46566,8 @@ g:
     [edge-point : i64 8]
     [target-point : i64 26]
     (begin
-      (compiler_regalloc.compiler-reg-fill-i64-array
-        (owned_view.compiler-owned-shared-view starts)
-        -1)
-      (compiler_regalloc.compiler-reg-fill-i64-array
-        (owned_view.compiler-owned-shared-view ends)
-        -1)
+      (compiler_regalloc.compiler-reg-fill-i64-array (&mut starts) -1)
+      (compiler_regalloc.compiler-reg-fill-i64-array (&mut ends) -1)
       (set! (array-ref starts 2) target-point)
       (set! (array-ref ends 2) target-point)
       (match (compiler_backend.compiler-backend-scavenge-assignments-build
@@ -49504,8 +49461,8 @@ b_keep:
             "    movq _tl_cell(%rip), ")
           (not
             (let
-              [bound-145 (compiler-backend-todo-marker)]
-              (compiler_backend.compiler-backend-string-contains? asm bound-145)))))]
+              [needle (compiler-backend-todo-marker)]
+              (compiler_backend.compiler-backend-string-contains? asm needle)))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-global-safety-ok?) : bool

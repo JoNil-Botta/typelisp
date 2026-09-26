@@ -78,7 +78,7 @@ so this section only maps the modules by area. Import a module with
 
 - Language support: `runtime`, `core_macros`, `comptime`, `clone`, `eq`,
   `hash`, `option`, `result`, `iterator`, `test`, `profile`, `ffi`, `cpu`.
-- Text and formatting: `string`, `str_cat`, `str_cat_runtime`,
+- Text and formatting: `string`, `string_utf8`, `str_cat`, `str_cat_runtime`,
   `string_caller_result`, `text_buf`, `text_buf_borrowed`, `text_buf_family`,
   `format`, `format_writer_core`, `json`, `serialize`.
 - Collections: `vector`, `dense_list`, `hashmap`, `set`, `queue`, `sort`,
@@ -404,7 +404,7 @@ contracts, and intentional panic/exit-status checks.
 12. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
 13. Link user-facing docs or tests to the new module when appropriate.
 
-Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 60 explicit
+Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 61 explicit
 build inputs, prove deterministic one-byte mutation propagation, and decode
 every embedded module against its exact source bytes.
 `scripts/verify-stdlib.sh` includes this gate in CI.

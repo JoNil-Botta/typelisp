@@ -12,6 +12,12 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
+`string_utf8_api.tl` runs the shared scalar decoder through both the native
+fixture manifest and inline tests. It covers every leading byte, every second
+byte in each constrained range, every truncation/continuation position, scalar
+boundaries, original-input error offsets, first-error ordering, NUL, borrowed
+substrings, static/copied/arena input, and retained results.
+
 The package-lock inline transaction test exercises `io.OpenWriteCreateNew`,
 file flushing, atomic sibling replacement, advisory coordination locks,
 collision ownership, and pre-replacement fault cleanup on both host targets.

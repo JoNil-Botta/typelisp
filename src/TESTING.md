@@ -285,8 +285,8 @@ must print the leaf's name and returned/expected status before failing.
 A `*_smoke.tl` file is the runnable wrapper for one or more module-local
 self-tests. It should contain little logic: import the module, call the
 self-test, and return `42` only when the checks pass. Examples include
-`compiler_parse_smoke.tl`, `compiler_lower_smoke.tl`,
-`compiler_optimize_smoke.tl`, and `compiler_backend_smoke.tl`.
+`compiler_parse_smoke.tl`, `compiler_lower_smoke.tl`, and
+`compiler_backend_smoke.tl`.
 
 Smoke drivers and their fixtures live under `src/tests/` (a reserved package
 test directory, excluded from the source/closure scan). They are built and run
@@ -364,10 +364,8 @@ modules with dedicated smokes, #2651/#2671/#2657), plus
 complete definition/literal counters across linked, dense, and mixed block
 storage, with independent expected results. It covers empty sequences, builder
 growth, duplicate and nonliteral definitions, missing and boundary IDs, traversal
-order, and rescanning retained input. `compiler_optimize_smoke.tl` also invokes
-the differential fixture alongside the existing literal-specialization and
-tail-only literal-site workflows. Keep both the counter and admission coverage
-when changing this scanner.
+order, and rescanning retained input. Keep both the counter and admission
+coverage when changing this scanner.
 
 Top-level `(test name body...)` items are source-owned executable checks. Normal
 `check`, `compile`, `build`, and `run` ignore them. `typelisp test <file.tl>`

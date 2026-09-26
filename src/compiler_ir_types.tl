@@ -7866,10 +7866,10 @@
           args
           result
           origin))]
-    [(CompilerIrInstr.Store dst value ty)
+    [(CompilerIrInstr.Store global value ty)
       (str_cat.str-cat
-        "  store %"
-        (string.int->string dst)
+        "  store @"
+        (compiler-ir-symbol-text global)
         ", "
         (compiler-ir-typed-value-render
           structural-session

@@ -111632,9 +111632,9 @@
     ;; constant-enables induction, bce_version, and unrolling below, and
     ;; a descriptor-stored length global forwards as the SAME literal the
     ;; compares see (mixed symbolic/literal state would defeat the
-    ;; ctor_fwd equality eliminations). The map is shared with the later
-    ;; divisor-targeted rewrite and empty in the common case, which
-    ;; makes this a length check per function.
+    ;; ctor_fwd equality eliminations). The map is shared with the final
+    ;; multiply-to-shift rewrite (opt-const-global-mul-shift-final) and empty
+    ;; in the common case, which makes this a length check per function.
     [s
       (opt-pass-with-blocks
         (opt-const-length-rewrite-summary-blocks
@@ -112216,16 +112216,6 @@
               (opt-pass-func s))
             s)
           s))]
-    ;; Substitute proven constant-global divisors with their literals before
-    ;; divrem-safety, so the literal divisor both enables the backend
-    ;; magic-multiply path and lets divrem-safety drop the zero/overflow
-    ;; guards. This only rewrites operand values, leaving the CFG structure
-    ;; intact, so the post-LFTR LICM context stays valid for the divrem-safety
-    ;; pass below.
-    [s
-      (opt-pass-with-blocks
-        (opt-const-divisor-rewrite-summary-blocks summaries (opt-pass-blocks s))
-        s)]
     [s
       (opt-stage
         "divrem_safety"
@@ -132931,9 +132921,8 @@
 ;; value). Substituting Mov sources early is register-neutral: the following
 ;; fold propagates the literal into its uses and DCEs the Move, so a bound used
 ;; only in a compare still ends as an immediate operand and no constant is held
-;; in a register across a loop. The same rewrite runs again after global_gvn,
-;; where it is a no-op for the sites this run already covered and catches
-;; globals materialized mid-iteration by other passes. Load/StorePtr/Gep and
+;; in a register across a loop. It also puts the literal divisor in front of
+;; divrem_safety and the backend's magic-multiply path. Load/StorePtr/Gep and
 ;; the vector arms keep the global's hidden-load form: their operand is an
 ;; address or a descriptor pointer, not a scalar the fold can use.
 ;; A wide power-of-two global stays a Global operand here like every other

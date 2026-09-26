@@ -7375,9 +7375,7 @@
   [types : CompilerRegVarTypes]) : bool
   (match value
     [(ir.CompilerIrValue.Var id)
-      (match (compiler-reg-var-types-lookup
-        (compiler-reg-global-shared-view types)
-        id)
+      (match (compiler-reg-var-types-lookup types id)
         [(CompilerRegMaybeType.Some ty)
           (and
             (not
@@ -7404,7 +7402,7 @@
       (compiler-reg-call-arg-gp-class?
         type-segment-bases
         (compiler-reg-global-array-element-shared-view values index)
-        (compiler-reg-global-shared-view types))
+        types)
       (compiler-reg-call-args-array-gp-class?
         type-segment-bases
         values
@@ -7422,10 +7420,7 @@
       (compiler-reg-call-arg-gp-class? type-segment-bases v types)]
     [(ir.CompilerIrCallArgs.Two a b)
       (and
-        (compiler-reg-call-arg-gp-class?
-          type-segment-bases
-          a
-          (compiler-reg-global-shared-view types))
+        (compiler-reg-call-arg-gp-class? type-segment-bases a types)
         (compiler-reg-call-arg-gp-class? type-segment-bases b types))]
     [(ir.CompilerIrCallArgs.Array values)
       (compiler-reg-call-args-array-gp-class?
@@ -7520,9 +7515,7 @@
   [types : CompilerRegVarTypes]) : bool
   (match value
     [(ir.CompilerIrValue.Var id)
-      (match (compiler-reg-var-types-lookup
-        (compiler-reg-global-shared-view types)
-        id)
+      (match (compiler-reg-var-types-lookup types id)
         [(CompilerRegMaybeType.Some ty)
           (compiler-reg-type-register-group?
             type-segment-bases
@@ -7542,7 +7535,7 @@
       (compiler-reg-call-arg-group?
         type-segment-bases
         (compiler-reg-global-array-element-shared-view values i)
-        (compiler-reg-global-shared-view types))
+        types)
       (compiler-reg-call-args-array-has-group?
         type-segment-bases
         values
@@ -7559,10 +7552,7 @@
       (compiler-reg-call-arg-group? type-segment-bases a types)]
     [(ir.CompilerIrCallArgs.Two a b)
       (or
-        (compiler-reg-call-arg-group?
-          type-segment-bases
-          a
-          (compiler-reg-global-shared-view types))
+        (compiler-reg-call-arg-group? type-segment-bases a types)
         (compiler-reg-call-arg-group? type-segment-bases b types))]
     [(ir.CompilerIrCallArgs.Array values)
       (compiler-reg-call-args-array-has-group?
@@ -7625,12 +7615,12 @@
       [is-float : bool
         (compiler-reg-call-arg-float?
           (compiler-reg-global-shared-view value)
-          (compiler-reg-global-shared-view types))]
+          types)]
       (compiler-reg-call-arg-vars-selective-array
         (compiler-reg-call-arg-vars-selective-value
           out
           value
-          (compiler-reg-global-shared-view types)
+          types
           target-abi
           int-idx
           float-idx
@@ -7669,12 +7659,12 @@
         [a-float : bool
           (compiler-reg-call-arg-float?
             (compiler-reg-global-shared-view a)
-            (compiler-reg-global-shared-view types))]
+            types)]
         [after-a : live.CompilerLiveI64Set
           (compiler-reg-call-arg-vars-selective-value
             out
             a
-            (compiler-reg-global-shared-view types)
+            types
             target-abi
             start
             0
@@ -7727,19 +7717,19 @@
     (compiler-reg-call-gp-overflow-from?
       type-segment-bases
       (compiler-reg-global-shared-view args)
-      (compiler-reg-global-shared-view types)
+      types
       target-abi)
     (compiler-reg-call-gp-parallel-from?
       type-segment-bases
       (compiler-reg-global-shared-view args)
-      (compiler-reg-global-shared-view types)
+      types
       start
       (compiler-reg-arg-reg-limit-for-abi target-abi)))
     out
     (if (compiler-reg-call-args-have-group?
       type-segment-bases
       (compiler-reg-global-shared-view args)
-      (compiler-reg-global-shared-view types))
+      types)
       (live.compiler-live-set-union
         out
         (live.compiler-live-call-args-vars args))
@@ -7780,7 +7770,7 @@
                   type-segment-bases
                   out
                   args
-                  (compiler-reg-global-shared-view types)
+                  types
                   0
                   target-abi
                   true)]
@@ -7792,7 +7782,7 @@
                     type-segment-bases
                     (live.compiler-live-value-vars-into out base)
                     args
-                    (compiler-reg-global-shared-view types)
+                    types
                     0
                     target-abi
                     false))]
@@ -7807,7 +7797,7 @@
                       (live.compiler-live-value-vars-into out base)
                       func)
                     args
-                    (compiler-reg-global-shared-view types)
+                    types
                     0
                     target-abi
                     false))]
@@ -7830,7 +7820,7 @@
                   type-segment-bases
                   out
                   args
-                  (compiler-reg-global-shared-view types)
+                  types
                   0
                   target-abi
                   false)]
@@ -7844,7 +7834,7 @@
                   type-segment-bases
                   (live.compiler-live-value-vars-into out func)
                   args
-                  (compiler-reg-global-shared-view types)
+                  types
                   1
                   target-abi
                   false)]
@@ -7858,7 +7848,7 @@
                   type-segment-bases
                   (live.compiler-live-value-vars-into out func)
                   args
-                  (compiler-reg-global-shared-view types)
+                  types
                   1
                   target-abi
                   false)]
@@ -7867,7 +7857,7 @@
                   type-segment-bases
                   (live.compiler-live-value-vars-into out func)
                   args
-                  (compiler-reg-global-shared-view types)
+                  types
                   0
                   target-abi
                   false)]
@@ -7893,7 +7883,7 @@
               type-segment-bases
               instrs
               set
-              (compiler-reg-global-shared-view types)
+              types
               target-abi)
             types
             target-abi)])]
@@ -7913,7 +7903,7 @@
                       type-segment-bases
                       instrs
                       out
-                      (compiler-reg-global-shared-view types)
+                      types
                       target-abi))])
               (set! i (+ i 1))))
           out))]))
@@ -8085,9 +8075,7 @@
               [var : i64 interval.var]
               (if (live.compiler-live-set-contains? ineligible var)
                 unit
-                (match (compiler-reg-var-types-lookup
-                  (compiler-reg-global-shared-view types)
-                  var)
+                (match (compiler-reg-var-types-lookup types var)
                   [(CompilerRegMaybeType.Some ty)
                     (if (if want-float
                       (compiler-reg-float-type? ty)
@@ -9034,9 +9022,7 @@
   [types : CompilerRegVarTypes]
   [left : i64]
   [right : i64]) : bool
-  (match (compiler-reg-var-types-lookup
-    (compiler-reg-global-shared-view types)
-    left)
+  (match (compiler-reg-var-types-lookup types left)
     [(CompilerRegMaybeType.Some left-ty)
       (match (compiler-reg-var-types-lookup types right)
         [(CompilerRegMaybeType.Some right-ty)
@@ -9065,9 +9051,7 @@
   [types : CompilerRegVarTypes]
   [left : i64]
   [right : i64]) : bool
-  (match (compiler-reg-var-types-lookup
-    (compiler-reg-global-shared-view types)
-    left)
+  (match (compiler-reg-var-types-lookup types left)
     [(CompilerRegMaybeType.Some left-ty)
       (match (compiler-reg-var-types-lookup types right)
         [(CompilerRegMaybeType.Some right-ty)
@@ -10053,9 +10037,7 @@
                       index))
                   (set!
                     (array-ref int-ok index)
-                    (match (compiler-reg-var-types-lookup
-                      (compiler-reg-global-shared-view type-info)
-                      index)
+                    (match (compiler-reg-var-types-lookup type-info index)
                       [(CompilerRegMaybeType.Some ty)
                         (if (and
                           (compiler-reg-scalar-type?
@@ -10131,10 +10113,7 @@
     (not (= left right))
     (not (live.compiler-live-set-contains? group-vars left))
     (not (live.compiler-live-set-contains? group-vars right))
-    (compiler-reg-compatible-types?
-      (compiler-reg-global-shared-view types)
-      left
-      right)
+    (compiler-reg-compatible-types? types left right)
     ;; #2 same-value relaxation: a proven same-value pair (single-def direct copy)
     ;; may coalesce despite overlap -- one register holds the shared value. The
     ;; geometry test itself is unchanged; this only ADDS the same-value escape.
@@ -10185,7 +10164,7 @@
         (begin
           (if (compiler-reg-coalesce-vars-compatible?
             (compiler-reg-global-shared-view intervals)
-            (compiler-reg-global-shared-view types)
+            types
             group-vars
             var
             member
@@ -10214,7 +10193,7 @@
           (if (compiler-reg-coalesce-map-var-compatible-with-root?
             next
             (compiler-reg-global-shared-view intervals)
-            (compiler-reg-global-shared-view types)
+            types
             group-vars
             member
             right-root
@@ -10339,7 +10318,7 @@
       [(not
           (compiler-reg-coalesce-vars-compatible?
             (compiler-reg-global-shared-view intervals)
-            (compiler-reg-global-shared-view types)
+            types
             group-vars
             left
             right
@@ -10418,7 +10397,7 @@
                 (compiler-reg-global-shared-view root-start)
                 (compiler-reg-global-shared-view root-end)
                 (compiler-reg-global-shared-view intervals)
-                (compiler-reg-global-shared-view types)
+                types
                 group-vars
                 item.src
                 item.dst
@@ -14462,7 +14441,7 @@
                     (while (< i count)
                       (begin
                         (compiler-reg-invariant-scan-addresses!
-                          (compiler-reg-global-shared-view types)
+                          types
                           (compiler-reg-global-array-element-shared-view
                             slots
                             i)
@@ -17059,7 +17038,7 @@
       (compiler-reg-global-shared-view candidate-regs)
       vars
       var
-      (compiler-reg-global-shared-view type-info)
+      type-info
       assignments
       (compiler-reg-global-shared-view intervals)
       group-vars
@@ -17177,7 +17156,7 @@
                 candidate-regs
                 vars
                 0
-                (compiler-reg-global-shared-view type-info)
+                type-info
                 assignments
                 (compiler-reg-global-shared-view intervals)
                 group-vars
@@ -17334,7 +17313,7 @@
                       candidate-regs
                       vars
                       0
-                      (compiler-reg-global-shared-view type-info)
+                      type-info
                       assignments
                       (compiler-reg-global-shared-view intervals)
                       group-vars
@@ -17952,7 +17931,7 @@
       (compiler-reg-global-shared-view candidate-regs)
       vars
       var
-      (compiler-reg-global-shared-view type-info)
+      type-info
       assignments
       (compiler-reg-global-shared-view intervals)
       group-vars
@@ -17974,7 +17953,7 @@
           (compiler-reg-global-shared-view candidate-regs)
           vars
           var
-          (compiler-reg-global-shared-view type-info)
+          type-info
           assignments
           (compiler-reg-global-shared-view intervals)
           group-vars
@@ -18095,7 +18074,7 @@
             candidate-regs
             vars
             0
-            (compiler-reg-global-shared-view type-info)
+            type-info
             assignments
             (compiler-reg-global-shared-view intervals)
             group-vars
@@ -18767,7 +18746,7 @@
       vars
       var
       param-vars
-      (compiler-reg-global-shared-view type-info)
+      type-info
       assignments
       intervals
       group-vars
@@ -18879,7 +18858,7 @@
             vars
             0
             param-vars
-            (compiler-reg-global-shared-view type-info)
+            type-info
             assignments
             intervals
             group-vars
@@ -19202,7 +19181,7 @@
             (compiler-reg-function-group-vars
               type-segment-bases
               (compiler-reg-global-shared-view func)
-              (compiler-reg-global-shared-view type-info))]
+              type-info)]
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq
               (compiler-reg-global-shared-view blocks))]
@@ -19238,7 +19217,7 @@
                     (compiler-reg-coalesce-map-build
                       function-moves
                       (compiler-reg-global-shared-view intervals)
-                      (compiler-reg-global-shared-view type-info)
+                      type-info
                       group-vars
                       vars
                       (__tl_make-array i64 0)))]
@@ -19385,7 +19364,7 @@
         (compiler-reg-function-group-vars
           type-segment-bases
           (compiler-reg-global-shared-view func)
-          (compiler-reg-global-shared-view type-info))]
+          type-info)]
       (match selection
         [(CompilerRegIntervalSelection.Selection _ intervals)
           (let
@@ -19398,7 +19377,7 @@
                 (compiler-reg-coalesce-map-build
                   function-moves
                   (compiler-reg-global-shared-view intervals)
-                  (compiler-reg-global-shared-view type-info)
+                  type-info
                   group-vars
                   vars
                   (__tl_make-array i64 0)))]
@@ -19419,7 +19398,7 @@
                   0
                   0
                   vars
-                  (compiler-reg-global-shared-view type-info)
+                  type-info
                   assignments
                   (compiler-reg-global-shared-view intervals)
                   group-vars
@@ -19441,7 +19420,7 @@
                       (compiler-reg-global-shared-view live-blocks)
                       depths
                       vars
-                      (compiler-reg-global-shared-view type-info)
+                      type-info
                       assignments
                       (compiler-reg-global-shared-view intervals)
                       group-vars
@@ -19750,7 +19729,7 @@
           (compiler-reg-global-shared-view candidate-regs)
           vars
           var
-          (compiler-reg-global-shared-view type-info)
+          type-info
           assignments
           (compiler-reg-global-shared-view intervals)
           group-vars
@@ -19846,7 +19825,7 @@
                     candidate-regs
                     vars
                     0
-                    (compiler-reg-global-shared-view type-info)
+                    type-info
                     assignments
                     (compiler-reg-global-shared-view intervals)
                     group-vars
@@ -20007,7 +19986,7 @@
                   candidate-regs
                   vars
                   0
-                  (compiler-reg-global-shared-view type-info)
+                  type-info
                   assignments
                   (compiler-reg-global-shared-view intervals)
                   group-vars
@@ -20084,7 +20063,7 @@
             in-vars
             current-vars
             extra-assignments
-            (compiler-reg-global-shared-view extra-types)))]
+            extra-types))]
       [round-plan-types : CompilerRegVarTypes
         (compiler-reg-plan-types (compiler-reg-global-shared-view round-plan))]
       [round-type-info : CompilerRegVarTypes
@@ -21350,9 +21329,7 @@
             (live.compiler-live-set-contains? live-after v)
             (not (live.compiler-live-set-contains? defs v))
             (not (live.compiler-live-set-contains? memory-vars v)))
-            (match (compiler-reg-var-types-lookup
-              (compiler-reg-global-shared-view type-info)
-              v)
+            (match (compiler-reg-var-types-lookup type-info v)
               [(CompilerRegMaybeType.Some ty)
                 (if (compiler-reg-cold-call-protectable-type?
                   type-segment-bases
@@ -21415,9 +21392,7 @@
         (let
           [v : i64 (array-ref selected i)]
           (begin
-            (match (compiler-reg-var-types-lookup
-              (compiler-reg-global-shared-view type-info)
-              v)
+            (match (compiler-reg-var-types-lookup type-info v)
               [(CompilerRegMaybeType.Some ty)
                 (set!
                   (array-ref out w)
@@ -21432,9 +21407,7 @@
         (let
           [v : i64 (array-ref selected i)]
           (begin
-            (match (compiler-reg-var-types-lookup
-              (compiler-reg-global-shared-view type-info)
-              v)
+            (match (compiler-reg-var-types-lookup type-info v)
               [(CompilerRegMaybeType.Some ty)
                 (set!
                   (array-ref out w)
@@ -21508,7 +21481,7 @@
                     (compiler-reg-ineligible-memory
                       blocks
                       (live.compiler-live-set-empty))
-                    (compiler-reg-global-shared-view type-info)
+                    type-info
                     vars
                     (&mut selected))]
                 (if (or (< selected-count 2) (> selected-count 12))
@@ -21533,8 +21506,7 @@
                                       selected
                                       selected-count
                                       vars
-                                      (compiler-reg-global-shared-view
-                                        type-info)))])
+                                      type-info))])
                               (ir.compiler-ir-block-seq-ref seq b)))
                           (set! b (+ b 1))))
                       (CompilerRegColdCallRewrite.Rewrite
@@ -22441,9 +22413,7 @@
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Spill _)
-            (match (compiler-reg-var-types-lookup
-              (compiler-reg-global-shared-view type-info)
-              var)
+            (match (compiler-reg-var-types-lookup type-info var)
               [(CompilerRegMaybeType.No) false]
               [(CompilerRegMaybeType.Some ty)
                 (compiler-reg-cold-call-protectable-type?
@@ -22467,7 +22437,7 @@
         (begin
           (if (compiler-reg-call-hole-eligible-var?
             type-segment-bases
-            (compiler-reg-global-shared-view type-info)
+            type-info
             assignments
             ineligible
             var)
@@ -22542,9 +22512,7 @@
   (if (live.compiler-live-set-contains? ineligible var)
     false
     (if (compiler-reg-call-hole-csr-home? target-abi assignments var)
-      (match (compiler-reg-var-types-lookup
-        (compiler-reg-global-shared-view type-info)
-        var)
+      (match (compiler-reg-var-types-lookup type-info var)
         [(CompilerRegMaybeType.No) false]
         [(CompilerRegMaybeType.Some ty)
           (compiler-reg-cold-call-protectable-type?
@@ -22573,7 +22541,7 @@
         (begin
           (if (compiler-reg-call-hole-eligible-var?
             type-segment-bases
-            (compiler-reg-global-shared-view type-info)
+            type-info
             assignments
             ineligible
             var)
@@ -22583,7 +22551,7 @@
             (if (compiler-reg-call-hole-csr-candidate-var?
               type-segment-bases
               target-abi
-              (compiler-reg-global-shared-view type-info)
+              type-info
               assignments
               ineligible
               var)
@@ -24034,7 +24002,7 @@
                                     live-after
                                     var))
                                   (match (compiler-reg-var-types-lookup
-                                    (compiler-reg-global-shared-view type-info)
+                                    type-info
                                     var)
                                     [(CompilerRegMaybeType.No) unit]
                                     [(CompilerRegMaybeType.Some ty)
@@ -24073,7 +24041,7 @@
                                     var
                                     (not (= 0 (bit-and exit-read (shl 1 j))))))
                                   (match (compiler-reg-var-types-lookup
-                                    (compiler-reg-global-shared-view type-info)
+                                    type-info
                                     var)
                                     [(CompilerRegMaybeType.No) unit]
                                     [(CompilerRegMaybeType.Some ty)
@@ -24123,7 +24091,7 @@
               type-segment-bases
               (ir.compiler-ir-block-seq-ref seq index)
               (compiler-reg-global-shared-view liveness)
-              (compiler-reg-global-shared-view type-info)
+              type-info
               carrier
               selected
               selected-count
@@ -24484,7 +24452,7 @@
         (compiler-reg-global-shared-view ctx.func)
         ctx.vars
         (compiler-reg-global-shared-view ctx.plan)
-        (compiler-reg-global-shared-view ctx.type-info)
+        ctx.type-info
         ctx.temp-start)]
     (if (>= round (compiler-reg-call-hole-max-rounds))
       none
@@ -24524,7 +24492,7 @@
                     ctx.type-segment-bases
                     ctx.seq
                     (compiler-reg-global-shared-view ctx.liveness)
-                    (compiler-reg-global-shared-view ctx.type-info)
+                    ctx.type-info
                     carrier
                     selected
                     selected-count
@@ -24563,7 +24531,7 @@
                     (compiler-reg-global-shared-view split-func)
                     ctx.threshold
                     false
-                    (compiler-reg-global-shared-view split-types)
+                    split-types
                     (compiler-reg-assignment-table-empty))]
                 [unimproved : i64
                   (compiler-reg-call-hole-drop-unimproved!
@@ -24628,7 +24596,7 @@
             (compiler-reg-global-shared-view func)
             vars
             (compiler-reg-global-shared-view plan)
-            (compiler-reg-global-shared-view type-info)
+            type-info
             temp-start)]
         [threshold : i64
           (if (>= temp-start 0)
@@ -24654,13 +24622,13 @@
                   (compiler-reg-call-hole-mark-candidates!
                     type-segment-bases
                     target-abi
-                    (compiler-reg-global-shared-view type-info)
+                    type-info
                     (compiler-reg-plan-assignments
                       (compiler-reg-global-shared-view plan))
                     (compiler-reg-ineligible-vars-non-params
                       type-segment-bases
                       (compiler-reg-global-shared-view func)
-                      (compiler-reg-global-shared-view type-info)
+                      type-info
                       target-abi)
                     threshold
                     (&mut flags)
@@ -24719,7 +24687,7 @@
                           (compiler-reg-global-shared-view func)
                           (compiler-reg-global-shared-view seq)
                           liveness
-                          (compiler-reg-global-shared-view type-info)
+                          type-info
                           (compiler-reg-global-shared-view plan)
                           vars
                           temp-start
@@ -25369,9 +25337,7 @@
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Register _)
-            (match (compiler-reg-var-types-lookup
-              (compiler-reg-global-shared-view type-info)
-              var)
+            (match (compiler-reg-var-types-lookup type-info var)
               [(CompilerRegMaybeType.No) false]
               [(CompilerRegMaybeType.Some ty)
                 (compiler-reg-cold-call-protectable-type?
@@ -25618,7 +25584,7 @@
                       (not (= (array-ref resident-stamp var) generation))
                       (compiler-reg-loop-park-through-eligible?
                         type-segment-bases
-                        (compiler-reg-global-shared-view type-info)
+                        type-info
                         assignments
                         ineligible
                         var))
@@ -26464,9 +26430,7 @@
           (not (= (bit-and (shr mask slot) 1) 0))
           (let
             [var : i64 (array-ref pk.park-var slot)]
-            (match (compiler-reg-var-types-lookup
-              (compiler-reg-global-shared-view type-info)
-              var)
+            (match (compiler-reg-var-types-lookup type-info var)
               [(CompilerRegMaybeType.No) unit]
               [(CompilerRegMaybeType.Some ty)
                 (ir.compiler-ir-instr-builder-push!
@@ -26494,9 +26458,7 @@
             (= (array-ref pk.park-store-at slot) at))
           (let
             [var : i64 (array-ref pk.park-var slot)]
-            (match (compiler-reg-var-types-lookup
-              (compiler-reg-global-shared-view type-info)
-              var)
+            (match (compiler-reg-var-types-lookup type-info var)
               [(CompilerRegMaybeType.No) unit]
               [(CompilerRegMaybeType.Some ty)
                 (ir.compiler-ir-instr-builder-push!
@@ -26555,7 +26517,7 @@
             (compiler-reg-loop-park-push-reloads!
               (&mut builder)
               pk
-              (compiler-reg-global-shared-view type-info)
+              type-info
               direct)
             (while (< i count)
               (begin
@@ -26568,7 +26530,7 @@
                   (compiler-reg-loop-park-push-stores!
                     (&mut builder)
                     pk
-                    (compiler-reg-global-shared-view type-info)
+                    type-info
                     stores
                     i))
                 (ir.compiler-ir-instr-builder-push!
@@ -26649,11 +26611,7 @@
         (begin
           (set!
             (array-ref out index)
-            (compiler-reg-loop-park-rewrite-block
-              pk
-              seq
-              (compiler-reg-global-shared-view type-info)
-              index))
+            (compiler-reg-loop-park-rewrite-block pk seq type-info index))
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index sites)
@@ -26665,11 +26623,7 @@
             (begin
               (set!
                 (array-ref out write)
-                (compiler-reg-loop-park-splice-block
-                  pk
-                  seq
-                  (compiler-reg-global-shared-view type-info)
-                  index))
+                (compiler-reg-loop-park-splice-block pk seq type-info index))
               (set! write (+ write 1))))
           (set! index (+ index 1))))
       (ir.CompilerIrBlockList.Array
@@ -26745,7 +26699,7 @@
         (compiler-reg-global-shared-view rd.func)
         rd.vars
         rd.plan
-        (compiler-reg-global-shared-view rd.type-info)
+        rd.type-info
         rd.temp-start)]
     (if (>= round (compiler-reg-loop-park-max-rounds))
       none
@@ -26777,7 +26731,7 @@
                   (compiler-reg-loop-park-rewrite-blocks
                     pk
                     ctx.seq
-                    (compiler-reg-global-shared-view rd.type-info))]
+                    rd.type-info)]
                 [park-vars : i64 (+ rd.vars parked)]
                 [park-func : ir.CompilerIrFunction
                   (ir.CompilerIrFunction.Function
@@ -26799,7 +26753,7 @@
                     (compiler-reg-global-shared-view park-func)
                     rd.threshold
                     rd.cold-split
-                    (compiler-reg-global-shared-view park-types)
+                    park-types
                     (compiler-reg-assignment-table-empty))]
                 ;; The rewrite adds blocks, so the parked function gets its own
                 ;; weights; they agree with the input on every original block,
@@ -26867,7 +26821,7 @@
             (compiler-reg-global-shared-view func)
             vars
             (compiler-reg-global-shared-view plan)
-            (compiler-reg-global-shared-view type-info)
+            type-info
             temp-start)]
         [threshold : i64
           (if (>= temp-start 0)
@@ -26928,14 +26882,14 @@
                       (compiler-reg-ineligible-vars-non-params
                         type-segment-bases
                         (compiler-reg-global-shared-view func)
-                        (compiler-reg-global-shared-view type-info)
+                        type-info
                         target-abi)]
                     [spilled : (__tl_dyn-array bool)
                       (__tl_make-array bool vars)]
                     [spilled-count : i64
                       (compiler-reg-call-hole-mark-eligible!
                         type-segment-bases
-                        (compiler-reg-global-shared-view type-info)
+                        type-info
                         (compiler-reg-plan-assignments
                           (compiler-reg-global-shared-view plan))
                         ineligible
@@ -26952,7 +26906,7 @@
                         ;; SSA facts the placement rests on.
                         (live.compiler-live-analyze-function-edge-precise
                           (compiler-reg-global-shared-view func))
-                        (compiler-reg-global-shared-view type-info)
+                        type-info
                         (compiler-reg-plan-assignments
                           (compiler-reg-global-shared-view plan))
                         ineligible
@@ -26969,7 +26923,7 @@
                           target-abi
                           (compiler-reg-global-shared-view func)
                           (compiler-reg-global-shared-view plan)
-                          (compiler-reg-global-shared-view type-info)
+                          type-info
                           temp-start
                           threshold
                           cold-split
@@ -29219,10 +29173,7 @@
           (>= var 0)
           (< var n)
           (= (array-ref root-has-remat var) 0)
-          (match (compiler-reg-loop-split-type-ok?
-            (compiler-reg-global-shared-view type-info)
-            group-vars
-            var)
+          (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
             [(CompilerRegMaybeType.Some _) true]
             [(CompilerRegMaybeType.No) false])
           (match (compiler-reg-assignment-table-lookup assignments var)
@@ -29297,7 +29248,7 @@
     [remat-table : CompilerRegRematTable
       (compiler-reg-remat-table-build
         (compiler-reg-global-shared-view func)
-        (compiler-reg-global-shared-view type-info))]
+        type-info)]
     [remat-cands : (__tl_dyn-array i64) remat-table.candidates]
     [root-has-remat : (__tl_dyn-array i64) (__tl_make-array i64 an)]
     [cand : (__tl_dyn-array i64) (__tl_make-array i64 an)]
@@ -29320,7 +29271,7 @@
             candidates
             0
             assignments
-            (compiler-reg-global-shared-view type-info)
+            type-info
             group-vars
             kind0
             root-has-remat
@@ -29349,7 +29300,7 @@
                     [rr : i64 (compiler-reg-call-region-root parents n v)]
                     (and (not (= rr v)) (> (array-ref cand rr) 0)))
                   (match (compiler-reg-loop-split-type-ok?
-                    (compiler-reg-global-shared-view type-info)
+                    type-info
                     group-vars
                     v)
                     [(CompilerRegMaybeType.Some _) true]
@@ -30408,9 +30359,7 @@
   [type-segment-bases : i64]
   [types : CompilerRegVarTypes]
   [var : i64]) : bool
-  (match (compiler-reg-var-types-lookup
-    (compiler-reg-global-shared-view types)
-    var)
+  (match (compiler-reg-var-types-lookup types var)
     [(CompilerRegMaybeType.Some ty)
       (compiler-reg-type-register-group-has-sse?
         type-segment-bases
@@ -33529,7 +33478,7 @@
       [is-float : bool
         (compiler-reg-call-arg-float?
           (compiler-reg-global-shared-view value)
-          (compiler-reg-global-shared-view types))]
+          types)]
       (begin
         (compiler-reg-float-arg-pref-value!
           target-abi
@@ -33578,7 +33527,7 @@
         [a-float : bool
           (compiler-reg-call-arg-float?
             (compiler-reg-global-shared-view a)
-            (compiler-reg-global-shared-view types))]
+            types)]
         (begin
           (compiler-reg-float-arg-pref-value!
             target-abi
@@ -33717,7 +33666,7 @@
           target-abi
           (compiler-reg-global-shared-view pool)
           (compiler-reg-global-array-element-shared-view slots i)
-          (compiler-reg-global-shared-view types)
+          types
           prefs
           parents)
         (set! i (+ i 1))))))
@@ -33739,7 +33688,7 @@
               target-abi
               (compiler-reg-global-shared-view pool)
               instrs
-              (compiler-reg-global-shared-view types)
+              types
               prefs
               parents)])
         (compiler-reg-float-arg-pref-blocks!
@@ -33761,7 +33710,7 @@
                   target-abi
                   (compiler-reg-global-shared-view pool)
                   instrs
-                  (compiler-reg-global-shared-view types)
+                  types
                   prefs
                   parents)])
             (set! i (+ i 1)))))]))
@@ -33845,7 +33794,7 @@
       [is-float : bool
         (compiler-reg-call-arg-float?
           (compiler-reg-global-shared-view value)
-          (compiler-reg-global-shared-view types))]
+          types)]
       (begin
         (compiler-reg-float-arg-demote-value!
           target-abi
@@ -33890,7 +33839,7 @@
         [a-float : bool
           (compiler-reg-call-arg-float?
             (compiler-reg-global-shared-view a)
-            (compiler-reg-global-shared-view types))]
+            types)]
         (begin
           (compiler-reg-float-arg-demote-value!
             target-abi
@@ -34015,7 +33964,7 @@
         (compiler-reg-float-arg-demote-instr!
           target-abi
           (compiler-reg-global-array-element-shared-view slots i)
-          (compiler-reg-global-shared-view types)
+          types
           parents
           assignments)
         (set! i (+ i 1))))))
@@ -34035,7 +33984,7 @@
             (compiler-reg-float-arg-demote-seq!
               target-abi
               instrs
-              (compiler-reg-global-shared-view types)
+              types
               parents
               assignments)])
         (compiler-reg-float-arg-demote-blocks!
@@ -34055,7 +34004,7 @@
                 (compiler-reg-float-arg-demote-seq!
                   target-abi
                   instrs
-                  (compiler-reg-global-shared-view types)
+                  types
                   parents
                   assignments)])
             (set! i (+ i 1)))))]))
@@ -34994,7 +34943,7 @@
                   (compiler-reg-group-pair-member-ok?
                     type-segment-bases
                     v
-                    (compiler-reg-global-shared-view type-info)
+                    type-info
                     group-vars
                     excluded
                     starts
@@ -35004,7 +34953,7 @@
                     type-segment-bases
                     v
                     vars
-                    (compiler-reg-global-shared-view type-info)
+                    type-info
                     group-vars
                     excluded
                     caller-unsafe
@@ -35060,7 +35009,7 @@
               (if (compiler-reg-group-pair-member-ok?
                 type-segment-bases
                 w
-                (compiler-reg-global-shared-view type-info)
+                type-info
                 group-vars
                 excluded
                 starts
@@ -35824,7 +35773,7 @@
       (compiler-reg-function-group-vars
         type-segment-bases
         (compiler-reg-global-shared-view func)
-        (compiler-reg-global-shared-view type-info))]
+        type-info)]
     ;; Same-value overlap-coalescing exclusion points. This is the KIND-6
     ;; (call-like minus tail calls: call/syscall/cpuid/xgetbv) point set, NOT the
     ;; coarse merged
@@ -35878,7 +35827,7 @@
               interval-index
               set-empty
               storage-identity-vars))
-          (compiler-reg-global-shared-view type-info)
+          type-info
           (compiler-reg-global-shared-view interval-index))
         (compiler-reg-function-same-value-parents-filtered
           (compiler-reg-global-shared-view func)
@@ -36004,7 +35953,7 @@
         (compiler-reg-coalesce-map-build
           moves
           (compiler-reg-global-shared-view coalesce-index)
-          (compiler-reg-global-shared-view type-info)
+          type-info
           group-vars
           (array-length coalesce-index.starts)
           sv-parents)
@@ -36044,7 +35993,7 @@
       (compiler-reg-early-scratch-model
         (compiler-reg-global-shared-view func)
         (compiler-reg-global-shared-view eff-index)
-        (compiler-reg-global-shared-view type-info)
+        type-info
         assignment-table
         allow-caller-saved-zero-call)]
     [allocation-index : CompilerRegIntervalIndex
@@ -36100,7 +36049,7 @@
       (compiler-reg-function-float-arg-prefs
         target-abi
         (compiler-reg-global-shared-view func)
-        (compiler-reg-global-shared-view type-info)
+        type-info
         coalesce
         (array-length interval-index.starts))]
     ;; The effective scalar allocation pass sees only coalesced
@@ -36155,7 +36104,7 @@
     [integer-candidates : CompilerRegIntervalSeq
       (compiler-reg-candidates
         (compiler-reg-global-shared-view eff-intervals)
-        (compiler-reg-global-shared-view type-info)
+        type-info
         eff-blocked
         false)]
     [scratch-candidates : CompilerRegIntervalSeq
@@ -36295,7 +36244,7 @@
         (compiler-reg-early-scratch-model
           (compiler-reg-global-shared-view func)
           (compiler-reg-global-shared-view eff-index)
-          (compiler-reg-global-shared-view type-info)
+          type-info
           base-integer-assignments
           true))]
     [allocation-table : CompilerRegAssignmentTable
@@ -36362,7 +36311,7 @@
           integer-candidates
           integer-assignments
           eff-index
-          (compiler-reg-global-shared-view type-info)
+          type-info
           group-vars
           coalesce.parents
           base-eviction-ref-counts)
@@ -36387,11 +36336,7 @@
       ;; hints so float pressure is ordered by actual use density and moves bias
       ;; toward an already assigned neighbour, matching the integer greedy.
       (compiler-reg-greedy-state
-        (compiler-reg-candidates
-          eff-intervals
-          (compiler-reg-global-shared-view type-info)
-          eff-blocked
-          true)
+        (compiler-reg-candidates eff-intervals type-info eff-blocked true)
         (compiler-reg-xmm-registers-for-abi target-abi)
         integer-call-assignments
         (compiler-reg-global-shared-view eff-index)
@@ -36415,7 +36360,7 @@
         (compiler-reg-float-call-args-demote!
           target-abi
           (compiler-reg-global-shared-view func)
-          (compiler-reg-global-shared-view type-info)
+          type-info
           coalesce
           scalar-assignments)
         unit)]
@@ -36538,7 +36483,7 @@
           call-save-shadows
           (compiler-reg-invariant-facts-build
             (compiler-reg-global-shared-view func)
-            (compiler-reg-global-shared-view type-info)).cells-clean
+            type-info).cells-clean
           (array-length interval-index.starts))
         assignments)]
     ;; GAP2b: register-pair homing for group values. Runs LAST, when every
@@ -36552,7 +36497,7 @@
             (compiler-reg-assign-group-pairs
               type-segment-bases
               (compiler-reg-global-shared-view func)
-              (compiler-reg-global-shared-view type-info)
+              type-info
               group-vars
               interval-index
               final-assignments
@@ -37134,7 +37079,7 @@
           func
           forced-spill-from
           cold-split?
-          (compiler-reg-global-shared-view type-info)
+          type-info
           forced-assignments))]
     [result : CompilerRegPlan (compiler-reg-owned-copy-plan raw type-info)]
     (begin
@@ -37228,7 +37173,7 @@
                 (compiler-reg-ineligible-vars-non-params
                   type-segment-bases
                   (compiler-reg-global-shared-view func)
-                  (compiler-reg-global-shared-view type-info)
+                  type-info
                   target-abi)]
               (if forced-spill?
                 (compiler-reg-live-set-insert-range base forced-spill-from vars)
@@ -37254,7 +37199,7 @@
                   type-segment-bases
                   func
                   liveness-handle
-                  (compiler-reg-global-shared-view type-info)
+                  type-info
                   intervals
                   interval-index
                   preassignments
@@ -42933,7 +42878,7 @@
             (compiler-reg-global-shared-view func)
             vars
             (compiler-reg-global-shared-view plan)
-            (compiler-reg-global-shared-view type-info)
+            type-info
             temp-start)]
         (if (not
           (let
@@ -42984,7 +42929,7 @@
                     (compiler-reg-global-shared-view func)
                     threshold
                     cold-split
-                    (compiler-reg-global-shared-view type-info)
+                    type-info
                     (compiler-reg-assignment-table-empty))]
                 [reserved-cost : i64
                   (+
@@ -43177,9 +43122,7 @@
               (ir.CompilerIrInstr.Mov
                 root
                 (ir.CompilerIrValue.Var (array-ref act-w root))
-                (compiler-reg-caller-save-var-type
-                  (compiler-reg-global-shared-view type-info)
-                  root)))
+                (compiler-reg-caller-save-var-type type-info root)))
             unit)
           (set! j (+ j 1)))))))
 
@@ -43361,9 +43304,7 @@
                           (compiler-reg-var-types-insert
                             extra-types
                             w
-                            (compiler-reg-caller-save-var-type
-                              (compiler-reg-global-shared-view type-info)
-                              victim))))))
+                            (compiler-reg-caller-save-var-type type-info victim))))))
                   (set! ei (+ ei 1))))))
           (while (< b nblocks)
             (begin
@@ -43449,8 +43390,7 @@
                                               (array-ref evict-w victim)
                                               (ir.CompilerIrValue.Var victim)
                                               (compiler-reg-caller-save-var-type
-                                                (compiler-reg-global-shared-view
-                                                  type-info)
+                                                type-info
                                                 victim)))
                                           (ir.compiler-ir-instr-builder-push!
                                             (&mut builder)
@@ -43459,8 +43399,7 @@
                                               (ir.CompilerIrValue.Var
                                                 (array-ref evict-w victim))
                                               (compiler-reg-caller-save-var-type
-                                                (compiler-reg-global-shared-view
-                                                  type-info)
+                                                type-info
                                                 victim)))))
                                       (set! e-cursor (+ e-cursor 1)))))
                                 ;; activations at this point
@@ -43478,8 +43417,7 @@
                                         cabi.compiler-reg-id-invalid)]
                                     [ty : ast.AstType
                                       (compiler-reg-caller-save-var-type
-                                        (compiler-reg-global-shared-view
-                                          type-info)
+                                        type-info
                                         root)]
                                     (begin
                                       (if (or
@@ -43551,8 +43489,7 @@
                                           act-exit
                                           act-w
                                           point
-                                          (compiler-reg-global-shared-view
-                                            type-info)
+                                          type-info
                                           (&mut builder))
                                         (ir.compiler-ir-instr-builder-push!
                                           (&mut builder)
@@ -43568,8 +43505,7 @@
                                           act-exit
                                           act-w
                                           point
-                                          (compiler-reg-global-shared-view
-                                            type-info)
+                                          type-info
                                           (&mut builder))))
                                     ;; deactivate the regions ending here
                                     (let
@@ -44434,7 +44370,7 @@
             parents
             merged-roots
             out-extra-assignments
-            (compiler-reg-global-shared-view out-extra-types)
+            out-extra-types
             (compiler-reg-global-shared-view remap)
             (compiler-reg-global-shared-view marks)
             (&mut builder))
@@ -44587,7 +44523,7 @@
                   parents
                   merged-roots
                   out-extra-assignments
-                  (compiler-reg-global-shared-view out-extra-types)
+                  out-extra-types
                   (compiler-reg-global-shared-view remap)
                   (compiler-reg-global-shared-view marks)
                   (&mut builder))
@@ -44819,12 +44755,12 @@
       [table : CompilerRegRematTable
         (compiler-reg-remat-table-build
           (compiler-reg-global-shared-view func)
-          (compiler-reg-global-shared-view type-info))]
+          type-info)]
       [group-vars : live.CompilerLiveI64Set
         (compiler-reg-function-group-vars
           type-segment-bases
           (compiler-reg-global-shared-view func)
-          (compiler-reg-global-shared-view type-info))]
+          type-info)]
       (match (compiler-reg-with-analysis-scratch
         vars
         (compiler-reg-global-shared-view blocks)

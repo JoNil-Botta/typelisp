@@ -3164,7 +3164,7 @@
       [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
       (and
         (let
-          [type-info-copy (reg.compiler-reg-global-shared-view type-info)]
+          [type-info-copy type-info]
           [assignments-copy assignments]
           [set-empty (live.compiler-live-set-empty)]
           (reg.compiler-reg-loop-park-through-eligible?
@@ -3175,7 +3175,7 @@
             0))
         (not
           (let
-            [type-info-copy (reg.compiler-reg-global-shared-view type-info)]
+            [type-info-copy type-info]
             [assignments-copy assignments]
             [set-empty (live.compiler-live-set-empty)]
             (reg.compiler-reg-loop-park-through-eligible?
@@ -3186,7 +3186,7 @@
               1)))
         (not
           (let
-            [type-info-copy (reg.compiler-reg-global-shared-view type-info)]
+            [type-info-copy type-info]
             [assignments-copy assignments]
             [set-empty (live.compiler-live-set-empty)]
             (reg.compiler-reg-loop-park-through-eligible?
@@ -8437,7 +8437,7 @@
                     "use0b"
                     (+ vars 1))
                   (match (reg.compiler-reg-var-types-lookup
-                    (reg.compiler-reg-global-shared-view rewritten-types)
+                    rewritten-types
                     vars)
                     [(reg.CompilerRegMaybeType.Some ty)
                       (match ty
@@ -12598,20 +12598,14 @@
           5
           (ast.AstType.Bool))]
       [merged : reg.CompilerRegVarTypes
-        (reg.compiler-reg-var-types-merge
-          extra
-          (reg.compiler-reg-global-shared-view base))]
+        (reg.compiler-reg-var-types-merge extra base)]
       (and
         (= (array-ref (reg.compiler-reg-var-types-present base) 2) 1)
         (= (array-ref (reg.compiler-reg-var-types-present base) 3) 0)
-        (match (reg.compiler-reg-var-types-lookup
-          (reg.compiler-reg-global-shared-view base)
-          2)
+        (match (reg.compiler-reg-var-types-lookup base 2)
           [(reg.CompilerRegMaybeType.Some (ast.AstType.I64)) true]
           [_ false])
-        (match (reg.compiler-reg-var-types-lookup
-          (reg.compiler-reg-global-shared-view base)
-          3)
+        (match (reg.compiler-reg-var-types-lookup base 3)
           [(reg.CompilerRegMaybeType.No) true]
           [_ false])
         ;; Merge overrides a present extra entry without mutating the published
@@ -12695,9 +12689,7 @@
         (reg.compiler-reg-function-var-types
           (compiler-reg-select-var-types-function))]
       (and
-        (match (reg.compiler-reg-var-types-lookup
-          (reg.compiler-reg-global-shared-view types)
-          3)
+        (match (reg.compiler-reg-var-types-lookup types 3)
           [(reg.CompilerRegMaybeType.Some (ast.AstType.I64)) true]
           [_ false])
         (match (reg.compiler-reg-var-types-lookup types 4)

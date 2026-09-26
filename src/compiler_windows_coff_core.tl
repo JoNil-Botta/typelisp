@@ -189,8 +189,7 @@
   (begin
     (cfg
       compile-profile
-      (compiler_driver_core.compiler-driver-profile-start-phase
-        (profile_state.compiler-profile-state-shared-view profile-state)))
+      (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
     (match (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
       backend-state
       pools
@@ -200,7 +199,7 @@
       spans
       true
       false
-      (profile_state.compiler-profile-state-shared-view profile-state))
+      profile-state)
       [(compiler_backend.ResultCompilerBackendBuffer.Ok asm)
         (begin
           (cfg
@@ -267,9 +266,9 @@
       typecheck-state)
     (match (compiler-windows-coff-object-program-eligibility
       backend-state
-      (owned_view.compiler-owned-shared-view pools)
+      pools
       (owned_view.compiler-owned-shared-view program)
-      (profile_state.compiler-profile-state-shared-view profile-state))
+      profile-state)
       [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
         (compiler-windows-batch-emit-assembly
           backend-state
@@ -286,24 +285,23 @@
           (cfg
             compile-profile
             (compiler_driver_core.compiler-driver-profile-start-phase
-              (profile_state.compiler-profile-state-shared-view profile-state)))
+              profile-state))
           (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
             backend-state
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             (owned_view.compiler-owned-shared-view program)
             (compiler_backend.CompilerBackendTarget.Windows)
             mode
             (owned_view.compiler-owned-shared-view spans)
             true
             false
-            (profile_state.compiler-profile-state-shared-view profile-state))
+            profile-state)
             [(compiler_backend.ResultCompilerBackendObject.Ok image)
               (begin
                 (cfg
                   compile-profile
                   (compiler_driver_core.compiler-driver-profile-finish-phase
-                    (profile_state.compiler-profile-state-shared-view
-                      profile-state)
+                    profile-state
                     "backend.object-image"))
                 (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
                   typecheck-state
@@ -315,8 +313,7 @@
                       (cfg
                         compile-profile
                         (compiler_driver_core.compiler-driver-profile-start-phase
-                          (profile_state.compiler-profile-state-shared-view
-                            profile-state)))
+                          profile-state))
                       (match (compiler_object_coff.compiler-object-coff-render
                         (owned_view.compiler-owned-shared-view image))
                         [(compiler_object_coff.ResultCompilerObjectCoff.Ok
@@ -421,14 +418,13 @@
       (compiler_driver_core.compiler-driver-retire-frontend-arena!)
       (cfg
         compile-profile
-        (compiler_driver_core.compiler-driver-profile-start-phase
-          (profile_state.compiler-profile-state-shared-view profile-state)))
+        (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-advisory-sink
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         program
         spans
         opt-level
-        (profile_state.compiler-profile-state-shared-view profile-state)
+        profile-state
         (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
@@ -437,7 +433,7 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (profile_state.compiler-profile-state-shared-view profile-state)
+                profile-state
                 "optimize"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
               typecheck-state

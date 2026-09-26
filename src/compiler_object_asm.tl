@@ -2,7 +2,6 @@
 ;; assembly. This is a cheap side-artifact path for direct object emission: it
 ;; preserves the already-selected instruction bytes and relocatable operations
 ;; without running lowering, optimization, or instruction selection again.
-(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)

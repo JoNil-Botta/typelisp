@@ -6,7 +6,6 @@
 ;; compiler-path benchmark: opt2 self-compile is sensitive to liveness set
 ;; iteration and copy costs.
 (import compiler_ir_types as ir)
-(import stdlib.comptime)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as live_label_map)
 (import compiler_owned_view as owned_view)
@@ -22,24 +21,6 @@
   [index : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
-
-(defmacro (compiler-live-box-shared-view [value : Expr]) : Expr
-  (let
-    ;; Spliced into the generated pointer element type.
-    ;; lint-allow: unused-variable
-    [inner-ty : comptime.Expr
-      (comptime.box-element-type (comptime.expr-type value))]
-    `(let
-      [address : i64
-        (unsafe
-          (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))))]
-      (unsafe
-        (ptr-read (int->ptr (cast address : u64) : (Ptr ,inner-ty)))))))
-
-(defmacro (compiler-live-box-field-shared-view [value : Expr] [field : Expr]) : Expr
-  `(let
-    [payload (compiler-live-box-shared-view ,value)]
-    (compiler-live-shared-view (__tl-project-field payload ,field))))
 
 (defstruct CompilerLiveI64Set
   (words (__tl_dyn-array i64)))

@@ -25,7 +25,6 @@
 
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
-(import compiler_owned_view as owned_view)
 
 (define (bounds-check-smoke-program) : ir.CompilerIrProgram
   (ir.CompilerIrProgram.Program

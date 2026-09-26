@@ -1,5 +1,4 @@
 ;; compiler_backend_runtime_common.tl - Target-neutral backend runtime recipes.
-(import compiler_owned_view as owned_view)
 (import stdlib.string)
 (import compiler_str_cat as str_cat)
 

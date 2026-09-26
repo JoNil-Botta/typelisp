@@ -3,7 +3,6 @@
 (import compiler_backend_object_target_linux as object_linux)
 (import compiler_backend_object_target_windows as object_windows)
 (import compiler_object as cobj)
-(import compiler_owned_view as owned_view)
 (import stdlib.test)
 
 (define (compiler-backend-object-target-leaf-shapes-test!) : unit

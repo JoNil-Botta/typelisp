@@ -1,6 +1,5 @@
 ;; compiler_object_coff_overflow_fixture.tl - emit the bounded extended-count
 ;; COFF fixture consumed by scripts/verify-coff-relocation-overflow.sh.
-(import compiler_owned_view as owned_view)
 (import compiler_object as cobj)
 (import compiler_object_coff as coff)
 (import stdlib.byte_buf)

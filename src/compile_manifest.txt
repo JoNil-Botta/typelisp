@@ -159,7 +159,6 @@ case|selfhost_compiler_regalloc|src/compiler_regalloc.tl|assembly|skip|direct
 end
 
 case|selfhost_compiler_specialize|src/compiler_specialize.tl|assembly|skip|direct
-contains|__tl_specialized_alloc_type_i64_none
 end
 
 case|selfhost_compiler_symbols|src/compiler_symbols.tl|assembly|skip|direct

@@ -831,7 +831,7 @@
         "    call tl_atomic_i32_cas_ptr\n"))))
 
 (define (compiler-backend-atomic-count-at-least?
-  [asm : String]
+  [asm : (& asm str)]
   [needle : String]
   [want : i64]) : bool
   (>= (compiler_backend.compiler-backend-string-count asm needle) want))
@@ -839,40 +839,28 @@
 (define (compiler-backend-atomic-intrinsic-linux-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-atomic-no-helper-calls? asm)
+    (compiler-backend-atomic-count-at-least? asm "    movq (%rdi), %rax\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    xchgq %rsi, (%rdi)\n" 1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movq (%rdi), %rax\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    xchgq %rsi, (%rdi)\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock addq %rsi, (%rdi)\n"
       1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock xaddq %rax, (%rdi)\n"
       1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock cmpxchgq %rdx, (%rdi)\n"
       1)
+    (compiler-backend-atomic-count-at-least? asm "    movl (%rdi), %eax\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    xchgl %esi, (%rdi)\n" 1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movl (%rdi), %eax\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    xchgl %esi, (%rdi)\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock addl %esi, (%rdi)\n"
       1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock xaddl %eax, (%rdi)\n"
       1)
     (compiler-backend-atomic-count-at-least?
@@ -883,40 +871,28 @@
 (define (compiler-backend-atomic-intrinsic-windows-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-atomic-no-helper-calls? asm)
+    (compiler-backend-atomic-count-at-least? asm "    movq (%rcx), %rax\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    xchgq %rdx, (%rcx)\n" 1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movq (%rcx), %rax\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    xchgq %rdx, (%rcx)\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock addq %rdx, (%rcx)\n"
       1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock xaddq %rax, (%rcx)\n"
       1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock cmpxchgq %r8, (%rcx)\n"
       1)
+    (compiler-backend-atomic-count-at-least? asm "    movl (%rcx), %eax\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    xchgl %edx, (%rcx)\n" 1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movl (%rcx), %eax\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    xchgl %edx, (%rcx)\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock addl %edx, (%rcx)\n"
       1)
     (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
+      asm
       "    lock xaddl %eax, (%rcx)\n"
       1)
     (compiler-backend-atomic-count-at-least?
@@ -993,44 +969,20 @@
 (define (compiler-backend-volatile-intrinsic-linux-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-volatile-no-helper-calls? asm)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movq (%rdi), %rax\n"
-      2)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movq %rsi, (%rdi)\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movl (%rdi), %eax\n"
-      2)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movl %esi, (%rdi)\n"
-      1)
+    (compiler-backend-atomic-count-at-least? asm "    movq (%rdi), %rax\n" 2)
+    (compiler-backend-atomic-count-at-least? asm "    movq %rsi, (%rdi)\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    movl (%rdi), %eax\n" 2)
+    (compiler-backend-atomic-count-at-least? asm "    movl %esi, (%rdi)\n" 1)
     (not (compiler_backend.compiler-backend-string-contains? asm "    xchgq "))
     (not (compiler_backend.compiler-backend-string-contains? asm "    xchgl "))))
 
 (define (compiler-backend-volatile-intrinsic-windows-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-volatile-no-helper-calls? asm)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movq (%rcx), %rax\n"
-      2)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movq %rdx, (%rcx)\n"
-      1)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movl (%rcx), %eax\n"
-      2)
-    (compiler-backend-atomic-count-at-least?
-      (owned_view.compiler-owned-shared-view asm)
-      "    movl %edx, (%rcx)\n"
-      1)
+    (compiler-backend-atomic-count-at-least? asm "    movq (%rcx), %rax\n" 2)
+    (compiler-backend-atomic-count-at-least? asm "    movq %rdx, (%rcx)\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    movl (%rcx), %eax\n" 2)
+    (compiler-backend-atomic-count-at-least? asm "    movl %edx, (%rcx)\n" 1)
     (not (compiler_backend.compiler-backend-string-contains? asm "    xchgq "))
     (not (compiler_backend.compiler-backend-string-contains? asm "    xchgl "))))
 
@@ -1485,7 +1437,7 @@
       (compiler_backend.compiler-backend-string-contains? asm needle))
     (compiler-backend-string-contains-inline-alloc-size? asm size)))
 
-(define (compiler-backend-alloc-call-count [asm : String]) : i64
+(define (compiler-backend-alloc-call-count [asm : (& asm str)]) : i64
   (+
     (compiler_backend.compiler-backend-string-count asm "    call tl_alloc\n")
     (+
@@ -2557,14 +2509,11 @@
     [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-windows-object-manifest-resource-ok?
-  [image : cobj.CompilerObjectImage]) : bool
+  [image : (& image cobj.CompilerObjectImage)]) : bool
   (let
-    [sections : cobj.CompilerObjectSectionList
-      (owned_view.compiler-owned-shared-view image.sections)]
-    [symbols : cobj.CompilerObjectSymbolList
-      (owned_view.compiler-owned-shared-view image.symbols)]
-    [relocs : cobj.CompilerObjectRelocationList
-      (owned_view.compiler-owned-shared-view image.relocations)]
+    [sections : cobj.CompilerObjectSectionList image.sections]
+    [symbols : cobj.CompilerObjectSymbolList image.symbols]
+    [relocs : cobj.CompilerObjectRelocationList image.relocations]
     [manifest : String
       (string.copy (& object_windows.compiler-backend-object-utf8-manifest))]
     [manifest-size : i64 (string.string-length manifest)]
@@ -2952,8 +2901,7 @@
               true))]
         (if (and
           shape-ok
-          (compiler-backend-windows-object-manifest-resource-ok?
-            (owned_view.compiler-owned-shared-view image)))
+          (compiler-backend-windows-object-manifest-resource-ok? image))
           (match (coff.compiler-object-coff-render image)
             [(coff.ResultCompilerObjectCoff.Ok obj)
               (let
@@ -3706,10 +3654,7 @@
         ;; by-reference copy the Win64 ABI requires at each of the two call
         ;; sites is a frame temporary (#7885), so nothing here allocates: no
         ;; allocator call and no inline 16-byte arena bump.
-        (=
-          (compiler-backend-alloc-call-count
-            (owned_view.compiler-owned-shared-view asm))
-          0)
+        (= (compiler-backend-alloc-call-count asm) 0)
         (not (compiler-backend-string-contains-alloc-size? asm 16))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -5255,10 +5200,7 @@
         (compiler_backend.backend-and8
           ;; sret ABI: struct/enum returns write the result through the
           ;; caller-provided sret slot -- no per-return arena allocation.
-          (=
-            (compiler-backend-alloc-call-count
-              (owned_view.compiler-owned-shared-view asm))
-            0)
+          (= (compiler-backend-alloc-call-count asm) 0)
           (not (compiler-backend-string-contains-alloc-size? asm 16))
           (compiler_backend.compiler-backend-string-contains? asm "movq $7,")
           (compiler_backend.compiler-backend-string-contains? asm "movq $1,")
@@ -5531,10 +5473,7 @@
           (compiler_backend.compiler-backend-string-contains? asm "tl_alloc:\n")
           ;; sret ABI: only the heap-backed (Array) closure return
           ;; still allocates; Box/Pair/String returns use sret/static data.
-          (>=
-            (compiler-backend-alloc-call-count
-              (owned_view.compiler-owned-shared-view asm))
-            1)
+          (>= (compiler-backend-alloc-call-count asm) 1)
           (>=
             (+
               (compiler_backend.compiler-backend-string-count
@@ -10280,8 +10219,7 @@
     true)
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList
-          (owned_view.compiler-owned-shared-view image.sections)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
         [renders : bool
           (match target
             [(compiler_backend.CompilerBackendTarget.Linux)
@@ -20306,12 +20244,9 @@ g:
     (compiler_ir_types.compiler-source-spans-empty))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList
-          (owned_view.compiler-owned-shared-view image.sections)]
-        [symbols : cobj.CompilerObjectSymbolList
-          (owned_view.compiler-owned-shared-view image.symbols)]
-        [relocs : cobj.CompilerObjectRelocationList
-          (owned_view.compiler-owned-shared-view image.relocations)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
+        [symbols : cobj.CompilerObjectSymbolList image.symbols]
+        [relocs : cobj.CompilerObjectRelocationList image.relocations]
         [table-label : String ".Lf0_entry_switch_table"]
         (and
           (elf.compiler-object-elf-image-supported? image)
@@ -24276,9 +24211,9 @@ g:
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-vector-copy-line
-  [move : String]
-  [src : String]
-  [dst : String]) : String
+  [move : (& move str)]
+  [src : (& src str)]
+  [dst : (& dst str)]) : String
   (str_cat.str-cat
     "    "
     (str_cat.str-cat
@@ -24303,50 +24238,29 @@ g:
         1
         0
         (owned_view.compiler-owned-shared-view width)
-        (compiler-backend-vector-copy-line
-          (owned_view.compiler-owned-shared-view move)
-          (owned_view.compiler-owned-shared-view r6)
-          r7))
+        (compiler-backend-vector-copy-line move r6 r7))
       (compiler-backend-vector-copy-emits?
         2
         0
         (owned_view.compiler-owned-shared-view width)
         (str_cat.str-cat
-          (compiler-backend-vector-copy-line
-            (owned_view.compiler-owned-shared-view move)
-            r6
-            (owned_view.compiler-owned-shared-view r15))
-          (compiler-backend-vector-copy-line
-            (owned_view.compiler-owned-shared-view move)
-            (owned_view.compiler-owned-shared-view r15)
-            "-64(%rbp)")))
+          (compiler-backend-vector-copy-line move r6 r15)
+          (compiler-backend-vector-copy-line move r15 "-64(%rbp)")))
       (compiler-backend-vector-copy-emits?
         3
         2
         (owned_view.compiler-owned-shared-view width)
         (str_cat.str-cat
-          (compiler-backend-vector-copy-line
-            (owned_view.compiler-owned-shared-view move)
-            "-64(%rbp)"
-            (owned_view.compiler-owned-shared-view r14))
-          (compiler-backend-vector-copy-line
-            (owned_view.compiler-owned-shared-view move)
-            (owned_view.compiler-owned-shared-view r14)
-            r8)))
+          (compiler-backend-vector-copy-line move "-64(%rbp)" r14)
+          (compiler-backend-vector-copy-line move r14 r8)))
       (compiler-backend-vector-copy-emits?
         4
         2
         width
         (str_cat.str-cat
-          (compiler-backend-vector-copy-line
-            (owned_view.compiler-owned-shared-view move)
-            "-64(%rbp)"
-            (owned_view.compiler-owned-shared-view r14))
+          (compiler-backend-vector-copy-line move "-64(%rbp)" r14)
           (str_cat.str-cat
-            (compiler-backend-vector-copy-line
-              (owned_view.compiler-owned-shared-view move)
-              r14
-              (owned_view.compiler-owned-shared-view r15))
+            (compiler-backend-vector-copy-line move r14 r15)
             (compiler-backend-vector-copy-line move r15 "-128(%rbp)")))))))
 
 (define (compiler-backend-mask-copy-emits?
@@ -26919,7 +26833,7 @@ g:
 
 (define (compiler-backend-runtime-sensitive-instrs-ok?
   [target : compiler_backend.CompilerBackendTarget]
-  [asm : String]) : bool
+  [asm : (& asm str)]) : bool
   (and
     (= (compiler_backend.compiler-backend-string-count asm "    lock ") 14)
     (if (compiler_backend.compiler-backend-target-windows? target)
@@ -26956,9 +26870,7 @@ g:
   (let
     [asm : String (compiler-backend-test-runtime-functions-for-target target)]
     (and
-      (compiler-backend-runtime-sensitive-instrs-ok?
-        target
-        (owned_view.compiler-owned-shared-view asm))
+      (compiler-backend-runtime-sensitive-instrs-ok? target asm)
       (if (compiler_backend.compiler-backend-target-windows? target)
         (compiler-backend-runtime-windows-global-symbols-ok? asm)
         (compiler-backend-runtime-linux-global-symbols-ok? asm)))))
@@ -38187,7 +38099,7 @@ g:
   [width : String]
   [signed? : bool]
   [extension : String]
-  [flag-reg : String]) : bool
+  [flag-reg : (& flag-reg str)]) : bool
   (let
     [reg : String (compiler-backend-shift-count-reg suffix)]
     [test : String
@@ -38312,49 +38224,43 @@ g:
             "8"
             true
             "    movsbq %r8b, %r11"
-            (owned_view.compiler-owned-shared-view flag-reg))
+            flag-reg)
           (compiler-backend-shift-guard-body-ok?
             ui8
             "b"
             "8"
             false
             "    movzbq %r8b, %r11"
-            (owned_view.compiler-owned-shared-view flag-reg))
+            flag-reg)
           (compiler-backend-shift-guard-body-ok?
             si16
             "w"
             "16"
             true
             "    movswq %r8w, %r11"
-            (owned_view.compiler-owned-shared-view flag-reg))
+            flag-reg)
           (compiler-backend-shift-guard-body-ok?
             ui16
             "w"
             "16"
             false
             "    movzwq %r8w, %r11"
-            (owned_view.compiler-owned-shared-view flag-reg))
+            flag-reg)
           (compiler-backend-shift-guard-body-ok?
             si32
             "l"
             "32"
             true
             "    movslq %r8d, %r11"
-            (owned_view.compiler-owned-shared-view flag-reg))
+            flag-reg)
           (compiler-backend-shift-guard-body-ok?
             ui32
             "l"
             "32"
             false
             "    movl %r8d, %r11d"
-            (owned_view.compiler-owned-shared-view flag-reg))
-          (compiler-backend-shift-guard-body-ok?
-            si64
-            "q"
-            "64"
-            true
-            ""
-            (owned_view.compiler-owned-shared-view flag-reg))
+            flag-reg)
+          (compiler-backend-shift-guard-body-ok? si64 "q" "64" true "" flag-reg)
           (compiler-backend-shift-guard-body-ok?
             ui64
             "q"
@@ -40174,7 +40080,7 @@ g:
     "%rsi"))
 
 (define (compiler-backend-direct-tail-call-param-store
-  [reg : String]
+  [reg : (& reg str)]
   [slot : String]) : String
   (str_cat.str-cat "    movq " reg ", " slot "\n"))
 
@@ -40201,16 +40107,12 @@ g:
       (not
         (let
           [needle
-            (compiler-backend-direct-tail-call-param-store
-              (owned_view.compiler-owned-shared-view reg0)
-              "-8(%rbp)")]
+            (compiler-backend-direct-tail-call-param-store reg0 "-8(%rbp)")]
           (compiler_backend.compiler-backend-string-contains? body needle)))
       (not
         (let
           [needle
-            (compiler-backend-direct-tail-call-param-store
-              (owned_view.compiler-owned-shared-view reg1)
-              "-16(%rbp)")]
+            (compiler-backend-direct-tail-call-param-store reg1 "-16(%rbp)")]
           (compiler_backend.compiler-backend-string-contains? body needle)))
       (not
         (let
@@ -42170,10 +42072,7 @@ g:
     (compiler-backend-tuple-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (=
-          (compiler-backend-alloc-call-count
-            (owned_view.compiler-owned-shared-view asm))
-          0)
+        (= (compiler-backend-alloc-call-count asm) 0)
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -42254,10 +42153,7 @@ g:
     (compiler_lower_tests.compiler-lower-inline-boxed-recursive-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and4
-        (=
-          (compiler-backend-alloc-call-count
-            (owned_view.compiler-owned-shared-view asm))
-          2)
+        (= (compiler-backend-alloc-call-count asm) 2)
         ;; Both boxed leaves heap-allocate a full inline Tree value: tag (8)
         ;; plus the largest variant payload Branch((Box Tree), (Box Tree)) =
         ;; 16, so 24 bytes. With default-inline aggregates each box holds the
@@ -42327,10 +42223,7 @@ g:
         (>= (compiler_backend.compiler-backend-string-count asm "    call ") 6)
         ;; sret ABI: aggregate args/returns pass by caller slot pointer
         ;; and inline construction is stack storage -- no arena allocation.
-        (=
-          (compiler-backend-alloc-call-count
-            (owned_view.compiler-owned-shared-view asm))
-          0)
+        (= (compiler-backend-alloc-call-count asm) 0)
         (not
           (let
             [needle (compiler-backend-todo-marker)]

@@ -9444,8 +9444,8 @@
 ")
 
 (define (compiler-typecheck-string-prefix-at?
-  [text : String]
-  [prefix : String]
+  [text : (& text str)]
+  [prefix : (& prefix str)]
   [start : i64]) : bool
   (let
     [text-len : i64 (string.string-length text)]
@@ -9469,8 +9469,8 @@
             (= index prefix-len)))))))
 
 (define (compiler-typecheck-string-find-from
-  [text : String]
-  [needle : String]
+  [text : (& text str)]
+  [needle : (& needle str)]
   [start : i64]) : i64
   (let
     [text-len : i64 (string.string-length text)]
@@ -9484,10 +9484,7 @@
         unit)
       (while (not done)
         (if (<= (+ index needle-len) text-len)
-          (if (compiler-typecheck-string-prefix-at?
-            (tc_core.tc-global-shared-view text)
-            (tc_core.tc-global-shared-view needle)
-            index)
+          (if (compiler-typecheck-string-prefix-at? text needle index)
             (begin
               (set! found index)
               (set! done true))
@@ -9503,15 +9500,9 @@
           "(defmacro (for [bindings : ExprBindingClause ...]"]
         [end-marker : String "(cfg\n  test\n  (defmacro (core-macros-user-fold"]
         [start : i64
-          (compiler-typecheck-string-find-from
-            (tc_core.tc-global-shared-view source)
-            start-marker
-            0)]
+          (compiler-typecheck-string-find-from source start-marker 0)]
         [end : i64
-          (compiler-typecheck-string-find-from
-            (tc_core.tc-global-shared-view source)
-            end-marker
-            start)]
+          (compiler-typecheck-string-find-from source end-marker start)]
         (if (and (>= start 0) (> end start))
           (str_cat.str-cat
             "(module fixture.core_for)\n(import stdlib.comptime)\n"

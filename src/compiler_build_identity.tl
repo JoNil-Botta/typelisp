@@ -21,7 +21,9 @@
   (define compiler-build-git-hash-raw : String
     "unknown"))
 
-(define (compiler-build-identity-trim-length [identity : String] [length : i64]) : i64
+(define (compiler-build-identity-trim-length
+  [identity : (& identity str)]
+  [length : i64]) : i64
   (if (and
     (> length 0)
     (or
@@ -35,7 +37,7 @@
     (compiler-build-identity-global-shared-view compiler-build-git-hash-raw)
     0
     (compiler-build-identity-trim-length
-      (compiler-build-identity-global-shared-view compiler-build-git-hash-raw)
+      compiler-build-git-hash-raw
       (string.string-length compiler-build-git-hash-raw))))
 
 (define (compiler-build-git-hash-shared-view) : String

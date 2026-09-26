@@ -11237,23 +11237,18 @@
         [_ (ResultAstDecl.Err "parse: import macro operand must be a call")])]
     [(ResultAstExpr.Err message) (ResultAstDecl.Err message)]))
 
-(define (parse-ast-dotted-import-tl-suffix? [name : String]) : bool
+(define (parse-ast-dotted-import-tl-suffix? [name : (& name str)]) : bool
   (let
     [n : i64 (string.string-length name)]
     (if (< n 3)
       false
       (string.eq (string.substring name (- n 3) 3) ".tl"))))
 
-(define (parse-ast-dotted-import-name-valid? [name : String]) : bool
+(define (parse-ast-dotted-import-name-valid? [name : (& name str)]) : bool
   (let
     [n : i64 (string.string-length name)]
     [i : i64 0]
-    [ok : bool
-      (and
-        (> n 0)
-        (not
-          (parse-ast-dotted-import-tl-suffix?
-            (compiler-parse-place-shared-view name))))]
+    [ok : bool (and (> n 0) (not (parse-ast-dotted-import-tl-suffix? name)))]
     [last-was-dot : bool true]
     (begin
       (while ok
@@ -11277,7 +11272,7 @@
           (set! ok false)))
       (and (= i n) (not last-was-dot)))))
 
-(define (parse-ast-dotted-import-default-alias-start [name : String]) : i64
+(define (parse-ast-dotted-import-default-alias-start [name : (& name str)]) : i64
   (let
     [n : i64 (string.string-length name)]
     [i : i64 0]
@@ -11293,9 +11288,7 @@
 
 (define (parse-ast-dotted-import-default-alias [name : String]) : String
   (let
-    [start : i64
-      (parse-ast-dotted-import-default-alias-start
-        (compiler-parse-place-shared-view name))]
+    [start : i64 (parse-ast-dotted-import-default-alias-start name)]
     (string.substring name start (- (string.string-length name) start))))
 
 (define (parse-ast-dotted-import-default-alias-id-with-state
@@ -11303,7 +11296,7 @@
   [name-id : i64]) : i64
   (ci.intern-compat-state-dotted-final-id intern-state name-id))
 
-(define (parse-ast-dotted-import-wildcard? [name : String]) : bool
+(define (parse-ast-dotted-import-wildcard? [name : (& name str)]) : bool
   (let
     [n : i64 (string.string-length name)]
     (and (>= n 2) (string.eq (string.substring name (- n 2) 2) ".*"))))
@@ -11351,13 +11344,10 @@
     [start-line : i64 (token.span-start-line span)]
     [start-col : i64 (token.span-start-col span)]
     [end-line : i64 (token.span-end-line span)]
-    (if (parse-ast-dotted-import-wildcard?
-      (compiler-parse-place-shared-view text))
+    (if (parse-ast-dotted-import-wildcard? text)
       unit
       (let
-        [start : i64
-          (parse-ast-dotted-import-default-alias-start
-            (compiler-parse-place-shared-view text))]
+        [start : i64 (parse-ast-dotted-import-default-alias-start text)]
         [n : i64 (string.string-length text)]
         (compiler-parse-semantic-origin-push!
           (CompilerParseSemanticOriginKind.ImportAlias)
@@ -11383,12 +11373,9 @@
       (compiler-parse-dispatch-intern-state dispatch)]
     [module-name : String
       (compiler-parse-name-text-with-state intern-state module-name-id)]
-    (if (not
-      (parse-ast-dotted-import-name-valid?
-        (compiler-parse-place-shared-view module-name)))
+    (if (not (parse-ast-dotted-import-name-valid? module-name))
       (ResultAstDecl.Err "parse: invalid dotted import module name")
-      (if (parse-ast-dotted-import-wildcard?
-        (compiler-parse-place-shared-view module-name))
+      (if (parse-ast-dotted-import-wildcard? module-name)
         (match (reader.spanned-sexpr-view tail)
           [(reader.SpannedSexprView.Nil _)
             (let

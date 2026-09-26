@@ -4931,7 +4931,7 @@
 ;; integrity pass. The imported catalog is immutable; successful verification
 ;; should not change the optimizer's allocation schedule or generated assembly.
 (define (compiler-ir-spmd-call-segment-eq-at?
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [segment : String]) : bool
   (let
@@ -4950,7 +4950,7 @@
         (= index length)))))
 
 (define (compiler-ir-spmd-call-signature-args-end
-  [signature : String]
+  [signature : (& signature str)]
   [args : (& args CompilerIrSpmdCallArgSeq)]
   [bases : i64]
   [index : i64]
@@ -4963,12 +4963,9 @@
           [type-name : String (compiler-ir-type-name bases (clone ty))]
           [next : i64 (+ position 1 (string.string-length type-name))]
           (if (and
+            (compiler-ir-spmd-call-segment-eq-at? signature position " ")
             (compiler-ir-spmd-call-segment-eq-at?
-              (compiler-ir-global-shared-view signature)
-              position
-              " ")
-            (compiler-ir-spmd-call-segment-eq-at?
-              (compiler-ir-global-shared-view signature)
+              signature
               (+ position 1)
               type-name))
             (compiler-ir-spmd-call-signature-args-end
@@ -4980,13 +4977,13 @@
             -1))])))
 
 (define (compiler-ir-spmd-call-signature-valid?
-  [signature : String]
+  [signature : (& signature str)]
   [payload : (& payload CompilerIrInstrSpmdCallPayload)]) : bool
   (let
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     [end : i64
       (compiler-ir-spmd-call-signature-args-end
-        (compiler-ir-global-shared-view signature)
+        signature
         (& payload.args)
         bases
         0
@@ -4997,20 +4994,14 @@
         [(CompilerIrSpmdCallResult.Value _ _ ty)
           (compiler-ir-type-name bases (clone ty))])]
     (and
+      (compiler-ir-spmd-call-segment-eq-at? signature 0 "(->")
+      (compiler-ir-spmd-call-segment-eq-at? signature end " ")
       (compiler-ir-spmd-call-segment-eq-at?
-        (compiler-ir-global-shared-view signature)
-        0
-        "(->")
-      (compiler-ir-spmd-call-segment-eq-at?
-        (compiler-ir-global-shared-view signature)
-        end
-        " ")
-      (compiler-ir-spmd-call-segment-eq-at?
-        (compiler-ir-global-shared-view signature)
+        signature
         (+ end 1)
         (compiler-ir-global-shared-view result-type))
       (compiler-ir-spmd-call-segment-eq-at?
-        (compiler-ir-global-shared-view signature)
+        signature
         (+ end 1 (string.string-length result-type))
         ")")
       (=
@@ -5103,10 +5094,7 @@
             (+
               4
               (string.string-length (compiler-ir-symbol-text payload.callee))))
-          (compiler-ir-spmd-call-segment-eq-at?
-            (compiler-ir-global-shared-view selected.link-symbol)
-            0
-            "_tl_")
+          (compiler-ir-spmd-call-segment-eq-at? selected.link-symbol 0 "_tl_")
           (compiler-ir-spmd-call-segment-eq-at?
             selected.link-symbol
             4
@@ -8949,36 +8937,36 @@
 ;; right span. The passes stack (a versioned clone can be unrolled), hence the
 ;; loop; a bounded fuel keeps a pathological user label from spinning.
 (define (compiler-source-spans-label-suffix-len
-  [text : String]
+  [text : (& text str)]
   [suffix : String]) : i64
   (let
-    [n : i64 (string.string-length (& text))]
+    [n : i64 (string.string-length text)]
     [m : i64 (string.string-length (& suffix))]
-    (if (and (> n m) (string.is-string-prefix-at (& text) (& suffix) (- n m)))
+    (if (and (> n m) (string.is-string-prefix-at text (& suffix) (- n m)))
       m
       0)))
 
-(define (compiler-source-spans-label-digit-at? [text : String] [index : i64]) : bool
+(define (compiler-source-spans-label-digit-at?
+  [text : (& text str)]
+  [index : i64]) : bool
   (let
-    [c : char (string.string-ref (& text) index)]
+    [c : char (string.string-ref text index)]
     (and (>= c '0') (<= c '9'))))
 
 ;; Length of a trailing `__u<digits>` unroll-copy suffix, or 0.
-(define (compiler-source-spans-label-unroll-suffix-len [text : String]) : i64
+(define (compiler-source-spans-label-unroll-suffix-len [text : (& text str)]) : i64
   (let
     [marker : String "__u"]
-    [n : i64 (string.string-length (& text))]
+    [n : i64 (string.string-length text)]
     [digits : i64 n]
     (begin
       (while (and
         (> digits 0)
-        (compiler-source-spans-label-digit-at?
-          (compiler-ir-global-shared-view text)
-          (- digits 1)))
+        (compiler-source-spans-label-digit-at? text (- digits 1)))
         (set! digits (- digits 1)))
       (if (or (= digits n) (< digits 4))
         0
-        (if (string.is-string-prefix-at (& text) (& marker) (- digits 3))
+        (if (string.is-string-prefix-at text (& marker) (- digits 3))
           (- n (- digits 3))
           0)))))
 
@@ -8986,18 +8974,13 @@
 (define (compiler-source-spans-bounds-clone-suffix-len [text : String]) : i64
   (let
     [fast : String "__bce_fast"]
-    [fast-len : i64
-      (compiler-source-spans-label-suffix-len
-        (compiler-ir-global-shared-view text)
-        fast)]
+    [fast-len : i64 (compiler-source-spans-label-suffix-len text fast)]
     (if (> fast-len 0)
       fast-len
       (let
         [unswitch : String "__licm_false"]
         [unswitch-len : i64
-          (compiler-source-spans-label-suffix-len
-            (compiler-ir-global-shared-view text)
-            unswitch)]
+          (compiler-source-spans-label-suffix-len text unswitch)]
         (if (> unswitch-len 0)
           unswitch-len
           (compiler-source-spans-label-unroll-suffix-len text))))))
@@ -10414,7 +10397,7 @@
         (CompilerIrRepresentationIndex counts index.class-masks)))))
 
 (define (compiler-ir-representation-var-type-set!
-  [types : CompilerIrRepresentationVarTypes]
+  [types : (& types CompilerIrRepresentationVarTypes)]
   [var : i64]
   [ty : ast.AstType]) : unit
   (if (or (< var 0) (>= var (array-length types.present)))
@@ -10425,7 +10408,7 @@
 
 (define (compiler-ir-representation-param-types!
   [params : CompilerIrParamSeq]
-  [types : CompilerIrRepresentationVarTypes]) : unit
+  [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (let
     [position : i64 0]
     (while (< position params.len)
@@ -10434,15 +10417,12 @@
           (compiler-ir-global-shared-view params)
           position)
           [(CompilerIrParam.Param _ ty var)
-            (compiler-ir-representation-var-type-set!
-              (compiler-ir-global-shared-view types)
-              var
-              ty)])
+            (compiler-ir-representation-var-type-set! types var ty)])
         (set! position (+ position 1))))))
 
 (define (compiler-ir-representation-instr-def-type!
   [instr : CompilerIrInstr]
-  [types : CompilerIrRepresentationVarTypes]) : unit
+  [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (match (compiler-ir-global-shared-view instr)
     ;; The index does not type indirect-call results or a scalar Select.
     [(CompilerIrInstr.CallIndirect _ _ _ _) unit]
@@ -10459,28 +10439,26 @@
 
 (define (compiler-ir-representation-instr-types!
   [instrs : CompilerIrInstrSeq]
-  [types : CompilerIrRepresentationVarTypes]) : unit
+  [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (let
     [i : i64 0]
     (while (< i (compiler-ir-instr-seq-count instrs))
       (begin
         (compiler-ir-representation-instr-def-type!
           (compiler-ir-instr-seq-ref instrs i)
-          (compiler-ir-global-shared-view types))
+          types)
         (set! i (+ i 1))))))
 
 (define (compiler-ir-representation-block-types!
   [blocks : CompilerIrBlockList]
-  [types : CompilerIrRepresentationVarTypes]) : unit
+  [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (begin
-            (compiler-ir-representation-instr-types!
-              instrs
-              (compiler-ir-global-shared-view types))
+            (compiler-ir-representation-instr-types! instrs types)
             (compiler-ir-representation-block-types! (deref rest) types))])]
     [(CompilerIrBlockList.Array seq)
       (let
@@ -10489,9 +10467,7 @@
           (begin
             (match (compiler-ir-block-seq-ref seq i)
               [(CompilerIrBlock.Block _ instrs)
-                (compiler-ir-representation-instr-types!
-                  instrs
-                  (compiler-ir-global-shared-view types))])
+                (compiler-ir-representation-instr-types! instrs types)])
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-representation-function-var-types
@@ -10504,12 +10480,8 @@
             (__tl_make-array i64 vars)
             (__tl_make-array ast.AstType vars))]
         (begin
-          (compiler-ir-representation-param-types!
-            params
-            (compiler-ir-global-shared-view types))
-          (compiler-ir-representation-block-types!
-            blocks
-            (compiler-ir-global-shared-view types))
+          (compiler-ir-representation-param-types! params types)
+          (compiler-ir-representation-block-types! blocks types)
           types))]))
 
 (define (compiler-ir-representation-float-type? [ty : ast.AstType]) : bool

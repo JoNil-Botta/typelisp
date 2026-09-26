@@ -456,7 +456,7 @@
 (define (compiler-dependency-tlci-prepare-deps-from!
   [state : load.CompilerLoadSessionState]
   [manifest-dir : String]
-  [deps : load.CompilerPkgDepList]
+  [deps : (& deps load.CompilerPkgDepList)]
   [index : i64]) : unit
   (if (>= index (load.compiler-pkg-dep-list-count deps))
     unit
@@ -487,7 +487,7 @@
       (compiler-dependency-tlci-prepare-deps-from!
         (owned_view.compiler-owned-shared-view state)
         manifest-dir
-        (owned_view.compiler-owned-shared-view items)
+        items
         0)
       (cfg
         dependency-tlci-verification

@@ -801,7 +801,7 @@
   (compiler-driver-state-replace-owned-pool-arena-if-uncached! state 1 1))
 
 (define (compiler-driver-state-reset-owned-intern-arena-if-uncached!
-  [state : CompilerDriverState]) : unit
+  [state : (& state CompilerDriverState)]) : unit
   (if (or
     (not (compiler-driver-state-has-owned-pool-arena? state))
     (compiler-driver-state-session-cache-enabled? state))
@@ -1034,7 +1034,7 @@
 
 (define (compiler-driver-runtime-prelude-cache-lookup-with-state
   [load-state : compiler_load.CompilerLoadSessionState]
-  [key : compiler_load.CompilerLoadPreludeCacheKey]) : compiler_load.CompilerLoadPreludeCacheLookup
+  [key : (& key compiler_load.CompilerLoadPreludeCacheKey)]) : compiler_load.CompilerLoadPreludeCacheLookup
   (compiler_load.compiler-load-session-state-runtime-prelude-cache-lookup
     load-state
     key))
@@ -1129,8 +1129,7 @@
       (owned_view.compiler-owned-shared-view state))
     (compiler-driver-state-reset-owned-pool-arena-if-uncached!
       (owned_view.compiler-owned-shared-view state))
-    (compiler-driver-state-reset-owned-intern-arena-if-uncached!
-      (owned_view.compiler-owned-shared-view state))
+    (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
     (let
       [pools : compiler_ast_types.AstNodePoolContext
         (compiler-driver-state-pool-context
@@ -1175,8 +1174,7 @@
       (owned_view.compiler-owned-shared-view state))
     (compiler-driver-state-release-owned-pool-arena-if-uncached!
       (owned_view.compiler-owned-shared-view state))
-    (compiler-driver-state-reset-owned-intern-arena-if-uncached!
-      (owned_view.compiler-owned-shared-view state))
+    (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
     (let
       [pools : compiler_ast_types.AstNodePoolContext
         (compiler-driver-state-pool-context
@@ -1221,8 +1219,7 @@
           (owned_view.compiler-owned-shared-view state))
         ordinal
         "owned-pool-release")
-      (compiler-driver-state-reset-owned-intern-arena-if-uncached!
-        (owned_view.compiler-owned-shared-view state))
+      (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
       (let
         [pools : compiler_ast_types.AstNodePoolContext
           (compiler-driver-state-pool-context
@@ -4061,7 +4058,7 @@
 (cfg
   embedded-stdlib-tlci
   (define (compiler-driver-prelude-surface-key-valid?
-    [key : surface_identity.SurfaceIdentityKey]
+    [key : (& key surface_identity.SurfaceIdentityKey)]
     [outer-build : String]
     [expected-source-hash : String]
     [configuration : String]) : bool
@@ -4094,7 +4091,7 @@
           [(compiler_surface_hydrate.ResultCompilerSurfaceKey.Ok key)
             (if (not
               (compiler-driver-prelude-surface-key-valid?
-                (owned_view.compiler-owned-shared-view key)
+                key
                 outer-build
                 expected-source-hash
                 configuration))
@@ -4477,7 +4474,7 @@
           cfgs)]
       (match (compiler-driver-runtime-prelude-cache-lookup-with-state
         (owned_view.compiler-owned-shared-view load-state)
-        (owned_view.compiler-owned-shared-view key))
+        key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
           (compiler_load.ResultCompilerLoadWithPaths.Ok
             decls

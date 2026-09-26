@@ -12,6 +12,22 @@
 (import compiler_intern as spec_ci)
 (import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
+
+(define (compiler-specialize-decl-list-defines?
+  [decls : ast.AstDeclList]
+  [name : String]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (let
+        [rest : ast.AstDeclList rest]
+        (match (ast.ast-decl-unwrapped decl)
+          [(ast.AstDecl.DefFn decl-meta fn-name _ _ _ _)
+            (if (string.eq (spec_ci.intern-str fn-name) name)
+              true
+              (compiler-specialize-decl-list-defines? rest name))]
+          [_ (compiler-specialize-decl-list-defines? rest name)]))]))
+
 (import compiler_profile_state as profile_state)
 
 ;; Specialization contexts are immutable handles over arena-backed compiler
@@ -7524,6 +7540,33 @@
         [result : ResultSpecProgram
           (compiler-specialize-program-with-pools-and-intern-state
             program
+            pools
+            (spec_ci.intern-global-shared-view intern-state))]
+        (begin
+          (ast.ast-node-pool-context-install! previous-pools)
+          (spec_ci.intern-compat-state-install! intern-state)
+          result)))))
+
+(define (compiler-specialize-program-with-paths-and-pools
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [fallback-path : String]
+  [pools : ast.AstNodePoolContext]) : ResultSpecProgramWithPaths
+  (let
+    [previous-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [intern-state : spec_ci.InternCompatState
+      (spec_ci.intern-compat-state-capture-active)]
+    (begin
+      (ast.ast-node-pool-context-install! pools)
+      (spec_ci.intern-compat-state-install!
+        (spec_ci.intern-global-shared-view intern-state))
+      (let
+        [result : ResultSpecProgramWithPaths
+          (compiler-specialize-program-with-paths-and-pools-and-intern-state
+            program
+            paths
+            fallback-path
             pools
             (spec_ci.intern-global-shared-view intern-state))]
         (begin

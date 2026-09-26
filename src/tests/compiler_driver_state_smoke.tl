@@ -248,7 +248,7 @@
             [(parser.ResultAstProgram.Ok serial-program)
               (let
                 [serial-result : spec.ResultSpecProgramWithPaths
-                  (spec_tests.compiler-specialize-program-with-paths-and-pools
+                  (spec.compiler-specialize-program-with-paths-and-pools
                     serial-program
                     (owned_view.compiler-owned-shared-view paths)
                     "specialize-smoke.tl"

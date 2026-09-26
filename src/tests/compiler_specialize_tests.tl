@@ -360,33 +360,6 @@
           (spec_ci.intern-compat-state-install! intern-state)
           result)))))
 
-(define (compiler-specialize-program-with-paths-and-pools
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [fallback-path : String]
-  [pools : ast.AstNodePoolContext]) : spec.ResultSpecProgramWithPaths
-  (let
-    [previous-pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-capture-active)]
-    [intern-state : spec_ci.InternCompatState
-      (spec_ci.intern-compat-state-capture-active)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
-      (let
-        [result : spec.ResultSpecProgramWithPaths
-          (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
-            program
-            paths
-            fallback-path
-            pools
-            (spec_ci.intern-global-shared-view intern-state))]
-        (begin
-          (ast.ast-node-pool-context-install! previous-pools)
-          (spec_ci.intern-compat-state-install! intern-state)
-          result)))))
-
 (define (compiler-specialize-program-with-paths
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
@@ -394,7 +367,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : spec.ResultSpecProgramWithPaths
-      (compiler-specialize-program-with-paths-and-pools
+      (spec.compiler-specialize-program-with-paths-and-pools
         program
         paths
         fallback-path
@@ -407,21 +380,6 @@
   (spec.compiler-specialize-needed-with-pools
     program
     (ast.ast-node-pool-context-capture-active)))
-
-(define (compiler-specialize-decl-list-defines?
-  [decls : ast.AstDeclList]
-  [name : String]) : bool
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) false]
-    [(ast.AstDeclListStep.Cons decl rest)
-      (let
-        [rest : ast.AstDeclList rest]
-        (match (ast.ast-decl-unwrapped decl)
-          [(ast.AstDecl.DefFn decl-meta fn-name _ _ _ _)
-            (if (string.eq (spec_ci.intern-str fn-name) name)
-              true
-              (compiler-specialize-decl-list-defines? rest name))]
-          [_ (compiler-specialize-decl-list-defines? rest name)]))]))
 
 (define (compiler-specialize-type-param-ok?) : bool
   (match (parser.parse-ast-source
@@ -439,10 +397,10 @@
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 (and
                   (not
-                    (compiler-specialize-decl-list-defines?
+                    (spec.compiler-specialize-decl-list-defines?
                       (ast.ast-place-shared-view decls)
                       "alloc"))
-                  (compiler-specialize-decl-list-defines?
+                  (spec.compiler-specialize-decl-list-defines?
                     decls
                     "__tl_specialized_alloc_type_i64_none")))])]
         [(spec.ResultSpecProgram.Err _) false])]
@@ -482,11 +440,11 @@
                 [decls : ast.AstDeclList
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 [original : bool
-                  (compiler-specialize-decl-list-defines?
+                  (spec.compiler-specialize-decl-list-defines?
                     (ast.ast-place-shared-view decls)
                     "scale")]
                 [generated : bool
-                  (compiler-specialize-decl-list-defines?
+                  (spec.compiler-specialize-decl-list-defines?
                     decls
                     "__tl_specialized_scale_i64_2_none")]
                 (and (not original) generated))])]
@@ -730,7 +688,7 @@
               (let
                 [decls : ast.AstDeclList
                   (ast.ast-decl-list-box-shared-view decls-box)]
-                (compiler-specialize-decl-list-defines?
+                (spec.compiler-specialize-decl-list-defines?
                   decls
                   "__tl_specialized_pick_type_i64_none"))])]
         [(spec.ResultSpecProgram.Err _) false])]
@@ -1031,7 +989,7 @@
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 (and
                   (not
-                    (compiler-specialize-decl-list-defines?
+                    (spec.compiler-specialize-decl-list-defines?
                       (ast.ast-place-shared-view decls)
                       "alloc"))
                   (=
@@ -1259,7 +1217,7 @@
                     (let
                       [decls : ast.AstDeclList
                         (ast.ast-decl-list-box-shared-view decls-box)]
-                      (compiler-specialize-decl-list-defines?
+                      (spec.compiler-specialize-decl-list-defines?
                         decls
                         "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none"))])))]
           [(spec.ResultSpecProgram.Err _) false]))]
@@ -1850,7 +1808,7 @@
           [(spec.ResultSpecProgram.Ok specialized)
             (match specialized
               [(ast.AstProgram.Program decls)
-                (compiler-specialize-decl-list-defines?
+                (spec.compiler-specialize-decl-list-defines?
                   (ast.ast-decl-list-box-shared-view decls)
                   "__tl_specialized_pick_i64_7_none")])]
           [_ false])]

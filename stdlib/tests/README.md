@@ -234,6 +234,12 @@ Inline stdlib coverage:
   `IoError` rendering, `try-read-file`, `try-write-file`, `try-file-exists?`,
   `try-append-file`, `read-file-or`, `append-file`, `file-nonempty?`, and
   `FileHandle` open/close/read/write/flush/EOF/mode-mismatch behavior.
+- `json_sequence_api.tl` covers valid empty/full/slack live prefixes, spare-slot
+  poison, exact order and duplicate-key lookup, independently owned results,
+  checked-size boundaries, allocation-free borrowed validation and generated
+  serialization with single evaluation. `tests/safety/json_sequence_live_prefix.tl`
+  checks 181 safe subprocess failures across every sequence operation, malformed
+  public lengths, boxed arrays/objects, builders, strategy hooks and size overflow.
 - `json.tl` owns inline tests for the JSON data model, list/member helpers,
   vector-backed parser builders, escape helpers, parser subroutines,
   deterministic finite f64/f32 number conversion, serializer helpers, and

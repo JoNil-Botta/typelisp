@@ -45,7 +45,7 @@
 # unsafe shared-view bridge instead of replacing it with an interpreted
 # transformer: the catalog now has 160 entries, all still native. Issue #7005
 # adds the stdlib.math/mul-add dispatch macro: 161 entries, all native.
-native-entries-min 161
+native-entries-min 162
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

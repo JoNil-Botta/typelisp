@@ -15,6 +15,8 @@
 
 (include-str-lzss payload-cpu "../stdlib/cpu.tl")
 
+(include-str-lzss payload-checked-size "../stdlib/checked_size.tl")
+
 (include-str-lzss payload-comptime "../stdlib/comptime.tl")
 
 (include-str-lzss
@@ -159,6 +161,8 @@
       (compiler-embedded-stdlib-payload-copy payload-clone)]
     [(string.eq suffix "cpu.tl")
       (compiler-embedded-stdlib-payload-copy payload-cpu)]
+    [(string.eq suffix "checked_size.tl")
+      (compiler-embedded-stdlib-payload-copy payload-checked-size)]
     [(string.eq suffix "comptime.tl")
       (compiler-embedded-stdlib-payload-copy payload-comptime)]
     [(string.eq suffix "concurrency_registry.tl")

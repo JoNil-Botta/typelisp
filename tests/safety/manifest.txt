@@ -874,3 +874,6 @@ foreign_global_macro_write_reject|check-fail|tests/safety/foreign_global_macro_w
 foreign_global_macro_caller_place_reject|check-fail|tests/safety/foreign_global_macro_caller_place_reject.tl|-|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
 foreign_global_access_defined|run-exit|tests/safety/foreign_global_access_defined.tl|42|-
 foreign_global_shadow_defined|run-exit|tests/safety/foreign_global_shadow_defined.tl|42|-
+
+# JSON live-prefix validation and checked arithmetic, including strategy hooks.
+json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|-

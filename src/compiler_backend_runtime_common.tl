@@ -1,7 +1,7 @@
 ;; compiler_backend_runtime_common.tl - Target-neutral backend runtime recipes.
 (import compiler_owned_view as owned_view)
 (import stdlib.string)
-(import stdlib.str_cat_runtime as str_cat)
+(import compiler_str_cat as str_cat)
 
 (defstruct CompilerBackendRuntimeFeatures
   (alloc bool)
@@ -157,17 +157,17 @@ tl_startup_profile_process_entry_tick:
     (str_cat.str-cat
       (str_cat.str-cat
         "    addq "
-        (owned_view.compiler-owned-shared-view size-reg)
+        size-reg
         ", tl_profile_alloc_total_bytes(%rip)\n    addq "
         size-reg
         ", tl_profile_alloc_live_bytes(%rip)\n")
       (str_cat.str-cat
         "    movq tl_profile_alloc_live_bytes(%rip), "
-        (owned_view.compiler-owned-shared-view scratch-reg)
+        scratch-reg
         "\n    cmpq tl_profile_alloc_peak_bytes(%rip), "
-        (owned_view.compiler-owned-shared-view scratch-reg)
+        scratch-reg
         "\n    jbe "
-        (owned_view.compiler-owned-shared-view done-label)
+        done-label
         "\n    movq "
         scratch-reg
         ", tl_profile_alloc_peak_bytes(%rip)\n"
@@ -194,13 +194,13 @@ tl_startup_profile_process_entry_tick:
       (str_cat.str-cat
         claim-reg
         ", tl_profile_alloc_live_bytes(%rip)\n    movq tl_profile_alloc_live_bytes(%rip), "
-        (owned_view.compiler-owned-shared-view scratch-reg)
+        scratch-reg
         "\n")
       (str_cat.str-cat
         "    cmpq tl_profile_alloc_peak_bytes(%rip), "
-        (owned_view.compiler-owned-shared-view scratch-reg)
+        scratch-reg
         "\n    jbe "
-        (owned_view.compiler-owned-shared-view done-label))
+        done-label)
       (str_cat.str-cat
         "\n    movq "
         scratch-reg
@@ -215,13 +215,13 @@ tl_startup_profile_process_entry_tick:
   (if profile
     (str_cat.str-cat
       "    movq 16("
-      (owned_view.compiler-owned-shared-view arena-reg)
+      arena-reg
       "), "
-      (owned_view.compiler-owned-shared-view used-reg)
+      used-reg
       "\n    subq 8("
       arena-reg
       "), "
-      (owned_view.compiler-owned-shared-view used-reg)
+      used-reg
       "\n    subq "
       used-reg
       ", tl_profile_alloc_live_bytes(%rip)\n")
@@ -237,11 +237,11 @@ tl_startup_profile_process_entry_tick:
       "    movq 16("
       arena-reg
       "), "
-      (owned_view.compiler-owned-shared-view used-reg)
+      used-reg
       "\n    subq "
       mark-reg
       ", "
-      (owned_view.compiler-owned-shared-view used-reg)
+      used-reg
       "\n    subq "
       used-reg
       ", tl_profile_alloc_live_bytes(%rip)\n")
@@ -256,64 +256,41 @@ tl_startup_profile_process_entry_tick:
   [profile : bool]) : String
   (let
     [size-text : String (string.int->string size)]
-    [size-imm : String
-      (str_cat.str-cat "$" (owned_view.compiler-owned-shared-view size-text))]
+    [size-imm : String (str_cat.str-cat "$" size-text)]
     [label : String (compiler-backend-runtime-fast-alloc-label size)]
-    [slow-label : String
-      (str_cat.str-cat (owned_view.compiler-owned-shared-view label) "_slow")]
-    [atomic-label : String
-      (str_cat.str-cat (owned_view.compiler-owned-shared-view label) "_atomic")]
-    [atomic-cas-label : String
-      (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view label)
-        "_atomic_cas")]
+    [slow-label : String (str_cat.str-cat label "_slow")]
+    [atomic-label : String (str_cat.str-cat label "_atomic")]
+    [atomic-cas-label : String (str_cat.str-cat label "_atomic_cas")]
     [atomic-profile-label : String
-      (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view label)
-        "_atomic_profile_done")]
-    [profile-label : String
-      (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view label)
-        "_profile_done")]
+      (str_cat.str-cat label "_atomic_profile_done")]
+    [profile-label : String (str_cat.str-cat label "_profile_done")]
     [prologue : String
       (str_cat.str-cat
         label
         ":\n"
         current-arena-load
         "    testq %r8, %r8\n    jz "
-        (owned_view.compiler-owned-shared-view slow-label)
+        slow-label
         "\n")]
     [ordinary-body-a : String
       (str_cat.str-cat
         "    movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz "
-        (owned_view.compiler-owned-shared-view atomic-label)
+        atomic-label
         "
     movq 16(%r9), %rax")]
     [ordinary-body-b : String
-      (str_cat.str-cat
-        "\n    leaq "
-        (owned_view.compiler-owned-shared-view size-text)
-        "(%rax), "
-        (owned_view.compiler-owned-shared-view next-reg))]
+      (str_cat.str-cat "\n    leaq " size-text "(%rax), " next-reg)]
     ;; No wrap guard: `size` is one of the fixed 8..64 stub sizes, and the bump
     ;; cursor is a canonical user-space arena address, so `cursor + size` cannot
     ;; carry past 2^64. The general variable-size `tl_alloc` keeps its guard
     ;; because its size argument is caller-supplied. Only the usable-end bound
     ;; below can fail, and it routes to the same slow path.
     [ordinary-body-c : String
-      (str_cat.str-cat
-        "\n    cmpq "
-        (owned_view.compiler-owned-shared-view usable-end-offset)
-        "(%r9), "
-        (owned_view.compiler-owned-shared-view next-reg))]
+      (str_cat.str-cat "\n    cmpq " usable-end-offset "(%r9), " next-reg)]
     [ordinary-body-d : String
-      (str_cat.str-cat
-        "\n    ja "
-        (owned_view.compiler-owned-shared-view slow-label)
-        "\n    movq "
-        (owned_view.compiler-owned-shared-view next-reg))]
+      (str_cat.str-cat "\n    ja " slow-label "\n    movq " next-reg)]
     [ordinary-body : String
       (str_cat.str-cat
         ordinary-body-a
@@ -335,13 +312,9 @@ tl_startup_profile_process_entry_tick:
     movq 56(%r8), %r9
     movq 16(%r9), %rax
 "
-        (owned_view.compiler-owned-shared-view atomic-cas-label))]
+        atomic-cas-label)]
     [atomic-body-b : String
-      (str_cat.str-cat
-        ":\n    leaq "
-        (owned_view.compiler-owned-shared-view size-text)
-        "(%rax), "
-        (owned_view.compiler-owned-shared-view next-reg))]
+      (str_cat.str-cat ":\n    leaq " size-text "(%rax), " next-reg)]
     ;; Same fixed-size wrap argument as the ordinary body above.
     [atomic-body-c : String ""]
     [atomic-body-d : String
@@ -349,9 +322,9 @@ tl_startup_profile_process_entry_tick:
         "\n    cmpq "
         usable-end-offset
         "(%r9), "
-        (owned_view.compiler-owned-shared-view next-reg)
+        next-reg
         "\n    ja "
-        (owned_view.compiler-owned-shared-view slow-label))]
+        slow-label)]
     [atomic-body-e : String
       (str_cat.str-cat
         "\n    lock cmpxchgq "

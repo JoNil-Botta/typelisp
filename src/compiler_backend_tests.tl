@@ -31,7 +31,7 @@
 (import compiler_profile_state as profile_state)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
-(import stdlib.str_cat_runtime as str_cat)
+(import compiler_str_cat as str_cat)
 (import stdlib.text_buf)
 (import stdlib.arena)
 
@@ -1407,11 +1407,7 @@
 (define (compiler-backend-call-or-jmp-ok? [asm : (& asm str)] [symbol : String]) : bool
   (or
     (let
-      [needle
-        (str_cat.str-cat
-          "    call "
-          (owned_view.compiler-owned-shared-view symbol)
-          "\n")]
+      [needle (str_cat.str-cat "    call " symbol "\n")]
       (compiler_backend.compiler-backend-string-contains? asm needle))
     (let
       [needle (str_cat.str-cat "    jmp " symbol "\n")]
@@ -2337,11 +2333,7 @@
         (and
           (compiler_backend.backend-and8
             (let
-              [needle
-                (str_cat.str-cat
-                  (owned_view.compiler-owned-shared-view base-label)
-                  ":\n"
-                  "")]
+              [needle (str_cat.str-cat base-label ":\n" "")]
               (compiler_backend.compiler-backend-string-contains? asm needle))
             (>=
               (compiler_backend.compiler-backend-string-count
@@ -5310,8 +5302,7 @@
   [asm : (& asm str)]
   [name : String]) : bool
   (let
-    [symbol : String
-      (str_cat.str-cat "_tl_" (owned_view.compiler-owned-shared-view name))]
+    [symbol : String (str_cat.str-cat "_tl_" name)]
     [init-symbol : String (str_cat.str-cat "_tl___global_init_" name)]
     (and
       (compiler_backend.backend-and4
@@ -5320,49 +5311,29 @@
         ;; size; an 8-byte handle/scalar global reserves 8. Accept any of them.
         (or
           (let
-            [needle
-              (str_cat.str-cat
-                "    .comm "
-                (owned_view.compiler-owned-shared-view symbol)
-                ", 8, 8\n")]
+            [needle (str_cat.str-cat "    .comm " symbol ", 8, 8\n")]
             (compiler_backend.compiler-backend-string-contains? asm needle))
           (let
-            [needle
-              (str_cat.str-cat
-                "    .comm "
-                (owned_view.compiler-owned-shared-view symbol)
-                ", 16, 8\n")]
+            [needle (str_cat.str-cat "    .comm " symbol ", 16, 8\n")]
             (compiler_backend.compiler-backend-string-contains? asm needle))
           (let
-            [needle
-              (str_cat.str-cat
-                "    .comm "
-                (owned_view.compiler-owned-shared-view symbol)
-                ", 24, 8\n")]
+            [needle (str_cat.str-cat "    .comm " symbol ", 24, 8\n")]
             (compiler_backend.compiler-backend-string-contains? asm needle)))
         (let
-          [needle
-            (str_cat.str-cat
-              "    call "
-              (owned_view.compiler-owned-shared-view init-symbol)
-              "\n")]
+          [needle (str_cat.str-cat "    call " init-symbol "\n")]
           (compiler_backend.compiler-backend-string-contains? asm needle))
         ;; The startup sequence installs the initializer result: a pointer
         ;; store for a boxed cell, or the IAG-1 byte copy for an inline
         ;; aggregate cell.
         (or
           (let
-            [needle
-              (str_cat.str-cat
-                "    movq %rax, "
-                (owned_view.compiler-owned-shared-view symbol)
-                "(%rip)\n")]
+            [needle (str_cat.str-cat "    movq %rax, " symbol "(%rip)\n")]
             (compiler_backend.compiler-backend-string-contains? asm needle))
           (let
             [needle
               (str_cat.str-cat
                 "    movups (%rax), %xmm0\n    movups %xmm0, "
-                (owned_view.compiler-owned-shared-view symbol)
+                symbol
                 "(%rip)\n")]
             (compiler_backend.compiler-backend-string-contains? asm needle)))
         (let
@@ -5370,18 +5341,10 @@
           (compiler_backend.compiler-backend-string-contains? asm needle)))
       (or
         (let
-          [needle
-            (str_cat.str-cat
-              "    movq "
-              (owned_view.compiler-owned-shared-view symbol)
-              "(%rip), %rax\n")]
+          [needle (str_cat.str-cat "    movq " symbol "(%rip), %rax\n")]
           (compiler_backend.compiler-backend-string-contains? asm needle))
         (let
-          [needle
-            (str_cat.str-cat
-              "    movq "
-              (owned_view.compiler-owned-shared-view symbol)
-              "(%rip), %r10\n")]
+          [needle (str_cat.str-cat "    movq " symbol "(%rip), %r10\n")]
           (compiler_backend.compiler-backend-string-contains? asm needle))
         ;; A register-group global is read via its address.
         (let
@@ -6330,13 +6293,7 @@
   [body : (& body str)]
   [reg : String]) : bool
   (let
-    [needle
-      (str_cat.str-cat
-        "    cmpq "
-        (owned_view.compiler-owned-shared-view reg)
-        ", "
-        reg
-        "\n")]
+    [needle (str_cat.str-cat "    cmpq " reg ", " reg "\n")]
     (compiler_backend.compiler-backend-string-contains? body needle)))
 
 (define (compiler-backend-immediate-lhs-r9-compare-win64-ok?) : bool
@@ -12191,7 +12148,7 @@
                   "(%rsp)\n    movq "
                   (string.int->string a)
                   "(%rsp), "
-                  (owned_view.compiler-owned-shared-view reg)
+                  reg
                   "\n")))
             (set!
               want-buf
@@ -12226,19 +12183,19 @@
     [tail : String "    leave\n    ret\n"]
     [no-overlap-input : String
       (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view head)
+        head
         "    movq $1, 8(%rsp)\n    movdqa 16(%rsp), %xmm0\n"
-        (owned_view.compiler-owned-shared-view tail))]
+        tail)]
     [wide-overlap-input : String
       (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view head)
+        head
         "    movq $1, 8(%rsp)\n    movdqa 12(%rsp), %xmm0\n"
-        (owned_view.compiler-owned-shared-view tail))]
+        tail)]
     [narrow-overlap-input : String
       (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view head)
+        head
         "    movq $1, 16(%rsp)\n    movq 20(%rsp), %rax\n"
-        (owned_view.compiler-owned-shared-view tail))]
+        tail)]
     [no-overlap-got : String
       (compiler-backend-peephole-test-win64-asm
         "main"
@@ -12282,14 +12239,14 @@
     [tail : String "    leave\n    ret\n"]
     [adjacent-input : String
       (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view head)
+        head
         "    movq $1, 40(%rsp)\n    movq 32(%rsp), %rax\n"
-        (owned_view.compiler-owned-shared-view tail))]
+        tail)]
     [covered-input : String
       (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view head)
+        head
         "    movq $1, 40(%rsp)\n    movq 40(%rsp), %rax\n"
-        (owned_view.compiler-owned-shared-view tail))]
+        tail)]
     [adjacent-got : String
       (compiler-backend-peephole-test-win64-asm
         "main"
@@ -12419,9 +12376,9 @@
     [tail : String "    leave\n    ret\n"]
     [before-input : String
       (str_cat.str-cat
-        (owned_view.compiler-owned-shared-view head)
+        head
         "    movq 40(%rsp), %rax\n    movq $1, 40(%rsp)\n"
-        (owned_view.compiler-owned-shared-view tail))]
+        tail)]
     [after-input : String
       (str_cat.str-cat
         head
@@ -20522,9 +20479,9 @@ g:
 (define (compiler-backend-avx2-map-source [elem : String]) : String
   (str_cat.str-cat
     "(define (fill [a : (__tl_dyn-array "
-    (owned_view.compiler-owned-shared-view elem)
+    elem
     ")] [b : (__tl_dyn-array "
-    (owned_view.compiler-owned-shared-view elem)
+    elem
     ")] [out : (__tl_dyn-array "
     elem
     ")] [n : i64]) : unit
@@ -20535,11 +20492,11 @@ g:
 (define (compiler-backend-uniform-map-source [elem : String]) : String
   (str_cat.str-cat
     "(define (fill [a : (__tl_dyn-array "
-    (owned_view.compiler-owned-shared-view elem)
+    elem
     ")] [b : (__tl_dyn-array "
-    (owned_view.compiler-owned-shared-view elem)
+    elem
     ")] [out : (__tl_dyn-array "
-    (owned_view.compiler-owned-shared-view elem)
+    elem
     ")] [n : i64] [r : "
     elem
     "]) : unit
@@ -20584,27 +20541,17 @@ g:
             (compiler_backend.backend-and4
               (let
                 [needle
-                  (str_cat.str-cat
-                    "    .section .rodata\n"
-                    align
-                    (owned_view.compiler-owned-shared-view label)
-                    ":\n")]
+                  (str_cat.str-cat "    .section .rodata\n" align label ":\n")]
                 (compiler_backend.compiler-backend-string-contains? asm needle))
               (=
                 (compiler_backend.compiler-backend-string-count
                   (owned_view.compiler-owned-shared-view asm)
-                  (str_cat.str-cat
-                    (owned_view.compiler-owned-shared-view label)
-                    ":\n"))
+                  (str_cat.str-cat label ":\n"))
                 1)
               (>=
                 (compiler_backend.compiler-backend-string-count
                   (owned_view.compiler-owned-shared-view asm)
-                  (str_cat.str-cat
-                    (owned_view.compiler-owned-shared-view load)
-                    " "
-                    (owned_view.compiler-owned-shared-view label)
-                    "(%rip), "))
+                  (str_cat.str-cat load " " label "(%rip), "))
                 2)
               (not
                 (let
@@ -24381,26 +24328,11 @@ g:
       (if (string.eq width "zmm")
         "vmovdqu64"
         "vmovdqu")]
-    [r6 : String
-      (str_cat.str-cat
-        "%"
-        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "6"))]
-    [r7 : String
-      (str_cat.str-cat
-        "%"
-        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "7"))]
-    [r8 : String
-      (str_cat.str-cat
-        "%"
-        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "8"))]
-    [r14 : String
-      (str_cat.str-cat
-        "%"
-        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "14"))]
-    [r15 : String
-      (str_cat.str-cat
-        "%"
-        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "15"))]
+    [r6 : String (str_cat.str-cat "%" (str_cat.str-cat width "6"))]
+    [r7 : String (str_cat.str-cat "%" (str_cat.str-cat width "7"))]
+    [r8 : String (str_cat.str-cat "%" (str_cat.str-cat width "8"))]
+    [r14 : String (str_cat.str-cat "%" (str_cat.str-cat width "14"))]
+    [r15 : String (str_cat.str-cat "%" (str_cat.str-cat width "15"))]
     (and
       (compiler-backend-vector-copy-emits?
         1
@@ -24583,11 +24515,7 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (let
-          [needle
-            (str_cat.str-cat
-              "    "
-              (owned_view.compiler-owned-shared-view mnemonic)
-              " (%r8), ")]
+          [needle (str_cat.str-cat "    " mnemonic " (%r8), ")]
           (compiler_backend.compiler-backend-string-contains? asm needle))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -24990,11 +24918,7 @@ g:
             asm
             "    vpermq $216, %ymm1, %ymm8\n"))
         (let
-          [needle
-            (str_cat.str-cat
-              "    "
-              (owned_view.compiler-owned-shared-view widen)
-              " (%rsp), %ymm0\n")]
+          [needle (str_cat.str-cat "    " widen " (%rsp), %ymm0\n")]
           (compiler_backend.compiler-backend-string-contains? asm needle))
         (let
           [needle (str_cat.str-cat "    " widen " 16(%rsp), %ymm0\n")]
@@ -33929,11 +33853,7 @@ g:
   (and
     (not
       (let
-        [needle
-          (str_cat.str-cat
-            ".globl "
-            (owned_view.compiler-owned-shared-view name)
-            "\n")]
+        [needle (str_cat.str-cat ".globl " name "\n")]
         (compiler_backend.compiler-backend-string-contains? asm needle)))
     (not
       (let
@@ -35240,9 +35160,7 @@ g:
         "%xmm2"
         "%xmm3"
         "%r12")
-      (str_cat.str-cat
-        "    ucomisd %xmm3, %xmm2\n"
-        (owned_view.compiler-owned-shared-view tail)))
+      (str_cat.str-cat "    ucomisd %xmm3, %xmm2\n" tail))
     (string.eq
       (compiler_backend.compiler-backend-float-compare-reg-asm
         op
@@ -38374,16 +38292,16 @@ g:
     [test : String
       (str_cat.str-cat
         "    test"
-        (owned_view.compiler-owned-shared-view suffix)
+        suffix
         " "
-        (owned_view.compiler-owned-shared-view reg)
+        reg
         ", "
-        (owned_view.compiler-owned-shared-view reg)
+        reg
         "\n    jl .L_tl_abort_site_")]
     [cmp : String
       (str_cat.str-cat
         "    cmp"
-        (owned_view.compiler-owned-shared-view suffix)
+        suffix
         " $"
         width
         ", "
@@ -38398,11 +38316,7 @@ g:
       (if (string.eq extension "")
         count-push
         (str_cat.str-cat extension "\n    pushq %r11\n"))]
-    [zero-flag : String
-      (str_cat.str-cat
-        "    movq $0, "
-        (owned_view.compiler-owned-shared-view flag-reg)
-        "\n")]
+    [zero-flag : String (str_cat.str-cat "    movq $0, " flag-reg "\n")]
     [one-flag : String (str_cat.str-cat "    movq $1, " flag-reg "\n")]
     (and
       (> (string.string-length body) 0)
@@ -41279,22 +41193,14 @@ g:
             (let
               [callee-load : i64
                 (let
-                  [needle
-                    (str_cat.str-cat
-                      "    movq "
-                      (owned_view.compiler-owned-shared-view arg-reg)
-                      ", %r10\n")]
+                  [needle (str_cat.str-cat "    movq " arg-reg ", %r10\n")]
                   (compiler_backend.compiler-backend-string-find-from
                     asm
                     needle
                     0))]
               [save : i64
                 (let
-                  [needle
-                    (str_cat.str-cat
-                      "    movq %r10, "
-                      (owned_view.compiler-owned-shared-view slot)
-                      "\n")]
+                  [needle (str_cat.str-cat "    movq %r10, " slot "\n")]
                   (compiler_backend.compiler-backend-string-find-from
                     asm
                     needle
@@ -47001,16 +46907,13 @@ b_keep:
       (while (< i 65)
         (let
           [suffix : String (string.int->string i)]
-          [symbol : String
-            (str_cat.str-cat
-              (owned_view.compiler-owned-shared-view prefix)
-              (owned_view.compiler-owned-shared-view suffix))]
+          [symbol : String (str_cat.str-cat prefix suffix)]
           (begin
             (set!
               (array-ref chunks i)
               (str_cat.str-cat
                 ".globl "
-                (owned_view.compiler-owned-shared-view symbol)
+                symbol
                 "\n"
                 symbol
                 ":\n    movq $"
@@ -48142,10 +48045,7 @@ b_keep:
     ;; touches the borrowed register, so name the scavenged GP scratch in it.
     [scratch-wrap-a : String
       (compiler_backend.compiler-backend-emergency-wrap
-        (str_cat.str-cat
-          "A_BODY "
-          (owned_view.compiler-owned-shared-view scratch-gp-a)
-          "\n")
+        (str_cat.str-cat "A_BODY " scratch-gp-a "\n")
         state-a)]
     [scratch-cycle-a0 : String
       (compiler_backend.compiler-backend-cycle-temp-slot-with-backend-state
@@ -49159,7 +49059,7 @@ b_keep:
       asm
       (str_cat.str-cat
         "    cmp"
-        (owned_view.compiler-owned-shared-view suffix)
+        suffix
         " $1, "
         lhs
         "\n    jno 1f\n    cmp"

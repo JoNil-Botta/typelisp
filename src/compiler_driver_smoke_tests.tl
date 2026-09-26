@@ -734,11 +734,10 @@
   [expr-segment-bases : i64]
   [type-segment-bases : i64]
   [base-arena : i64]) : bool
-  (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level
-    pools-a
+  (match (compiler_optimize.optimize-program
     program-a
     spans-a
-    1)
+    (compiler_optimize.optimize-request pools-a 1))
     [(compiler_optimize.CompilerOptimizedProgram.Program
         optimized-a
         optimized-spans-a)
@@ -749,11 +748,10 @@
           base-arena))
         (compiler-driver-reader-context-smoke-fail
           "reader changed during state A optimization")
-        (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level
-          pools-b
+        (match (compiler_optimize.optimize-program
           program-b
           spans-b
-          1)
+          (compiler_optimize.optimize-request pools-b 1))
           [(compiler_optimize.CompilerOptimizedProgram.Program
               optimized-b
               optimized-spans-b)

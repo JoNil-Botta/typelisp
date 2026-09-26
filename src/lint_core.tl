@@ -3944,17 +3944,16 @@
       "\\stdlib/string.tl")
     (lint-string-has-suffix? module-name "/stdlib\\string.tl")))
 
+;; `subject` names what was imported: `module alias a`, `item x`, or
+;; `item x as a` when a selected item is renamed.
 (define (lint-unused-import-finding
   [module-name : String]
-  [alias : String]
-  [item? : bool]
+  [subject : String]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (str_cat.str-cat
-      (if item?
-        "unused import: item "
-        "unused import: module alias ")
-      alias
+      "unused import: "
+      subject
       " from "
       module-name
       " is never referenced")
@@ -4126,8 +4125,23 @@
                         (lint-findings-add
                           (lint-unused-import-finding
                             (ci.intern-str module-name)
-                            (ci.intern-str alias)
-                            item?
+                            (match kind
+                              [(ast.AstImportKind.ModuleItem item)
+                                (if (string.eq
+                                  (ci.intern-str item)
+                                  (ci.intern-str alias))
+                                  (str_cat.str-cat
+                                    "item "
+                                    (ci.intern-str alias))
+                                  (str_cat.str-cat
+                                    "item "
+                                    (ci.intern-str item)
+                                    " as "
+                                    (ci.intern-str alias)))]
+                              [_
+                                (str_cat.str-cat
+                                  "module alias "
+                                  (ci.intern-str alias))])
                             (__tl-box-place span))
                           acc))))])]))])))
 

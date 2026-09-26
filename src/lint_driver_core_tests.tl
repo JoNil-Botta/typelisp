@@ -994,17 +994,17 @@ end
         (lint_core.lint-rule-redundant-import-alias-id))
       redundant)))
 
-(define (selfhost-lint-unused-item-message-ok?) : bool
+(define (selfhost-lint-unused-item-message-ok?
+  [source : String]
+  [expected : String]) : bool
   (match (lint_core.lint-findings-get
     (lint_driver_core.selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
-      "(import stdlib.profile.now-ms)\n(define (main) : i64 42)"
+      source
       (lint_svec.new))
     0)
     [(lint_core.LintMaybeFinding.Some finding)
-      (string.eq
-        finding.message
-        "unused import: item now-ms from stdlib.profile is never referenced")]
+      (string.eq finding.message expected)]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-import-forms-self-test) : i64
@@ -1075,7 +1075,21 @@ end
           1
           0))
       110]
-    [(not (selfhost-lint-unused-item-message-ok?)) 111]
+    [(not
+        (selfhost-lint-unused-item-message-ok?
+          "(import stdlib.profile.now-ms)\n(define (main) : i64 42)"
+          "unused import: item now-ms from stdlib.profile is never referenced"))
+      111]
+    [(not
+        (selfhost-lint-unused-item-message-ok?
+          "(import stdlib.profile.now-ms as clock)\n(define (main) : i64 42)"
+          "unused import: item now-ms as clock from stdlib.profile is never referenced"))
+      112]
+    [(not
+        (selfhost-lint-unused-item-message-ok?
+          "(import stdlib.profile as prof)\n(define (main) : i64 42)"
+          "unused import: module alias prof from stdlib.profile is never referenced"))
+      113]
     [else 42]))
 
 (define (selfhost-lint-package-dead-code-fixture-decls

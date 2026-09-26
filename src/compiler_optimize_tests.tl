@@ -9497,10 +9497,9 @@
     42
     "the late slot forwards the pre-copy a uniform-phi fold left in a decided join, threads the join's decided edges, and leaves neither the copy nor a branch on a per-edge literal behind"))
 
-;; The tier's suppression is a DEPTH, so an inner priced scope cannot
-;; un-suppress the rest of an outer one, and pricing a candidate always leaves
-;; the slot enabled for the pipeline that follows.
-(define (compiler-optimize-late-sweep-suppression-self-test) : i64
+;; Pricing a candidate runs the frozen priced pipeline, which leaves the late
+;; sweep out; nothing it does switches the sweep off for the pipeline after it.
+(define (compiler-optimize-late-sweep-after-pricing-self-test) : i64
   (let
     ;; Priced exactly the way `opt-inline-checked-verdict` prices a site; the
     ;; cost itself is not what is under test, the state it leaves behind is.
@@ -9511,40 +9510,21 @@
         (opt-dce-late-test-function
           "dce_late_priced"
           (opt-dce-late-dead-blocks)))]
-    (begin
-      (when (opt.compiler-opt-late-sweep-suppressed?) (return 1))
-      (opt.compiler-opt-late-sweep-suppress-enter!)
-      (opt.compiler-opt-late-sweep-suppress-enter!)
-      (opt.compiler-opt-late-sweep-suppress-leave!)
-      ;; The inner scope left; the outer one is still in force.
-      (unless (opt.compiler-opt-late-sweep-suppressed?) (return 2))
-      (when
-        (opt-dce-late-run-changed?
-          "dce_late_suppressed"
-          (opt-dce-late-dead-blocks))
-        (return 3))
-      (opt.compiler-opt-late-sweep-suppress-leave!)
-      (when (opt.compiler-opt-late-sweep-suppressed?) (return 4))
-      ;; A stray leave cannot suppress the pipeline's own sweep.
-      (opt.compiler-opt-late-sweep-suppress-leave!)
-      (when (opt.compiler-opt-late-sweep-suppressed?) (return 5))
-      ;; Pricing a candidate the way the checked tier does leaves the slot on
-      ;; (`priced` above ran before this body did).
-      (when (< priced 0) (return 6))
-      (when (opt.compiler-opt-late-sweep-suppressed?) (return 7))
-      (unless
-        (opt-dce-late-run-changed?
-          "dce_late_after_pricing"
-          (opt-dce-late-dead-blocks))
-        (return 8))
-      42)))
+    (cond
+      [(< priced 0) 1]
+      [(not
+          (opt-dce-late-run-changed?
+            "dce_late_after_pricing"
+            (opt-dce-late-dead-blocks)))
+        2]
+      [else 42])))
 
 (test
-  dce-late-suppression-is-scoped
+  dce-late-runs-after-pricing
   (test.assert-i64-eq
-    (compiler-optimize-late-sweep-suppression-self-test)
+    (compiler-optimize-late-sweep-after-pricing-self-test)
     42
-    "the checked tier's late-sweep suppression nests, clamps at zero, and is off again after a candidate is priced, so the pipeline's own sweep runs and reports its change"))
+    "pricing a candidate leaves the pipeline's own late sweep on, so it runs and reports its change"))
 
 (define (opt-successor-sink-test-function
   [name : String]
@@ -10476,6 +10456,7 @@
         (opt_i64_i64_map.with-capacity 8))]
     (opt.OptLoopBceSummaries
       true
+      false
       (profile_state.compiler-profile-state-new)
       (opt.compiler-opt-global-shared-view clean)
       clean
@@ -35467,6 +35448,14 @@
 (define (opt-licm-unswitch-test-run [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (opt.opt-licm-unswitch-final
     (ast.ast-node-pool-reader-type-segment-bases)
+    true
+    func))
+
+;; The same final pass as the frozen priced pipeline runs it.
+(define (opt-licm-unswitch-test-run-priced [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (opt.opt-licm-unswitch-final
+    (ast.ast-node-pool-reader-type-segment-bases)
+    false
     func))
 
 (define (opt-licm-unswitch-one-successor?
@@ -35626,10 +35615,8 @@
     [once : ir.CompilerIrFunction
       (opt-licm-unswitch-test-run (opt-lu1-test-function false))]
     [once-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks once)]
-    [_enter : unit (opt.compiler-opt-late-sweep-suppress-enter!)]
     [priced : ir.CompilerIrFunction
-      (opt-licm-unswitch-test-run (opt-lu1-test-function true))]
-    [_leave : unit (opt.compiler-opt-late-sweep-suppress-leave!)]
+      (opt-licm-unswitch-test-run-priced (opt-lu1-test-function true))]
     [priced-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks priced)]
     [head-clone : i64 (ir.compiler-ir-label "head__licm_false")]
     (cond
@@ -35777,10 +35764,8 @@
     [small : ir.CompilerIrFunction
       (opt-licm-unswitch-test-run (opt-ph1-test-function 10))]
     [small-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks small)]
-    [_enter : unit (opt.compiler-opt-late-sweep-suppress-enter!)]
     [priced : ir.CompilerIrFunction
-      (opt-licm-unswitch-test-run (opt-ph1-test-function 70))]
-    [_leave : unit (opt.compiler-opt-late-sweep-suppress-leave!)]
+      (opt-licm-unswitch-test-run-priced (opt-ph1-test-function 70))]
     [priced-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks priced)]
     [head-clone : i64 (ir.compiler-ir-label "head__licm_false")]
     (cond
@@ -75251,6 +75236,7 @@
           summary)
         unit)
       (opt.OptLoopBceSummaries
+        false
         false
         (profile_state.compiler-profile-state-new)
         (opt_i64_i64_map.with-capacity 8)

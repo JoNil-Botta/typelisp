@@ -45,6 +45,12 @@
             (set! index (+ index 1)))))
       subst)))
 
+(define (tc-lifetime-subst-len [subst : tc_core.TcLifetimeSubst]) : i64
+  (match subst
+    [(tc_core.TcLifetimeSubst.Nil) 0]
+    [(tc_core.TcLifetimeSubst.One _ _) 1]
+    [(tc_core.TcLifetimeSubst.Dense _ _ len) len]))
+
 (define (tc-lifetime-subst-wide-and-order-ok?) : bool
   (let
     [count : i64 2048]
@@ -63,8 +69,8 @@
           (set! index (+ index 1))))
       (and
         ok
-        (= (tc_core.tc-lifetime-subst-len forward) count)
-        (= (tc_core.tc-lifetime-subst-len reverse) count)))))
+        (= (tc-lifetime-subst-len forward) count)
+        (= (tc-lifetime-subst-len reverse) count)))))
 
 (define (tc-lifetime-subst-list-ok?) : bool
   (let
@@ -99,11 +105,11 @@
     [duplicate : tc_core.TcLifetimeSubst
       (tc-lifetime-subst-must-bind left 30 130)]
     (and
-      (= (tc_core.tc-lifetime-subst-len tc_core.TcLifetimeSubst.Nil) 0)
-      (= (tc_core.tc-lifetime-subst-len one) 1)
-      (= (tc_core.tc-lifetime-subst-len root) 2)
-      (= (tc_core.tc-lifetime-subst-len left) 3)
-      (= (tc_core.tc-lifetime-subst-len right) 3)
+      (= (tc-lifetime-subst-len tc_core.TcLifetimeSubst.Nil) 0)
+      (= (tc-lifetime-subst-len one) 1)
+      (= (tc-lifetime-subst-len root) 2)
+      (= (tc-lifetime-subst-len left) 3)
+      (= (tc-lifetime-subst-len right) 3)
       (tc-lifetime-subst-lookup-eq? root 10 110)
       (tc-lifetime-subst-lookup-eq? root 20 120)
       (tc-lifetime-subst-lookup-missing? root 30)

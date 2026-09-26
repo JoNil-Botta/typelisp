@@ -9990,38 +9990,6 @@
                           (lower-context-expr-push ctx rewritten-index)))))]
                 [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
             [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-      [(ast.AstExpr.FixedArrayTake array-box index-box)
-        (let
-          [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
-          [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-          (match (lower-spmd-inline-expr
-            ctx
-            function-state
-            env
-            type-env
-            array
-            subst
-            shadowed)
-            [(ResultLowerAstExpr.Ok rewritten-array)
-              (let
-                [rewritten-index : ast.AstExpr
-                  (try
-                    (lower-spmd-inline-expr
-                      ctx
-                      function-state
-                      env
-                      type-env
-                      index
-                      subst
-                      shadowed))]
-                (ResultLowerAstExpr.Ok
-                  (lower-context-expr-get
-                    ctx
-                    (ast.ast-expr-fixed-array-take-with-pools
-                      (tc_core.tc-context-pools ctx)
-                      (lower-context-expr-push ctx rewritten-array)
-                      (lower-context-expr-push ctx rewritten-index)))))]
-            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
       [(ast.AstExpr.Replace place-box replacement-box)
         (let
           [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
@@ -11910,18 +11878,6 @@
             (lower-global-shared-view names)
             (lower-reach-expr pools all-functions names state array)
             live)
-          index))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools array-box)]
-        [index : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools index-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state array)
           index))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
@@ -29495,11 +29451,6 @@
         [live : ast.AstExpr (lower-context-expr-get ctx live-box)]
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
         (lower-array-take ctx state env type-env arr live index expr-ty))]
-    [(ast.AstExpr.FixedArrayTake arr-box index-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-        (lower-fixed-array-take ctx state env type-env arr index expr-ty))]
     [(ast.AstExpr.Replace place-box replacement-box)
       (let
         [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
@@ -40397,7 +40348,7 @@
                                       type-env
                                       index
                                       (ast.AstType.I64)
-                                      "lower: array-take! index must be integer"))]
+                                      "lower: __tl_array-take! index must be integer"))]
                                 (match index-lowered
                                   [(LowerExpr.Expr
                                       index-state
@@ -40447,190 +40398,45 @@
                       (lower-diagnostic-at-expr
                         ctx
                         array
-                        "lower: array-take! requires dynamic array storage")))])])]
+                        "lower: __tl_array-take! requires dynamic array storage")))])])]
         [(tc_core.ResultTcArrayReceiver.Err message)
           (ResultLowerExpr.Err
             (box (lower-diagnostic-at-expr ctx array message)))])]
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ctx array message)))]))
 
-;; Materialize the removed value before its slot is reinitialized. Scalar and
+;; Materialize a place's old value before the place is overwritten. Scalar and
 ;; register-group loads are already independent values; an inline memory
 ;; aggregate needs a distinct local copy because its lowered value is an
-;; address into the array storage itself.
-(define (lower-fixed-array-take-old
+;; address into the place's storage itself.
+(define (lower-place-old-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [elem-ptr : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]) : ResultLowerExpr
-  (if (= (lower-type-size ctx elem-ty) 0)
-    (ResultLowerExpr.Ok (LowerExpr.Expr state ir.CompilerIrValue.Unit elem-ty))
+  [place-ptr : ir.CompilerIrValue]
+  [value-ty : ast.AstType]) : ResultLowerExpr
+  (if (= (lower-type-size ctx value-ty) 0)
+    (ResultLowerExpr.Ok (LowerExpr.Expr state ir.CompilerIrValue.Unit value-ty))
     (match (lower-array-elem-ref-result
       ctx
       state
-      elem-ptr
-      (lower-global-shared-view elem-ty))
+      place-ptr
+      (lower-global-shared-view value-ty))
       [(ResultLowerExpr.Ok old)
         (match (lower-global-shared-view old)
           [(LowerExpr.Expr old-state old-value _)
             (if (and
-              (lower-type-inline-storage? ctx elem-ty)
+              (lower-type-inline-storage? ctx value-ty)
               (not
                 (lower-type-register-resident?
                   ctx
-                  (lower-global-shared-view elem-ty))))
+                  (lower-global-shared-view value-ty))))
               (lower-copy-inline-aggregate-to-inline
                 ctx
                 old-state
                 old-value
-                elem-ty)
+                value-ty)
               (ResultLowerExpr.Ok old))])]
       [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
-
-(define (lower-fixed-array-take-reinit
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [elem-ptr : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]
-  [origin : ast.AstExpr]
-  [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-fixed-array-take-old
-    ctx
-    state
-    (lower-global-shared-view elem-ptr)
-    (lower-global-shared-view elem-ty))
-    [(ResultLowerExpr.Ok old)
-      (match old
-        [(LowerExpr.Expr old-state old-value _)
-          (match (lower-init-expr
-            ctx
-            old-state
-            env
-            type-env
-            (lower-global-shared-view elem-ty)
-            origin
-            (lower-global-shared-view elem-ty))
-            [(ResultLowerExpr.Ok initialized)
-              (match initialized
-                [(LowerExpr.Expr init-state init-value _)
-                  (ResultLowerExpr.Ok
-                    (LowerExpr.Expr
-                      (lower-array-elem-store-state
-                        ctx
-                        init-state
-                        elem-ptr
-                        init-value
-                        elem-ty)
-                      old-value
-                      result-ty))])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
-
-;; `(array-take! items index)` evaluates the storage place and index once,
-;; checks the fixed bound, moves/copies the old value into an independent
-;; result, then immediately restores the slot with `(init : T)`.
-(define (lower-fixed-array-take
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [array : ast.AstExpr]
-  [index : ast.AstExpr]
-  [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-expr-result-type-or-check
-    ctx
-    env
-    type-env
-    (lower-state-type-cache state)
-    (lower-state-function-state state)
-    array)
-    [(tc_core.ResultTcType.Ok array-ty)
-      (match (tc_core.tc-fixed-array-take-receiver ctx array-ty)
-        [(tc_core.ResultTcArrayReceiver.Ok receiver)
-          (match receiver
-            [(tc_core.TcArrayReceiver container-ty elem-ty)
-              (let
-                [elem-ir-ty : ast.AstType
-                  (tc_core.tc-type-without-regions
-                    (tc_core.tc-resolve-type ctx elem-ty))]
-                (match (lower-expr
-                  ctx
-                  state
-                  env
-                  type-env
-                  (lower-global-shared-view array))
-                  [(ResultLowerExpr.Ok array-lowered)
-                    (match array-lowered
-                      [(LowerExpr.Expr array-state array-value _)
-                        (match (lower-index-result-type-or-check
-                          ctx
-                          env
-                          type-env
-                          (lower-state-type-cache array-state)
-                          (lower-state-function-state array-state)
-                          (lower-global-shared-view index))
-                          [(tc_core.ResultTcType.Ok index-ty)
-                            (match (lower-expr-expected
-                              ctx
-                              array-state
-                              env
-                              type-env
-                              (lower-global-shared-view index)
-                              index-ty
-                              (lower-global-shared-view index))
-                              [(ResultLowerExpr.Ok index-lowered)
-                                (match index-lowered
-                                  [(LowerExpr.Expr
-                                      index-state
-                                      index-value
-                                      index-value-ty)
-                                    (match (tc_core.tc-type-strip-region
-                                      (tc_core.tc-resolve-type ctx container-ty))
-                                      [(ast.AstType.Array _ elem-count)
-                                        (match (lower-fixed-array-element-addr
-                                          ctx
-                                          index-state
-                                          array-value
-                                          index-value
-                                          index-value-ty
-                                          (lower-global-shared-view elem-ir-ty)
-                                          elem-count)
-                                          [(LowerExpr.Expr
-                                              addr-state
-                                              elem-ptr
-                                              _)
-                                            (lower-fixed-array-take-reinit
-                                              ctx
-                                              (lower-state-record-latest-bounds-check-at-expr
-                                                ctx
-                                                addr-state
-                                                index)
-                                              env
-                                              type-env
-                                              elem-ptr
-                                              elem-ir-ty
-                                              array
-                                              result-ty)])]
-                                      [_
-                                        (ResultLowerExpr.Err
-                                          (box
-                                            (lower-diagnostic-at-expr
-                                              ctx
-                                              array
-                                              "lower: array-take! requires fixed array type")))])])]
-                              [(ResultLowerExpr.Err message)
-                                (ResultLowerExpr.Err message)])]
-                          [(tc_core.ResultTcType.Err message)
-                            (ResultLowerExpr.Err
-                              (box (lower-diagnostic-at-expr ctx index message)))])])]
-                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))])]
-        [(tc_core.ResultTcArrayReceiver.Err message)
-          (ResultLowerExpr.Err
-            (box (lower-diagnostic-at-expr ctx array message)))])]
-    [(tc_core.ResultTcType.Err message)
-      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ctx array message)))]))
 
 (define (lower-array-ref
   [ctx : tc_core.TcContext]
@@ -41684,7 +41490,7 @@
               [(ResultLowerExpr.Ok lowered-replacement)
                 (match lowered-replacement
                   [(LowerExpr.Expr replacement-state replacement-value _)
-                    (match (lower-fixed-array-take-old
+                    (match (lower-place-old-value
                       ctx
                       replacement-state
                       (lower-global-shared-view place-ptr)
@@ -43932,10 +43738,6 @@
       (or
         (lower-spmd-reduce-node-writes-id? ctx name array-box)
         (lower-spmd-reduce-node-writes-id? ctx name live-box)
-        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name array-box)
         (lower-spmd-reduce-node-writes-id? ctx name index-box))]
     [(ast.AstExpr.Replace _ _) true]
     [(ast.AstExpr.ArrayPush array-box value-box)
@@ -64985,7 +64787,6 @@
     [(ast.AstExpr.Unquote _) false]
     [(ast.AstExpr.UnquoteSplicing _) false]
     [(ast.AstExpr.ArrayTake _ _ _) true]
-    [(ast.AstExpr.FixedArrayTake _ _) true]
     [(ast.AstExpr.Replace _ _) true]
     [(ast.AstExpr.Break) true]
     [(ast.AstExpr.Continue) true]
@@ -71243,7 +71044,6 @@
             (lower-source-node-has-import-call? pools value-box)
             (lower-source-node-has-import-call? pools body-box))])]
     [(ast.AstExpr.ArrayTake _ _ _) false]
-    [(ast.AstExpr.FixedArrayTake _ _) false]
     [(ast.AstExpr.Replace _ _) false]
     [(ast.AstExpr.PtrAddrOf _) false]
     [(ast.AstExpr.ForOwnedState _) false]

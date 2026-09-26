@@ -2462,9 +2462,6 @@
 (define (compiler-parse-tag-expr-array-take) : i64
   303)
 
-(define (compiler-parse-tag-expr-fixed-array-take) : i64
-  305)
-
 (define (compiler-parse-tag-expr-replace) : i64
   314)
 
@@ -2502,6 +2499,9 @@
 
 (define (compiler-parse-tag-expr-retired-array-data) : i64
   317)
+
+(define (compiler-parse-tag-expr-retired-array-take) : i64
+  305)
 
 ;; Legacy nodes remain available while parsing quoted seed templates. They are
 ;; not accepted as ordinary source expressions at depth zero.
@@ -3253,7 +3253,7 @@
         (compiler-parse-dispatch-bind
           out
           "array-take!"
-          (compiler-parse-tag-expr-fixed-array-take)))
+          (compiler-parse-tag-expr-retired-array-take)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -7189,33 +7189,6 @@
         [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")])]
     [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")]))
 
-(define (parse-ast-fixed-array-take
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]
-  [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-view rest)
-    [(reader.SpannedSexprView.Cons array index-tail _)
-      (match (reader.spanned-sexpr-view index-tail)
-        [(reader.SpannedSexprView.Cons index end _)
-          (match (reader.spanned-sexpr-view end)
-            [(reader.SpannedSexprView.Nil _)
-              (match (parse-ast-expr-with-pools dispatch pools array)
-                [(ResultAstExpr.Ok parsed-array)
-                  (match (parse-ast-expr-with-pools dispatch pools index)
-                    [(ResultAstExpr.Ok parsed-index)
-                      (ResultAstExpr.Ok
-                        (ast.ast-expr-fixed-array-take-with-pools
-                          pools
-                          parsed-array
-                          parsed-index))]
-                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-            [_
-              (ResultAstExpr.Err
-                "parse: array-take! expects exactly two operands; compatibility storage must use private __tl_array-take!")])]
-        [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
-    [_ (ResultAstExpr.Err "parse: malformed array-take!")]))
-
 (define (parse-ast-for-owned-state
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -8880,8 +8853,6 @@
       (parse-ast-array-push dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-array-take))
       (parse-ast-private-array-take dispatch pools rest)]
-    [(= tag (compiler-parse-tag-expr-fixed-array-take))
-      (parse-ast-fixed-array-take dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-for-owned-state))
       (parse-ast-for-owned-state dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-for-owned-step))
@@ -8939,6 +8910,9 @@
     [(= tag (compiler-parse-tag-expr-retired-array-data))
       (ResultAstExpr.Err
         "parse: array-data was removed; raw dynamic-buffer storage is compiler-private")]
+    [(= tag (compiler-parse-tag-expr-retired-array-take))
+      (ResultAstExpr.Err
+        "parse: array-take! was removed; use (replace! (array-ref array index) replacement)")]
     [(= tag (compiler-parse-tag-expr-struct-get))
       (parse-ast-struct-get dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-comptime))

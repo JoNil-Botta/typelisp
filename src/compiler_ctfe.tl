@@ -2772,8 +2772,7 @@
     [(ast.AstExpr.MakeArray _ _) "__tl_make-array"]
     [(ast.AstExpr.ArrayRef _ _) "array-ref"]
     [(ast.AstExpr.ArraySet _ _ _) "array-set!"]
-    [(ast.AstExpr.ArrayTake _ _ _) "array-take!"]
-    [(ast.AstExpr.FixedArrayTake _ _) "array-take!"]
+    [(ast.AstExpr.ArrayTake _ _ _) "__tl_array-take!"]
     [(ast.AstExpr.Replace _ _) "replace!"]
     [(ast.AstExpr.ArrayPush _ _) "__tl_array-push!"]
     [(ast.AstExpr.StringRef _ _) "string-ref"]
@@ -12906,14 +12905,6 @@
         ast.ast-expr-array-take-with-pools
         array-box
         live-box
-        index-box)]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (ctfe-quote-children-2
-        env
-        fuel
-        quasiquote
-        ast.ast-expr-fixed-array-take-with-pools
-        array-box
         index-box)]
     [(ast.AstExpr.Replace place-box replacement-box)
       (ctfe-quote-children-2

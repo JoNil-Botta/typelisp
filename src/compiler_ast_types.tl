@@ -950,9 +950,6 @@
   ;; second operand is a parallel bool liveness bitmap; the result is `(Tuple
   ;; bool T)` whose payload is meaningful only when its leading flag is true.
   (ArrayTake i64 i64 i64)
-  ;; Public checked mem::take-style operation for fixed-array places. The old
-  ;; element is returned and the selected slot is immediately reinitialized.
-  (FixedArrayTake i64 i64)
   (ArrayPush i64 i64)
   (StringRef i64 i64)
   (While i64 i64)
@@ -6302,9 +6299,6 @@
 (define (ast-expr-array-take [target : i64] [live : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.ArrayTake target live index)))
 
-(define (ast-expr-fixed-array-take [target : i64] [index : i64]) : i64
-  (ast-node-push (AstExpr.FixedArrayTake target index)))
-
 (define (ast-expr-replace [place : i64] [replacement : i64]) : i64
   (ast-node-push (AstExpr.Replace place replacement)))
 
@@ -6661,7 +6655,6 @@
       [(AstExpr.ArrayRef a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
       [(AstExpr.ArraySet a b d) (ast-fold-3 ,c ,s ,e a b d ,@x)]
       [(AstExpr.ArrayTake a b d) (ast-fold-3 ,c ,s ,e a b d ,@x)]
-      [(AstExpr.FixedArrayTake a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
       [(AstExpr.ArrayPush a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
       [(AstExpr.StringRef a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
       [(AstExpr.While a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
@@ -7018,8 +7011,6 @@
         (AstExpr.ArraySet (,e ,@x a) (,e ,@x b) (,e ,@x d))]
       [(AstExpr.ArrayTake a b d)
         (AstExpr.ArrayTake (,e ,@x a) (,e ,@x b) (,e ,@x d))]
-      [(AstExpr.FixedArrayTake a b)
-        (AstExpr.FixedArrayTake (,e ,@x a) (,e ,@x b))]
       [(AstExpr.ArrayPush a b) (AstExpr.ArrayPush (,e ,@x a) (,e ,@x b))]
       [(AstExpr.StringRef a b) (AstExpr.StringRef (,e ,@x a) (,e ,@x b))]
       [(AstExpr.While a b) (AstExpr.While (,e ,@x a) (,e ,@x b))]
@@ -7570,10 +7561,6 @@
         (match ,r
           [(AstExpr.ArrayTake b0 b1 b2)
             (and (,e ,@x a0 b0) (,e ,@x a1 b1) (,e ,@x a2 b2))]
-          [_ false])]
-      [(AstExpr.FixedArrayTake a0 a1)
-        (match ,r
-          [(AstExpr.FixedArrayTake b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
           [_ false])]
       [(AstExpr.ArrayPush a0 a1)
         (match ,r
@@ -8636,12 +8623,6 @@
   [live : i64]
   [index : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.ArrayTake target live index)))
-
-(define (ast-expr-fixed-array-take-with-pools
-  [pools : AstNodePoolContext]
-  [target : i64]
-  [index : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.FixedArrayTake target index)))
 
 (define (ast-expr-replace-with-pools
   [pools : AstNodePoolContext]

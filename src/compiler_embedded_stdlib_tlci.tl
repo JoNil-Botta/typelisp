@@ -1839,7 +1839,7 @@
     session
     (compiler-comptime-host-build-binary-intrinsic! 0)))
 
-;; array-take!: pop the target, liveness bitmap, and index expressions and
+;; __tl_array-take!: pop the target, liveness bitmap, and index expressions and
 ;; push the dedicated consuming extraction node reconstructed by interpreted
 ;; quasiquote.
 (define (compiler-comptime-host-callback-expr-array-take

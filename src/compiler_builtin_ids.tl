@@ -1713,7 +1713,6 @@
       ["match" 182]
       ["struct-get" 183]
       ["array-set!" 184]
-      ["array-take!" 185]
       ["cast" 186]
       ["ann" 187]
       ["tuple-ref" 188]
@@ -2034,7 +2033,6 @@
     (compiler-builtin-load-ctfe! insert-missing "match")
     (compiler-builtin-load-ctfe! insert-missing "struct-get")
     (compiler-builtin-load-ctfe! insert-missing "array-set!")
-    (compiler-builtin-load-ctfe! insert-missing "array-take!")
     (compiler-builtin-load-ctfe! insert-missing "cast")
     (compiler-builtin-load-ctfe! insert-missing "ann")
     (compiler-builtin-load-ctfe! insert-missing "tuple-ref")

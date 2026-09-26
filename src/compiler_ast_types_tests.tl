@@ -195,7 +195,6 @@
     [(ast.AstExpr.ArrayRef _ _) 14]
     [(ast.AstExpr.ArraySet _ _ _) 15]
     [(ast.AstExpr.ArrayTake _ _ _) 75]
-    [(ast.AstExpr.FixedArrayTake _ _) 76]
     [(ast.AstExpr.ArrayPush _ _) 41]
     [(ast.AstExpr.StringRef _ _) 16]
     [(ast.AstExpr.While _ _) 17]

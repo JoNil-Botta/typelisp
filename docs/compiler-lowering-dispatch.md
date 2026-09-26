@@ -27,7 +27,7 @@ bodies below. Grouped names are exact `AstExpr` variants.
 | `If`, `While`, `ForOwnedState`, `ForOwnedStep`, `Foreach` | Resolve children or unpack the typed payload, then use the existing control-flow family helper. |
 | `SpmdReduce`, `SpmdScan`, `SpmdCompact`, `SpmdBroadcast`, `SpmdShuffle` | Existing SPMD helpers own lowering. The longer dispatcher wrappers unpack payloads and forward resolved child expressions; they do not construct family IR. |
 | `Match`, `StringRef`, `StructGet`, `StructSet` | Child-resolution routes to the existing match/string/field helpers. Value and tail-position matches share one arm walker (`lower-match-dispatch` and the `lower-match-*` arms) parameterized by a `LowerMatchCont`. |
-| `MakeArray`, `Array`, `DynArray`, `ArrayRef`, `ArraySet`, `ArrayTake`, `FixedArrayTake`, `Replace`, `ArrayPush` | Existing allocation/literal/element/ownership helpers; dispatcher only forwards the selected family and operands. |
+| `MakeArray`, `Array`, `DynArray`, `ArrayRef`, `ArraySet`, `ArrayTake`, `Replace`, `ArrayPush` | Existing allocation/literal/element/ownership helpers; dispatcher only forwards the selected family and operands. |
 | `Tuple`, `TupleRef` | Existing tuple construction/access helpers. |
 | `WithRegion`, `WithEscape`, `WithScratch`, `InArena`, `WithResource` | Existing arena/resource helpers own cleanup and lifetime handoffs. |
 | `Box`, `BoxGet`, `BoxTake`, `BoxSet` | Existing box helpers; `BoxGet`/`BoxTake` share the established `lower-box-get` route. |

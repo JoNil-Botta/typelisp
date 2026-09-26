@@ -1276,15 +1276,17 @@
 (define (compiler-parse-array-take-ok?) : bool
   (and
     (compiler-parse-ok?
-      "(define (main [items : (Array i64 1)]) : i64 (array-take! items 0))")
-    (compiler-parse-ok?
       "(define (main [items : (__tl_dyn-array i64)] [live : (__tl_dyn-array bool)]) : (Tuple bool i64) (__tl_array-take! items live 0))")
     ;; Keep the neighboring parser tag distinct: a previous collision caused
-    ;; every dereference to dispatch to the two-operand array-take parser.
+    ;; every dereference to dispatch to an array-take parser.
     (compiler-parse-ok? "(define (main [item : (Box i64)]) : i64 (deref item))")
+    ;; Every public arity reports the single migration diagnostic.
+    (compiler-parse-error-ok?
+      "(define (main [items : (Array i64 1)]) : i64 (array-take! items 0))"
+      "parse: array-take! was removed; use (replace! (array-ref array index) replacement)")
     (compiler-parse-error-ok?
       "(define (main [items : (Array i64 1)] [live : (Array bool 1)]) : i64 (array-take! items live 0))"
-      "parse: array-take! expects exactly two operands; compatibility storage must use private __tl_array-take!")))
+      "parse: array-take! was removed; use (replace! (array-ref array index) replacement)")))
 
 (define (compiler-parse-replace-ok?) : bool
   (and

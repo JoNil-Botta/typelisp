@@ -7777,7 +7777,6 @@
     [(ast.AstExpr.MacroExpansion _ _ _)
       (compiler-load-lazy-alias-demand-unknown)]
     [(ast.AstExpr.ArrayTake _ _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.FixedArrayTake _ _) (compiler-load-lazy-alias-demand-unknown)]
     [(ast.AstExpr.WithRegion _ _) (compiler-load-lazy-alias-demand-unknown)]
     [(ast.AstExpr.WithResource _) (compiler-load-lazy-alias-demand-unknown)]
     [(ast.AstExpr.BracketClause _) (compiler-load-lazy-alias-demand-unknown)]

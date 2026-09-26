@@ -723,7 +723,6 @@
     [(ast.AstExpr.Set _ _) true]
     [(ast.AstExpr.ArraySet _ _ _) true]
     [(ast.AstExpr.ArrayTake _ _ _) true]
-    [(ast.AstExpr.FixedArrayTake _ _) true]
     [(ast.AstExpr.Replace _ _) true]
     [(ast.AstExpr.ArrayPush _ _) true]
     [(ast.AstExpr.StructSet _ _ _) true]
@@ -769,7 +768,6 @@
     [(ast.AstExpr.Set _ _) true]
     [(ast.AstExpr.ArraySet _ _ _) true]
     [(ast.AstExpr.ArrayTake _ _ _) true]
-    [(ast.AstExpr.FixedArrayTake _ _) true]
     [(ast.AstExpr.Replace _ _) true]
     [(ast.AstExpr.ArrayPush _ _) true]
     [(ast.AstExpr.StructSet _ _ _) true]
@@ -5437,17 +5435,6 @@
           (lint-single-element-array-expr
             live
             (lint-single-element-array-note-use state name))
-          (lint-single-element-array-children node-id state)))]
-    [(ast.AstExpr.FixedArrayTake array index)
-      (let
-        [name : String
-          (lint-single-element-array-var-name (ast.ast-node-get array))]
-        (if (and
-          (lint-single-element-array-candidate-tracked?
-            state.candidates
-            (owned_view.compiler-owned-shared-view name))
-          (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
-          (lint-single-element-array-note-use state name)
           (lint-single-element-array-children node-id state)))]
     [(ast.AstExpr.ForOwnedState payload)
       (lint-single-element-array-expr

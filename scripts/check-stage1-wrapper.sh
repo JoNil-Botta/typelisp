@@ -1406,8 +1406,8 @@ printf '\n' >> "$OPT2_HANDOFF_TEST_LOG"
 
 command=${1:-}
 case "$command" in
-    run)
-        exit 42
+    test)
+        exit 0
         ;;
     build)
         if [ "${OPT2_HANDOFF_TEST_SKIP_GENERATED:-0}" -eq 0 ]; then

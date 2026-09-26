@@ -8,7 +8,8 @@
 # keeps its own uses of values, and the default check never sees them. This
 # checks src/main.tl for both targets under each cfg set a build mode uses.
 # The run holds a scripts/refactor-capped.sh slot and each check is capped at
-# 4G and 10 minutes.
+# 8G and 10 minutes (one type error in a big macro expansion can double the
+# checker's memory, so 4G turned readable errors into cap kills).
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 [ -n "${TL_REFACTOR_CAPPED:-}" ] || exec "$ROOT/scripts/refactor-capped.sh" "$0" "$@"
@@ -20,7 +21,7 @@ check() { # target cfgs...
     target=$1
     shift
     set -- $(for c in "$@"; do printf -- '--cfg %s ' "$c"; done)
-    if scripts/refactor-capped.sh --mem 4G --timeout 600 "$CHECKER" check src/main.tl --target "$target" --stdlib-root stdlib --stdlib-root src "$@" \
+    if scripts/refactor-capped.sh --mem 8G --timeout 600 "$CHECKER" check src/main.tl --target "$target" --stdlib-root stdlib --stdlib-root src "$@" \
         > target/refactor-check-cfgs.out 2>&1; then
         echo "[refactor-check-cfgs] ok   $target $*"
     else

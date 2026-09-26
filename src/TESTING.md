@@ -470,8 +470,20 @@ Windows for commit headroom. Chunks run in the bounded pool from
 - Chunks are settled in chunk order. A failing chunk, or one stopped by its
   cap or timeout, fails the gate with its output.
 
-Every run first executes the pool self-test (a fake compiler; also available
-alone as `--self-test-pool`) before compiling the manifest.
+A case's `contains`, `not-contains` and `count-at-least` directives are
+checked together at its `end`, in one pass (#8005). One `grep -F -f` keeps the
+assembly lines that hold any needle, any symbol needle's bare symbol, a
+`main:`/`_tl_start:`/`# TODO` marker or a symbol-metadata row, and one awk
+decides every directive from them, with the same fallbacks and the same
+failure messages as a per-directive check. Every symbol regex requires its
+bare symbol literally, which is what makes the line prefilter exact, so the
+runner refuses a symbol needle whose symbol is not a non-empty
+`[A-Za-z0-9_]` word.
+
+Every run first executes the expectation self-test (each directive kind on
+synthetic assembly, through each fallback route, with each failure message)
+and the pool self-test (a fake compiler). `--self-test-pool` runs just these
+two, without compiling the manifest.
 
 ### Scalar floating-point comparisons
 

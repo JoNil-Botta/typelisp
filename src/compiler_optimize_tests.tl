@@ -24,7 +24,7 @@
 (import (vector.vector opt.OptAggregatePromoteSlot core) as opt_aggregate_promote_slot_vec)
 (import (vector.vector i64 core) as opt_dense_i64_vec)
 (import (vector.vector opt.OptSsaDenseEntry core) as opt_ssa_dense_vec)
-(import (vector.vector opt.OptGlobalDenseFact core) as opt_global_fact_vec)
+(import (vector.vector opt.OptGlobalFact core) as opt_global_fact_vec)
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -1458,87 +1458,67 @@
       (+ next 1)
       last)))
 
-(define (opt-dense-test-global-copy-facts
-  [facts : opt.OptGlobalCopyFacts]
-  [next : i64]
-  [last : i64]) : opt.OptGlobalCopyFacts
-  (if (> next last)
-    facts
-    (opt-dense-test-global-copy-facts
-      (opt.opt-global-copy-facts-prepend
-        facts
-        (opt.OptGlobalCopyFact.Fact next (ir.CompilerIrValue.I64 next) 0 next))
-      (+ next 1)
-      last)))
-
-(define (opt-dense-test-global-expr-facts
-  [facts : opt.OptGlobalExprFacts]
-  [next : i64]
-  [last : i64]) : opt.OptGlobalExprFacts
-  (if (> next last)
-    facts
-    (opt-dense-test-global-expr-facts
-      (opt.opt-global-expr-facts-prepend
-        facts
-        (opt.OptGlobalExprFact.Fact
-          (opt.OptGlobalExprKey.MovKey
-            (ir.CompilerIrValue.I64 next)
-            (ast.AstType.I64))
-          next
-          0
-          next))
-      (+ next 1)
-      last)))
-
-(define (opt-dense-test-global-pack-word-facts
-  [facts : opt.OptGlobalPackWordFacts]
-  [next : i64]
-  [last : i64]) : opt.OptGlobalPackWordFacts
-  (if (> next last)
-    facts
-    (opt-dense-test-global-pack-word-facts
-      (opt.opt-global-pack-word-facts-prepend
-        facts
-        (opt.OptGlobalPackWordFact.Fact
-          next
-          next
+;; Dense fact `next` of kind 0 (copy), 1 (expression) or 2 (pack word), with
+;; `next` in every number.
+(define (opt-dense-test-global-fact [kind : i64] [next : i64]) : opt.OptGlobalFact
+  (cond
+    [(= kind 0)
+      (opt.OptGlobalFact.Copy next (ir.CompilerIrValue.I64 next) 0 next)]
+    [(= kind 1)
+      (opt.OptGlobalFact.Expr
+        (opt.OptGlobalExprKey.MovKey
           (ir.CompilerIrValue.I64 next)
-          0
-          next))
+          (ast.AstType.I64))
+        next
+        0
+        next)]
+    [else
+      (opt.OptGlobalFact.PackWord next next (ir.CompilerIrValue.I64 next) 0 next)]))
+
+(define (opt-global-facts-push
+  [facts : opt.OptGlobalFacts]
+  [fact : opt.OptGlobalFact]) : opt.OptGlobalFacts
+  (let
+    [items : opt_global_fact_vec.Vec facts.items]
+    (begin
+      (opt_global_fact_vec.push-ref! (&mut items) fact)
+      (opt.OptGlobalFacts items))))
+
+(define (opt-dense-test-global-facts
+  [kind : i64]
+  [facts : opt.OptGlobalFacts]
+  [next : i64]
+  [last : i64]) : opt.OptGlobalFacts
+  (if (> next last)
+    facts
+    (opt-dense-test-global-facts
+      kind
+      (opt-global-facts-push facts (opt-dense-test-global-fact kind next))
       (+ next 1)
       last)))
 
-(define (opt-dense-test-global-copy-fact-is?
-  [facts : opt.OptGlobalCopyFacts]
+;; Whether fact `index` of `facts` is dense fact `expected`.
+(define (opt-dense-test-global-fact-is?
+  [facts : opt.OptGlobalFacts]
   [index : i64]
   [expected : i64]) : bool
-  (match (opt-global-copy-facts-ref facts index)
-    [(opt.OptGlobalCopyFact.Fact dst src _ _)
-      (and
-        (= dst expected)
-        (match src
-          [(ir.CompilerIrValue.I64 value) (= value expected)]
-          [_ false]))]))
-
-(define (opt-dense-test-global-expr-fact-is?
-  [facts : opt.OptGlobalExprFacts]
-  [index : i64]
-  [expected : i64]) : bool
-  (match (opt-global-expr-facts-ref facts index)
-    [(opt.OptGlobalExprFact.Fact _ dst _ _) (= dst expected)]))
-
-(define (opt-dense-test-global-pack-word-fact-is?
-  [facts : opt.OptGlobalPackWordFacts]
-  [index : i64]
-  [expected : i64]) : bool
-  (match (opt-global-pack-word-facts-ref facts index)
-    [(opt.OptGlobalPackWordFact.Fact group word-index value _ _)
-      (and
-        (= group expected)
-        (= word-index expected)
-        (match value
-          [(ir.CompilerIrValue.I64 found) (= found expected)]
-          [_ false]))]))
+  (let
+    [items : opt_global_fact_vec.Vec facts.items]
+    (match (clone (array-ref (opt_global_fact_vec.slots (& items)) index))
+      [(opt.OptGlobalFact.Copy dst src _ _)
+        (and
+          (= dst expected)
+          (match src
+            [(ir.CompilerIrValue.I64 value) (= value expected)]
+            [_ false]))]
+      [(opt.OptGlobalFact.Expr _ dst _ _) (= dst expected)]
+      [(opt.OptGlobalFact.PackWord group word-index value _ _)
+        (and
+          (= group expected)
+          (= word-index expected)
+          (match value
+            [(ir.CompilerIrValue.I64 found) (= found expected)]
+            [_ false]))])))
 
 (define (opt-dense-test-var-def-index-is?
   [defs : (& defs (__tl_dyn-array opt.OptMaybeVarDef))]
@@ -1910,15 +1890,12 @@
         (ast.AstType.U64))]
     [roots : opt.OptScratchRootList
       (opt-dense-test-scratch-roots (opt.opt-scratch-root-list-new) 1 32)]
-    [global-copy : opt.OptGlobalCopyFacts
-      (opt-dense-test-global-copy-facts (opt.opt-global-copy-facts-new) 1 8)]
-    [global-expr : opt.OptGlobalExprFacts
-      (opt-dense-test-global-expr-facts (opt.opt-global-expr-facts-new) 1 8)]
-    [global-pack-word : opt.OptGlobalPackWordFacts
-      (opt-dense-test-global-pack-word-facts
-        (opt.opt-global-pack-word-facts-new)
-        1
-        8)]
+    [global-copy : opt.OptGlobalFacts
+      (opt-dense-test-global-facts 0 (opt.opt-global-facts-new) 1 8)]
+    [global-expr : opt.OptGlobalFacts
+      (opt-dense-test-global-facts 1 (opt.opt-global-facts-new) 1 8)]
+    [global-pack-word : opt.OptGlobalFacts
+      (opt-dense-test-global-facts 2 (opt.opt-global-facts-new) 1 8)]
     [ssa-sites : opt.OptSsaPhiSites
       (opt.opt-ssa-phi-sites-prepend
         (opt-dense-test-ssa-sites (opt.opt-ssa-phi-sites-new) 1 8)
@@ -1972,47 +1949,41 @@
             (ir.compiler-ir-label "dense_storage")
             (ir.compiler-ir-instr-seq-empty))
           (ir.CompilerIrBlockList.Nil)))]
-    [copy-precedence : opt.OptGlobalCopyFactTable
-      (let
-        [facts
-          (opt.opt-global-copy-facts-prepend
-            (opt.opt-global-copy-facts-prepend
-              (opt.opt-global-copy-facts-new)
-              (opt.OptGlobalCopyFact.Fact 7 (ir.CompilerIrValue.I64 1) 0 1))
-            (opt.OptGlobalCopyFact.Fact 7 (ir.CompilerIrValue.I64 2) 0 2))]
-        (opt.opt-global-copy-table-from-facts facts))]
+    ;; Two facts for one key, both available: the one listed first answers.
+    [copy-precedence : opt.OptGlobalFactTable
+      (opt.opt-global-fact-table
+        0
+        (opt-global-facts-push
+          (opt-global-facts-push
+            (opt.opt-global-facts-new)
+            (opt.OptGlobalFact.Copy 7 (ir.CompilerIrValue.I64 2) 0 2))
+          (opt.OptGlobalFact.Copy 7 (ir.CompilerIrValue.I64 1) 0 1)))]
     [expr-key : opt.OptGlobalExprKey
       (opt.OptGlobalExprKey.MovKey (ir.CompilerIrValue.I64 9) (ast.AstType.I64))]
-    [expr-precedence : opt.OptGlobalExprFactTable
-      (opt.opt-global-expr-table-from-facts
+    [expr-precedence : opt.OptGlobalFactTable
+      (opt.opt-global-fact-table
         type-segment-bases
-        (opt.opt-global-expr-facts-prepend
-          (opt.opt-global-expr-facts-prepend
-            (opt.opt-global-expr-facts-new)
-            (opt.OptGlobalExprFact.Fact
+        (opt-global-facts-push
+          (opt-global-facts-push
+            (opt.opt-global-facts-new)
+            (opt.OptGlobalFact.Expr
               (opt.compiler-opt-global-shared-view expr-key)
-              1
+              2
               0
-              1))
-          (opt.OptGlobalExprFact.Fact
+              2))
+          (opt.OptGlobalFact.Expr
             (opt.compiler-opt-global-shared-view expr-key)
-            2
+            1
             0
-            2)))]
-    [pack-precedence : opt.OptGlobalPackWordFactTable
-      (let
-        [facts
-          (opt.opt-global-pack-word-facts-prepend
-            (opt.opt-global-pack-word-facts-prepend
-              (opt.opt-global-pack-word-facts-new)
-              (opt.OptGlobalPackWordFact.Fact
-                7
-                0
-                (ir.CompilerIrValue.I64 1)
-                0
-                1))
-            (opt.OptGlobalPackWordFact.Fact 7 0 (ir.CompilerIrValue.I64 2) 0 2))]
-        (opt.opt-global-pack-word-table-from-facts facts))]
+            1)))]
+    [pack-precedence : opt.OptGlobalFactTable
+      (opt.opt-global-fact-table
+        0
+        (opt-global-facts-push
+          (opt-global-facts-push
+            (opt.opt-global-facts-new)
+            (opt.OptGlobalFact.PackWord 7 0 (ir.CompilerIrValue.I64 2) 0 2))
+          (opt.OptGlobalFact.PackWord 7 0 (ir.CompilerIrValue.I64 1) 0 1)))]
     (cond
       [(not (opt.opt-licm-store-roots-safe? licm (opt.OptLicmRoot.Fresh 99))) 1]
       [(opt.opt-licm-store-roots-safe? licm (opt.OptLicmRoot.Fresh 4)) 2]
@@ -2043,50 +2014,50 @@
             32))
         14]
       [(opt.opt-scratch-root-list-contains? roots 33) 15]
-      [(not (= (opt.opt-global-copy-facts-count global-copy) 8)) 16]
+      [(not (= (opt.opt-global-facts-count global-copy) 8)) 16]
       [(not
-          (opt-dense-test-global-copy-fact-is?
+          (opt-dense-test-global-fact-is?
             (opt.compiler-opt-global-shared-view global-copy)
             0
-            8))
+            1))
         17]
-      [(not (opt-dense-test-global-copy-fact-is? global-copy 7 1)) 18]
-      [(not (= (opt.opt-global-expr-facts-count global-expr) 8)) 19]
+      [(not (opt-dense-test-global-fact-is? global-copy 7 8)) 18]
+      [(not (= (opt.opt-global-facts-count global-expr) 8)) 19]
       [(not
-          (opt-dense-test-global-expr-fact-is?
+          (opt-dense-test-global-fact-is?
             (opt.compiler-opt-global-shared-view global-expr)
             0
-            8))
+            1))
         20]
-      [(not (opt-dense-test-global-expr-fact-is? global-expr 7 1)) 21]
+      [(not (opt-dense-test-global-fact-is? global-expr 7 8)) 21]
+      [(not (= (opt.opt-global-facts-count global-pack-word) 8)) 22]
       [(not
-          (=
-            (opt-global-pack-word-facts-count
-              (opt.compiler-opt-global-shared-view global-pack-word))
-            8))
-        22]
-      [(not
-          (opt-dense-test-global-pack-word-fact-is?
+          (opt-dense-test-global-fact-is?
             (opt.compiler-opt-global-shared-view global-pack-word)
             0
-            8))
+            1))
         23]
-      [(not (opt-dense-test-global-pack-word-fact-is? global-pack-word 7 1)) 24]
+      [(not (opt-dense-test-global-fact-is? global-pack-word 7 8)) 24]
       [(not (opt-dense-test-var-def-index-is? var-defs 0 0 0)) 25]
       [(not (opt-dense-test-var-def-index-is? var-defs 2 0 1)) 26]
       [(not (opt-dense-test-var-def-index-empty? var-defs 1)) 27]
-      [(match (opt.opt-global-copy-lookup copy-precedence 7 doms 0 3)
+      [(match (opt.opt-global-fact-lookup
+          0
+          copy-precedence
+          (opt.OptGlobalFact.Copy 7 (ir.CompilerIrValue.Unit) 0 0)
+          doms
+          0
+          3)
           [(ir.CompilerIrMaybeValue.Some value)
             (match value
               [(ir.CompilerIrValue.I64 found) (not (= found 2))]
               [_ true])]
           [(ir.CompilerIrMaybeValue.No) true])
         28]
-      [(match (opt.opt-global-expr-lookup
+      [(match (opt.opt-global-fact-lookup
           type-segment-bases
           expr-precedence
-          expr-key
-          9
+          (opt.OptGlobalFact.Expr expr-key 9 0 0)
           doms
           0
           3)
@@ -2096,7 +2067,13 @@
               [_ true])]
           [(ir.CompilerIrMaybeValue.No) true])
         29]
-      [(match (opt.opt-global-pack-word-lookup pack-precedence 7 0 doms 0 3)
+      [(match (opt.opt-global-fact-lookup
+          0
+          pack-precedence
+          (opt.OptGlobalFact.PackWord 7 0 (ir.CompilerIrValue.Unit) 0 0)
+          doms
+          0
+          3)
           [(ir.CompilerIrMaybeValue.Some value)
             (match value
               [(ir.CompilerIrValue.I64 found) (not (= found 2))]
@@ -28087,10 +28064,10 @@
         (ir.CompilerIrValue.Var 1)
         (ir.CompilerIrValue.Var 2)
         (ast.AstType.I64))]
-    [buckets : (__tl_dyn-array opt.OptGlobalExprFacts)
-      (__tl_make-array opt.OptGlobalExprFacts 1)]
-    [table : opt.OptGlobalExprFactTable
-      (opt.OptGlobalExprFactTable (opt.compiler-opt-global-shared-view buckets))]
+    [buckets : (__tl_dyn-array opt.OptGlobalFacts)
+      (__tl_make-array opt.OptGlobalFacts 1)]
+    [table : opt.OptGlobalFactTable
+      (opt.OptGlobalFactTable (opt.compiler-opt-global-shared-view buckets))]
     [doms : opt.OptDomInfo
       (opt-cfg-dominators
         (ir.compiler-ir-block-cons
@@ -28101,19 +28078,18 @@
     (begin
       (set!
         (array-ref buckets 0)
-        (opt.opt-global-expr-facts-prepend
-          (opt.opt-global-expr-facts-new)
-          (opt.OptGlobalExprFact.Fact
+        (opt-global-facts-push
+          (opt.opt-global-facts-new)
+          (opt.OptGlobalFact.Expr
             (opt.compiler-opt-global-shared-view key)
             7
             0
             1)))
       (and
-        (match (opt.opt-global-expr-lookup
+        (match (opt.opt-global-fact-lookup
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt.compiler-opt-global-shared-view table)
-          key
-          8
+          (opt.OptGlobalFact.Expr key 8 0 0)
           doms
           0
           2)
@@ -28122,11 +28098,10 @@
               [(ir.CompilerIrValue.Var id) (= id 7)]
               [_ false])]
           [(ir.CompilerIrMaybeValue.No) false])
-        (match (opt.opt-global-expr-lookup
+        (match (opt.opt-global-fact-lookup
           (ast.ast-node-pool-reader-type-segment-bases)
           table
-          other-key
-          8
+          (opt.OptGlobalFact.Expr other-key 8 0 0)
           doms
           0
           2)
@@ -78921,41 +78896,6 @@
   [_class : ir.CompilerIrSpmdValueClass]
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
   (opt.opt-ssa-rewrite-value env value))
-
-(define (opt-global-expr-facts-ref [facts : opt.OptGlobalExprFacts] [index : i64]) : opt.OptGlobalExprFact
-  (let
-    [items : opt_global_fact_vec.Vec facts.items]
-    (match (clone
-      (array-ref
-        (opt_global_fact_vec.slots (& items))
-        (- (- (opt_global_fact_vec.len (& items)) index) 1)))
-      [(opt.OptGlobalDenseFact.Expr fact) fact]
-      [_ (string.tl_oob_abort)])))
-
-(define (opt-global-copy-facts-ref [facts : opt.OptGlobalCopyFacts] [index : i64]) : opt.OptGlobalCopyFact
-  (let
-    [items : opt_global_fact_vec.Vec facts.items]
-    (match (clone
-      (array-ref
-        (opt_global_fact_vec.slots (& items))
-        (- (- (opt_global_fact_vec.len (& items)) index) 1)))
-      [(opt.OptGlobalDenseFact.Copy fact) fact]
-      [_ (string.tl_oob_abort)])))
-
-(define (opt-global-pack-word-facts-count [facts : opt.OptGlobalPackWordFacts]) : i64
-  (opt_global_fact_vec.len (& facts.items)))
-
-(define (opt-global-pack-word-facts-ref
-  [facts : opt.OptGlobalPackWordFacts]
-  [index : i64]) : opt.OptGlobalPackWordFact
-  (let
-    [items : opt_global_fact_vec.Vec facts.items]
-    (match (clone
-      (array-ref
-        (opt_global_fact_vec.slots (& items))
-        (- (- (opt_global_fact_vec.len (& items)) index) 1)))
-      [(opt.OptGlobalDenseFact.PackWord fact) fact]
-      [_ (string.tl_oob_abort)])))
 
 (define (opt-sccp-rewrite-spmd-value
   [env : opt.OptSccpEnv]

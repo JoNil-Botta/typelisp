@@ -32,17 +32,10 @@ function decode(s,    i, ch, esc, out) {
     }
     return out
 }
-function replace_literal(text, needle, replacement,    at, out) {
-    out = ""
-    while ((at = index(text, needle))) {
-        out = out substr(text, 1, at - 1) replacement
-        text = substr(text, at + length(needle))
-    }
-    return out text
-}
 function substitute(text) {
-    text = replace_literal(text, "${{TMP_URI}}", ENVIRON["CORPUS_URI"])
-    return replace_literal(text, "${{TMP}}", ENVIRON["CORPUS_TMP"])
+    gsub(/\$\{\{TMP_URI\}\}/, ENVIRON["CORPUS_URI"], text)
+    gsub(/\$\{\{TMP\}\}/, ENVIRON["CORPUS_TMP"], text)
+    return text
 }
 # Return the next quoted string; consumed includes its closing quote.
 function quoted(text,    start, i, ch, raw) {

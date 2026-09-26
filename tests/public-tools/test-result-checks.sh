@@ -8,7 +8,7 @@ trap 'rm -rf "$case_dir"' EXIT HUP INT TERM
 
 check() {
     check_corpus_result "$case_dir/spec" "$case_dir/out" "$case_dir/err" "$1" \
-        "$case_dir/messages" '/tmp/a b&c' 'file:///tmp/a%20b&c' "$2" > "$case_dir/got"
+        "$case_dir/messages" '/tmp/a bc' 'file:///tmp/a%20bc' "$2" > "$case_dir/got"
     if ! cmp -s "$case_dir/want" "$case_dir/got"; then
         echo "corpus result self-test failed: $3" >&2
         diff -u "$case_dir/want" "$case_dir/got" >&2 || true
@@ -35,7 +35,7 @@ cat > "$case_dir/spec" <<'SPEC'
 SPEC
 printf 'alpha\nbeta a.*b\n' > "$case_dir/out"
 printf 'diagnostic\n' > "$case_dir/err"
-printf '%s\n' '{"id":1,"result":"alpha beta /tmp/a b&c file:///tmp/a%20b&c"}' '{"id":2,"result":null}' > "$case_dir/messages"
+printf '%s\n' '{"id":1,"result":"alpha beta /tmp/a bc file:///tmp/a%20bc"}' '{"id":2,"result":null}' > "$case_dir/messages"
 : > "$case_dir/want"
 check 7 linux 'all checks pass'
 

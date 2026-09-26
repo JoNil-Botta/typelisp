@@ -53976,6 +53976,23 @@
 (defenum OptBoundsDomWalk
   (Walk ir.CompilerIrInstrSeq OptBoundsFacts OptDomCmpFacts))
 
+;; The per-function tables one bounds_dom run builds before its walk
+;; (opt-bounds-dom-blocks-with-context-result-core) and every rule reads. They
+;; are fixed for the whole run: only `var-facts` is still filled in by the
+;; nonneg pre-pass, in place, before the walk starts.
+(defstruct OptBoundsDomEnv
+  (type-segment-bases i64)
+  (context OptCfgContext)
+  (index OptCfgIndex)
+  (doms OptDomInfo)
+  (defs (__tl_dyn-array OptBoolBranchDef))
+  (phi-defs (__tl_dyn-array OptBoolBranchDef))
+  (terms (__tl_dyn-array OptBoolBranchDef))
+  (var-facts (__tl_dyn-array i64))
+  (checks OptBoundsDomChecks)
+  (copies opt_i64_i64_map.Map)
+  (sources OptValueSources))
+
 ;; GVN rewrites a dominated duplicate expression (e.g. the per-access
 ;; `Cast(i -> U64)` index) into `Mov dst2 = dst1`, and block-local copy
 ;; propagation cannot forward that copy into a check in a later block (its env
@@ -54818,16 +54835,14 @@
 ;; defining comparison. Operands are resolved through the same copy map the
 ;; bounds facts use so both sides speak one spelling.
 (define (opt-dom-cmp-edge-fact
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [cond : ir.CompilerIrValue]
   [taken? : bool]
   [block : i64]
   [facts : OptDomCmpFacts]) : OptDomCmpFacts
   (match cond
     [(ir.CompilerIrValue.Var var)
-      (match (opt-bool-branch-def defs var)
+      (match (opt-bool-branch-def env.defs var)
         [(OptBoolBranchDef.No) facts]
         [(OptBoolBranchDef.Some instr _)
           (match instr
@@ -54835,14 +54850,14 @@
               (let
                 [clhs : ir.CompilerIrValue
                   (opt-bounds-dom-resolve
-                    copies
+                    env.copies
                     (opt-dom-cmp-canon-lhs
                       (compiler-opt-global-shared-view op)
                       (compiler-opt-global-shared-view lhs)
                       (compiler-opt-global-shared-view rhs)))]
                 [crhs : ir.CompilerIrValue
                   (opt-bounds-dom-resolve
-                    copies
+                    env.copies
                     (opt-dom-cmp-canon-rhs
                       (compiler-opt-global-shared-view op)
                       lhs
@@ -54852,10 +54867,10 @@
                     (compiler-opt-global-shared-view op))
                   (opt-integer-type? (compiler-opt-global-shared-view ty))
                   (opt-gvn-value-stable?
-                    sources
+                    env.sources
                     (compiler-opt-global-shared-view clhs))
                   (opt-gvn-value-stable?
-                    sources
+                    env.sources
                     (compiler-opt-global-shared-view crhs)))
                   (opt-dom-cmp-facts-cons
                     (OptDomCmpFact.Fact
@@ -54975,20 +54990,19 @@
 
 ;; Is `value` the mask `len - 1` for this exact length value?
 (define (opt-bounds-dom-len-minus-one?
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [len : ir.CompilerIrValue]
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var var)
-      (match (opt-bool-branch-def defs var)
+      (match (opt-bool-branch-def env.defs var)
         [(OptBoolBranchDef.No) false]
         [(OptBoolBranchDef.Some instr _)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
               (and
                 (opt-integer-type? ty)
-                (opt-value-eq (opt-bounds-dom-resolve copies lhs) len)
+                (opt-value-eq (opt-bounds-dom-resolve env.copies lhs) len)
                 (or
                   (and
                     (opt-binop-eq
@@ -55123,20 +55137,17 @@
 ;; `to-label` on the side that makes the test true? Both edges landing on
 ;; `to-label` proves nothing, so that is rejected.
 (define (opt-bounds-dom-edge-tests-lt?
-  [index : (& index OptCfgIndex)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [from-label : i64]
   [to-label : i64]
   [stepped : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]) : bool
-  (match (opt-cfg-index-id index from-label)
+  (match (opt-cfg-index-id env.index from-label)
     [(option_i64.None) false]
     [(option_i64.Some id)
-      (if (or (< id 0) (>= id (array-length terms)))
+      (if (or (< id 0) (>= id (array-length env.terms)))
         false
-        (match (array-ref terms id)
+        (match (opt-bool-branch-def env.terms id)
           [(OptBoolBranchDef.No) false]
           [(OptBoolBranchDef.Some instr _)
             (match instr
@@ -55146,7 +55157,7 @@
                   (not (= false-label to-label))
                   (match cond
                     [(ir.CompilerIrValue.Var var)
-                      (match (opt-bool-branch-def defs var)
+                      (match (opt-bool-branch-def env.defs var)
                         [(OptBoolBranchDef.No) false]
                         [(OptBoolBranchDef.Some cond-instr _)
                           (match cond-instr
@@ -55155,10 +55166,10 @@
                                 (opt-binop-eq op (ir.CompilerIrBinOp.Lt))
                                 (opt-integer-type? ty)
                                 (opt-value-eq
-                                  (opt-bounds-dom-resolve copies lhs)
+                                  (opt-bounds-dom-resolve env.copies lhs)
                                   stepped)
                                 (opt-value-eq
-                                  (opt-bounds-dom-resolve copies rhs)
+                                  (opt-bounds-dom-resolve env.copies rhs)
                                   len))]
                             [_ false])])]
                     [_ false]))]
@@ -55169,11 +55180,7 @@
 ;; Anything else must be `self + k` for a positive literal k whose edge was
 ;; guarded by `self + k < len`.
 (define (opt-bounds-dom-counter-input-ok?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [block-label : i64]
   [self : i64]
@@ -55185,7 +55192,7 @@
       (and
         (>= seed 0)
         (match (opt-dom-cmp-lookup
-          type-segment-bases
+          env.type-segment-bases
           cmp-facts
           (ir.CompilerIrBinOp.Lt)
           (ir.CompilerIrValue.I64 seed)
@@ -55198,7 +55205,7 @@
               [_ false])]))]
     [(ir.CompilerIrValue.Var var)
       (and
-        (match (opt-bool-branch-def defs var)
+        (match (opt-bool-branch-def env.defs var)
           [(OptBoolBranchDef.No) false]
           [(OptBoolBranchDef.Some instr _)
             (match instr
@@ -55206,30 +55213,18 @@
                 (and
                   (opt-binop-eq op (ir.CompilerIrBinOp.Add))
                   (opt-integer-type? ty)
-                  (match (opt-bounds-dom-resolve copies lhs)
+                  (match (opt-bounds-dom-resolve env.copies lhs)
                     [(ir.CompilerIrValue.Var base) (= base self)]
                     [_ false])
                   (match rhs
                     [(ir.CompilerIrValue.I64 step) (> step 0)]
                     [_ false]))]
               [_ false])])
-        (opt-bounds-dom-edge-tests-lt?
-          index
-          terms
-          defs
-          copies
-          from-label
-          block-label
-          value
-          len))]
+        (opt-bounds-dom-edge-tests-lt? env from-label block-label value len))]
     [_ false]))
 
 (define (opt-bounds-dom-counter-inputs-ok?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [block-label : i64]
   [self : i64]
@@ -55253,16 +55248,12 @@
             (- phi-inputs-at-51555-3.len 1))]
         (and
           (opt-bounds-dom-counter-input-ok?
-            type-segment-bases
-            index
-            terms
-            defs
-            copies
+            env
             (compiler-opt-global-shared-view cmp-facts)
             block-label
             self
             (compiler-opt-global-shared-view len)
-            (opt-bounds-dom-resolve copies value)
+            (opt-bounds-dom-resolve env.copies value)
             from-label)
           (let
             [phi-inputs-at-51573-9 : ir.CompilerIrPhiInputSeq
@@ -55270,11 +55261,7 @@
             (if (<= phi-inputs-at-51573-9.len 0)
               true
               (opt-bounds-dom-counter-inputs-ok?
-                type-segment-bases
-                index
-                terms
-                defs
-                copies
+                env
                 cmp-facts
                 block-label
                 self
@@ -55282,19 +55269,14 @@
                 rest))))))))
 
 (define (opt-bounds-dom-counter-in-range?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [block-label : i64]
   [idx : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]) : bool
   (match idx
     [(ir.CompilerIrValue.Var var)
-      (match (opt-bool-branch-def phi-defs var)
+      (match (opt-bool-branch-def env.phi-defs var)
         [(OptBoolBranchDef.No) false]
         [(OptBoolBranchDef.Some instr _)
           (match instr
@@ -55302,11 +55284,7 @@
               (and
                 (opt-integer-type? ty)
                 (opt-bounds-dom-counter-inputs-ok?
-                  type-segment-bases
-                  index
-                  terms
-                  defs
-                  copies
+                  env
                   cmp-facts
                   block-label
                   dst
@@ -55357,8 +55335,7 @@
 ;; inside the body gets its range from the inner guard and its no-wrap bound
 ;; from the header guard, which is the shape that dominates this codebase.
 (define (opt-bounds-dom-counter-upper-bounded?
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
+  [env : (& env OptBoundsDomEnv)]
   [facts : OptDomCmpFacts]
   [self : ir.CompilerIrValue]
   [latch-id : i64]) : bool
@@ -55373,12 +55350,11 @@
             fact-value
             (opt-binop-eq fact-op (ir.CompilerIrBinOp.Lt))
             (opt-value-eq fact-lhs (compiler-opt-global-shared-view self))
-            (opt-type-eq type-segment-bases fact-ty (ast.AstType.I64))
-            (opt-dom-info-dominates-id? doms fact-block latch-id))
+            (opt-type-eq env.type-segment-bases fact-ty (ast.AstType.I64))
+            (opt-dom-info-dominates-id? env.doms fact-block latch-id))
             true
             (opt-bounds-dom-counter-upper-bounded?
-              type-segment-bases
-              doms
+              env
               (deref rest)
               self
               latch-id))])]))
@@ -55519,8 +55495,7 @@
       (opt-dom-info-dominates-id? doms fact-block at-id)]))
 
 (define (opt-dom-cmp-lookup-at-mask
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
+  [env : (& env OptBoundsDomEnv)]
   [at-id : i64]
   [facts : OptDomCmpFacts]
   [query : i64]
@@ -55551,11 +55526,11 @@
                       want)
                     0))
                 (opt-dom-cmp-fact-holds-at?
-                  doms
+                  env.doms
                   (compiler-opt-global-shared-view fact)
                   at-id))
                 (opt-dom-cmp-fact-verdict
-                  type-segment-bases
+                  env.type-segment-bases
                   fact
                   query
                   (compiler-opt-global-shared-view lhs)
@@ -55570,8 +55545,7 @@
 
 ;; Do the facts that hold at `at-id` decide this i64 comparison TRUE?
 (define (opt-dom-cmp-decided-at?
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
+  [env : (& env OptBoundsDomEnv)]
   [at-id : i64]
   [facts : OptDomCmpFacts]
   [op : ir.CompilerIrBinOp]
@@ -55582,8 +55556,7 @@
     (if (= query 0)
       false
       (match (opt-dom-cmp-lookup-at-mask
-        type-segment-bases
-        doms
+        env
         at-id
         facts
         query
@@ -55596,8 +55569,7 @@
 
 ;; `x + k` for a positive literal k, fenced against wrapping (see WRAP FENCES).
 (define (opt-bounds-dom-add-no-wrap?
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [at-id : i64]
   [value : ir.CompilerIrValue]
@@ -55606,14 +55578,12 @@
     (and
       (= offset 1)
       (opt-bounds-dom-counter-upper-bounded?
-        type-segment-bases
-        doms
+        env
         (compiler-opt-global-shared-view cmp-facts)
         (compiler-opt-global-shared-view value)
         at-id))
     (opt-dom-cmp-decided-at?
-      type-segment-bases
-      doms
+      env
       at-id
       cmp-facts
       (ir.CompilerIrBinOp.Le)
@@ -55632,14 +55602,7 @@
 
 ;; Is `value` provably non-negative at `at-id`?
 (define (opt-bounds-dom-nonneg-at?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [at-id : i64]
@@ -55652,30 +55615,22 @@
         (opt-nonneg-phis-member? (compiler-opt-global-shared-view phis) var)
         ;; A container length: `< 2^63` by the premise the check itself carries.
         (opt-bounds-dom-length-value?
-          var-facts
+          env.var-facts
           (compiler-opt-global-shared-view value))
         ;; Derived at its own definition site by the pre-pass below.
         (opt-bounds-dom-var-fact?
-          var-facts
+          env.var-facts
           var
           (opt-bounds-dom-var-fact-nonneg))
         ;; Proved by a `bounds_check` this point is dominated by.
         (opt-bounds-dom-checked-any?
-          doms
-          checks
+          env
           at-id
           (compiler-opt-global-shared-view value))
         (and
           (> fuel 0)
           (opt-bounds-dom-nonneg-def?
-            type-segment-bases
-            index
-            doms
-            defs
-            phi-defs
-            var-facts
-            checks
-            copies
+            env
             (compiler-opt-global-shared-view cmp-facts)
             phis
             at-id
@@ -55684,8 +55639,7 @@
         ;; An explicit dominating `(>= x 0)` / `(< x 0)` guard, in either
         ;; spelling: the implication masks read both off one query.
         (opt-dom-cmp-decided-at?
-          type-segment-bases
-          doms
+          env
           at-id
           cmp-facts
           (ir.CompilerIrBinOp.Ge)
@@ -55696,20 +55650,13 @@
 ;; The var's own definition: a zero extension, a length load, a phi (optimistic
 ;; over the group), or a fenced affine/scaled derivation.
 (define (opt-bounds-dom-nonneg-def?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [at-id : i64]
   [var : i64]
   [fuel : i64]) : bool
-  (match (opt-bool-branch-def phi-defs var)
+  (match (opt-bool-branch-def env.phi-defs var)
     [(OptBoolBranchDef.Some instr _)
       (match instr
         [(ir.CompilerIrInstr.Cast _ _ from to)
@@ -55718,36 +55665,22 @@
           (and
             (opt-integer-type? ty)
             (opt-bounds-dom-nonneg-inputs?
-              type-segment-bases
-              index
-              doms
-              defs
-              phi-defs
-              var-facts
-              checks
-              copies
+              env
               cmp-facts
               (OptNonnegPhis.Cons var (box phis))
               inputs
               fuel))]
         [_ false])]
     [(OptBoolBranchDef.No)
-      (match (opt-bool-branch-def defs var)
+      (match (opt-bool-branch-def env.defs var)
         [(OptBoolBranchDef.No) false]
         [(OptBoolBranchDef.Some instr _)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
               (and
-                (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+                (opt-type-eq env.type-segment-bases ty (ast.AstType.I64))
                 (opt-bounds-dom-nonneg-binop?
-                  type-segment-bases
-                  index
-                  doms
-                  defs
-                  phi-defs
-                  var-facts
-                  checks
-                  copies
+                  env
                   cmp-facts
                   phis
                   at-id
@@ -55759,14 +55692,7 @@
             [_ false])])]))
 
 (define (opt-bounds-dom-nonneg-binop?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [at-id : i64]
@@ -55787,23 +55713,11 @@
         [(OptBoundsDomOffset.No) false]
         [(OptBoundsDomOffset.Some raw-base offset)
           (let
-            [base : ir.CompilerIrValue (opt-bounds-dom-resolve copies raw-base)]
+            [base : ir.CompilerIrValue
+              (opt-bounds-dom-resolve env.copies raw-base)]
             (cond
               [(= offset 0)
-                (opt-bounds-dom-nonneg-at?
-                  type-segment-bases
-                  index
-                  doms
-                  defs
-                  phi-defs
-                  var-facts
-                  checks
-                  copies
-                  cmp-facts
-                  phis
-                  at-id
-                  base
-                  fuel)]
+                (opt-bounds-dom-nonneg-at? env cmp-facts phis at-id base fuel)]
               ;; `base - |offset|` is decided outright by the pre-pass, from the
               ;; `base >= |offset|` dominating its own definition; there is
               ;; nothing structural left to add here.
@@ -55811,23 +55725,10 @@
               [else
                 (and
                   (opt-bounds-dom-var-fact?
-                    var-facts
+                    env.var-facts
                     dst
                     (opt-bounds-dom-var-fact-fenced))
-                  (opt-bounds-dom-nonneg-at?
-                    type-segment-bases
-                    index
-                    doms
-                    defs
-                    phi-defs
-                    var-facts
-                    checks
-                    copies
-                    cmp-facts
-                    phis
-                    at-id
-                    base
-                    fuel))]))])]
+                  (opt-bounds-dom-nonneg-at? env cmp-facts phis at-id base fuel))]))])]
     [(opt-binop-eq
         (compiler-opt-global-shared-view op)
         (ir.CompilerIrBinOp.Mul))
@@ -55837,22 +55738,17 @@
           (and
             (> scale 0)
             (opt-bounds-dom-var-fact?
-              var-facts
+              env.var-facts
               dst
               (opt-bounds-dom-var-fact-fenced))
             (opt-bounds-dom-nonneg-at?
-              type-segment-bases
-              index
-              doms
-              defs
-              phi-defs
-              var-facts
-              checks
-              copies
+              env
               cmp-facts
               phis
               at-id
-              (opt-bounds-dom-resolve copies (ir.CompilerIrValue.Var raw-var))
+              (opt-bounds-dom-resolve
+                env.copies
+                (ir.CompilerIrValue.Var raw-var))
               fuel))])]
     ;; `x / c` for a positive literal c: the quotient of a non-negative
     ;; dividend lies in [0, x] and the divide cannot overflow (see NARROWING
@@ -55865,18 +55761,11 @@
           (and
             (> divisor 0)
             (opt-bounds-dom-nonneg-at?
-              type-segment-bases
-              index
-              doms
-              defs
-              phi-defs
-              var-facts
-              checks
-              copies
+              env
               cmp-facts
               phis
               at-id
-              (opt-bounds-dom-resolve copies lhs)
+              (opt-bounds-dom-resolve env.copies lhs)
               fuel))]
         [_ false])]
     ;; `x >> k` for a literal k in [0, width): the arithmetic shift right of a
@@ -55891,18 +55780,11 @@
             (>= count 0)
             (< count 64)
             (opt-bounds-dom-nonneg-at?
-              type-segment-bases
-              index
-              doms
-              defs
-              phi-defs
-              var-facts
-              checks
-              copies
+              env
               cmp-facts
               phis
               at-id
-              (opt-bounds-dom-resolve copies lhs)
+              (opt-bounds-dom-resolve env.copies lhs)
               fuel))]
         [_ false])]
     ;; `x & m`: one clear sign bit clears the result's, so EITHER operand
@@ -55912,32 +55794,18 @@
         [_ false])
       (or
         (opt-bounds-dom-nonneg-at?
-          type-segment-bases
-          index
-          doms
-          defs
-          phi-defs
-          var-facts
-          checks
-          copies
+          env
           (compiler-opt-global-shared-view cmp-facts)
           (compiler-opt-global-shared-view phis)
           at-id
-          (opt-bounds-dom-resolve copies lhs)
+          (opt-bounds-dom-resolve env.copies lhs)
           fuel)
         (opt-bounds-dom-nonneg-at?
-          type-segment-bases
-          index
-          doms
-          defs
-          phi-defs
-          var-facts
-          checks
-          copies
+          env
           cmp-facts
           phis
           at-id
-          (opt-bounds-dom-resolve copies rhs)
+          (opt-bounds-dom-resolve env.copies rhs)
           fuel))]
     [else false]))
 
@@ -55945,50 +55813,29 @@
 ;; the value it names is live, and the facts that may discharge it are the ones
 ;; that block is dominated by. An edge no execution takes carries nothing.
 (define (opt-bounds-dom-nonneg-edge?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [value : ir.CompilerIrValue]
   [from-label : i64]
   [fuel : i64]) : bool
-  (match (opt-cfg-index-id index from-label)
+  (match (opt-cfg-index-id env.index from-label)
     [(option_i64.None) false]
     [(option_i64.Some from-id)
-      (if (or (< from-id 0) (>= from-id (opt-cfg-index-block-count index)))
+      (if (or (< from-id 0) (>= from-id (opt-cfg-index-block-count env.index)))
         false
-        (if (not (array-ref index.reachable from-id))
+        (if (not (array-ref env.index.reachable from-id))
           true
           (opt-bounds-dom-nonneg-at?
-            type-segment-bases
-            index
-            doms
-            defs
-            phi-defs
-            var-facts
-            checks
-            copies
+            env
             cmp-facts
             phis
             from-id
-            (opt-bounds-dom-resolve copies value)
+            (opt-bounds-dom-resolve env.copies value)
             fuel)))]))
 
 (define (opt-bounds-dom-nonneg-inputs?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [inputs : ir.CompilerIrPhiInputSeq]
@@ -56011,14 +55858,7 @@
             (- phi-inputs-at-52210-3.len 1))]
         (and
           (opt-bounds-dom-nonneg-edge?
-            type-segment-bases
-            index
-            doms
-            defs
-            phi-defs
-            var-facts
-            checks
-            copies
+            env
             (compiler-opt-global-shared-view cmp-facts)
             (compiler-opt-global-shared-view phis)
             value
@@ -56029,45 +55869,19 @@
               (compiler-opt-global-shared-view rest)]
             (if (<= phi-inputs-at-52229-9.len 0)
               true
-              (opt-bounds-dom-nonneg-inputs?
-                type-segment-bases
-                index
-                doms
-                defs
-                phi-defs
-                var-facts
-                checks
-                copies
-                cmp-facts
-                phis
-                rest
-                fuel))))))))
+              (opt-bounds-dom-nonneg-inputs? env cmp-facts phis rest fuel))))))))
 
 ;; `idx >= 0` plus a dominating signed `idx < len` decides the unsigned check:
 ;; both operands are then non-negative i64s, where unsigned and signed order
 ;; agree. `block-id` is the block the check sits in, which is where the question
 ;; is asked.
 (define (opt-bounds-dom-nonneg?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [block-id : i64]
   [value : ir.CompilerIrValue]) : bool
   (opt-bounds-dom-nonneg-at?
-    type-segment-bases
-    index
-    doms
-    defs
-    phi-defs
-    var-facts
-    checks
-    copies
+    env
     cmp-facts
     (OptNonnegPhis.Nil)
     block-id
@@ -56321,18 +56135,17 @@
 ;; dominance, because a check later in `at-id`'s own block runs after the
 ;; question is asked.
 (define (opt-bounds-dom-checked-any?
-  [doms : (& doms OptDomInfo)]
-  [checks : (& checks OptBoundsDomChecks)]
+  [env : (& env OptBoundsDomEnv)]
   [at-id : i64]
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var var)
       (let
-        [offsets (& checks.offsets)]
+        [offsets (& env.checks.offsets)]
         (if (or (< var 0) (>= (+ var 1) (array-length offsets)))
           false
           (let
-            [rows (& checks.blocks)]
+            [rows (& env.checks.blocks)]
             [row : i64 (array-ref offsets var)]
             [end : i64 (array-ref offsets (+ var 1))]
             [found : bool false]
@@ -56343,7 +56156,7 @@
                     [block : i64 (array-ref rows row)]
                     (if (and
                       (not (= block at-id))
-                      (opt-dom-info-dominates-id? doms block at-id))
+                      (opt-dom-info-dominates-id? env.doms block at-id))
                       (set! found true)
                       unit))
                   (set! row (+ row 1))))
@@ -56355,8 +56168,7 @@
 ;; consumed by the edge out of it); otherwise the check's block must strictly
 ;; dominate.
 (define (opt-bounds-dom-checked-below?
-  [doms : (& doms OptDomInfo)]
-  [checks : OptBoundsDomChecks]
+  [env : (& env OptBoundsDomEnv)]
   [at-id : i64]
   [end? : bool]
   [value : ir.CompilerIrValue]
@@ -56364,12 +56176,12 @@
   (match value
     [(ir.CompilerIrValue.Var var)
       (let
-        [offsets : (__tl_dyn-array i64) checks.offsets]
+        [offsets : (__tl_dyn-array i64) env.checks.offsets]
         (if (or (< var 0) (>= (+ var 1) (array-length offsets)))
           false
           (let
-            [lens : (__tl_dyn-array ir.CompilerIrValue) checks.lens]
-            [rows : (__tl_dyn-array i64) checks.blocks]
+            [lens : (__tl_dyn-array ir.CompilerIrValue) env.checks.lens]
+            [rows : (__tl_dyn-array i64) env.checks.blocks]
             [row : i64 (array-ref offsets var)]
             [end : i64 (array-ref offsets (+ var 1))]
             [found : bool false]
@@ -56382,7 +56194,7 @@
                       (opt-value-eq
                         (compiler-opt-global-array-element-shared-view lens row)
                         (compiler-opt-global-shared-view len))
-                      (opt-dom-info-dominates-id? doms block at-id)
+                      (opt-dom-info-dominates-id? env.doms block at-id)
                       (or end? (not (= block at-id))))
                       (set! found true)
                       unit))
@@ -56453,13 +56265,11 @@
   (Some ir.CompilerIrValue ir.CompilerIrValue))
 
 (define (opt-bounds-dom-select-arms
-  [type-segment-bases : i64]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [value : ir.CompilerIrValue]) : OptBoundsDomArms
   (match value
     [(ir.CompilerIrValue.Var var)
-      (match (opt-bool-branch-def phi-defs var)
+      (match (opt-bool-branch-def env.phi-defs var)
         [(OptBoolBranchDef.No) (OptBoundsDomArms.No)]
         [(OptBoolBranchDef.Some instr _)
           (match instr
@@ -56471,13 +56281,13 @@
                   (compiler-opt-box-field-shared-view payload-box ty)]
                 (if (and
                   (= lanes 0)
-                  (opt-type-eq type-segment-bases ty (ast.AstType.I64)))
+                  (opt-type-eq env.type-segment-bases ty (ast.AstType.I64)))
                   (OptBoundsDomArms.Some
                     (opt-bounds-dom-resolve
-                      copies
+                      env.copies
                       (compiler-opt-box-field-shared-view payload-box on-true))
                     (opt-bounds-dom-resolve
-                      copies
+                      env.copies
                       (compiler-opt-box-field-shared-view payload-box on-false)))
                   (OptBoundsDomArms.No)))]
             [_ (OptBoundsDomArms.No)])])]
@@ -56485,23 +56295,21 @@
 
 ;; The literal-offset split of a value's own definition, or the value itself.
 (define (opt-bounds-dom-induct-term
-  [type-segment-bases : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [value : ir.CompilerIrValue]) : OptBoundsDomOffset
   (match (compiler-opt-global-shared-view value)
     [(ir.CompilerIrValue.Var var)
-      (match (opt-bool-branch-def defs var)
+      (match (opt-bool-branch-def env.defs var)
         [(OptBoolBranchDef.No) (OptBoundsDomOffset.Some value 0)]
         [(OptBoolBranchDef.Some instr _)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
-              (if (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+              (if (opt-type-eq env.type-segment-bases ty (ast.AstType.I64))
                 (match (opt-bounds-dom-affine-parts op lhs rhs)
                   [(OptBoundsDomOffset.No) (OptBoundsDomOffset.Some value 0)]
                   [(OptBoundsDomOffset.Some base offset)
                     (OptBoundsDomOffset.Some
-                      (opt-bounds-dom-resolve copies base)
+                      (opt-bounds-dom-resolve env.copies base)
                       offset)])
                 (OptBoundsDomOffset.Some value 0))]
             [_ (OptBoundsDomOffset.Some value 0)])])]
@@ -56510,10 +56318,7 @@
 ;; Do the facts in scope put `value` below `bound` at `at-id`, in the signed
 ;; domain the facts are recorded in? A `select` bound is split into its arms.
 (define (opt-bounds-dom-below-fact?
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [at-id : i64]
   [strict? : bool]
@@ -56521,19 +56326,12 @@
   [bound : ir.CompilerIrValue]
   [depth : i64]) : bool
   (match (if (> depth 0)
-    (opt-bounds-dom-select-arms
-      type-segment-bases
-      phi-defs
-      copies
-      (compiler-opt-global-shared-view bound))
+    (opt-bounds-dom-select-arms env (compiler-opt-global-shared-view bound))
     (OptBoundsDomArms.No))
     [(OptBoundsDomArms.Some on-true on-false)
       (and
         (opt-bounds-dom-below-fact?
-          type-segment-bases
-          doms
-          phi-defs
-          copies
+          env
           (compiler-opt-global-shared-view cmp-facts)
           at-id
           strict?
@@ -56541,10 +56339,7 @@
           on-true
           (- depth 1))
         (opt-bounds-dom-below-fact?
-          type-segment-bases
-          doms
-          phi-defs
-          copies
+          env
           cmp-facts
           at-id
           strict?
@@ -56553,8 +56348,7 @@
           (- depth 1)))]
     [(OptBoundsDomArms.No)
       (opt-dom-cmp-decided-at?
-        type-segment-bases
-        doms
+        env
         at-id
         cmp-facts
         (if strict?
@@ -56566,110 +56360,62 @@
 ;; A passed check of `value` against `bound` (or against both arms of a select
 ;; bound) holding at `at-id`.
 (define (opt-bounds-dom-checked-in-range?
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [checks : OptBoundsDomChecks]
+  [env : (& env OptBoundsDomEnv)]
   [at-id : i64]
   [end? : bool]
   [value : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [depth : i64]) : bool
   (match (if (> depth 0)
-    (opt-bounds-dom-select-arms
-      type-segment-bases
-      phi-defs
-      copies
-      (compiler-opt-global-shared-view bound))
+    (opt-bounds-dom-select-arms env (compiler-opt-global-shared-view bound))
     (OptBoundsDomArms.No))
     [(OptBoundsDomArms.Some on-true on-false)
       (and
         (opt-bounds-dom-checked-in-range?
-          type-segment-bases
-          doms
-          phi-defs
-          copies
-          (compiler-opt-global-shared-view checks)
+          env
           at-id
           end?
           (compiler-opt-global-shared-view value)
           on-true
           (- depth 1))
         (opt-bounds-dom-checked-in-range?
-          type-segment-bases
-          doms
-          phi-defs
-          copies
-          checks
+          env
           at-id
           end?
           value
           on-false
           (- depth 1)))]
     [(OptBoundsDomArms.No)
-      (opt-bounds-dom-checked-below? doms checks at-id end? value bound)]))
+      (opt-bounds-dom-checked-below? env at-id end? value bound)]))
 
 ;; `0 <= bound` -- what a container length always satisfies, and what makes a
 ;; literal-zero seed in range without any other fact.
 (define (opt-bounds-dom-bound-positive?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [at-id : i64]
   [bound : ir.CompilerIrValue]
   [depth : i64]) : bool
   (match (if (> depth 0)
-    (opt-bounds-dom-select-arms
-      type-segment-bases
-      phi-defs
-      copies
-      (compiler-opt-global-shared-view bound))
+    (opt-bounds-dom-select-arms env (compiler-opt-global-shared-view bound))
     (OptBoundsDomArms.No))
     [(OptBoundsDomArms.Some on-true on-false)
       (and
         (opt-bounds-dom-bound-positive?
-          type-segment-bases
-          index
-          doms
-          defs
-          phi-defs
-          var-facts
-          checks
-          copies
+          env
           (compiler-opt-global-shared-view cmp-facts)
           at-id
           on-true
           (- depth 1))
         (opt-bounds-dom-bound-positive?
-          type-segment-bases
-          index
-          doms
-          defs
-          phi-defs
-          var-facts
-          checks
-          copies
+          env
           cmp-facts
           at-id
           on-false
           (- depth 1)))]
     [(OptBoundsDomArms.No)
       (opt-bounds-dom-nonneg-at?
-        type-segment-bases
-        index
-        doms
-        defs
-        phi-defs
-        var-facts
-        checks
-        copies
+        env
         cmp-facts
         (OptNonnegPhis.Nil)
         at-id
@@ -56681,16 +56427,7 @@
 ;; is what admits a passed check sitting in that same block. `nonneg?` is the
 ;; path fact `value >= 0` inherited from the branch that selected this edge.
 (define (opt-bounds-dom-induct-in-range?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [at-id : i64]
@@ -56708,10 +56445,7 @@
         (or
           below?
           (opt-bounds-dom-below-fact?
-            type-segment-bases
-            doms
-            phi-defs
-            copies
+            env
             (compiler-opt-global-shared-view cmp-facts)
             at-id
             strict?
@@ -56723,31 +56457,18 @@
           (and
             (= literal 0)
             (if strict?
-              (opt-bounds-dom-len-positive? type-segment-bases cmp-facts bound)
-              (opt-bounds-dom-bound-positive?
-                type-segment-bases
-                index
-                doms
-                defs
-                phi-defs
-                var-facts
-                checks
-                copies
+              (opt-bounds-dom-len-positive?
+                env.type-segment-bases
                 cmp-facts
-                at-id
-                bound
-                2)))))]
+                bound)
+              (opt-bounds-dom-bound-positive? env cmp-facts at-id bound 2)))))]
     [(ir.CompilerIrValue.Var var)
       (or
         ;; The induction hypothesis: a value the group already carries.
         (opt-nonneg-phis-member? (compiler-opt-global-shared-view phis) var)
         ;; A passed check gives both halves at once.
         (opt-bounds-dom-checked-in-range?
-          type-segment-bases
-          doms
-          phi-defs
-          copies
-          (compiler-opt-global-shared-view checks)
+          env
           at-id
           end?
           (compiler-opt-global-shared-view value)
@@ -56757,14 +56478,7 @@
           (or
             nonneg?
             (opt-bounds-dom-nonneg-at?
-              type-segment-bases
-              index
-              doms
-              defs
-              phi-defs
-              var-facts
-              checks
-              copies
+              env
               (compiler-opt-global-shared-view cmp-facts)
               (OptNonnegPhis.Nil)
               at-id
@@ -56773,10 +56487,7 @@
           (or
             below?
             (opt-bounds-dom-below-fact?
-              type-segment-bases
-              doms
-              phi-defs
-              copies
+              env
               (compiler-opt-global-shared-view cmp-facts)
               at-id
               strict?
@@ -56786,16 +56497,7 @@
         (and
           (> fuel 0)
           (opt-bounds-dom-induct-def?
-            type-segment-bases
-            index
-            doms
-            terms
-            defs
-            phi-defs
-            var-facts
-            checks
-            copies
-            sources
+            env
             cmp-facts
             phis
             at-id
@@ -56811,16 +56513,7 @@
 ;; The value's own definition: a phi (every input discharged on its own edge) or
 ;; an affine step off one.
 (define (opt-bounds-dom-induct-def?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [at-id : i64]
@@ -56831,7 +56524,7 @@
   [var : i64]
   [bound : ir.CompilerIrValue]
   [fuel : i64]) : bool
-  (match (opt-bool-branch-def phi-defs var)
+  (match (opt-bool-branch-def env.phi-defs var)
     [(OptBoolBranchDef.Some instr label)
       (match instr
         [(ir.CompilerIrInstr.Phi dst inputs ty)
@@ -56839,16 +56532,7 @@
             (= dst var)
             (opt-integer-type? ty)
             (opt-bounds-dom-induct-inputs?
-              type-segment-bases
-              index
-              doms
-              terms
-              defs
-              phi-defs
-              var-facts
-              checks
-              copies
-              sources
+              env
               cmp-facts
               (OptNonnegPhis.Cons var (box phis))
               label
@@ -56860,19 +56544,20 @@
               fuel))]
         [_ false])]
     [(OptBoolBranchDef.No)
-      (match (opt-bool-branch-def defs var)
+      (match (opt-bool-branch-def env.defs var)
         [(OptBoolBranchDef.No) false]
         [(OptBoolBranchDef.Some instr _)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
-              (if (not (opt-type-eq type-segment-bases ty (ast.AstType.I64)))
+              (if (not
+                (opt-type-eq env.type-segment-bases ty (ast.AstType.I64)))
                 false
                 (match (opt-bounds-dom-affine-parts op lhs rhs)
                   [(OptBoundsDomOffset.No) false]
                   [(OptBoundsDomOffset.Some raw-base offset)
                     (let
                       [base : ir.CompilerIrValue
-                        (opt-bounds-dom-resolve copies raw-base)]
+                        (opt-bounds-dom-resolve env.copies raw-base)]
                       (cond
                         ;; `base - k`: in [0, base] once `base >= 0` is known,
                         ;; so the base's own range carries over unchanged.
@@ -56881,28 +56566,18 @@
                             (or
                               nonneg?
                               (opt-bounds-dom-var-fact?
-                                var-facts
+                                env.var-facts
                                 var
                                 (opt-bounds-dom-var-fact-nonneg))
                               (opt-dom-cmp-decided-at?
-                                type-segment-bases
-                                doms
+                                env
                                 at-id
                                 (compiler-opt-global-shared-view cmp-facts)
                                 (ir.CompilerIrBinOp.Ge)
                                 (compiler-opt-global-shared-view base)
                                 (ir.CompilerIrValue.I64 (- 0 offset))))
                             (opt-bounds-dom-induct-in-range?
-                              type-segment-bases
-                              index
-                              doms
-                              terms
-                              defs
-                              phi-defs
-                              var-facts
-                              checks
-                              copies
-                              sources
+                              env
                               cmp-facts
                               phis
                               at-id
@@ -56915,16 +56590,7 @@
                               fuel))]
                         [(= offset 0)
                           (opt-bounds-dom-induct-in-range?
-                            type-segment-bases
-                            index
-                            doms
-                            terms
-                            defs
-                            phi-defs
-                            var-facts
-                            checks
-                            copies
-                            sources
+                            env
                             cmp-facts
                             phis
                             at-id
@@ -56947,11 +56613,7 @@
                             (= offset 1)
                             (or
                               (opt-bounds-dom-checked-in-range?
-                                type-segment-bases
-                                doms
-                                phi-defs
-                                copies
-                                (compiler-opt-global-shared-view checks)
+                                env
                                 at-id
                                 end?
                                 (compiler-opt-global-shared-view base)
@@ -56959,24 +56621,14 @@
                                 2)
                               (and
                                 (opt-bounds-dom-nonneg-at?
-                                  type-segment-bases
-                                  index
-                                  doms
-                                  defs
-                                  phi-defs
-                                  var-facts
-                                  checks
-                                  copies
+                                  env
                                   (compiler-opt-global-shared-view cmp-facts)
                                   (OptNonnegPhis.Nil)
                                   at-id
                                   (compiler-opt-global-shared-view base)
                                   (opt-bounds-dom-nonneg-fuel))
                                 (opt-bounds-dom-below-fact?
-                                  type-segment-bases
-                                  doms
-                                  phi-defs
-                                  copies
+                                  env
                                   cmp-facts
                                   at-id
                                   true
@@ -56988,16 +56640,7 @@
 ;; One phi input, discharged at the block its edge leaves. An edge no execution
 ;; takes carries nothing.
 (define (opt-bounds-dom-induct-edge?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [home-label : i64]
@@ -57008,48 +56651,36 @@
   [from-label : i64]
   [bound : ir.CompilerIrValue]
   [fuel : i64]) : bool
-  (match (opt-cfg-index-id index from-label)
+  (match (opt-cfg-index-id env.index from-label)
     [(option_i64.None) false]
     [(option_i64.Some from-id)
-      (if (or (< from-id 0) (>= from-id (opt-cfg-index-block-count index)))
+      (if (or (< from-id 0) (>= from-id (opt-cfg-index-block-count env.index)))
         false
-        (if (not (array-ref index.reachable from-id))
+        (if (not (array-ref env.index.reachable from-id))
           true
           (let
             [value : ir.CompilerIrValue
               (opt-bounds-dom-strip-int-cast
-                type-segment-bases
-                phi-defs
-                copies
-                (opt-bounds-dom-resolve copies raw-value))]
+                env.type-segment-bases
+                env.phi-defs
+                env.copies
+                (opt-bounds-dom-resolve env.copies raw-value))]
             ;; The branch that selected this edge decides its own condition of
             ;; the value the edge carries. The fact list is NOT threaded further
             ;; down -- it holds on this edge only -- but what it proves about
             ;; the value travels with the value through further substitutions.
             [edge-facts : OptDomCmpFacts
               (opt-bounds-dom-induct-edge-facts
-                terms
-                defs
-                sources
-                copies
+                env
                 (compiler-opt-global-shared-view cmp-facts)
                 from-id
                 home-label)]
             (and
               (opt-gvn-value-stable?
-                sources
+                env.sources
                 (compiler-opt-global-shared-view value))
               (opt-bounds-dom-induct-in-range?
-                type-segment-bases
-                index
-                doms
-                terms
-                defs
-                phi-defs
-                var-facts
-                checks
-                copies
-                sources
+                env
                 cmp-facts
                 phis
                 from-id
@@ -57057,8 +56688,7 @@
                 (or
                   nonneg?
                   (opt-dom-cmp-decided-at?
-                    type-segment-bases
-                    doms
+                    env
                     from-id
                     (compiler-opt-global-shared-view edge-facts)
                     (ir.CompilerIrBinOp.Ge)
@@ -57067,10 +56697,7 @@
                 (or
                   below?
                   (opt-bounds-dom-below-fact?
-                    type-segment-bases
-                    doms
-                    phi-defs
-                    copies
+                    env
                     edge-facts
                     from-id
                     strict?
@@ -57086,16 +56713,13 @@
 ;; `home-label`, prepended to the facts already in scope. A branch whose two
 ;; edges share one label decides nothing about it.
 (define (opt-bounds-dom-induct-edge-facts
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [from-id : i64]
   [home-label : i64]) : OptDomCmpFacts
-  (if (or (< from-id 0) (>= from-id (array-length terms)))
+  (if (or (< from-id 0) (>= from-id (array-length env.terms)))
     cmp-facts
-    (match (array-ref terms from-id)
+    (match (opt-bool-branch-def env.terms from-id)
       [(OptBoolBranchDef.No) cmp-facts]
       [(OptBoolBranchDef.Some instr _)
         (match instr
@@ -57104,37 +56728,14 @@
               cmp-facts
               (cond
                 [(= true-label home-label)
-                  (opt-dom-cmp-edge-fact
-                    defs
-                    copies
-                    sources
-                    cond
-                    true
-                    from-id
-                    cmp-facts)]
+                  (opt-dom-cmp-edge-fact env cond true from-id cmp-facts)]
                 [(= false-label home-label)
-                  (opt-dom-cmp-edge-fact
-                    defs
-                    copies
-                    sources
-                    cond
-                    false
-                    from-id
-                    cmp-facts)]
+                  (opt-dom-cmp-edge-fact env cond false from-id cmp-facts)]
                 [else cmp-facts]))]
           [_ cmp-facts])])))
 
 (define (opt-bounds-dom-induct-inputs?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
   [home-label : i64]
@@ -57162,16 +56763,7 @@
             (- phi-inputs-at-53371-3.len 1))]
         (and
           (opt-bounds-dom-induct-edge?
-            type-segment-bases
-            index
-            doms
-            terms
-            defs
-            phi-defs
-            var-facts
-            (compiler-opt-global-shared-view checks)
-            copies
-            sources
+            env
             (compiler-opt-global-shared-view cmp-facts)
             (compiler-opt-global-shared-view phis)
             home-label
@@ -57188,16 +56780,7 @@
             (if (<= phi-inputs-at-53396-9.len 0)
               true
               (opt-bounds-dom-induct-inputs?
-                type-segment-bases
-                index
-                doms
-                terms
-                defs
-                phi-defs
-                var-facts
-                checks
-                copies
-                sources
+                env
                 cmp-facts
                 phis
                 home-label
@@ -57224,23 +56807,14 @@
 ;; `off = -1` needs only `base <= bound`, while `off = 0` (a plain `p - q`)
 ;; needs `base < bound`, since `q >= 1` is not known.
 (define (opt-bounds-dom-difference-in-range?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [at-id : i64]
   [idx : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]) : bool
   (match idx
     [(ir.CompilerIrValue.Var var)
-      (match (opt-bool-branch-def defs var)
+      (match (opt-bool-branch-def env.defs var)
         [(OptBoolBranchDef.No) false]
         [(OptBoolBranchDef.Some instr _)
           (match instr
@@ -57248,18 +56822,14 @@
               (if (not
                 (and
                   (opt-binop-eq op (ir.CompilerIrBinOp.Sub))
-                  (opt-type-eq type-segment-bases ty (ast.AstType.I64))))
+                  (opt-type-eq env.type-segment-bases ty (ast.AstType.I64))))
                 false
                 (let
                   [minuend : ir.CompilerIrValue
-                    (opt-bounds-dom-resolve copies lhs)]
+                    (opt-bounds-dom-resolve env.copies lhs)]
                   [subtrahend : ir.CompilerIrValue
-                    (opt-bounds-dom-resolve copies rhs)]
-                  (match (opt-bounds-dom-induct-term
-                    type-segment-bases
-                    defs
-                    copies
-                    minuend)
+                    (opt-bounds-dom-resolve env.copies rhs)]
+                  (match (opt-bounds-dom-induct-term env minuend)
                     [(OptBoundsDomOffset.No) false]
                     [(OptBoundsDomOffset.Some base offset)
                       (and
@@ -57268,38 +56838,21 @@
                         ;; `0 <= B < base` is the whole of the index's own
                         ;; range; the loop that walks `i` supplies both halves.
                         (opt-bounds-dom-nonneg-at?
-                          type-segment-bases
-                          index
-                          doms
-                          defs
-                          phi-defs
-                          var-facts
-                          checks
-                          copies
+                          env
                           (compiler-opt-global-shared-view cmp-facts)
                           (OptNonnegPhis.Nil)
                           at-id
                           (compiler-opt-global-shared-view subtrahend)
                           (opt-bounds-dom-nonneg-fuel))
                         (opt-dom-cmp-decided-at?
-                          type-segment-bases
-                          doms
+                          env
                           at-id
                           (compiler-opt-global-shared-view cmp-facts)
                           (ir.CompilerIrBinOp.Lt)
                           subtrahend
                           (compiler-opt-global-shared-view base))
                         (opt-bounds-dom-induct-in-range?
-                          type-segment-bases
-                          index
-                          doms
-                          terms
-                          defs
-                          phi-defs
-                          var-facts
-                          checks
-                          copies
-                          sources
+                          env
                           cmp-facts
                           (OptNonnegPhis.Nil)
                           at-id
@@ -57316,38 +56869,17 @@
 ;; The whole ABCD verdict for one `(index, length)` pair: the cycle rule on the
 ;; index itself, then the decreasing form built out of one.
 (define (opt-bounds-dom-inductive-in-range?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [at-id : i64]
   [strict? : bool]
   [idx : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]) : bool
   (and
-    (opt-bounds-dom-induct-candidate?
-      phi-defs
-      defs
-      (compiler-opt-global-shared-view idx))
+    (opt-bounds-dom-induct-candidate? env (compiler-opt-global-shared-view idx))
     (or
       (opt-bounds-dom-induct-in-range?
-        type-segment-bases
-        index
-        doms
-        terms
-        defs
-        phi-defs
-        var-facts
-        (compiler-opt-global-shared-view checks)
-        copies
-        sources
+        env
         (compiler-opt-global-shared-view cmp-facts)
         (OptNonnegPhis.Nil)
         at-id
@@ -57358,39 +56890,24 @@
         (compiler-opt-global-shared-view idx)
         (compiler-opt-global-shared-view bound)
         (opt-bounds-dom-induct-fuel))
-      (opt-bounds-dom-difference-in-range?
-        type-segment-bases
-        index
-        doms
-        terms
-        defs
-        phi-defs
-        var-facts
-        checks
-        copies
-        sources
-        cmp-facts
-        at-id
-        idx
-        bound))))
+      (opt-bounds-dom-difference-in-range? env cmp-facts at-id idx bound))))
 
 ;; Only a phi or an affine derivation can carry an induction, and every query
 ;; that reaches here has already failed the cheaper rules; this gate is what
 ;; keeps the walk off every other index.
 (define (opt-bounds-dom-induct-candidate?
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
+  [env : (& env OptBoundsDomEnv)]
   [idx : ir.CompilerIrValue]) : bool
   (match idx
     [(ir.CompilerIrValue.Var var)
       (or
-        (match (opt-bool-branch-def phi-defs var)
+        (match (opt-bool-branch-def env.phi-defs var)
           [(OptBoolBranchDef.No) false]
           [(OptBoolBranchDef.Some instr _)
             (match instr
               [(ir.CompilerIrInstr.Phi _ _ _) true]
               [_ false])])
-        (match (opt-bool-branch-def defs var)
+        (match (opt-bool-branch-def env.defs var)
           [(OptBoolBranchDef.No) false]
           [(OptBoolBranchDef.Some instr _)
             (match instr
@@ -57418,18 +56935,9 @@
 ;; replaced by the bool it computes, exactly as every other verdict in this pass
 ;; does.
 (define (opt-bounds-dom-induct-verdict
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
-  [index : OptCfgIndex]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [op : ir.CompilerIrBinOp]
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]
@@ -57440,9 +56948,17 @@
         (compiler-opt-global-shared-view op)
         (ir.CompilerIrBinOp.Lt))]
     [idx : ir.CompilerIrValue
-      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies lhs)]
+      (opt-bounds-dom-strip-int-cast
+        env.type-segment-bases
+        env.phi-defs
+        env.copies
+        lhs)]
     [bound : ir.CompilerIrValue
-      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies rhs)]
+      (opt-bounds-dom-strip-int-cast
+        env.type-segment-bases
+        env.phi-defs
+        env.copies
+        rhs)]
     (if (and
       (or strict? (opt-binop-eq op (ir.CompilerIrBinOp.Le)))
       (opt-integer-type? (compiler-opt-global-shared-view ty))
@@ -57450,16 +56966,7 @@
       (opt-bounds-dom-value-var? (compiler-opt-global-shared-view idx))
       (opt-bounds-dom-value-var? (compiler-opt-global-shared-view bound))
       (opt-bounds-dom-inductive-in-range?
-        type-segment-bases
-        index
-        doms
-        terms
-        defs
-        phi-defs
-        var-facts
-        checks
-        copies
-        sources
+        env
         cmp-facts
         block-id
         strict?
@@ -57484,14 +56991,7 @@
     [(OptDomCmpLookup.No) false]))
 
 (define (opt-bounds-dom-guarded-in-range?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [len-eq : (& len-eq OptLenEqUse)]
@@ -57503,7 +57003,7 @@
     (and
       (or
         (match (opt-dom-cmp-lookup-chained
-          type-segment-bases
+          env.type-segment-bases
           (compiler-opt-global-shared-view cmp-facts)
           (ir.CompilerIrBinOp.Lt)
           (compiler-opt-global-shared-view idx)
@@ -57513,9 +57013,9 @@
           [(OptDomCmpLookup.No) false])
         ;; P-B: `idx < g.len` with the field invariant and the family relation.
         (opt-len-eq-field-guarded?
-          type-segment-bases
+          env.type-segment-bases
           len-eq
-          copies
+          env.copies
           (compiler-opt-global-shared-view cmp-facts)
           block-id
           (compiler-opt-global-shared-view idx)
@@ -57526,14 +57026,7 @@
           raw-idx)
         (opt-bounds-index-checked? facts (compiler-opt-global-shared-view idx))
         (opt-bounds-dom-nonneg?
-          type-segment-bases
-          index
-          doms
-          defs
-          phi-defs
-          var-facts
-          checks
-          copies
+          env
           (compiler-opt-global-shared-view cmp-facts)
           block-id
           (compiler-opt-global-shared-view idx))))
@@ -57541,7 +57034,7 @@
     ;; in between -- that is the fact the retyped compare below leaves behind,
     ;; and the fixpoint's later rounds read it back here.
     (match (opt-dom-cmp-lookup-chained
-      type-segment-bases
+      env.type-segment-bases
       cmp-facts
       (ir.CompilerIrBinOp.Lt)
       idx
@@ -57577,11 +57070,9 @@
 ;; `len >= 1` is in the syntactic form: at m = -1 the mask is the identity and
 ;; bounds nothing.
 (define (opt-bounds-dom-mask-below-len?
-  [type-segment-bases : i64]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [len-positive? : bool]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [len : ir.CompilerIrValue]
   [m : ir.CompilerIrValue]) : bool
   (or
@@ -57591,8 +57082,7 @@
       ;; says `len >= 1`.
       len-positive?
       (opt-bounds-dom-len-minus-one?
-        defs
-        copies
+        env
         (compiler-opt-global-shared-view len)
         (compiler-opt-global-shared-view m)))
     (and
@@ -57602,7 +57092,7 @@
           [(ir.CompilerIrValue.I64 value) (>= value 0)]
           [_ false])
         (match (opt-dom-cmp-lookup
-          type-segment-bases
+          env.type-segment-bases
           (compiler-opt-global-shared-view cmp-facts)
           (ir.CompilerIrBinOp.Lt)
           (compiler-opt-global-shared-view m)
@@ -57612,7 +57102,7 @@
           [(OptDomCmpLookup.No) false]))
       ;; m < len
       (match (opt-dom-cmp-lookup
-        type-segment-bases
+        env.type-segment-bases
         cmp-facts
         (ir.CompilerIrBinOp.Lt)
         m
@@ -57622,16 +57112,14 @@
         [(OptDomCmpLookup.No) false]))))
 
 (define (opt-bounds-dom-masked-value?
-  [type-segment-bases : i64]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [len-positive? : bool]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [len : ir.CompilerIrValue]
   [idx : ir.CompilerIrValue]) : bool
   (match idx
     [(ir.CompilerIrValue.Var var)
-      (match (opt-bool-branch-def defs var)
+      (match (opt-bool-branch-def env.defs var)
         [(OptBoolBranchDef.No) false]
         [(OptBoolBranchDef.Some instr _)
           (match instr
@@ -57641,21 +57129,17 @@
                 (opt-integer-type? ty)
                 (or
                   (opt-bounds-dom-mask-below-len?
-                    type-segment-bases
+                    env
                     (compiler-opt-global-shared-view cmp-facts)
                     len-positive?
-                    defs
-                    copies
                     (compiler-opt-global-shared-view len)
-                    (opt-bounds-dom-resolve copies rhs))
+                    (opt-bounds-dom-resolve env.copies rhs))
                   (opt-bounds-dom-mask-below-len?
-                    type-segment-bases
+                    env
                     cmp-facts
                     len-positive?
-                    defs
-                    copies
                     len
-                    (opt-bounds-dom-resolve copies lhs))))]
+                    (opt-bounds-dom-resolve env.copies lhs))))]
             [_ false])])]
     [_ false]))
 
@@ -57670,29 +57154,24 @@
 ;; reference each other cyclically, so the depth counter is what guarantees
 ;; termination rather than any structural property of the graph.
 (define (opt-bounds-dom-masked-or-phi?
-  [type-segment-bases : i64]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [len-positive? : bool]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [len : ir.CompilerIrValue]
   [value : ir.CompilerIrValue]
   [depth : i64]) : bool
   (or
     (opt-bounds-dom-masked-value?
-      type-segment-bases
+      env
       (compiler-opt-global-shared-view cmp-facts)
       len-positive?
-      defs
-      copies
       (compiler-opt-global-shared-view len)
       (compiler-opt-global-shared-view value))
     (and
       (> depth 0)
       (match value
         [(ir.CompilerIrValue.Var var)
-          (match (opt-bool-branch-def phi-defs var)
+          (match (opt-bool-branch-def env.phi-defs var)
             [(OptBoolBranchDef.No) false]
             [(OptBoolBranchDef.Some instr _)
               (match instr
@@ -57700,12 +57179,9 @@
                   (and
                     (opt-integer-type? ty)
                     (opt-bounds-dom-phi-inputs-masked?
-                      type-segment-bases
+                      env
                       cmp-facts
                       len-positive?
-                      defs
-                      phi-defs
-                      copies
                       len
                       inputs
                       (- depth 1)))]
@@ -57713,12 +57189,9 @@
         [_ false]))))
 
 (define (opt-bounds-dom-phi-inputs-masked?
-  [type-segment-bases : i64]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [len-positive? : bool]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [len : ir.CompilerIrValue]
   [inputs : ir.CompilerIrPhiInputSeq]
   [depth : i64]) : bool
@@ -57739,14 +57212,11 @@
             (- phi-inputs-at-53896-3.len 1))]
         (and
           (opt-bounds-dom-masked-or-phi?
-            type-segment-bases
+            env
             (compiler-opt-global-shared-view cmp-facts)
             len-positive?
-            defs
-            phi-defs
-            copies
             (compiler-opt-global-shared-view len)
-            (opt-bounds-dom-resolve copies value)
+            (opt-bounds-dom-resolve env.copies value)
             depth)
           (let
             [phi-inputs-at-53909-9 : ir.CompilerIrPhiInputSeq
@@ -57754,44 +57224,37 @@
             (if (<= phi-inputs-at-53909-9.len 0)
               true
               (opt-bounds-dom-phi-inputs-masked?
-                type-segment-bases
+                env
                 cmp-facts
                 len-positive?
-                defs
-                phi-defs
-                copies
                 len
                 rest
                 depth))))))))
 
 (define (opt-bounds-dom-mask-in-range?
-  [type-segment-bases : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [raw-idx : ir.CompilerIrValue]
   [raw-len : ir.CompilerIrValue]) : bool
   (let
     [idx : ir.CompilerIrValue
-      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies raw-idx)]
+      (opt-bounds-dom-strip-int-cast
+        env.type-segment-bases
+        env.phi-defs
+        env.copies
+        raw-idx)]
     [len : ir.CompilerIrValue
-      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies raw-len)]
+      (opt-bounds-dom-strip-int-cast
+        env.type-segment-bases
+        env.phi-defs
+        env.copies
+        raw-len)]
     [len-positive? : bool
       (opt-bounds-dom-len-positive?
-        type-segment-bases
+        env.type-segment-bases
         (compiler-opt-global-shared-view cmp-facts)
         (compiler-opt-global-shared-view len))]
-    (opt-bounds-dom-masked-or-phi?
-      type-segment-bases
-      cmp-facts
-      len-positive?
-      defs
-      phi-defs
-      copies
-      len
-      idx
-      4)))
+    (opt-bounds-dom-masked-or-phi? env cmp-facts len-positive? len idx 4)))
 
 ;; --- constant-offset runs against one length ----------------------------------
 ;;
@@ -57874,15 +57337,13 @@
 ;; this pass goes through, so a check operand and a dominating fact speak one
 ;; spelling.
 (define (opt-bounds-dom-canon
-  [type-segment-bases : i64]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
   (opt-bounds-dom-strip-int-cast
-    type-segment-bases
-    phi-defs
-    copies
-    (opt-bounds-dom-resolve copies value)))
+    env.type-segment-bases
+    env.phi-defs
+    env.copies
+    (opt-bounds-dom-resolve env.copies value)))
 
 (define (opt-bounds-dom-term-ok?
   [sources : (& sources OptValueSources)]
@@ -57899,18 +57360,14 @@
 ;; the pass-wide requirement that a var names one runtime value; the cap is what
 ;; keeps the wrap argument above exact.
 (define (opt-bounds-dom-term
-  [type-segment-bases : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [value : ir.CompilerIrValue]) : OptBoundsDomTerm
   (let
     [self : OptBoundsDomTerm
       (OptBoundsDomTerm (compiler-opt-global-shared-view value) 0)]
     (match value
       [(ir.CompilerIrValue.Var var)
-        (match (opt-bool-branch-def defs var)
+        (match (opt-bool-branch-def env.defs var)
           [(OptBoolBranchDef.No) self]
           [(OptBoolBranchDef.Some instr _)
             (match instr
@@ -57922,13 +57379,9 @@
                     [(OptBoundsDomOffset.Some raw-base offset)
                       (let
                         [base : ir.CompilerIrValue
-                          (opt-bounds-dom-canon
-                            type-segment-bases
-                            phi-defs
-                            copies
-                            raw-base)]
+                          (opt-bounds-dom-canon env raw-base)]
                         (if (opt-bounds-dom-term-ok?
-                          sources
+                          env.sources
                           (compiler-opt-global-shared-view base)
                           offset)
                           (OptBoundsDomTerm base offset)
@@ -57937,11 +57390,7 @@
       [_ self])))
 
 (define (opt-bounds-dom-bracket-bits
-  [type-segment-bases : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [fact : OptBoundsFact]
   [base : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]
@@ -57951,27 +57400,17 @@
     [(OptBoundsFact.Fact fact-index fact-length)
       (if (not
         (opt-value-eq
-          (opt-bounds-dom-canon type-segment-bases phi-defs copies fact-length)
+          (opt-bounds-dom-canon env fact-length)
           (compiler-opt-global-shared-view len)))
         acc
         (let
           [term : OptBoundsDomTerm
-            (opt-bounds-dom-term
-              type-segment-bases
-              defs
-              phi-defs
-              copies
-              sources
-              (opt-bounds-dom-canon
-                type-segment-bases
-                phi-defs
-                copies
-                fact-index))]
+            (opt-bounds-dom-term env (opt-bounds-dom-canon env fact-index))]
           (if (not
             (opt-value-eq term.base (compiler-opt-global-shared-view base)))
             acc
             (let
-              [stride : i64 (opt-bounds-dom-stride-of defs base len)]
+              [stride : i64 (opt-bounds-dom-stride-of env.defs base len)]
               (if (and
                 (> stride 0)
                 (>= offset 0)
@@ -58041,11 +57480,7 @@
 ;; The bracket bits the facts in scope supply for `base + offset`: 1 for a passed
 ;; check at or below this offset, 2 for one at or above it.
 (define (opt-bounds-dom-bracket-mask
-  [type-segment-bases : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [facts : OptBoundsFacts]
   [base : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]
@@ -58058,38 +57493,17 @@
         [(OptBoundsFacts.Nil) acc]
         [(OptBoundsFacts.Cons fact rest)
           (opt-bounds-dom-bracket-mask
-            type-segment-bases
-            defs
-            phi-defs
-            copies
-            sources
+            env
             (deref rest)
             (compiler-opt-global-shared-view base)
             (compiler-opt-global-shared-view len)
             offset
-            (opt-bounds-dom-bracket-bits
-              type-segment-bases
-              defs
-              phi-defs
-              copies
-              sources
-              fact
-              base
-              len
-              offset
-              acc))])]))
+            (opt-bounds-dom-bracket-bits env fact base len offset acc))])]))
 
 ;; The lower bracket: a passed check at or below this offset, or a nonnegative
 ;; base under a nonnegative offset.
 (define (opt-bounds-dom-run-lower-ok?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [block-id : i64]
   [mask : i64]
@@ -58098,47 +57512,22 @@
   (cond
     [(not (= (bit-and mask 1) 0)) true]
     [(< offset 0) false]
-    [else
-      (opt-bounds-dom-nonneg?
-        type-segment-bases
-        index
-        doms
-        defs
-        phi-defs
-        var-facts
-        checks
-        copies
-        cmp-facts
-        block-id
-        base)]))
+    [else (opt-bounds-dom-nonneg? env cmp-facts block-id base)]))
 
 ;; Is this check implied by dominating checks of the same base and length
 ;; bracketing its offset?
 (define (opt-bounds-dom-run-in-range?
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [block-id : i64]
   [idx : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]) : bool
   (let
-    [term : OptBoundsDomTerm
-      (opt-bounds-dom-term type-segment-bases defs phi-defs copies sources idx)]
+    [term : OptBoundsDomTerm (opt-bounds-dom-term env idx)]
     [mask : i64
       (opt-bounds-dom-bracket-mask
-        type-segment-bases
-        defs
-        phi-defs
-        copies
-        sources
+        env
         facts
         (compiler-opt-global-shared-view term.base)
         len
@@ -58147,14 +57536,7 @@
     (and
       (not (= (bit-and mask 2) 0))
       (opt-bounds-dom-run-lower-ok?
-        type-segment-bases
-        index
-        doms
-        defs
-        phi-defs
-        var-facts
-        checks
-        copies
+        env
         cmp-facts
         block-id
         mask
@@ -58318,26 +57700,15 @@
 ;; only for a run of three or more whose brackets are not already its first two
 ;; checks and whose index and length arithmetic can move.
 (define (opt-bounds-dom-run-from
-  [type-segment-bases : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [instrs : ir.CompilerIrInstrSeq]
   [start : i64]) : OptBoundsDomRun
   (match (ir.compiler-ir-instr-seq-ref instrs start)
     [(ir.CompilerIrInstr.BoundsCheck raw-index raw-length _)
       (let
-        [len : ir.CompilerIrValue
-          (opt-bounds-dom-canon type-segment-bases phi-defs copies raw-length)]
+        [len : ir.CompilerIrValue (opt-bounds-dom-canon env raw-length)]
         [head : OptBoundsDomTerm
-          (opt-bounds-dom-term
-            type-segment-bases
-            defs
-            phi-defs
-            copies
-            sources
-            (opt-bounds-dom-canon type-segment-bases phi-defs copies raw-index))]
+          (opt-bounds-dom-term env (opt-bounds-dom-canon env raw-index))]
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [members : i64 1]
         [second-pos : i64 -1]
@@ -58356,23 +57727,11 @@
                 [(ir.CompilerIrInstr.BoundsCheck other-index other-length _)
                   (let
                     [other-len : ir.CompilerIrValue
-                      (opt-bounds-dom-canon
-                        type-segment-bases
-                        phi-defs
-                        copies
-                        other-length)]
+                      (opt-bounds-dom-canon env other-length)]
                     [other : OptBoundsDomTerm
                       (opt-bounds-dom-term
-                        type-segment-bases
-                        defs
-                        phi-defs
-                        copies
-                        sources
-                        (opt-bounds-dom-canon
-                          type-segment-bases
-                          phi-defs
-                          copies
-                          other-index))]
+                        env
+                        (opt-bounds-dom-canon env other-index))]
                     (if (and
                       (opt-value-eq
                         other-len
@@ -58420,34 +57779,18 @@
     [_ (OptBoundsDomRun.No)]))
 
 (define (opt-bounds-dom-run-scan
-  [type-segment-bases : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [instrs : ir.CompilerIrInstrSeq]
   [pos : i64]) : OptBoundsDomRun
   (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
     (OptBoundsDomRun.No)
     (match (opt-bounds-dom-run-from
-      type-segment-bases
-      defs
-      phi-defs
-      copies
-      sources
+      env
       (compiler-opt-global-shared-view instrs)
       pos)
       [(OptBoundsDomRun.Some first min-pos max-pos)
         (OptBoundsDomRun.Some first min-pos max-pos)]
-      [(OptBoundsDomRun.No)
-        (opt-bounds-dom-run-scan
-          type-segment-bases
-          defs
-          phi-defs
-          copies
-          sources
-          instrs
-          (+ pos 1))])))
+      [(OptBoundsDomRun.No) (opt-bounds-dom-run-scan env instrs (+ pos 1))])))
 
 (define (opt-bounds-dom-widen-mark!
   [moved : (&mut moved (__tl_dyn-array bool))]
@@ -58565,31 +57908,19 @@
 ;; rewrites; each one leaves its run bracketed at the front, which the scan then
 ;; skips, so the loop makes progress and a block with no run pays one walk.
 (define (opt-bounds-dom-widen-instrs
-  [type-segment-bases : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [instrs : ir.CompilerIrInstrSeq]
   [fuel : i64]) : ir.CompilerIrInstrSeq
   (if (<= fuel 0)
     instrs
     (match (opt-bounds-dom-run-scan
-      type-segment-bases
-      defs
-      phi-defs
-      copies
-      sources
+      env
       (compiler-opt-global-shared-view instrs)
       0)
       [(OptBoundsDomRun.No) instrs]
       [(OptBoundsDomRun.Some first min-pos max-pos)
         (opt-bounds-dom-widen-instrs
-          type-segment-bases
-          defs
-          phi-defs
-          copies
-          sources
+          env
           (opt-bounds-dom-widen-run instrs first min-pos max-pos)
           (- fuel 1))])))
 
@@ -59249,14 +58580,7 @@
   (and (> n 0) (= (bit-and n (- n 1)) 0)))
 
 (define (opt-bounds-dom-unsigned-divmod
-  [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [block-id : i64]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
@@ -59270,42 +58594,28 @@
           (opt-binop-eq
             (compiler-opt-global-shared-view op)
             (ir.CompilerIrBinOp.Mod)))
-        (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+        (opt-type-eq env.type-segment-bases ty (ast.AstType.I64))
         (match (compiler-opt-global-shared-view rhs)
           [(ir.CompilerIrValue.I64 divisor)
             (opt-bounds-dom-positive-power-of-two? divisor)]
           [_ false])
         (opt-bounds-dom-nonneg?
-          type-segment-bases
-          index
-          doms
-          defs
-          phi-defs
-          var-facts
-          checks
-          copies
+          env
           cmp-facts
           block-id
-          (opt-bounds-dom-resolve copies (compiler-opt-global-shared-view lhs))))
+          (opt-bounds-dom-resolve
+            env.copies
+            (compiler-opt-global-shared-view lhs))))
         (ir.CompilerIrInstr.BinOp dst op lhs rhs (ast.AstType.U64))
         instr)]
     [_ instr]))
 
 (define (opt-bounds-dom-instrs-from
-  [type-segment-bases : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [cfg-index : OptCfgIndex]
-  [doms : (& doms OptDomInfo)]
+  [env : (& env OptBoundsDomEnv)]
   [block-label : i64]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [slice-lengths : (& slice-lengths opt_i64_i64_map.Map)]
   [len-eq : OptLenEqUse]
   [instrs : ir.CompilerIrInstrSeq]
@@ -59341,11 +58651,11 @@
                 (let
                   [cidx : ir.CompilerIrValue
                     (opt-bounds-dom-resolve
-                      copies
+                      env.copies
                       (compiler-opt-global-shared-view idx))]
                   [clen : ir.CompilerIrValue
                     (opt-bounds-dom-resolve
-                      copies
+                      env.copies
                       (compiler-opt-global-shared-view len))]
                   ;; Canonical fact identity for stable native Slice length
                   ;; Words. Arithmetic and comparison queries keep `clen`.
@@ -59357,15 +58667,15 @@
                   ;; spelling the guard comparisons use, so strip once here.
                   [sidx : ir.CompilerIrValue
                     (opt-bounds-dom-strip-int-cast
-                      type-segment-bases
-                      phi-defs
-                      copies
+                      env.type-segment-bases
+                      env.phi-defs
+                      env.copies
                       (compiler-opt-global-shared-view cidx))]
                   [slen : ir.CompilerIrValue
                     (opt-bounds-dom-strip-int-cast
-                      type-segment-bases
-                      phi-defs
-                      copies
+                      env.type-segment-bases
+                      env.phi-defs
+                      env.copies
                       (compiler-opt-global-shared-view clen))]
                   (if (or
                     (opt-bounds-contains
@@ -59375,28 +58685,20 @@
                     ;; P-B: the same index, checked against a length-equal
                     ;; member of the same family.
                     (opt-len-eq-facts-cover?
-                      type-segment-bases
+                      env.type-segment-bases
                       len-eq
-                      copies
+                      env.copies
                       (compiler-opt-global-shared-view cur-facts)
                       block-id
                       (compiler-opt-global-shared-view cidx)
                       (compiler-opt-global-shared-view clen))
                     (opt-bounds-dom-unsigned-guarded?
-                      type-segment-bases
+                      env.type-segment-bases
                       (compiler-opt-global-shared-view cur-cmp-facts)
                       (compiler-opt-global-shared-view sidx)
                       (compiler-opt-global-shared-view slen))
                     (opt-bounds-dom-run-in-range?
-                      type-segment-bases
-                      cfg-index
-                      doms
-                      defs
-                      phi-defs
-                      var-facts
-                      checks
-                      copies
-                      sources
+                      env
                       (compiler-opt-global-shared-view cur-cmp-facts)
                       (compiler-opt-global-shared-view cur-facts)
                       block-id
@@ -59405,33 +58707,18 @@
                         slice-lengths
                         (compiler-opt-global-shared-view slen)))
                     (opt-bounds-dom-mask-in-range?
-                      type-segment-bases
-                      defs
-                      phi-defs
-                      copies
+                      env
                       (compiler-opt-global-shared-view cur-cmp-facts)
                       (compiler-opt-global-shared-view cidx)
                       (compiler-opt-global-shared-view clen))
                     (opt-bounds-dom-counter-in-range?
-                      type-segment-bases
-                      cfg-index
-                      terms
-                      defs
-                      phi-defs
-                      copies
+                      env
                       (compiler-opt-global-shared-view cur-cmp-facts)
                       block-label
                       (compiler-opt-global-shared-view sidx)
                       (compiler-opt-global-shared-view slen))
                     (opt-bounds-dom-guarded-in-range?
-                      type-segment-bases
-                      cfg-index
-                      doms
-                      defs
-                      phi-defs
-                      var-facts
-                      checks
-                      copies
+                      env
                       (compiler-opt-global-shared-view cur-cmp-facts)
                       (compiler-opt-global-shared-view cur-facts)
                       len-eq
@@ -59443,16 +58730,7 @@
                     ;; graph: the ABCD cycle proof and the decreasing index
                     ;; built out of one.
                     (opt-bounds-dom-inductive-in-range?
-                      type-segment-bases
-                      cfg-index
-                      doms
-                      terms
-                      defs
-                      phi-defs
-                      var-facts
-                      (compiler-opt-global-shared-view checks)
-                      copies
-                      sources
+                      env
                       (compiler-opt-global-shared-view cur-cmp-facts)
                       block-id
                       true
@@ -59463,10 +58741,10 @@
                       [stable? : bool
                         (and
                           (opt-gvn-value-stable?
-                            sources
+                            env.sources
                             (compiler-opt-global-shared-view cidx))
                           (opt-gvn-value-stable?
-                            sources
+                            env.sources
                             (compiler-opt-global-shared-view clen)))]
                       (begin
                         (ir.compiler-ir-instr-builder-push!
@@ -59510,27 +58788,11 @@
                 (ir.compiler-ir-instr-builder-push!
                   (&mut builder)
                   (opt-bounds-dom-fold-compare
-                    type-segment-bases
-                    doms
-                    (compiler-opt-global-shared-view cfg-index)
-                    terms
-                    defs
-                    phi-defs
-                    sources
-                    var-facts
-                    (compiler-opt-global-shared-view checks)
+                    env
                     block-id
                     (compiler-opt-global-shared-view cur-cmp-facts)
-                    copies
                     (opt-bounds-dom-unsigned-divmod
-                      type-segment-bases
-                      cfg-index
-                      doms
-                      defs
-                      phi-defs
-                      var-facts
-                      checks
-                      copies
+                      env
                       (compiler-opt-global-shared-view cur-cmp-facts)
                       block-id
                       instr)))])
@@ -59604,14 +58866,13 @@
   (Some ir.CompilerIrValue))
 
 (define (opt-bounds-dom-phi-carrier
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [value : ir.CompilerIrValue]) : OptDomPhiCarrier
   (match value
     [(ir.CompilerIrValue.Var var)
-      (if (not (opt-gvn-stable-var? sources var))
+      (if (not (opt-gvn-stable-var? env.sources var))
         (OptDomPhiCarrier.No)
-        (match (opt-bool-branch-def phi-defs var)
+        (match (opt-bool-branch-def env.phi-defs var)
           [(OptBoolBranchDef.No) (OptDomPhiCarrier.No)]
           [(OptBoolBranchDef.Some instr label)
             (match instr
@@ -59687,11 +58948,10 @@
 ;; other reachable predecessor being such a backedge is what makes this edge the
 ;; only way in.
 (define (opt-bounds-dom-sole-entry-pred
-  [info : (& info OptDomInfo)]
-  [index : OptCfgIndex]
+  [env : (& env OptBoundsDomEnv)]
   [id : i64]) : i64
   (let
-    [preds : OptCfgCsr index.preds]
+    [preds : OptCfgCsr env.index.preds]
     [offsets : (__tl_dyn-array i64) preds.offsets]
     [edges : (__tl_dyn-array i64) preds.edges]
     (if (or (< id 0) (>= (+ id 1) (array-length offsets)))
@@ -59708,8 +58968,8 @@
                 [pred : i64 (array-ref edges edge)]
                 (cond
                   [(or
-                      (not (array-ref index.reachable pred))
-                      (opt-dom-info-dominates-id? info id pred))
+                      (not (array-ref env.index.reachable pred))
+                      (opt-dom-info-dominates-id? env.doms id pred))
                     unit]
                   [(< only 0) (set! only pred)]
                   [(= only pred) unit]
@@ -59721,13 +58981,7 @@
 
 ;; What the edge `pred-id -> to-label` proves about `op(lhs, rhs)`.
 (define (opt-bounds-dom-edge-cmp-verdict
-  [type-segment-bases : i64]
-  [info : (& info OptDomInfo)]
-  [index : OptCfgIndex]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [pred-id : i64]
   [to-label : i64]
   [op : ir.CompilerIrBinOp]
@@ -59735,11 +58989,11 @@
   [rhs : ir.CompilerIrValue]
   [ty : ast.AstType]
   [fuel : i64]) : OptDomCmpLookup
-  (if (or (<= fuel 0) (< pred-id 0) (>= pred-id (array-length terms)))
+  (if (or (<= fuel 0) (< pred-id 0) (>= pred-id (array-length env.terms)))
     (OptDomCmpLookup.No)
     (let
       [direct : OptDomCmpLookup
-        (match (array-ref terms pred-id)
+        (match (opt-bool-branch-def env.terms pred-id)
           [(OptBoolBranchDef.No) (OptDomCmpLookup.No)]
           [(OptBoolBranchDef.Some instr _)
             (match instr
@@ -59752,11 +59006,9 @@
                     (not (= false-label to-label))))
                   (OptDomCmpLookup.No)
                   (opt-dom-cmp-lookup
-                    type-segment-bases
+                    env.type-segment-bases
                     (opt-dom-cmp-edge-fact
-                      defs
-                      copies
-                      sources
+                      env
                       cond
                       (= true-label to-label)
                       pred-id
@@ -59770,23 +59022,13 @@
         [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
         [(OptDomCmpLookup.No)
           (let
-            [up : i64
-              (opt-bounds-dom-sole-entry-pred
-                info
-                (compiler-opt-global-shared-view index)
-                pred-id)]
+            [up : i64 (opt-bounds-dom-sole-entry-pred env pred-id)]
             (if (< up 0)
               (OptDomCmpLookup.No)
               (opt-bounds-dom-edge-cmp-verdict
-                type-segment-bases
-                info
-                (compiler-opt-global-shared-view index)
-                terms
-                defs
-                sources
-                copies
+                env
                 up
-                (array-ref index.labels pred-id)
+                (array-ref env.index.labels pred-id)
                 op
                 lhs
                 rhs
@@ -59796,13 +59038,7 @@
 ;; Every reachable edge into `header-id`, each asked about its own phi inputs.
 ;; Verdict codes: 0 none seen yet, 1 true, 2 false.
 (define (opt-bounds-dom-phi-carried-scan
-  [type-segment-bases : i64]
-  [info : (& info OptDomInfo)]
-  [index : OptCfgIndex]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [carrier-lhs : OptDomPhiCarrier]
   [carrier-rhs : OptDomPhiCarrier]
   [lhs : ir.CompilerIrValue]
@@ -59811,13 +59047,13 @@
   [ty : ast.AstType]
   [header-id : i64]) : OptDomCmpLookup
   (let
-    [preds : OptCfgCsr index.preds]
+    [preds : OptCfgCsr env.index.preds]
     [offsets : (__tl_dyn-array i64) preds.offsets]
     [edges : (__tl_dyn-array i64) preds.edges]
     (if (or (< header-id 0) (>= (+ header-id 1) (array-length offsets)))
       (OptDomCmpLookup.No)
       (let
-        [header-label : i64 (array-ref index.labels header-id)]
+        [header-label : i64 (array-ref env.index.labels header-id)]
         [edge : i64 (array-ref offsets header-id)]
         [end : i64 (array-ref offsets (+ header-id 1))]
         [verdict : i64 0]
@@ -59827,10 +59063,10 @@
             (begin
               (let
                 [pred : i64 (array-ref edges edge)]
-                (if (not (array-ref index.reachable pred))
+                (if (not (array-ref env.index.reachable pred))
                   unit
                   (let
-                    [pred-label : i64 (array-ref index.labels pred)]
+                    [pred-label : i64 (array-ref env.index.labels pred)]
                     [edge-lhs : OptDomPhiInput
                       (opt-bounds-dom-phi-edge-operand
                         (compiler-opt-global-shared-view carrier-lhs)
@@ -59849,26 +59085,20 @@
                           [(OptDomPhiInput.Some raw-rhs)
                             (let
                               [clhs : ir.CompilerIrValue
-                                (opt-bounds-dom-resolve copies raw-lhs)]
+                                (opt-bounds-dom-resolve env.copies raw-lhs)]
                               [crhs : ir.CompilerIrValue
-                                (opt-bounds-dom-resolve copies raw-rhs)]
+                                (opt-bounds-dom-resolve env.copies raw-rhs)]
                               (if (not
                                 (and
                                   (opt-gvn-value-stable?
-                                    sources
+                                    env.sources
                                     (compiler-opt-global-shared-view clhs))
                                   (opt-gvn-value-stable?
-                                    sources
+                                    env.sources
                                     (compiler-opt-global-shared-view crhs))))
                                 (set! ok false)
                                 (match (opt-bounds-dom-edge-cmp-verdict
-                                  type-segment-bases
-                                  info
-                                  (compiler-opt-global-shared-view index)
-                                  terms
-                                  defs
-                                  sources
-                                  copies
+                                  env
                                   pred
                                   header-label
                                   (compiler-opt-global-shared-view op)
@@ -59894,14 +59124,7 @@
             (OptDomCmpLookup.No)))))))
 
 (define (opt-bounds-dom-phi-carried-verdict
-  [type-segment-bases : i64]
-  [info : (& info OptDomInfo)]
-  [index : OptCfgIndex]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [block-id : i64]
   [op : ir.CompilerIrBinOp]
   [lhs : ir.CompilerIrValue]
@@ -59909,21 +59132,15 @@
   [ty : ast.AstType]) : OptDomCmpLookup
   (let
     [carrier-lhs : OptDomPhiCarrier
-      (opt-bounds-dom-phi-carrier
-        phi-defs
-        sources
-        (compiler-opt-global-shared-view lhs))]
+      (opt-bounds-dom-phi-carrier env (compiler-opt-global-shared-view lhs))]
     [carrier-rhs : OptDomPhiCarrier
-      (opt-bounds-dom-phi-carrier
-        phi-defs
-        sources
-        (compiler-opt-global-shared-view rhs))]
+      (opt-bounds-dom-phi-carrier env (compiler-opt-global-shared-view rhs))]
     (match (opt-bounds-dom-phi-home
       (compiler-opt-global-shared-view carrier-lhs)
       (compiler-opt-global-shared-view carrier-rhs))
       [(OptDomPhiHome.No) (OptDomCmpLookup.No)]
       [(OptDomPhiHome.Some header-label)
-        (match (opt-cfg-index-id index header-label)
+        (match (opt-cfg-index-id env.index header-label)
           [(option_i64.None) (OptDomCmpLookup.No)]
           [(option_i64.Some header-id)
             ;; SSA already guarantees the phi's block dominates every use; the
@@ -59931,18 +59148,12 @@
             (if (not
               (and
                 (>= header-id 0)
-                (< header-id (opt-cfg-index-block-count index))
-                (array-ref index.reachable header-id)
-                (opt-dom-info-dominates-id? info header-id block-id)))
+                (< header-id (opt-cfg-index-block-count env.index))
+                (array-ref env.index.reachable header-id)
+                (opt-dom-info-dominates-id? env.doms header-id block-id)))
               (OptDomCmpLookup.No)
               (opt-bounds-dom-phi-carried-scan
-                type-segment-bases
-                info
-                index
-                terms
-                defs
-                sources
-                copies
+                env
                 carrier-lhs
                 carrier-rhs
                 lhs
@@ -59966,14 +59177,7 @@
 ;; the passes below it that it leaves every terminator alone, and `cfg` folds
 ;; the branch that reads the literal one pass later.
 (define (opt-bounds-dom-nonneg-literal-verdict
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
-  [index : (& index OptCfgIndex)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [block-id : i64]
   [op : ir.CompilerIrBinOp]
@@ -59982,7 +59186,7 @@
   [ty : ast.AstType]) : OptDomCmpLookup
   (if (not
     (opt-type-eq
-      type-segment-bases
+      env.type-segment-bases
       (compiler-opt-global-shared-view ty)
       (ast.AstType.I64)))
     (OptDomCmpLookup.No)
@@ -59995,20 +59199,13 @@
           (> literal 0)
           (not
             (opt-bounds-dom-nonneg?
-              type-segment-bases
-              index
-              doms
-              defs
-              phi-defs
-              var-facts
-              checks
-              copies
+              env
               cmp-facts
               block-id
               (ir.CompilerIrValue.Var var))))
           (OptDomCmpLookup.No)
           (opt-dom-cmp-fact-verdict
-            type-segment-bases
+            env.type-segment-bases
             (OptDomCmpFact.Fact
               (ir.CompilerIrBinOp.Ge)
               (ir.CompilerIrValue.Var var)
@@ -60328,8 +59525,7 @@
 ;; `x * c` for a positive literal c, fenced against wrapping: `x <= MAX / c`
 ;; keeps the product at or below `(MAX / c) * c <= MAX`.
 (define (opt-bounds-dom-mul-no-wrap?
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [at-id : i64]
   [value : ir.CompilerIrValue]
@@ -60337,8 +59533,7 @@
   (and
     (> scale 0)
     (opt-dom-cmp-decided-at?
-      type-segment-bases
-      doms
+      env
       at-id
       cmp-facts
       (ir.CompilerIrBinOp.Le)
@@ -60346,9 +59541,7 @@
       (ir.CompilerIrValue.I64 (/ 9223372036854775807 scale)))))
 
 (define (opt-bounds-dom-nonneg-prepass-binop!
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [var-facts : (&mut var-facts (__tl_dyn-array i64))]
   [cmp-facts : OptDomCmpFacts]
   [block-id : i64]
@@ -60368,7 +59561,8 @@
         [(OptBoundsDomOffset.No) unit]
         [(OptBoundsDomOffset.Some raw-base offset)
           (let
-            [base : ir.CompilerIrValue (opt-bounds-dom-resolve copies raw-base)]
+            [base : ir.CompilerIrValue
+              (opt-bounds-dom-resolve env.copies raw-base)]
             (cond
               [(= offset 0) unit]
               ;; `base - |offset|`: a dominating `base >= |offset|` is the whole
@@ -60377,8 +59571,7 @@
                 (if (and
                   (> offset (- (- 0 9223372036854775807) 1))
                   (opt-dom-cmp-decided-at?
-                    type-segment-bases
-                    doms
+                    env
                     block-id
                     cmp-facts
                     (ir.CompilerIrBinOp.Ge)
@@ -60391,8 +59584,7 @@
                   unit)]
               [else
                 (if (opt-bounds-dom-add-no-wrap?
-                  type-segment-bases
-                  doms
+                  env
                   cmp-facts
                   block-id
                   base
@@ -60407,11 +59599,10 @@
         [(OptAffineOperands.No) unit]
         [(OptAffineOperands.Some raw-var scale)
           (if (opt-bounds-dom-mul-no-wrap?
-            type-segment-bases
-            doms
+            env
             cmp-facts
             block-id
-            (opt-bounds-dom-resolve copies (ir.CompilerIrValue.Var raw-var))
+            (opt-bounds-dom-resolve env.copies (ir.CompilerIrValue.Var raw-var))
             scale)
             (opt-bounds-dom-var-facts-set!
               var-facts
@@ -60425,10 +59616,7 @@
 ;; `idx < len` in the signed domain is the fence a body-level `i + 1` needs when
 ;; the loop tests nothing else.
 (define (opt-bounds-dom-nonneg-prepass-instrs
-  [type-segment-bases : i64]
-  [doms : (& doms OptDomInfo)]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [var-facts : (&mut var-facts (__tl_dyn-array i64))]
   [cmp-facts : OptDomCmpFacts]
   [block-id : i64]
@@ -60442,11 +59630,9 @@
         (begin
           (match (ir.compiler-ir-instr-seq-ref instrs pos)
             [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-              (if (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+              (if (opt-type-eq env.type-segment-bases ty (ast.AstType.I64))
                 (opt-bounds-dom-nonneg-prepass-binop!
-                  type-segment-bases
-                  doms
-                  copies
+                  env
                   var-facts
                   (compiler-opt-global-shared-view cur)
                   block-id
@@ -60457,14 +59643,16 @@
                 unit)]
             [(ir.CompilerIrInstr.BoundsCheck idx len _)
               (let
-                [cidx : ir.CompilerIrValue (opt-bounds-dom-resolve copies idx)]
-                [clen : ir.CompilerIrValue (opt-bounds-dom-resolve copies len)]
+                [cidx : ir.CompilerIrValue
+                  (opt-bounds-dom-resolve env.copies idx)]
+                [clen : ir.CompilerIrValue
+                  (opt-bounds-dom-resolve env.copies len)]
                 (if (and
                   (opt-gvn-value-stable?
-                    sources
+                    env.sources
                     (compiler-opt-global-shared-view cidx))
                   (opt-gvn-value-stable?
-                    sources
+                    env.sources
                     (compiler-opt-global-shared-view clen)))
                   (set!
                     cur
@@ -60483,86 +59671,61 @@
       cur)))
 
 (define (opt-bounds-dom-nonneg-prepass-id!
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
+  [env : (& env OptBoundsDomEnv)]
   [children : (& children OptCfgCsr)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [var-facts : (&mut var-facts (__tl_dyn-array i64))]
   [cmp-facts : OptDomCmpFacts]
   [id : i64]) : unit
-  (let
-    [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
-    (if (or (< id 0) (>= id (opt-cfg-index-block-count index)))
-      unit
-      (match (opt-cfg-index-block index id)
-        [(OptMaybeBlock.No) unit]
-        [(OptMaybeBlock.Some block)
-          (match block
-            [(ir.CompilerIrBlock.Block _ instrs)
-              (let
-                [out-facts : OptDomCmpFacts
-                  (opt-bounds-dom-nonneg-prepass-instrs
-                    type-segment-bases
-                    context.doms
-                    sources
-                    copies
-                    var-facts
-                    cmp-facts
-                    id
-                    (compiler-opt-global-shared-view instrs))]
-                [offsets (& children.offsets)]
-                [edges (& children.edges)]
-                [edge : i64 (array-ref offsets id)]
-                [end : i64 (array-ref offsets (+ id 1))]
-                (while (< edge end)
-                  (begin
-                    (let
-                      [child-id : i64 (array-ref edges edge)]
-                      (opt-bounds-dom-nonneg-prepass-id!
-                        type-segment-bases
-                        (compiler-opt-global-shared-view context)
-                        children
-                        defs
-                        sources
-                        copies
-                        var-facts
-                        (opt-bounds-dom-child-cmp-facts
-                          context.doms
-                          (compiler-opt-global-shared-view index)
-                          defs
-                          sources
-                          copies
-                          (compiler-opt-global-shared-view out-facts)
-                          (compiler-opt-global-shared-view instrs)
-                          id
-                          child-id)
-                        child-id))
-                    (set! edge (+ edge 1)))))])]))))
+  (if (or (< id 0) (>= id (opt-cfg-index-block-count env.index)))
+    unit
+    (match (opt-cfg-index-block env.index id)
+      [(OptMaybeBlock.No) unit]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [out-facts : OptDomCmpFacts
+                (opt-bounds-dom-nonneg-prepass-instrs
+                  env
+                  var-facts
+                  cmp-facts
+                  id
+                  (compiler-opt-global-shared-view instrs))]
+              [offsets (& children.offsets)]
+              [edges (& children.edges)]
+              [edge : i64 (array-ref offsets id)]
+              [end : i64 (array-ref offsets (+ id 1))]
+              (while (< edge end)
+                (begin
+                  (let
+                    [child-id : i64 (array-ref edges edge)]
+                    (opt-bounds-dom-nonneg-prepass-id!
+                      env
+                      children
+                      var-facts
+                      (opt-bounds-dom-child-cmp-facts
+                        env
+                        (compiler-opt-global-shared-view out-facts)
+                        (compiler-opt-global-shared-view instrs)
+                        id
+                        child-id)
+                      child-id))
+                  (set! edge (+ edge 1)))))])])))
 
 (define (opt-bounds-dom-nonneg-prepass!
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
+  [env : (& env OptBoundsDomEnv)]
   [children : (& children OptCfgCsr)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [var-facts : (&mut var-facts (__tl_dyn-array i64))]) : unit
-  (match (opt-cfg-index-id context.index context.entry-label)
+  (match (opt-cfg-index-id env.context.index env.context.entry-label)
     [(option_i64.None) unit]
     [(option_i64.Some entry-id)
       (if (and
         (>= entry-id 0)
-        (< entry-id (opt-cfg-index-block-count context.index))
-        (array-ref context.index.reachable entry-id))
+        (< entry-id (opt-cfg-index-block-count env.context.index))
+        (array-ref env.context.index.reachable entry-id))
         (opt-bounds-dom-nonneg-prepass-id!
-          type-segment-bases
-          context
+          env
           children
-          defs
-          sources
-          copies
           var-facts
           (OptDomCmpFacts.Nil)
           entry-id)
@@ -60573,18 +59736,9 @@
 ;; joining-edge rule above when that returns nothing. Shared by the compare fold
 ;; and the branch fold below, so both ask exactly the same question.
 (define (opt-bounds-dom-compare-verdict
-  [type-segment-bases : i64]
-  [info : (& info OptDomInfo)]
-  [index : OptCfgIndex]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [op : ir.CompilerIrBinOp]
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]
@@ -60599,15 +59753,15 @@
         (opt-dom-cmp-canon-op (compiler-opt-global-shared-view op))]
       [canon-lhs : ir.CompilerIrValue
         (opt-bounds-dom-resolve
-          copies
+          env.copies
           (opt-dom-cmp-canon-lhs
             (compiler-opt-global-shared-view op)
             (compiler-opt-global-shared-view lhs)
             (compiler-opt-global-shared-view rhs)))]
       [canon-rhs : ir.CompilerIrValue
-        (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))]
+        (opt-bounds-dom-resolve env.copies (opt-dom-cmp-canon-rhs op lhs rhs))]
       (match (opt-dom-cmp-lookup-chained
-        type-segment-bases
+        env.type-segment-bases
         (compiler-opt-global-shared-view cmp-facts)
         (compiler-opt-global-shared-view canon-op)
         (compiler-opt-global-shared-view canon-lhs)
@@ -60616,14 +59770,7 @@
         [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
         [(OptDomCmpLookup.No)
           (match (opt-bounds-dom-phi-carried-verdict
-            type-segment-bases
-            info
-            (compiler-opt-global-shared-view index)
-            terms
-            defs
-            phi-defs
-            sources
-            copies
+            env
             block-id
             (compiler-opt-global-shared-view canon-op)
             (compiler-opt-global-shared-view canon-lhs)
@@ -60632,14 +59779,7 @@
             [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
             [(OptDomCmpLookup.No)
               (match (opt-bounds-dom-nonneg-literal-verdict
-                type-segment-bases
-                info
-                index
-                defs
-                phi-defs
-                var-facts
-                checks
-                copies
+                env
                 (compiler-opt-global-shared-view cmp-facts)
                 block-id
                 (compiler-opt-global-shared-view canon-op)
@@ -60649,18 +59789,9 @@
                 [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
                 [(OptDomCmpLookup.No)
                   (opt-bounds-dom-induct-verdict
-                    type-segment-bases
-                    info
-                    index
-                    terms
-                    defs
-                    phi-defs
-                    var-facts
-                    checks
-                    sources
+                    env
                     block-id
                     cmp-facts
-                    copies
                     canon-op
                     canon-lhs
                     canon-rhs
@@ -60698,52 +59829,34 @@
 ;; and the query are read at two different program points and have to name the
 ;; same runtime values at both.
 (define (opt-bounds-dom-branch-verdict
-  [type-segment-bases : i64]
-  [info : (& info OptDomInfo)]
-  [index : OptCfgIndex]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [sources : (& sources OptValueSources)]
+  [env : (& env OptBoundsDomEnv)]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [cond : ir.CompilerIrValue]) : OptDomCmpLookup
-  (match (opt-bounds-dom-resolve copies cond)
+  (match (opt-bounds-dom-resolve env.copies cond)
     [(ir.CompilerIrValue.Var var)
-      (if (not (opt-gvn-stable-var? sources var))
+      (if (not (opt-gvn-stable-var? env.sources var))
         (OptDomCmpLookup.No)
-        (match (opt-bool-branch-def defs var)
+        (match (opt-bool-branch-def env.defs var)
           [(OptBoolBranchDef.No) (OptDomCmpLookup.No)]
           [(OptBoolBranchDef.Some def-instr _)
             (match def-instr
               [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                 (if (and
                   (opt-gvn-value-stable?
-                    sources
+                    env.sources
                     (opt-bounds-dom-resolve
-                      copies
+                      env.copies
                       (compiler-opt-global-shared-view lhs)))
                   (opt-gvn-value-stable?
-                    sources
+                    env.sources
                     (opt-bounds-dom-resolve
-                      copies
+                      env.copies
                       (compiler-opt-global-shared-view rhs))))
                   (opt-bounds-dom-compare-verdict
-                    type-segment-bases
-                    info
-                    index
-                    terms
-                    defs
-                    phi-defs
-                    var-facts
-                    checks
-                    sources
+                    env
                     block-id
                     cmp-facts
-                    copies
                     op
                     lhs
                     rhs
@@ -60758,34 +59871,16 @@
 ;; collapse the control flow. A branch on an already-decided condition gets the
 ;; same treatment on the condition operand itself (see above).
 (define (opt-bounds-dom-fold-compare
-  [type-segment-bases : i64]
-  [info : (& info OptDomInfo)]
-  [index : OptCfgIndex]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [sources : (& sources OptValueSources)]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
+  [env : (& env OptBoundsDomEnv)]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       (match (opt-bounds-dom-compare-verdict
-        type-segment-bases
-        info
-        index
-        terms
-        defs
-        phi-defs
-        var-facts
-        checks
-        sources
+        env
         block-id
         cmp-facts
-        copies
         op
         lhs
         rhs
@@ -60797,20 +59892,7 @@
             (ir.CompilerIrValue.Bool value)
             (ast.AstType.Bool))])]
     [(ir.CompilerIrInstr.Branch cond true-label false-label)
-      (match (opt-bounds-dom-branch-verdict
-        type-segment-bases
-        info
-        index
-        terms
-        defs
-        phi-defs
-        var-facts
-        checks
-        sources
-        block-id
-        cmp-facts
-        copies
-        cond)
+      (match (opt-bounds-dom-branch-verdict env block-id cmp-facts cond)
         [(OptDomCmpLookup.No) instr]
         [(OptDomCmpLookup.Some value)
           (ir.CompilerIrInstr.Branch
@@ -61034,17 +60116,19 @@
     [_ (- 0 1)]))
 
 (define (opt-bounds-dom-range-known-add!
-  [type-segment-bases : i64]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [known : (&mut known (__tl_dyn-array bool))]
   [value : ir.CompilerIrValue]) : unit
   (let
-    [canon : ir.CompilerIrValue (opt-bounds-dom-resolve copies value)]
+    [canon : ir.CompilerIrValue (opt-bounds-dom-resolve env.copies value)]
     [canon-var : i64
       (opt-bounds-dom-range-value-var (compiler-opt-global-shared-view canon))]
     [stripped : ir.CompilerIrValue
-      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies canon)]
+      (opt-bounds-dom-strip-int-cast
+        env.type-segment-bases
+        env.phi-defs
+        env.copies
+        canon)]
     (begin
       (opt-bounds-dom-range-known-mark! known canon-var)
       (opt-bounds-dom-range-known-mark!
@@ -61052,9 +60136,7 @@
         (opt-bounds-dom-range-value-var stripped)))))
 
 (define (opt-bounds-dom-range-known-instrs!
-  [type-segment-bases : i64]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [nonneg : (& nonneg opt_i64_i64_map.Map)]
   [known : (&mut known (__tl_dyn-array bool))]
   [instrs : ir.CompilerIrInstrSeq]) : unit
@@ -61066,12 +60148,7 @@
         (begin
           (match (ir.compiler-ir-instr-seq-ref instrs pos)
             [(ir.CompilerIrInstr.BoundsCheck _ length _)
-              (opt-bounds-dom-range-known-add!
-                type-segment-bases
-                phi-defs
-                copies
-                known
-                length)]
+              (opt-bounds-dom-range-known-add! env known length)]
             [(ir.CompilerIrInstr.Mov dst src _)
               (if (opt-nonneg-global? nonneg src)
                 (opt-bounds-dom-range-known-mark! known dst)
@@ -61081,9 +60158,7 @@
       unit)))
 
 (define (opt-bounds-dom-range-known-blocks!
-  [type-segment-bases : i64]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [nonneg : (& nonneg opt_i64_i64_map.Map)]
   [known : (&mut known (__tl_dyn-array bool))]
   [blocks : ir.CompilerIrBlockList]) : unit
@@ -61093,46 +60168,24 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (begin
-            (opt-bounds-dom-range-known-instrs!
-              type-segment-bases
-              phi-defs
-              copies
-              nonneg
-              known
-              instrs)
-            (opt-bounds-dom-range-known-blocks!
-              type-segment-bases
-              phi-defs
-              copies
-              nonneg
-              known
-              (deref rest)))])]
+            (opt-bounds-dom-range-known-instrs! env nonneg known instrs)
+            (opt-bounds-dom-range-known-blocks! env nonneg known (deref rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bounds-dom-range-known-blocks!
-        type-segment-bases
-        phi-defs
-        copies
+        env
         nonneg
         known
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-bounds-dom-range-known-nonneg
-  [type-segment-bases : i64]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [nonneg : (& nonneg opt_i64_i64_map.Map)]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array bool)
   (let
     [known : (__tl_dyn-array bool) (__tl_make-array bool frame)]
     (begin
-      (opt-bounds-dom-range-known-blocks!
-        type-segment-bases
-        phi-defs
-        copies
-        nonneg
-        (&mut known)
-        blocks)
+      (opt-bounds-dom-range-known-blocks! env nonneg (&mut known) blocks)
       known)))
 
 ;; The whole legality question: is the upper bound non-negative where the merge
@@ -61146,14 +60199,7 @@
 ;; bound for all the rest, exactly as clang's `computeKnownBits` reads the
 ;; dominating conditions.
 (define (opt-bounds-dom-range-bound-nonneg?
-  [type-segment-bases : i64]
-  [index : OptCfgIndex]
-  [doms : OptDomInfo]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [known : (& known (__tl_dyn-array bool))]
@@ -61166,24 +60212,17 @@
       (compiler-opt-global-shared-view bound))
     (opt-nonneg-global? nonneg (compiler-opt-global-shared-view bound))
     (opt-bounds-dom-nonneg?
-      type-segment-bases
-      index
-      doms
-      defs
-      phi-defs
-      var-facts
-      checks
-      copies
+      env
       (compiler-opt-global-shared-view cmp-facts)
       block-id
       (compiler-opt-global-shared-view bound))
     (opt-bounds-dom-len-positive?
-      type-segment-bases
+      env.type-segment-bases
       (compiler-opt-global-shared-view cmp-facts)
       (compiler-opt-global-shared-view bound))
     (opt-bounds-length-checked? facts (compiler-opt-global-shared-view bound))
     (match (opt-dom-cmp-lookup-chained
-      type-segment-bases
+      env.type-segment-bases
       cmp-facts
       (ir.CompilerIrBinOp.Le)
       (ir.CompilerIrValue.I64 0)
@@ -61197,7 +60236,7 @@
 ;; backedge: the merge asserts the upper compare unconditionally in that block,
 ;; so no other path may reach it.
 (define (opt-bounds-dom-range-sole-pred?
-  [index : OptCfgIndex]
+  [index : (& index OptCfgIndex)]
   [parent-id : i64]
   [child-id : i64]) : bool
   (let
@@ -61335,14 +60374,7 @@
                 high-false))])])))
 
 (define (opt-bounds-dom-range-merge-high-block
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [known : (& known (__tl_dyn-array bool))]
@@ -61353,101 +60385,78 @@
   [true-label : i64]
   [false-label : i64]
   [high-instrs : ir.CompilerIrInstrSeq]) : OptRangeMergePlan
-  (let
-    [index : OptCfgIndex context.index]
-    (match (ir.compiler-ir-instr-seq-ref high-instrs 1)
-      [(ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var high-cond)
-          high-true
-          high-false)
-        (if (= high-true high-false)
-          (OptRangeMergePlan.No)
-          (match (ir.compiler-ir-instr-seq-ref high-instrs 0)
-            [(ir.CompilerIrInstr.BinOp
-                high-dst
-                high-op
-                high-lhs
-                high-rhs
-                high-ty)
-              (if (or
-                (not (= high-dst high-cond))
-                (not (opt-type-eq type-segment-bases high-ty (ast.AstType.I64))))
-                (OptRangeMergePlan.No)
-                (match (opt-bounds-dom-range-high-parts
-                  high-op
-                  high-lhs
-                  high-rhs)
-                  [(OptRangeMergeHigh.No) (OptRangeMergePlan.No)]
-                  [(OptRangeMergeHigh.Some merged-op high-idx bound)
-                    (let
-                      [canon-idx : ir.CompilerIrValue
-                        (opt-bounds-dom-resolve
-                          copies
-                          (compiler-opt-global-shared-view idx))]
-                      [canon-bound : ir.CompilerIrValue
-                        (opt-bounds-dom-resolve
-                          copies
-                          (compiler-opt-global-shared-view bound))]
-                      (if (and
-                        (opt-value-eq
-                          (opt-bounds-dom-resolve copies high-idx)
-                          (compiler-opt-global-shared-view canon-idx))
-                        (opt-gvn-value-stable? sources canon-idx)
-                        ;; A global operand is not GVN-stable -- its cell can be
-                        ;; written between two reads -- but the two compares
-                        ;; being merged are adjacent (the upper block holds only
-                        ;; its compare and its branch), so nothing can run
-                        ;; between them, and the whole-program table's
-                        ;; non-negativity is a property of the CELL rather than
-                        ;; of a program point.
-                        (or
-                          (opt-gvn-value-stable?
-                            sources
-                            (compiler-opt-global-shared-view canon-bound))
-                          (opt-nonneg-global?
-                            nonneg
-                            (compiler-opt-global-shared-view canon-bound)))
-                        (opt-bounds-dom-range-arms-agree?
-                          index
-                          false-label
-                          high-false
-                          (array-ref index.labels id)
-                          true-label)
-                        (opt-bounds-dom-range-bound-nonneg?
-                          type-segment-bases
-                          index
-                          context.doms
-                          defs
-                          phi-defs
-                          var-facts
-                          checks
-                          copies
-                          cmp-facts
-                          facts
-                          known
+  (match (ir.compiler-ir-instr-seq-ref high-instrs 1)
+    [(ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var high-cond)
+        high-true
+        high-false)
+      (if (= high-true high-false)
+        (OptRangeMergePlan.No)
+        (match (ir.compiler-ir-instr-seq-ref high-instrs 0)
+          [(ir.CompilerIrInstr.BinOp high-dst high-op high-lhs high-rhs high-ty)
+            (if (or
+              (not (= high-dst high-cond))
+              (not
+                (opt-type-eq env.type-segment-bases high-ty (ast.AstType.I64))))
+              (OptRangeMergePlan.No)
+              (match (opt-bounds-dom-range-high-parts high-op high-lhs high-rhs)
+                [(OptRangeMergeHigh.No) (OptRangeMergePlan.No)]
+                [(OptRangeMergeHigh.Some merged-op high-idx bound)
+                  (let
+                    [canon-idx : ir.CompilerIrValue
+                      (opt-bounds-dom-resolve
+                        env.copies
+                        (compiler-opt-global-shared-view idx))]
+                    [canon-bound : ir.CompilerIrValue
+                      (opt-bounds-dom-resolve
+                        env.copies
+                        (compiler-opt-global-shared-view bound))]
+                    (if (and
+                      (opt-value-eq
+                        (opt-bounds-dom-resolve env.copies high-idx)
+                        (compiler-opt-global-shared-view canon-idx))
+                      (opt-gvn-value-stable? env.sources canon-idx)
+                      ;; A global operand is not GVN-stable -- its cell can be
+                      ;; written between two reads -- but the two compares
+                      ;; being merged are adjacent (the upper block holds only
+                      ;; its compare and its branch), so nothing can run
+                      ;; between them, and the whole-program table's
+                      ;; non-negativity is a property of the CELL rather than
+                      ;; of a program point.
+                      (or
+                        (opt-gvn-value-stable?
+                          env.sources
+                          (compiler-opt-global-shared-view canon-bound))
+                        (opt-nonneg-global?
                           nonneg
-                          id
-                          canon-bound))
-                        (OptRangeMergePlan.Some
-                          merged-op
-                          idx
-                          bound
-                          low-dst
-                          high-dst)
-                        (OptRangeMergePlan.No)))]))]
-            [_ (OptRangeMergePlan.No)]))]
-      [_ (OptRangeMergePlan.No)])))
+                          (compiler-opt-global-shared-view canon-bound)))
+                      (opt-bounds-dom-range-arms-agree?
+                        env.index
+                        false-label
+                        high-false
+                        (array-ref env.index.labels id)
+                        true-label)
+                      (opt-bounds-dom-range-bound-nonneg?
+                        env
+                        cmp-facts
+                        facts
+                        known
+                        nonneg
+                        id
+                        canon-bound))
+                      (OptRangeMergePlan.Some
+                        merged-op
+                        idx
+                        bound
+                        low-dst
+                        high-dst)
+                      (OptRangeMergePlan.No)))]))]
+          [_ (OptRangeMergePlan.No)]))]
+    [_ (OptRangeMergePlan.No)]))
 
 ;; The upper half of the pattern, given the lower block's index and edges.
 (define (opt-bounds-dom-range-merge-upper
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [known : (& known (__tl_dyn-array bool))]
@@ -61457,62 +60466,42 @@
   [idx : ir.CompilerIrValue]
   [true-label : i64]
   [false-label : i64]) : OptRangeMergePlan
-  (let
-    [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
-    (match (opt-cfg-index-id index true-label)
-      [(option_i64.None) (OptRangeMergePlan.No)]
-      [(option_i64.Some high-id)
-        (if (or
-          (= high-id id)
-          (< high-id 0)
-          (>= high-id (array-length index.reachable))
-          (not (array-ref index.reachable high-id))
-          (not
-            (opt-bounds-dom-range-sole-pred?
-              (compiler-opt-global-shared-view index)
-              id
-              high-id)))
-          (OptRangeMergePlan.No)
-          (match (opt-cfg-index-block index high-id)
-            [(OptMaybeBlock.No) (OptRangeMergePlan.No)]
-            [(OptMaybeBlock.Some high-block)
-              (match high-block
-                [(ir.CompilerIrBlock.Block _ high-instrs)
-                  (if (not (= (ir.compiler-ir-instr-seq-count high-instrs) 2))
-                    (OptRangeMergePlan.No)
-                    (opt-bounds-dom-range-merge-high-block
-                      type-segment-bases
-                      context
-                      defs
-                      phi-defs
-                      var-facts
-                      checks
-                      sources
-                      copies
-                      cmp-facts
-                      facts
-                      known
-                      nonneg
-                      id
-                      low-dst
-                      idx
-                      true-label
-                      false-label
-                      high-instrs))])]))])))
+  (match (opt-cfg-index-id env.index true-label)
+    [(option_i64.None) (OptRangeMergePlan.No)]
+    [(option_i64.Some high-id)
+      (if (or
+        (= high-id id)
+        (< high-id 0)
+        (>= high-id (array-length env.index.reachable))
+        (not (array-ref env.index.reachable high-id))
+        (not (opt-bounds-dom-range-sole-pred? env.index id high-id)))
+        (OptRangeMergePlan.No)
+        (match (opt-cfg-index-block env.index high-id)
+          [(OptMaybeBlock.No) (OptRangeMergePlan.No)]
+          [(OptMaybeBlock.Some high-block)
+            (match high-block
+              [(ir.CompilerIrBlock.Block _ high-instrs)
+                (if (not (= (ir.compiler-ir-instr-seq-count high-instrs) 2))
+                  (OptRangeMergePlan.No)
+                  (opt-bounds-dom-range-merge-high-block
+                    env
+                    cmp-facts
+                    facts
+                    known
+                    nonneg
+                    id
+                    low-dst
+                    idx
+                    true-label
+                    false-label
+                    high-instrs))])]))]))
 
 ;; Does this block end in `(>= i 0)` guarding a two-instruction upper-bound
 ;; block? The compare must be the branch's SINGLE consumer: the merged value is
 ;; the conjunction, not the lower half, so any other reader would see a
 ;; different value.
 (define (opt-bounds-dom-range-merge-plan
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [uses : (& uses (__tl_dyn-array i64))]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
@@ -61536,7 +60525,10 @@
                 (if (or
                   (not (= low-dst cond-var))
                   (not
-                    (opt-type-eq type-segment-bases low-ty (ast.AstType.I64)))
+                    (opt-type-eq
+                      env.type-segment-bases
+                      low-ty
+                      (ast.AstType.I64)))
                   (not (= (opt-bool-branch-use-count uses low-dst) 1)))
                   (OptRangeMergePlan.No)
                   (match (opt-bounds-dom-range-low-index low-op low-lhs low-rhs)
@@ -61545,14 +60537,7 @@
                       (match (compiler-opt-global-shared-view idx)
                         [(ir.CompilerIrValue.Var _)
                           (opt-bounds-dom-range-merge-upper
-                            type-segment-bases
-                            context
-                            defs
-                            phi-defs
-                            var-facts
-                            checks
-                            sources
-                            copies
+                            env
                             cmp-facts
                             facts
                             known
@@ -61681,14 +60666,7 @@
         (ir.compiler-ir-instr-builder-to-seq builder)))))
 
 (define (opt-bounds-dom-range-merge-block
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : (& checks OptBoundsDomChecks)]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [state : OptRangeMergeState]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
@@ -61698,14 +60676,7 @@
     [forced : ir.CompilerIrInstrSeq
       (opt-bounds-dom-range-force-true-instrs state instrs)]
     (match (opt-bounds-dom-range-merge-plan
-      type-segment-bases
-      context
-      defs
-      phi-defs
-      var-facts
-      checks
-      sources
-      copies
+      env
       state.uses
       cmp-facts
       facts
@@ -61728,16 +60699,8 @@
             bound))])))
 
 (define (opt-bounds-dom-rewrite-id
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
+  [env : (& env OptBoundsDomEnv)]
   [children : (& children OptCfgCsr)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [slice-lengths : (& slice-lengths opt_i64_i64_map.Map)]
   [len-eq : OptLenEqUse]
   [range : OptRangeMergeState]
@@ -61747,12 +60710,11 @@
   [out : (&mut out (__tl_dyn-array OptGvnBlockResult))]
   [id : i64]) : unit
   (let
-    [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
-    [count : i64 (opt-cfg-index-block-count index)]
+    [count : i64 (opt-cfg-index-block-count env.index)]
     (if (and (>= id 0) (< id count))
       (let
-        [label : i64 (array-ref index.labels id)]
-        (match (opt-cfg-index-block index id)
+        [label : i64 (array-ref env.index.labels id)]
+        (match (opt-cfg-index-block env.index id)
           [(OptMaybeBlock.No) unit]
           [(OptMaybeBlock.Some block)
             (match block
@@ -61763,29 +60725,13 @@
                 ;; what deletes.
                 (let
                   [instrs : ir.CompilerIrInstrSeq
-                    (opt-bounds-dom-widen-instrs
-                      type-segment-bases
-                      defs
-                      phi-defs
-                      copies
-                      sources
-                      raw-instrs
-                      4)]
+                    (opt-bounds-dom-widen-instrs env raw-instrs 4)]
                   (match (opt-bounds-dom-instrs-from
-                    type-segment-bases
-                    defs
-                    phi-defs
-                    terms
-                    var-facts
-                    (compiler-opt-global-shared-view checks)
-                    index
-                    context.doms
+                    env
                     label
                     id
                     cmp-facts
                     facts
-                    sources
-                    copies
                     slice-lengths
                     (compiler-opt-global-shared-view len-eq)
                     (compiler-opt-global-shared-view instrs)
@@ -61803,30 +60749,15 @@
                               ;; recursion below reaches next, since a block
                               ;; entered only from here is its dominator child.
                               (opt-bounds-dom-range-merge-block
-                                type-segment-bases
-                                (compiler-opt-global-shared-view context)
-                                defs
-                                phi-defs
-                                var-facts
-                                checks
-                                sources
-                                copies
+                                env
                                 (compiler-opt-global-shared-view range)
                                 (compiler-opt-global-shared-view out-cmp-facts)
                                 (compiler-opt-global-shared-view out-facts)
                                 id
                                 rewritten))))
                         (opt-bounds-dom-rewrite-children
-                          type-segment-bases
-                          context
+                          env
                           children
-                          defs
-                          phi-defs
-                          terms
-                          var-facts
-                          checks
-                          sources
-                          copies
                           slice-lengths
                           len-eq
                           range
@@ -61846,12 +60777,11 @@
 ;; path at all. A loop header satisfies this -- its preds are the guard block and
 ;; its own latch -- which is what lets a loop-invariant guard fact reach the body.
 (define (opt-bounds-dom-child-entered-only-via?
-  [info : (& info OptDomInfo)]
-  [index : OptCfgIndex]
+  [env : (& env OptBoundsDomEnv)]
   [parent-id : i64]
   [child-id : i64]) : bool
   (let
-    [preds : OptCfgCsr index.preds]
+    [preds : OptCfgCsr env.index.preds]
     [offsets : (__tl_dyn-array i64) preds.offsets]
     [edges : (__tl_dyn-array i64) preds.edges]
     (if (or (< child-id 0) (>= (+ child-id 1) (array-length offsets)))
@@ -61867,8 +60797,8 @@
                 [pred : i64 (array-ref edges edge)]
                 (if (or
                   (= pred parent-id)
-                  (not (array-ref index.reachable pred))
-                  (opt-dom-info-dominates-id? info child-id pred))
+                  (not (array-ref env.index.reachable pred))
+                  (opt-dom-info-dominates-id? env.doms child-id pred))
                   unit
                   (set! only false)))
               (set! edge (+ edge 1))))
@@ -61878,11 +60808,7 @@
 ;; condition for a target the branch is the ONLY way into. A target reachable
 ;; without taking this edge keeps the parent's facts unchanged.
 (define (opt-bounds-dom-child-cmp-facts
-  [info : OptDomInfo]
-  [index : OptCfgIndex]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
+  [env : (& env OptBoundsDomEnv)]
   [cmp-facts : OptDomCmpFacts]
   [parent-instrs : ir.CompilerIrInstrSeq]
   [parent-id : i64]
@@ -61891,52 +60817,25 @@
     [count : i64 (ir.compiler-ir-instr-seq-count parent-instrs)]
     (if (or
       (< count 1)
-      (not
-        (opt-bounds-dom-child-entered-only-via?
-          info
-          (compiler-opt-global-shared-view index)
-          parent-id
-          child-id)))
+      (not (opt-bounds-dom-child-entered-only-via? env parent-id child-id)))
       cmp-facts
       (match (ir.compiler-ir-instr-seq-ref parent-instrs (- count 1))
         [(ir.CompilerIrInstr.Branch cond true-label false-label)
           (let
-            [child-label : i64 (array-ref index.labels child-id)]
+            [child-label : i64 (array-ref env.index.labels child-id)]
             (cond
               ;; A branch whose edges share one label decides nothing about it.
               [(= true-label false-label) cmp-facts]
               [(= child-label true-label)
-                (opt-dom-cmp-edge-fact
-                  defs
-                  copies
-                  sources
-                  cond
-                  true
-                  child-id
-                  cmp-facts)]
+                (opt-dom-cmp-edge-fact env cond true child-id cmp-facts)]
               [(= child-label false-label)
-                (opt-dom-cmp-edge-fact
-                  defs
-                  copies
-                  sources
-                  cond
-                  false
-                  child-id
-                  cmp-facts)]
+                (opt-dom-cmp-edge-fact env cond false child-id cmp-facts)]
               [else cmp-facts]))]
         [_ cmp-facts]))))
 
 (define (opt-bounds-dom-rewrite-children
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
+  [env : (& env OptBoundsDomEnv)]
   [children : (& children OptCfgCsr)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [terms : (& terms (__tl_dyn-array OptBoolBranchDef))]
-  [var-facts : (& var-facts (__tl_dyn-array i64))]
-  [checks : OptBoundsDomChecks]
-  [sources : (& sources OptValueSources)]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [slice-lengths : (& slice-lengths opt_i64_i64_map.Map)]
   [len-eq : OptLenEqUse]
   [range : OptRangeMergeState]
@@ -61947,7 +60846,6 @@
   [parent-id : i64]
   [parent-instrs : ir.CompilerIrInstrSeq]) : unit
   (let
-    [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
     [offsets (& children.offsets)]
     [edges (& children.edges)]
     [edge : i64 (array-ref offsets parent-id)]
@@ -61958,25 +60856,13 @@
           (let
             [child-id : i64 (array-ref edges edge)]
             (opt-bounds-dom-rewrite-id
-              type-segment-bases
-              (compiler-opt-global-shared-view context)
+              env
               children
-              defs
-              phi-defs
-              terms
-              var-facts
-              (compiler-opt-global-shared-view checks)
-              sources
-              copies
               slice-lengths
               (compiler-opt-global-shared-view len-eq)
               (compiler-opt-global-shared-view range)
               (opt-bounds-dom-child-cmp-facts
-                context.doms
-                (compiler-opt-global-shared-view index)
-                defs
-                sources
-                copies
+                env
                 (compiler-opt-global-shared-view cmp-facts)
                 (compiler-opt-global-shared-view parent-instrs)
                 parent-id
@@ -62545,6 +61431,19 @@
         sources
         frame
         (compiler-opt-global-shared-view blocks))]
+    [env : OptBoundsDomEnv
+      (OptBoundsDomEnv
+        type-segment-bases
+        (compiler-opt-global-shared-view context)
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view doms)
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-shared-view phi-defs)
+        (compiler-opt-global-shared-view terms)
+        (compiler-opt-global-shared-view var-facts)
+        (compiler-opt-global-shared-view checks)
+        (compiler-opt-global-shared-view copies)
+        (compiler-opt-global-shared-view sources))]
     [out : (__tl_dyn-array OptGvnBlockResult)
       (__tl_make-array OptGvnBlockResult count)]
     [next-var : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -62556,9 +61455,7 @@
           (compiler-opt-global-shared-view blocks))
         (__tl_make-array bool frame)
         (opt-bounds-dom-range-known-nonneg
-          type-segment-bases
-          phi-defs
-          copies
+          env
           nonneg
           frame
           (compiler-opt-global-shared-view blocks))
@@ -62573,28 +61470,13 @@
         (compiler-opt-global-shared-view blocks))
       ;; Decide every derived value at its own definition site first; the walk
       ;; below reads the answers wherever it needs them.
-      (opt-bounds-dom-nonneg-prepass!
-        type-segment-bases
-        (compiler-opt-global-shared-view context)
-        children
-        defs
-        sources
-        copies
-        (&mut var-facts))
+      (opt-bounds-dom-nonneg-prepass! env children (&mut var-facts))
       (match (opt-cfg-index-id index context.entry-label)
         [(option_i64.Some entry-id)
           (if (and (>= entry-id 0) (array-ref index.reachable entry-id))
             (opt-bounds-dom-rewrite-id
-              type-segment-bases
-              context
+              env
               children
-              defs
-              phi-defs
-              terms
-              var-facts
-              checks
-              sources
-              copies
               slice-lengths
               len-eq-blocks
               range

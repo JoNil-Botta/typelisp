@@ -3,9 +3,10 @@
 # The corpus spec is line-oriented and permits repeated message-check keys.
 # Keep their order and fixed-string semantics; a JSON object map would lose checks.
 check_corpus_result() {
+    # Disable Windows text I/O translation; exact() owns CR normalization.
     CORPUS_SPEC=$1 CORPUS_OUT=$2 CORPUS_ERR=$3 CORPUS_CODE=$4 \
     CORPUS_MESSAGES=$5 CORPUS_TMP=$6 CORPUS_URI=$7 CORPUS_HOST=$8 \
-    LC_ALL=C awk '
+    LC_ALL=C awk -v BINMODE=3 '
 function read_file(path,    text, status) {
     # A nonempty file cannot match ^$: preserve final newlines for exact checks
     # and wc -l semantics, including a final unterminated message.

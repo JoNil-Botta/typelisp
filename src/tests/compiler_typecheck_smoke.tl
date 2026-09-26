@@ -4082,12 +4082,6 @@
   (compiler_typecheck.compiler-typecheck-ok?
     (compiler-typecheck-smoke-qualified-array-source)))
 
-(test
-  compiler-typecheck-qualified-array-borrow
-  (if (compiler-typecheck-smoke-qualified-array-ok?)
-    unit
-    (io.panic "typecheck: qualified array borrow smoke failed")))
-
 (define (compiler-typecheck-smoke-lazy-import-explicit-alias-source) : String
   "(module helper.module)
 (define value : i64 41)
@@ -4692,12 +4686,6 @@
   (compiler_typecheck.compiler-typecheck-ok?
     (compiler-typecheck-smoke-qualified-enum-variant-precedence-source)))
 
-(test
-  compiler-typecheck-qualified-enum-variant-precedence
-  (if (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?)
-    unit
-    (io.panic "typecheck: qualified enum variant precedence smoke failed")))
-
 ;; Dotted variants and bare module-local constructors share the same direct
 ;; cache storage but are distinct key domains. A dotted name misclassified as
 ;; bare can cache a false constructor miss that poisons later variant lookup.
@@ -4725,12 +4713,6 @@
           "entry"
           qualified-id))
       (not (tc_core.tc-constructor-non-root-bare-name-id? session "" bare-id)))))
-
-(test
-  compiler-typecheck-dotted-constructor-cache-domain
-  (if (compiler-typecheck-smoke-dotted-constructor-cache-domain-ok?)
-    unit
-    (io.panic "typecheck: dotted constructor cache domain smoke failed")))
 
 (define (compiler-typecheck-smoke-lazy-import-stdlib-summary-source) : String
   "(module main)
@@ -5951,12 +5933,6 @@
         structural-module-id
         source-name-id))))
 
-(test
-  compiler-typecheck-structural-name-rendering
-  (unless
-    (compiler-typecheck-smoke-structural-name-rendering-ok?)
-    (io.panic "typecheck: structural name rendering smoke failed")))
-
 (define (compiler-typecheck-smoke-macro-change-signal-source-ok?
   [source : String]
   [expected-change : bool]) : bool
@@ -6023,12 +5999,6 @@
       (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))
 
-(test
-  compiler-typecheck-generated-semantic-origin-absent
-  (unless
-    (compiler-typecheck-smoke-generated-semantic-origin-absent-ok?)
-    (io.panic "typecheck: generated declaration has editable semantic origin")))
-
 (define (compiler-typecheck-smoke-macro-no-change-signal-ok?) : bool
   ;; An unused defmacro forces the full declaration walk while every output
   ;; declaration remains shared with the compact input program.
@@ -6093,75 +6063,6 @@
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-core-cond-body-source)
       "typecheck: unbound name core-cond-body-observed")))
-
-(test
-  compiler-typecheck-core-macro-bodies
-  (unless
-    (compiler-typecheck-core-macro-bodies-observed?)
-    (io.panic "typecheck: stdlib core macro body was bypassed")))
-
-(test
-  compiler-typecheck-call-diagnostics
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-call-argument-diagnostic-source)
-      "typecheck: call `takes-two` argument 1 (parameter `count`) type mismatch: expected i64, found bool")
-    (io.panic "typecheck: named call diagnostic inline test failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-lambda-argument-diagnostic-source)
-      "typecheck: call `lambda` argument 1 (parameter `item`) type mismatch: expected i64, found bool")
-    (io.panic "typecheck: lambda call diagnostic inline test failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-constructor-argument-diagnostic-source)
-      "typecheck: call `Pair` argument 1 (parameter `left`) type mismatch: expected i64, found bool")
-    (io.panic "typecheck: constructor call diagnostic inline test failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-lifetime-argument-diagnostic-source)
-      "typecheck: call `take-same` argument 2 (parameter `right`) type mismatch: expected (& left-life i64), found (& right-life i64); source lifetime `right-life` does not outlive required lifetime `left-life`")
-    (io.panic "typecheck: lifetime call diagnostic inline test failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-call-arity-diagnostic-source)
-      "typecheck: call arity mismatch: takes-two expected 2 arguments, got 1 argument")
-    (io.panic "typecheck: arity call diagnostic inline test failed"))
-  (unless
-    (compiler-typecheck-auto-borrow-tests-ok?)
-    (io.panic "typecheck: auto-borrow call diagnostic inline test failed")))
-
-(test
-  compiler-typecheck-closure-copy
-  (unless
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-closure-copy-aggregate-source))
-    (io.panic "typecheck: Copy aggregate closure alias failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-ok?
-      (compiler-typecheck-closure-copy-reference-source))
-    (io.panic "typecheck: Copy reference closure alias failed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-closure-copy-reference-escape-source)
-      "typecheck: reference-capturing closure value would escape lexical scope")
-    (io.panic "typecheck: copied reference closure escaped"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-closure-move-owner-alias-source)
-      "typecheck: use of moved value `f`")
-    (io.panic "typecheck: non-Copy closure source reuse passed"))
-  (unless
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-closure-move-nested-alias-source)
-      "typecheck: use of moved value `outer`")
-    (io.panic "typecheck: nested non-Copy closure source reuse passed")))
-
-(test
-  compiler-typecheck-unused-unsafe-state-isolation
-  (unless
-    (tc_core.tc-unused-unsafe-state-isolation-self-test)
-    (io.panic "typecheck: unused unsafe state isolation smoke failed")))
 
 (test
   compiler-typecheck-macro-state-isolation

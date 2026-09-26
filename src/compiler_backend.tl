@@ -3159,7 +3159,7 @@
         (compiler-backend-global-shared-view empty-i64-array)
         (compiler-backend-global-shared-view empty-bool-array)
         (compiler-backend-global-shared-view empty-string-array)
-        (compiler-backend-global-shared-view empty-scratch-assignment-index))]
+        empty-scratch-assignment-index)]
     [scratch-index : i64 0]
     [cell : (__tl_dyn-array CompilerBackendFunctionStateData)
       (__tl_make-array CompilerBackendFunctionStateData 1)]
@@ -5099,11 +5099,7 @@
             (compiler-backend-global-shared-view exclude0)
             (compiler-backend-global-shared-view exclude1)
             (compiler-backend-global-shared-view exclude2)))
-        (not
-          (compiler-backend-plan-uses-reg?
-            backend-state
-            (compiler-backend-global-shared-view assignments)
-            home)))
+        (not (compiler-backend-plan-uses-reg? backend-state assignments home)))
         (ResultBackendReg.Ok reg)
         (compiler-backend-vector-temp-zmm-iter
           backend-state
@@ -5407,7 +5403,7 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Var var)
       (match (compiler-backend-mask-var-stack-operand
-        (compiler-backend-global-shared-view assignments)
+        assignments
         var
         backend-state)
         [(CompilerBackendMaybeStackOperand.Some operand)
@@ -5437,10 +5433,7 @@
   [role : String]
   [scratch : String]
   [backend-state : CompilerBackendState]) : ResultBackendReg
-  (match (compiler-backend-mask-var-stack-operand
-    (compiler-backend-global-shared-view assignments)
-    dst
-    backend-state)
+  (match (compiler-backend-mask-var-stack-operand assignments dst backend-state)
     [(CompilerBackendMaybeStackOperand.Some _) (ResultBackendReg.Ok scratch)]
     [(CompilerBackendMaybeStackOperand.No)
       (compiler-backend-mask-var-reg backend-state assignments dst role)]))
@@ -5714,7 +5707,7 @@
     [tmp0 : String "%ymm0"]
     [tmp1 : String "%ymm1"]
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       lhs
       "word shift lhs"
       "ymm"
@@ -5725,7 +5718,7 @@
         (match lhs-use
           [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
             (match (compiler-backend-vector-register-use
-              (compiler-backend-global-shared-view assignments)
+              assignments
               rhs
               "word shift rhs"
               "ymm"
@@ -5736,7 +5729,7 @@
                 (match rhs-use
                   [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
                     (match (compiler-backend-vector-dst-reg
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       "word shift dst"
                       "ymm"
@@ -5952,7 +5945,7 @@
         "vpord"
         "vpor")]
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       lhs
       "byte shift lhs"
       (compiler-backend-global-shared-view width)
@@ -5965,7 +5958,7 @@
         (match lhs-use
           [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
             (match (compiler-backend-vector-register-use
-              (compiler-backend-global-shared-view assignments)
+              assignments
               rhs
               "byte shift rhs"
               (compiler-backend-global-shared-view width)
@@ -5978,7 +5971,7 @@
                 (match rhs-use
                   [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
                     (match (compiler-backend-vector-dst-reg
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       "byte shift dst"
                       (compiler-backend-global-shared-view width)
@@ -6319,7 +6312,7 @@
         "vpord"
         "vpor")]
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       lhs
       "byte multiply lhs"
       (compiler-backend-global-shared-view width)
@@ -6332,7 +6325,7 @@
         (match lhs-use
           [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
             (match (compiler-backend-vector-register-use
-              (compiler-backend-global-shared-view assignments)
+              assignments
               rhs
               "byte multiply rhs"
               (compiler-backend-global-shared-view width)
@@ -6345,7 +6338,7 @@
                 (match rhs-use
                   [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
                     (match (compiler-backend-vector-dst-reg
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       "byte multiply dst"
                       (compiler-backend-global-shared-view width)
@@ -6515,7 +6508,7 @@
     [home : String
       (compiler-backend-simd-base-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view base))]
     (if (string.eq home "")
       (compiler-backend-emit-load-value-with-plan
@@ -6539,12 +6532,12 @@
     [base-home : String
       (compiler-backend-simd-base-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view base))]
     [addr-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view base)
         (compiler-backend-global-shared-view index))]
     [base-reg : String
@@ -6578,7 +6571,7 @@
           [index-home : String
             (compiler-backend-simd-index-home
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view index))]
           [index-exclude : (__tl_dyn-array String)
             (compiler-backend-scavenge-exclude-append
@@ -6595,7 +6588,7 @@
                 backend-state)
               index-home)]
           (match (compiler-backend-emit-simd-base-data-pointer
-            (compiler-backend-global-shared-view assignments)
+            assignments
             base
             (compiler-backend-global-shared-view base-reg)
             backend-state)
@@ -6642,7 +6635,7 @@
     (compiler-backend-global-shared-view elem-ty)
     lanes)
     (match (compiler-backend-vector-dst-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       "load dst"
       "ymm"
@@ -6651,7 +6644,7 @@
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           base
           index
           (compiler-backend-global-shared-view elem-ty)
@@ -6759,7 +6752,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-splat-memory-load
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-global-shared-view value)
     (compiler-backend-global-shared-view elem-ty)
     backend-state)
@@ -6957,7 +6950,7 @@
     (compiler-backend-global-shared-view elem-ty)
     lanes)
     (match (compiler-backend-vector-dst-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       "splat dst"
       "ymm"
@@ -6965,7 +6958,7 @@
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-avx2-splat-load
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           value
           (compiler-backend-global-shared-view elem-ty)
@@ -7009,7 +7002,7 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-vector-register-use
-    (compiler-backend-global-shared-view assignments)
+    assignments
     lhs
     "lhs"
     "ymm"
@@ -7020,7 +7013,7 @@
       (match lhs-use
         [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
           (match (compiler-backend-vector-register-use
-            (compiler-backend-global-shared-view assignments)
+            assignments
             rhs
             "rhs"
             "ymm"
@@ -7031,7 +7024,7 @@
               (match rhs-use
                 [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
                   (match (compiler-backend-vector-dst-reg
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     dst
                     "binop dst"
                     "ymm"
@@ -7099,7 +7092,7 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-vector-register-use
-    (compiler-backend-global-shared-view assignments)
+    assignments
     lhs
     "lhs"
     "ymm"
@@ -7110,7 +7103,7 @@
       (match lhs-use
         [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
           (match (compiler-backend-vector-register-use
-            (compiler-backend-global-shared-view assignments)
+            assignments
             rhs
             "rhs"
             "ymm"
@@ -7121,7 +7114,7 @@
               (match rhs-use
                 [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
                   (match (compiler-backend-vector-dst-reg
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     dst
                     "binop dst"
                     "ymm"
@@ -7258,7 +7251,7 @@
                 "backend: unsupported AVX2 vector binary op")))]
         [else
           (match (compiler-backend-vector-register-use
-            (compiler-backend-global-shared-view assignments)
+            assignments
             lhs
             "lhs"
             "ymm"
@@ -7269,7 +7262,7 @@
               (match lhs-use
                 [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
                   (match (compiler-backend-vector-memory-or-register-use
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     rhs
                     "rhs"
                     "ymm"
@@ -7279,7 +7272,7 @@
                       (match rhs-use
                         [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
                           (match (compiler-backend-vector-dst-reg
-                            (compiler-backend-global-shared-view assignments)
+                            assignments
                             dst
                             "binop dst"
                             "ymm"
@@ -7359,7 +7352,7 @@
               instr-diag
               "backend: unsupported AVX2 vector binary op")))
         (match (compiler-backend-vector-register-use
-          (compiler-backend-global-shared-view assignments)
+          assignments
           reg-value
           "memory binop register operand"
           "ymm"
@@ -7370,7 +7363,7 @@
             (match reg-use
               [(CompilerBackendVectorUse.Use reg-asm reg)
                 (match (compiler-backend-vector-dst-reg
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   dst
                   "binop dst"
                   "ymm"
@@ -7379,7 +7372,7 @@
                   [(ResultBackendReg.Ok dst-reg)
                     (match (compiler-backend-emit-simd-indexed-address
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       base
                       index
                       (compiler-backend-global-shared-view elem-ty)
@@ -7447,7 +7440,7 @@
     (compiler-backend-global-shared-view elem-ty)
     lanes)
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       value
       "store value"
       "ymm"
@@ -7636,7 +7629,7 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Var var)
       (match (compiler-backend-vector-var-stack-operand
-        (compiler-backend-global-shared-view assignments)
+        assignments
         var
         backend-state)
         [(CompilerBackendMaybeStackOperand.Some operand)
@@ -7672,7 +7665,7 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Var var)
       (match (compiler-backend-vector-var-stack-operand
-        (compiler-backend-global-shared-view assignments)
+        assignments
         var
         backend-state)
         [(CompilerBackendMaybeStackOperand.Some operand)
@@ -7700,7 +7693,7 @@
   [scratch : String]
   [backend-state : CompilerBackendState]) : ResultBackendReg
   (match (compiler-backend-vector-var-stack-operand
-    (compiler-backend-global-shared-view assignments)
+    assignments
     dst
     backend-state)
     [(CompilerBackendMaybeStackOperand.Some _) (ResultBackendReg.Ok scratch)]
@@ -7865,7 +7858,7 @@
         (compiler-backend-global-shared-view width)
         1)]
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       src
       "copy source"
       (compiler-backend-global-shared-view width)
@@ -7876,7 +7869,7 @@
         (match source-use
           [(CompilerBackendVectorUse.Use load-asm source-reg)
             (match (compiler-backend-vector-dst-reg
-              (compiler-backend-global-shared-view assignments)
+              assignments
               dst
               "copy destination"
               (compiler-backend-global-shared-view width)
@@ -7925,7 +7918,7 @@
   (let
     [scratch : String (compiler-backend-mask-spill-scratch 0)]
     (match (compiler-backend-avx512-mask-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       src
       "copy source"
       lanes
@@ -7935,7 +7928,7 @@
         (match source-use
           [(CompilerBackendMaskUse.Use load-asm source-reg)
             (match (compiler-backend-avx512-mask-dst-reg
-              (compiler-backend-global-shared-view assignments)
+              assignments
               dst
               "copy destination"
               scratch
@@ -8101,7 +8094,7 @@
   [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-splat-memory-load
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-global-shared-view value)
     (compiler-backend-global-shared-view elem-ty)
     backend-state)
@@ -8452,7 +8445,7 @@
     (compiler-backend-global-shared-view elem-ty)
     lanes)
     (match (compiler-backend-vector-dst-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       "lane id dst"
       "zmm"
@@ -8485,7 +8478,7 @@
       (compiler-backend-global-shared-view elem-ty)
       lanes)
       (match (compiler-backend-vector-dst-reg
-        (compiler-backend-global-shared-view assignments)
+        assignments
         dst
         "lane id dst"
         "ymm"
@@ -8534,7 +8527,7 @@
     (compiler-backend-global-shared-view elem-ty)
     lanes)
     (match (compiler-backend-vector-dst-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       "load dst"
       "zmm"
@@ -8543,7 +8536,7 @@
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           base
           index
           (compiler-backend-global-shared-view elem-ty)
@@ -8603,7 +8596,7 @@
     (compiler-backend-global-shared-view elem-ty)
     lanes)
     (match (compiler-backend-vector-dst-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       "splat dst"
       "zmm"
@@ -8611,7 +8604,7 @@
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-avx512-splat-load
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           value
           (compiler-backend-global-shared-view elem-ty)
@@ -8733,7 +8726,7 @@
                 "backend: unsupported AVX-512 vector binary op")))]
         [else
           (match (compiler-backend-vector-register-use
-            (compiler-backend-global-shared-view assignments)
+            assignments
             lhs
             "lhs"
             "zmm"
@@ -8744,7 +8737,7 @@
               (match lhs-use
                 [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
                   (match (compiler-backend-vector-memory-or-register-use
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     rhs
                     "rhs"
                     "zmm"
@@ -8754,7 +8747,7 @@
                       (match rhs-use
                         [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
                           (match (compiler-backend-vector-dst-reg
-                            (compiler-backend-global-shared-view assignments)
+                            assignments
                             dst
                             "binop dst"
                             "zmm"
@@ -8832,7 +8825,7 @@
               instr-diag
               "backend: unsupported AVX-512 vector binary op")))
         (match (compiler-backend-vector-register-use
-          (compiler-backend-global-shared-view assignments)
+          assignments
           reg-value
           "memory binop register operand"
           "zmm"
@@ -8843,7 +8836,7 @@
             (match reg-use
               [(CompilerBackendVectorUse.Use reg-asm reg)
                 (match (compiler-backend-vector-dst-reg
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   dst
                   "binop dst"
                   "zmm"
@@ -8852,7 +8845,7 @@
                   [(ResultBackendReg.Ok dst-reg)
                     (match (compiler-backend-emit-simd-indexed-address
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       base
                       index
                       (compiler-backend-global-shared-view elem-ty)
@@ -8934,7 +8927,7 @@
               instr-diag
               "backend: unsupported AVX-512 vector compare")))
         (match (compiler-backend-vector-register-use
-          (compiler-backend-global-shared-view assignments)
+          assignments
           lhs
           "cmp lhs"
           "zmm"
@@ -8945,7 +8938,7 @@
             (match lhs-use
               [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
                 (match (compiler-backend-vector-memory-or-register-use
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   rhs
                   "cmp rhs"
                   "zmm"
@@ -8955,7 +8948,7 @@
                     (match rhs-use
                       [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
                         (match (compiler-backend-avx512-mask-dst-reg
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           dst
                           "cmp dst"
                           (compiler-backend-mask-spill-scratch 0)
@@ -9291,7 +9284,7 @@
     (compiler-backend-global-shared-view elem-ty)
     lanes)
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       lhs
       "cmp lhs"
       "ymm"
@@ -9302,7 +9295,7 @@
         (match lhs-use
           [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
             (match (compiler-backend-vector-register-use
-              (compiler-backend-global-shared-view assignments)
+              assignments
               rhs
               "cmp rhs"
               "ymm"
@@ -9313,7 +9306,7 @@
                 (match rhs-use
                   [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
                     (match (compiler-backend-vector-dst-reg
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       "cmp dst"
                       "ymm"
@@ -9441,7 +9434,7 @@
     (compiler-backend-global-shared-view elem-ty)
     lanes)
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       value
       "store value"
       "zmm"
@@ -9570,7 +9563,7 @@
   (if (not lane-offset)
     (ResultBackendGatherAdjust.Ok (CompilerBackendGatherAdjust "" ""))
     (match (compiler-backend-avx2-splat-load
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       (compiler-backend-global-shared-view logical-base)
       (compiler_ast_types.AstType.I64)
@@ -9613,7 +9606,7 @@
   (if (not lane-offset)
     (ResultBackendGatherAdjust.Ok (CompilerBackendGatherAdjust "" ""))
     (match (compiler-backend-avx512-splat-load
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       (compiler-backend-global-shared-view logical-base)
       (compiler_ast_types.AstType.I64)
@@ -9680,7 +9673,7 @@
         elem-ty
         lanes)
       (match (compiler-backend-vector-dst-reg
-        (compiler-backend-global-shared-view assignments)
+        assignments
         dst
         "gather dst"
         "ymm"
@@ -9689,7 +9682,7 @@
         [(ResultBackendReg.Ok dst-reg)
           (match (compiler-backend-emit-simd-indexed-address
             type-segment-bases
-            (compiler-backend-global-shared-view assignments)
+            assignments
             index-base
             (compiler-backend-gather-address-index
               (compiler-backend-global-shared-view index)
@@ -9704,7 +9697,7 @@
                   (compiler-backend-scavenge-reg-here
                     (compiler-backend-scavenge-exclude-ops2
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-global-shared-view base)
                       (compiler-backend-global-shared-view base))
                     7
@@ -9725,13 +9718,13 @@
                     32)]
                 [result-off : i64 96]
                 (match (compiler-backend-emit-simd-base-data-pointer
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   base
                   (compiler-backend-global-shared-view base-reg)
                   backend-state)
                   [(ResultCompilerBackend.Ok base-asm)
                     (match (compiler-backend-emit-avx2-gather-adjustments
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       index
                       lane-offset
@@ -9888,7 +9881,7 @@
         elem-ty
         lanes)
       (match (compiler-backend-vector-dst-reg
-        (compiler-backend-global-shared-view assignments)
+        assignments
         dst
         "gather dst"
         "zmm"
@@ -9897,7 +9890,7 @@
         [(ResultBackendReg.Ok dst-reg)
           (match (compiler-backend-emit-simd-indexed-address
             type-segment-bases
-            (compiler-backend-global-shared-view assignments)
+            assignments
             index-base
             (compiler-backend-gather-address-index
               (compiler-backend-global-shared-view index)
@@ -9912,7 +9905,7 @@
                   (compiler-backend-scavenge-reg-here
                     (compiler-backend-scavenge-exclude-ops2
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-global-shared-view base)
                       (compiler-backend-global-shared-view base))
                     7
@@ -9922,13 +9915,13 @@
                   (compiler-backend-vector-reg-lower-ymm
                     (compiler-backend-global-shared-view dst-reg))]
                 (match (compiler-backend-emit-simd-base-data-pointer
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   base
                   (compiler-backend-global-shared-view base-reg)
                   backend-state)
                   [(ResultCompilerBackend.Ok base-asm)
                     (match (compiler-backend-emit-avx512-gather-adjustments
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       index
                       lane-offset
@@ -10331,7 +10324,7 @@
       (match (compiler-backend-global-shared-view selector-high)
         [(compiler_ir_types.CompilerIrMaybeValue.Some high-value)
           (match (compiler-backend-vector-register-use
-            (compiler-backend-global-shared-view assignments)
+            assignments
             high-value
             "shuffle selector high"
             (compiler-backend-global-shared-view width)
@@ -10362,7 +10355,7 @@
         (compiler_ir_types.CompilerIrCallArgs.Nil)
         (compiler_ast_types.ast-type-list-new)
         false
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     (if (not shape-ok)
       (compiler-backend-avx2-shape-diagnostic
         type-segment-bases
@@ -10384,7 +10377,7 @@
                 "backend: 32-bit vector shuffle is missing its high selector half"
                 high-error))))
         (match (compiler-backend-vector-register-use
-          (compiler-backend-global-shared-view assignments)
+          assignments
           source
           "shuffle source"
           (compiler-backend-global-shared-view width)
@@ -10395,7 +10388,7 @@
             (match source-use
               [(CompilerBackendVectorUse.Use source-asm source-reg)
                 (match (compiler-backend-vector-register-use
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   selector-low
                   "shuffle selector low"
                   (compiler-backend-global-shared-view width)
@@ -10406,7 +10399,7 @@
                     (match low-use
                       [(CompilerBackendVectorUse.Use low-asm low-reg)
                         (match (compiler-backend-vector-dst-reg
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           dst
                           "shuffle dst"
                           (compiler-backend-global-shared-view width)
@@ -10414,7 +10407,7 @@
                           program-index.backend-state)
                           [(ResultBackendReg.Ok dst-reg)
                             (match (compiler-backend-emit-load-value-with-plan
-                              (compiler-backend-global-shared-view assignments)
+                              assignments
                               active-lanes
                               (compiler-backend-global-shared-view active-reg)
                               program-index.backend-state)
@@ -10425,8 +10418,7 @@
                                       [(compiler_ir_types.CompilerIrMaybeValue.Some
                                           high-value)
                                         (match (compiler-backend-vector-register-use
-                                          (compiler-backend-global-shared-view
-                                            assignments)
+                                          assignments
                                           high-value
                                           "shuffle selector high"
                                           (compiler-backend-global-shared-view
@@ -10574,8 +10566,7 @@
                                       (compiler-backend-call-symbol-index
                                         cbi.compiler-builtin-id-tl-oob-abort
                                         plan
-                                        (compiler-backend-global-shared-view
-                                          program-index))
+                                        program-index)
                                       "\n"
                                       (compiler-backend-emit-call-space-add
                                         call-space)
@@ -11172,7 +11163,7 @@
     [exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view carry)
         compiler_ir_types.CompilerIrValue.Unit)]
     [gp-reg : String
@@ -11242,7 +11233,7 @@
         (compiler-backend-global-shared-view work0-xmm)
         "ymm")]
     (match (compiler-backend-splat-memory-load
-      (compiler-backend-global-shared-view assignments)
+      assignments
       (compiler-backend-global-shared-view carry)
       (compiler-backend-global-shared-view elem-ty)
       backend-state)
@@ -11253,7 +11244,7 @@
           [exclude : (__tl_dyn-array String)
             (compiler-backend-scavenge-exclude-ops2
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view carry)
               compiler_ir_types.CompilerIrValue.Unit)]
           [gp-reg : String
@@ -11341,7 +11332,7 @@
       [dst-scratch : String
         (compiler-backend-xmm-spelling-family-register dst-scratch-xmm "ymm")]
       (match (compiler-backend-vector-dst-reg
-        (compiler-backend-global-shared-view assignments)
+        assignments
         dst
         "prefix dst"
         "ymm"
@@ -11349,7 +11340,7 @@
         backend-state)
         [(ResultBackendReg.Ok dst-reg)
           (match (compiler-backend-vector-register-use
-            (compiler-backend-global-shared-view assignments)
+            assignments
             src
             "prefix source"
             "ymm"
@@ -11387,7 +11378,7 @@
                     (match (compiler-backend-global-shared-view elem-ty)
                       [(compiler_ast_types.AstType.Bool)
                         (match (compiler-backend-avx2-vector-prefix-bool-carry
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           carry
                           (compiler-backend-global-shared-view dst-reg)
                           op
@@ -11402,8 +11393,7 @@
                                 prefix-asm
                                 carry-asm
                                 (compiler-backend-vector-store-dst
-                                  (compiler-backend-global-shared-view
-                                    assignments)
+                                  assignments
                                   dst
                                   "ymm"
                                   register-ty
@@ -11417,7 +11407,7 @@
                                   instr-diag)))])]
                       [_
                         (match (compiler-backend-avx2-vector-prefix-numeric-carry
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           carry
                           (compiler-backend-global-shared-view elem-ty)
                           planned-gp
@@ -11788,7 +11778,7 @@
     [exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view src)
         (compiler-backend-global-shared-view carry))]
     [carry-gp : String
@@ -11814,7 +11804,7 @@
         backend-state)]
     [mask-move : String (compiler-backend-avx512-mask-move-mnemonic lanes)]
     (match (compiler-backend-avx512-mask-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       src
       "vector prefix source"
       lanes
@@ -11824,14 +11814,14 @@
         (match src-use
           [(CompilerBackendMaskUse.Use src-asm src-reg)
             (match (compiler-backend-avx512-mask-dst-reg
-              (compiler-backend-global-shared-view assignments)
+              assignments
               dst
               "vector prefix dst"
               (compiler-backend-mask-spill-scratch 0)
               backend-state)
               [(ResultBackendReg.Ok dst-reg)
                 (match (compiler-backend-emit-load-value-with-plan
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   carry
                   (compiler-backend-global-shared-view carry-gp)
                   backend-state)
@@ -11909,7 +11899,7 @@
     [dst-scratch : String
       (compiler-backend-xmm-spelling-family-register dst-scratch-xmm "zmm")]
     (match (compiler-backend-vector-dst-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       "vector prefix dst"
       "zmm"
@@ -11917,7 +11907,7 @@
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-vector-register-use
-          (compiler-backend-global-shared-view assignments)
+          assignments
           src
           "vector prefix source"
           "zmm"
@@ -11938,7 +11928,7 @@
                         (compiler-backend-global-shared-view dst-reg)
                         "\n"))]
                   (match (compiler-backend-avx512-splat-load
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     dst
                     carry
                     (compiler-backend-global-shared-view elem-ty)
@@ -12067,7 +12057,7 @@
     [operand-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view src)
         (compiler-backend-global-shared-view carry))]
     [dst-exclude : (__tl_dyn-array String)
@@ -12274,12 +12264,12 @@
     [index-home : String
       (compiler-backend-simd-index-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view index))]
     [index-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view index)
         (compiler-backend-global-shared-view end-value))]
     [index-reg : String
@@ -12308,7 +12298,7 @@
     (match (if (string.eq index-reg index-home)
       (ResultCompilerBackend.Ok "")
       (compiler-backend-emit-load-value-with-plan
-        (compiler-backend-global-shared-view assignments)
+        assignments
         index
         (compiler-backend-global-shared-view index-reg)
         backend-state))
@@ -12471,7 +12461,7 @@
       (compiler_ast_types.AstType.I64)
       lanes)
     (match (compiler-backend-avx512-mask-dst-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       "tail mask dst"
       (compiler-backend-mask-spill-scratch 0)
@@ -12500,7 +12490,7 @@
                 (match (compiler-backend-emit-avx512-tail-mask-dynamic
                   function
                   current-label
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view dst-reg)
                   dst
                   index
@@ -12524,7 +12514,7 @@
             (match (compiler-backend-emit-avx512-tail-mask-dynamic
               function
               current-label
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view dst-reg)
               dst
               index
@@ -12579,7 +12569,7 @@
       (compiler-backend-global-shared-view elem-ty)
       lanes)
       (match (compiler-backend-avx512-mask-register-use
-        (compiler-backend-global-shared-view assignments)
+        assignments
         mask
         "load mask"
         lanes
@@ -12589,7 +12579,7 @@
           (match mask-use
             [(CompilerBackendMaskUse.Use mask-asm mask-reg)
               (match (compiler-backend-vector-dst-reg
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 dst
                 "load dst"
                 "zmm"
@@ -12598,7 +12588,7 @@
                 [(ResultBackendReg.Ok dst-reg)
                   (match (compiler-backend-emit-simd-indexed-address
                     type-segment-bases
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     base
                     index
                     (compiler-backend-global-shared-view elem-ty)
@@ -12680,7 +12670,7 @@
       (compiler-backend-global-shared-view elem-ty)
       lanes)
       (match (compiler-backend-vector-register-use
-        (compiler-backend-global-shared-view assignments)
+        assignments
         value
         "store value"
         "zmm"
@@ -12691,7 +12681,7 @@
           (match value-use
             [(CompilerBackendVectorUse.Use value-asm value-reg)
               (match (compiler-backend-avx512-mask-register-use
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 mask
                 "store mask"
                 lanes
@@ -12766,14 +12756,14 @@
       (compiler_ast_types.AstType.Bool)
       lanes)
     (match (compiler-backend-avx512-mask-dst-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       "mask load dst"
       (compiler-backend-mask-spill-scratch 0)
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-avx512-mask-register-use
-          (compiler-backend-global-shared-view assignments)
+          assignments
           mask
           "mask load active mask"
           lanes
@@ -12784,7 +12774,7 @@
               [(CompilerBackendMaskUse.Use mask-asm mask-reg)
                 (match (compiler-backend-emit-simd-indexed-address
                   type-segment-bases
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   base
                   index
                   (compiler_ast_types.AstType.Bool)
@@ -12795,7 +12785,7 @@
                       [addr : String addr-plan.addr]
                       (match (compiler-backend-vector-temp-zmm
                         backend-state
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         ""
                         ""
                         ""
@@ -12803,7 +12793,7 @@
                         [(ResultBackendReg.Ok bytes-reg)
                           (match (compiler-backend-vector-temp-zmm
                             backend-state
-                            (compiler-backend-global-shared-view assignments)
+                            assignments
                             (compiler-backend-global-shared-view bytes-reg)
                             ""
                             ""
@@ -12894,7 +12884,7 @@
       (compiler_ast_types.AstType.Bool)
       lanes)
     (match (compiler-backend-avx512-mask-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       value
       "mask store value"
       lanes
@@ -12904,7 +12894,7 @@
         (match value-use
           [(CompilerBackendMaskUse.Use value-asm value-reg)
             (match (compiler-backend-avx512-mask-register-use
-              (compiler-backend-global-shared-view assignments)
+              assignments
               mask
               "mask store active mask"
               lanes
@@ -12915,7 +12905,7 @@
                   [(CompilerBackendMaskUse.Use mask-asm mask-reg)
                     (match (compiler-backend-emit-simd-indexed-address
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       base
                       index
                       (compiler_ast_types.AstType.Bool)
@@ -12926,7 +12916,7 @@
                           [addr : String addr-plan.addr]
                           (match (compiler-backend-vector-temp-zmm
                             backend-state
-                            (compiler-backend-global-shared-view assignments)
+                            assignments
                             ""
                             ""
                             ""
@@ -13049,7 +13039,7 @@
     [lhs-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
     [rhs-gpr : String (compiler-backend-avx512-mask-gpr-part "%r10" lanes)]
     (match (compiler-backend-avx512-mask-source-into-gpr
-      (compiler-backend-global-shared-view assignments)
+      assignments
       lhs
       "lhs"
       lanes
@@ -13059,7 +13049,7 @@
         (match lhs-use
           [(CompilerBackendVectorUse.Use lhs-asm _)
             (match (compiler-backend-avx512-mask-source-into-gpr
-              (compiler-backend-global-shared-view assignments)
+              assignments
               rhs
               "rhs"
               lanes
@@ -13069,7 +13059,7 @@
                 (match rhs-use
                   [(CompilerBackendVectorUse.Use rhs-asm _)
                     (match (compiler-backend-avx512-mask-dst-reg
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       "mask binop dst"
                       (compiler-backend-mask-spill-scratch 0)
@@ -13135,17 +13125,14 @@
       lanes)
     (if (or
       (compiler-backend-mask-value-spilled?
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view lhs)
         backend-state)
       (compiler-backend-mask-value-spilled?
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs)
         backend-state)
-      (compiler-backend-mask-dst-spilled?
-        (compiler-backend-global-shared-view assignments)
-        dst
-        backend-state))
+      (compiler-backend-mask-dst-spilled? assignments dst backend-state))
       (compiler-backend-emit-avx512-mask-binop-gpr
         assignments
         dst
@@ -13157,13 +13144,13 @@
         backend-state)
       (match (compiler-backend-avx512-mask-value-reg
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         lhs
         "lhs")
         [(ResultBackendReg.Ok lhs-reg)
           (match (compiler-backend-avx512-mask-value-reg
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             rhs
             "rhs")
             [(ResultBackendReg.Ok rhs-reg)
@@ -13225,7 +13212,7 @@
     [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
     [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
     (match (compiler-backend-avx512-mask-source-into-gpr
-      (compiler-backend-global-shared-view assignments)
+      assignments
       src
       "not source"
       lanes
@@ -13235,7 +13222,7 @@
         (match src-use
           [(CompilerBackendVectorUse.Use src-asm _)
             (match (compiler-backend-avx512-mask-dst-reg
-              (compiler-backend-global-shared-view assignments)
+              assignments
               dst
               "mask not dst"
               (compiler-backend-mask-spill-scratch 0)
@@ -13298,13 +13285,10 @@
         lanes)
       (if (or
         (compiler-backend-mask-value-spilled?
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view src)
           backend-state)
-        (compiler-backend-mask-dst-spilled?
-          (compiler-backend-global-shared-view assignments)
-          dst
-          backend-state))
+        (compiler-backend-mask-dst-spilled? assignments dst backend-state))
         (compiler-backend-emit-avx512-mask-not-gpr
           assignments
           dst
@@ -13314,7 +13298,7 @@
           backend-state)
         (match (compiler-backend-avx512-mask-value-reg
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           src
           "not source")
           [(ResultBackendReg.Ok src-reg)
@@ -13388,7 +13372,7 @@
         (compiler_ast_types.AstType.I64)
         lanes)
       (match (compiler-backend-avx512-mask-register-use
-        (compiler-backend-global-shared-view assignments)
+        assignments
         src
         "reduce source"
         lanes
@@ -13472,14 +13456,14 @@
           (compiler-backend-global-shared-view elem-ty))]
       [false-stack? : bool
         (match (compiler-backend-vector-value-stack-operand
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view on-false)
           backend-state)
           [(CompilerBackendMaybeStackOperand.Some _) true]
           [(CompilerBackendMaybeStackOperand.No) false])]
       [true-stack? : bool
         (match (compiler-backend-vector-value-stack-operand
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view on-true)
           backend-state)
           [(CompilerBackendMaybeStackOperand.Some _) true]
@@ -13491,7 +13475,7 @@
               instr-diag
               "backend: unsupported AVX-512 select type")))
         (match (compiler-backend-vector-register-use
-          (compiler-backend-global-shared-view assignments)
+          assignments
           on-false
           "select false"
           "zmm"
@@ -13502,7 +13486,7 @@
             (match false-use
               [(CompilerBackendVectorUse.Use false-asm false-reg)
                 (match (compiler-backend-vector-register-use
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   on-true
                   "select true"
                   "zmm"
@@ -13513,7 +13497,7 @@
                     (match true-use
                       [(CompilerBackendVectorUse.Use true-asm true-reg)
                         (match (compiler-backend-avx512-mask-register-use
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           mask
                           "select mask"
                           lanes
@@ -13523,8 +13507,7 @@
                             (match mask-use
                               [(CompilerBackendMaskUse.Use mask-asm mask-reg)
                                 (match (compiler-backend-vector-dst-reg
-                                  (compiler-backend-global-shared-view
-                                    assignments)
+                                  assignments
                                   dst
                                   "select dst"
                                   "zmm"
@@ -13541,8 +13524,7 @@
                                           mask-asm)]
                                       [store-asm : String
                                         (compiler-backend-vector-store-dst
-                                          (compiler-backend-global-shared-view
-                                            assignments)
+                                          assignments
                                           dst
                                           "zmm"
                                           elem-ty
@@ -13700,7 +13682,7 @@
       (compiler_ast_types.AstType.Bool)
       lanes)
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       lhs
       "mask lhs"
       "ymm"
@@ -13711,7 +13693,7 @@
         (match lhs-use
           [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
             (match (compiler-backend-vector-register-use
-              (compiler-backend-global-shared-view assignments)
+              assignments
               rhs
               "mask rhs"
               "ymm"
@@ -13722,7 +13704,7 @@
                 (match rhs-use
                   [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
                     (match (compiler-backend-vector-dst-reg
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       "mask binop dst"
                       "ymm"
@@ -13816,7 +13798,7 @@
       (compiler_ast_types.AstType.Bool)
       lanes)
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       src
       "mask not source"
       "ymm"
@@ -13827,7 +13809,7 @@
         (match src-use
           [(CompilerBackendVectorUse.Use src-asm src-reg)
             (match (compiler-backend-vector-dst-reg
-              (compiler-backend-global-shared-view assignments)
+              assignments
               dst
               "mask not dst"
               "ymm"
@@ -13905,7 +13887,7 @@
       (compiler_ast_types.AstType.Bool)
       lanes)
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       src
       "mask reduce source"
       "ymm"
@@ -13990,7 +13972,7 @@
     (compiler-backend-global-shared-view elem-ty)
     lanes)
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       mask
       "select mask"
       "ymm"
@@ -14001,7 +13983,7 @@
         (match mask-use
           [(CompilerBackendVectorUse.Use mask-asm mask-reg)
             (match (compiler-backend-vector-register-use
-              (compiler-backend-global-shared-view assignments)
+              assignments
               on-false
               "select false"
               "ymm"
@@ -14012,7 +13994,7 @@
                 (match false-use
                   [(CompilerBackendVectorUse.Use false-asm false-reg)
                     (match (compiler-backend-vector-register-use
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       on-true
                       "select true"
                       "ymm"
@@ -14023,7 +14005,7 @@
                         (match true-use
                           [(CompilerBackendVectorUse.Use true-asm true-reg)
                             (match (compiler-backend-vector-dst-reg
-                              (compiler-backend-global-shared-view assignments)
+                              assignments
                               dst
                               "select dst"
                               "ymm"
@@ -14117,22 +14099,22 @@
       [dst-home : String
         (compiler-backend-value-scalar-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler_ir_types.CompilerIrValue.Var dst))]
       [mask-home : String
         (compiler-backend-value-scalar-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view condition))]
       [true-home : String
         (compiler-backend-value-scalar-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view on-true))]
       [false-home : String
         (compiler-backend-value-scalar-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view on-false))]
       ;; x86 conditional moves have no byte form.  Use the full GP home for
       ;; byte and Bool selects; all typed consumers observe the low byte.
@@ -14162,7 +14144,7 @@
             backend-state))]
       [conditional-address : String
         (compiler-backend-value-read-memory-operand
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view on-true)
           backend-state)]
       [conditional-direct? : bool
@@ -14203,7 +14185,7 @@
           (string.eq false-home result-reg))
           ""
           (compiler-backend-load-value-asm
-            (compiler-backend-global-shared-view assignments)
+            assignments
             on-false
             (compiler-backend-global-shared-view result-reg)
             backend-state))]
@@ -14211,17 +14193,14 @@
         (if conditional-direct?
           ""
           (compiler-backend-load-value-asm
-            (compiler-backend-global-shared-view assignments)
+            assignments
             on-true
             (compiler-backend-global-shared-view conditional-reg)
             backend-state))]
       [var-test : String
         (match (compiler-backend-global-shared-view condition)
           [(compiler_ir_types.CompilerIrValue.Var var)
-            (compiler-backend-branch-test-var-asm
-              (compiler-backend-global-shared-view assignments)
-              var
-              backend-state)]
+            (compiler-backend-branch-test-var-asm assignments var backend-state)]
           [_ ""])]
       [test-reg : String
         (if (not (string.eq var-test ""))
@@ -14239,7 +14218,7 @@
         (if (not (string.eq var-test ""))
           ""
           (compiler-backend-load-value-asm
-            (compiler-backend-global-shared-view assignments)
+            assignments
             condition
             (compiler-backend-global-shared-view test-reg)
             backend-state))]
@@ -14363,12 +14342,12 @@
       [lhs-home : String
         (compiler-backend-value-scalar-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view cmp-lhs))]
       [rhs-home : String
         (compiler-backend-value-scalar-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view cmp-rhs))]
       [lhs-immediate : String
         (match (compiler-backend-immediate-operand backend-state cmp-lhs)
@@ -14416,17 +14395,17 @@
       [dst-home : String
         (compiler-backend-value-scalar-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler_ir_types.CompilerIrValue.Var dst))]
       [true-home : String
         (compiler-backend-value-scalar-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view on-true))]
       [false-home : String
         (compiler-backend-value-scalar-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view on-false))]
       ;; x86 conditional moves have no byte form. Use the full GP home for byte
       ;; and Bool selects; all typed consumers observe the low byte.
@@ -14478,7 +14457,7 @@
             backend-state))]
       [conditional-address : String
         (compiler-backend-value-read-memory-operand
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view on-true)
           backend-state)]
       [conditional-direct? : bool
@@ -14580,7 +14559,7 @@
               (string.eq false-home result-reg))
               ""
               (compiler-backend-load-value-asm
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 on-false
                 (compiler-backend-global-shared-view result-reg)
                 backend-state))]
@@ -14588,7 +14567,7 @@
             (if conditional-direct?
               ""
               (compiler-backend-load-value-asm
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 on-true
                 conditional-reg
                 backend-state))]
@@ -14960,7 +14939,7 @@
       (compiler-backend-global-shared-view elem-ty)
       lanes))
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       mask
       "load mask"
       "ymm"
@@ -14971,7 +14950,7 @@
         (match mask-use
           [(CompilerBackendVectorUse.Use mask-asm mask-reg)
             (match (compiler-backend-vector-dst-reg
-              (compiler-backend-global-shared-view assignments)
+              assignments
               dst
               "predicated load dst"
               "ymm"
@@ -14980,7 +14959,7 @@
               [(ResultBackendReg.Ok dst-reg)
                 (match (compiler-backend-emit-simd-indexed-address
                   type-segment-bases
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   base
                   index
                   (compiler-backend-global-shared-view elem-ty)
@@ -15087,7 +15066,7 @@
       (compiler-backend-global-shared-view elem-ty)
       lanes))
     (match (compiler-backend-vector-register-use
-      (compiler-backend-global-shared-view assignments)
+      assignments
       mask
       "store mask"
       "ymm"
@@ -15099,7 +15078,7 @@
           [(CompilerBackendVectorUse.Use mask-asm mask-reg)
             (match (compiler-backend-emit-simd-indexed-address
               type-segment-bases
-              (compiler-backend-global-shared-view assignments)
+              assignments
               base
               index
               (compiler-backend-global-shared-view elem-ty)
@@ -15381,7 +15360,7 @@
       (compiler_ast_types.AstType.Bool)
       lanes)
     (match (compiler-backend-vector-dst-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       "tail mask dst"
       "ymm"
@@ -15389,13 +15368,13 @@
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-load-value-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           index
           "%r8"
           backend-state)
           [(ResultCompilerBackend.Ok index-asm)
             (match (compiler-backend-emit-load-value-with-plan
-              (compiler-backend-global-shared-view assignments)
+              assignments
               end-value
               "%r9"
               backend-state)
@@ -15664,7 +15643,7 @@
               (if saved?
                 (compiler-backend-callee-needs-save?
                   backend-state
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   reg-id)
                 (not
                   (=
@@ -15697,7 +15676,7 @@
       "|saved="
       (compiler-backend-trace-csr-set-text
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         body-mask
         true)
       "|used="
@@ -15746,7 +15725,7 @@
                 (set!
                   out
                   (compiler-backend-plan-body-reg-mask-var
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     (+
                       base
                       (compiler_regalloc.compiler-reg-low-bit-index32 bits))
@@ -15767,7 +15746,7 @@
     [out : i64 mask]
     (if (< id-count 0)
       (compiler-backend-plan-body-reg-mask-set
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler_liveness.compiler-live-instr-defs
           (compiler-backend-global-shared-view instr))
         (compiler-backend-plan-body-reg-mask-set
@@ -15782,7 +15761,7 @@
               (set!
                 out
                 (compiler-backend-plan-body-reg-mask-var
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (array-ref ids index)
                   out))
               (set! index (+ index 1))))
@@ -15811,10 +15790,7 @@
             [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
               (set!
                 out
-                (compiler-backend-plan-body-reg-mask-var
-                  (compiler-backend-global-shared-view assignments)
-                  var-id
-                  out))])
+                (compiler-backend-plan-body-reg-mask-var assignments var-id out))])
           (set! position (+ position 1))))
       (while (< b count)
         (begin
@@ -15830,7 +15806,7 @@
                     (set!
                       out
                       (compiler-backend-plan-body-reg-mask-instr
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         (compiler-backend-global-array-element-shared-view
                           slots
                           i)
@@ -15871,10 +15847,7 @@
       (compiler-backend-state-function-state backend-state)]
     ;; An empty plan homes nothing, whatever the installed mask describes; this
     ;; keeps out-of-emission callers correct.
-    (if (=
-      (compiler_regalloc.compiler-reg-assignment-count
-        (compiler-backend-global-shared-view assignments))
-      0)
+    (if (= (compiler_regalloc.compiler-reg-assignment-count assignments) 0)
       false
       (if (compiler-backend-function-state-bool?
         function-state
@@ -15903,39 +15876,39 @@
   (or
     (compiler-backend-callee-needs-save?
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-rbx)
     (compiler-backend-callee-needs-save?
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-r12)
     (compiler-backend-callee-needs-save?
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-r13)
     (compiler-backend-callee-needs-save?
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-r14)
     (compiler-backend-callee-needs-save?
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-r15)
     ;; M-G3 stage 2: %rbp is the 6th pool CSR in FPO functions.
     (compiler-backend-callee-needs-save?
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-rbp)
     (and
       (compiler-backend-current-fn-win64? backend-state)
       (or
         (compiler-backend-callee-needs-save?
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           compiler_abi.compiler-reg-id-rsi)
         (compiler-backend-callee-needs-save?
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           compiler_abi.compiler-reg-id-rdi)
         (compiler-backend-plan-uses-win64-xmm-callee-regs?
           assignments
@@ -15953,7 +15926,7 @@
     highest
     (compiler-backend-win64-xmm-callee-highest-at
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       (+ idx 1)
       (if (compiler-backend-callee-needs-save?
         backend-state
@@ -16012,9 +15985,7 @@
   [backend-state : CompilerBackendState]) : i64
   (let
     [highest : i64
-      (compiler-backend-win64-xmm-callee-highest
-        (compiler-backend-global-shared-view assignments)
-        backend-state)]
+      (compiler-backend-win64-xmm-callee-highest assignments backend-state)]
     (if (>= highest 0)
       ;; Start after the maximum Win64 GP-save prefix so late scavenge saves
       ;; cannot move or overlap the deterministic 16-byte XMM slots.
@@ -16026,24 +15997,22 @@
               backend-state
               assignments)))
         (* 2 (+ highest 1)))
-      (if (compiler-backend-plan-uses-callee-regs?
-        (compiler-backend-global-shared-view assignments)
-        backend-state)
+      (if (compiler-backend-plan-uses-callee-regs? assignments backend-state)
         (if (compiler-backend-current-fn-win64? backend-state)
           (cond
             [(compiler-backend-callee-needs-save?
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 compiler_abi.compiler-reg-id-rbp)
               (+ vars 8)]
             [(compiler-backend-callee-needs-save?
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 compiler_abi.compiler-reg-id-rdi)
               (+ vars 7)]
             [(compiler-backend-callee-needs-save?
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 compiler_abi.compiler-reg-id-rsi)
               (+ vars 6)]
             [(compiler-backend-callee-needs-save?
@@ -16055,7 +16024,7 @@
           (cond
             [(compiler-backend-callee-needs-save?
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 compiler_abi.compiler-reg-id-rbp)
               (+ vars 6)]
             [(compiler-backend-callee-needs-save?
@@ -16206,17 +16175,14 @@
       [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
       [tail : String
         (compiler-backend-emit-win64-xmm-callee-regs-at
-          (compiler-backend-global-shared-view assignments)
+          assignments
           vars
           frame
           (+ idx step)
           step
           saving
           backend-state)]
-      (if (compiler-backend-callee-needs-save?
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        reg-id)
+      (if (compiler-backend-callee-needs-save? backend-state assignments reg-id)
         (if saving
           (let
             [slot-offset : i64
@@ -16292,14 +16258,11 @@
       [tail : String
         (compiler-backend-emit-save-win64-xmm-callee-regs-fpo-at
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           vars
           rsp-bias
           (+ idx 1))]
-      (if (compiler-backend-callee-needs-save?
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        reg-id)
+      (if (compiler-backend-callee-needs-save? backend-state assignments reg-id)
         (let
           [slot-offset : i64
             (compiler-backend-win64-xmm-callee-slot-offset
@@ -16597,7 +16560,7 @@
         (if (or
           (compiler-backend-group-type?
             type-segment-bases
-            (compiler-backend-global-shared-view program-index)
+            program-index
             (compiler-backend-global-shared-view ty))
           (>
             (compiler-backend-abi-memory-size
@@ -16644,7 +16607,7 @@
                 [(ResultBackendReg.Ok reg)
                   (begin
                     (compiler_regalloc.compiler-reg-assignment-table-insert
-                      (compiler-backend-global-shared-view table)
+                      table
                       var
                       (compiler_regalloc.CompilerRegLocation.Register
                         (compiler_abi.compiler-abi-register-id-from-spelling
@@ -16677,7 +16640,7 @@
       0
       0
       program-index
-      (compiler-backend-global-shared-view table))
+      table)
       table
       (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
@@ -16770,7 +16733,7 @@
           target
           (compiler-backend-global-shared-view params)
           vars
-          (compiler-backend-global-shared-view program-index))
+          program-index)
         assignments)]
     [ready : bool
       (and
@@ -16778,10 +16741,7 @@
         (<= prefix-count (compiler_ir_types.compiler-ir-block-seq-count seq))
         (or
           (not incoming?)
-          (if (=
-            (compiler_regalloc.compiler-reg-assignment-count
-              (compiler-backend-global-shared-view selected))
-            0)
+          (if (= (compiler_regalloc.compiler-reg-assignment-count selected) 0)
             (= (compiler_ir_types.compiler-ir-param-seq-count params) 0)
             true)))]
     [function-state : CompilerBackendFunctionState
@@ -16843,16 +16803,16 @@
                               (if (and
                                 (= cond-var dst)
                                 (compiler-backend-shrinkwrap-compare-value-ready?
-                                  (compiler-backend-global-shared-view selected)
+                                  selected
                                   (compiler-backend-global-shared-view lhs)
                                   program-index.backend-state)
                                 (compiler-backend-shrinkwrap-compare-value-ready?
-                                  (compiler-backend-global-shared-view selected)
+                                  selected
                                   (compiler-backend-global-shared-view rhs)
                                   program-index.backend-state))
                                 (compiler-backend-emit-compare-branch
                                   type-segment-bases
-                                  (compiler-backend-global-shared-view selected)
+                                  selected
                                   (compiler-backend-global-shared-view function)
                                   op
                                   lhs
@@ -16895,17 +16855,17 @@
                         (if (or
                           (not incoming?)
                           (compiler-backend-shrinkwrap-incoming-return-ready?
-                            (compiler-backend-global-shared-view selected)
+                            selected
                             (compiler-backend-global-shared-view maybe)))
                           (compiler-backend-emit-return
                             type-segment-bases
                             source-function
                             (compiler-backend-global-shared-view blocks)
                             maybe
-                            (compiler-backend-global-shared-view selected)
+                            selected
                             vars
                             (compiler-backend-global-shared-view ret-ty)
-                            (compiler-backend-global-shared-view program-index))
+                            program-index)
                           (ResultCompilerBackend.Err
                             (box
                               (compiler_diagnostic.compiler-diagnostic-at-start
@@ -18189,27 +18149,27 @@
     [r12 : bool
       (compiler-backend-callee-needs-save?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         compiler_abi.compiler-reg-id-r12)]
     [r13 : bool
       (compiler-backend-callee-needs-save?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         compiler_abi.compiler-reg-id-r13)]
     [r14 : bool
       (compiler-backend-callee-needs-save?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         compiler_abi.compiler-reg-id-r14)]
     [r15 : bool
       (compiler-backend-callee-needs-save?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         compiler_abi.compiler-reg-id-r15)]
     [rbx : bool
       (compiler-backend-callee-needs-save?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         compiler_abi.compiler-reg-id-rbx)]
     ;; M-G3 stage 2: %rbp (slot idx 5, allocated LAST) extends the contiguous
     ;; pop run. Sound: a plan can only home a value in %rbp on the FPO path,
@@ -18220,7 +18180,7 @@
     [rbp : bool
       (compiler-backend-callee-needs-save?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         compiler_abi.compiler-reg-id-rbp)]
     [win-extra : bool
       (and
@@ -18228,7 +18188,7 @@
         (or
           (compiler-backend-callee-needs-save?
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             compiler_abi.compiler-reg-id-rsi)
           (compiler-backend-callee-needs-save?
             backend-state
@@ -18249,17 +18209,17 @@
   (cond
     [(compiler-backend-callee-needs-save?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         compiler_abi.compiler-reg-id-rbp)
       5]
     [(compiler-backend-callee-needs-save?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         compiler_abi.compiler-reg-id-rbx)
       4]
     [(compiler-backend-callee-needs-save?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         compiler_abi.compiler-reg-id-r15)
       3]
     [(compiler-backend-callee-needs-save?
@@ -18290,31 +18250,29 @@
       "    leaq "
       (compiler-backend-callee-save-slot
         vars
-        (compiler-backend-callee-save-pop-start-idx
-          backend-state
-          (compiler-backend-global-shared-view assignments))
+        (compiler-backend-callee-save-pop-start-idx backend-state assignments)
         backend-state)
       ", %rsp\n")
     ;; %rbp's slot (idx 5) is the lowest address, so it pops FIRST.
     (compiler-backend-emit-pop-callee-reg
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-rbp)
     (compiler-backend-emit-pop-callee-reg
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-rbx)
     (compiler-backend-emit-pop-callee-reg
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-r15)
     (compiler-backend-emit-pop-callee-reg
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-r14)
     (compiler-backend-emit-pop-callee-reg
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       compiler_abi.compiler-reg-id-r13)
     (compiler-backend-emit-pop-callee-reg
       backend-state
@@ -18332,7 +18290,7 @@
   (if (compiler-backend-current-fn-win64? backend-state)
     (str_cat.str-cat
       (compiler-backend-emit-save-callee-reg
-        (compiler-backend-global-shared-view assignments)
+        assignments
         vars
         compiler_abi.compiler-reg-id-rsi
         5
@@ -18352,7 +18310,7 @@
   (if (compiler-backend-current-fn-win64? backend-state)
     (str_cat.str-cat
       (compiler-backend-emit-restore-callee-reg
-        (compiler-backend-global-shared-view assignments)
+        assignments
         vars
         compiler_abi.compiler-reg-id-rdi
         6
@@ -18389,31 +18347,31 @@
   [backend-state : CompilerBackendState]) : String
   (str_cat.str-cat
     (compiler-backend-emit-save-callee-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       vars
       compiler_abi.compiler-reg-id-r12
       0
       backend-state)
     (compiler-backend-emit-save-callee-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       vars
       compiler_abi.compiler-reg-id-r13
       1
       backend-state)
     (compiler-backend-emit-save-callee-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       vars
       compiler_abi.compiler-reg-id-r14
       2
       backend-state)
     (compiler-backend-emit-save-callee-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       vars
       compiler_abi.compiler-reg-id-r15
       3
       backend-state)
     (compiler-backend-emit-save-callee-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       vars
       compiler_abi.compiler-reg-id-rbx
       4
@@ -18422,7 +18380,7 @@
     ;; FPO rebases the frame operand before replacing these moves with
     ;; unwind-described prologue pushes.
     (compiler-backend-emit-save-callee-reg
-      (compiler-backend-global-shared-view assignments)
+      assignments
       vars
       compiler_abi.compiler-reg-id-rbp
       (compiler-backend-rbp-callee-save-slot-index backend-state)
@@ -18439,51 +18397,49 @@
   [backend-state : CompilerBackendState]) : String
   (let
     [gp : String
-      (if (compiler-backend-callee-save-pop-eligible?
-        (compiler-backend-global-shared-view assignments)
-        backend-state)
+      (if (compiler-backend-callee-save-pop-eligible? assignments backend-state)
         (compiler-backend-emit-restore-callee-regs-pop
-          (compiler-backend-global-shared-view assignments)
+          assignments
           vars
           backend-state)
         (str_cat.str-cat
           ;; Win64: %rdi/%rsi restores first (no-op on Linux), mirroring the save.
           (compiler-backend-emit-restore-win64-callee-regs
-            (compiler-backend-global-shared-view assignments)
+            assignments
             vars
             backend-state)
           (compiler-backend-emit-restore-callee-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             vars
             compiler_abi.compiler-reg-id-rbp
             (compiler-backend-rbp-callee-save-slot-index backend-state)
             backend-state)
           (compiler-backend-emit-restore-callee-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             vars
             compiler_abi.compiler-reg-id-rbx
             4
             backend-state)
           (compiler-backend-emit-restore-callee-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             vars
             compiler_abi.compiler-reg-id-r15
             3
             backend-state)
           (compiler-backend-emit-restore-callee-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             vars
             compiler_abi.compiler-reg-id-r14
             2
             backend-state)
           (compiler-backend-emit-restore-callee-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             vars
             compiler_abi.compiler-reg-id-r13
             1
             backend-state)
           (compiler-backend-emit-restore-callee-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             vars
             compiler_abi.compiler-reg-id-r12
             0
@@ -19183,22 +19139,15 @@
 (define (compiler-backend-function-symbol-index
   [index : CompilerBackendProgramIndex]
   [name : i64]) : String
-  (if (compiler-backend-index-extern-provided?
-    (compiler-backend-global-shared-view index)
-    name)
+  (if (compiler-backend-index-extern-provided? index name)
     (compiler-backend-index-extern-link-symbol index name)
     (let
-      [name-text : String
-        (compiler-backend-symbol-text-index
-          (compiler-backend-global-shared-view index)
-          name)]
+      [name-text : String (compiler-backend-symbol-text-index index name)]
       [runtime-symbol : String
         (compiler-backend-runtime-prelude-string-helper-symbol name-text)]
       (if (not (string.eq runtime-symbol ""))
         runtime-symbol
-        (match (compiler-backend-index-function-slot
-          (compiler-backend-global-shared-view index)
-          name)
+        (match (compiler-backend-index-function-slot index name)
           [(backend_i64_i64_map.LookupFound slot)
             (let
               [tables : (& index CompilerBackendProgramTables)
@@ -19217,17 +19166,11 @@
   [index : CompilerBackendProgramIndex]
   [name : i64]) : String
   (let
-    [name-text : String
-      (compiler-backend-symbol-text-index
-        (compiler-backend-global-shared-view index)
-        name)]
+    [name-text : String (compiler-backend-symbol-text-index index name)]
     (if (and
       (compiler-backend-compact-function-symbol?
         (compiler-backend-global-shared-view name-text))
-      (not
-        (compiler-backend-index-extern-provided?
-          (compiler-backend-global-shared-view index)
-          name)))
+      (not (compiler-backend-index-extern-provided? index name)))
       (str_cat.str-cat
         "#t "
         (compiler-backend-function-symbol-index index name)
@@ -19284,30 +19227,18 @@
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : String
   (let
-    [name-text : String
-      (compiler-backend-symbol-text-index
-        (compiler-backend-global-shared-view index)
-        name)]
+    [name-text : String (compiler-backend-symbol-text-index index name)]
     (cond
-      [(compiler-backend-index-extern-provided?
-          (compiler-backend-global-shared-view index)
-          name)
+      [(compiler-backend-index-extern-provided? index name)
         (compiler-backend-index-extern-link-symbol index name)]
-      [(compiler-backend-index-extern-references?
-          (compiler-backend-global-shared-view index)
-          name)
+      [(compiler-backend-index-extern-references? index name)
         (let
           [link-symbol-id : i64
-            (compiler-backend-index-extern-link-symbol-id
-              (compiler-backend-global-shared-view index)
-              name)]
+            (compiler-backend-index-extern-link-symbol-id index name)]
           (if (and
             (= link-symbol-id name)
             (compiler-backend-call-raw-symbol-id? plan index.backend-state name)
-            (not
-              (compiler-backend-index-function-defines?
-                (compiler-backend-global-shared-view index)
-                name)))
+            (not (compiler-backend-index-function-defines? index name)))
             name-text
             (compiler-backend-link-symbol-id
               link-symbol-id
@@ -19315,19 +19246,14 @@
               index.backend-state)))]
       [(and
           (compiler-backend-call-raw-symbol-id? plan index.backend-state name)
-          (not
-            (compiler-backend-index-function-defines?
-              (compiler-backend-global-shared-view index)
-              name)))
+          (not (compiler-backend-index-function-defines? index name)))
         name-text]
       [else (compiler-backend-function-symbol-index index name)])))
 
 (define (compiler-backend-function-label-scope
   [index : CompilerBackendProgramIndex]
   [name : i64]) : String
-  (match (compiler-backend-index-function-slot
-    (compiler-backend-global-shared-view index)
-    name)
+  (match (compiler-backend-index-function-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
       (str_cat.str-cat "f" (string.int->string slot) "")]
     [(backend_i64_i64_map.LookupMissing)
@@ -19596,9 +19522,7 @@
       functions.slots
       index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
-        (match (compiler-backend-index-function-slot
-          (compiler-backend-global-shared-view program-index)
-          name)
+        (match (compiler-backend-index-function-slot program-index name)
           [(backend_i64_i64_map.LookupFound function-id)
             (str_cat.str-cat
               (if line-tables
@@ -19606,9 +19530,7 @@
                   "    .cv_linetable "
                   (string.int->string function-id)
                   ", "
-                  (compiler-backend-function-symbol-index
-                    (compiler-backend-global-shared-view program-index)
-                    name)
+                  (compiler-backend-function-symbol-index program-index name)
                   ", .Lcv_func_end_"
                   (string.int->string function-id))
                 (str_cat.str-cat
@@ -19845,16 +19767,12 @@
     ""
     (let
       [function-id : i64
-        (compiler-backend-backtrace-function-id
-          (compiler-backend-global-shared-view program-index)
-          name)]
+        (compiler-backend-backtrace-function-id program-index name)]
       (if (< function-id 0)
         ""
         (let
           [name-text : String
-            (compiler-backend-symbol-text-index
-              (compiler-backend-global-shared-view program-index)
-              name)]
+            (compiler-backend-symbol-text-index program-index name)]
           [path : String ""]
           [line : i64 0]
           [column : i64 0]
@@ -20444,7 +20362,7 @@
     [xmm-reg : String
       (compiler-backend-float-value-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view value))]
     [gp-part : String
       (compiler-backend-float-bits-gp-reg
@@ -20494,7 +20412,7 @@
     [rhs-reg : String
       (compiler-backend-float-value-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs))]
     (if (and (not (string.eq rhs-reg "")) (not (string.eq rhs-reg dst-home)))
       rhs-reg
@@ -20853,7 +20771,7 @@
     [home : String
       (compiler-backend-address-base-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view value)
         avoid
         allow-rbp)]
@@ -21593,7 +21511,7 @@
               instr-diag
               "backend: unsupported AVX2 vector reduction")))
         (match (compiler-backend-vector-register-use
-          (compiler-backend-global-shared-view assignments)
+          assignments
           src
           "reduce source"
           "ymm"
@@ -22054,7 +21972,7 @@
               instr-diag
               "backend: unsupported AVX-512 vector reduction")))
         (match (compiler-backend-vector-register-use
-          (compiler-backend-global-shared-view assignments)
+          assignments
           src
           "reduce source"
           "zmm"
@@ -22320,10 +22238,7 @@
   [sse1? : bool]) : CompilerBackendMaybeAsm
   (let
     [src0 : String
-      (compiler-backend-value-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        w0)]
+      (compiler-backend-value-register-home backend-state assignments w0)]
     [src1 : String
       (compiler-backend-value-register-home backend-state assignments w1)]
     (if (and
@@ -22363,7 +22278,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-emit-pack-words-direct-registers
     backend-state
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-global-shared-view w0)
     (compiler-backend-global-shared-view w1)
     (compiler-backend-global-shared-view dst0)
@@ -22376,7 +22291,7 @@
         [src1-home : String
           (compiler-backend-pack-word-source-home
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view w1)
             sse1?)]
         ;; GAP2b: REGISTER-form dsts (a pair-homed group) must be excluded from
@@ -22445,7 +22360,7 @@
             sse1?
             backend-state)]
         (match (compiler-backend-emit-load-pack-word-unless-immediate
-          (compiler-backend-global-shared-view assignments)
+          assignments
           w0
           sse0?
           (compiler-backend-global-shared-view scratch0)
@@ -22576,14 +22491,14 @@
       [w0-sse : bool
         (compiler-backend-group-word-sse?
           type-segment-bases
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view ty)
           0)]
       [w1-sse : bool
         (compiler-backend-group-word-sse? type-segment-bases program-index ty 1)]
       (match (compiler-backend-emit-assignment-lookup
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         dst)
         [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
           (match location
@@ -22625,14 +22540,14 @@
         [(compiler_regalloc.CompilerRegMaybeLocation.No)
           ;; stack-only: the group var lives in two stack slots.
           (match (compiler-backend-group-word-operand-with-backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             dst
             0
             vars
             backend-state)
             [(ResultCompilerBackend.Ok dst0)
               (match (compiler-backend-group-word-operand-with-backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 dst
                 1
                 vars
@@ -22675,7 +22590,7 @@
           (compiler-backend-float-type?
             (compiler-backend-global-shared-view ty))]
         (match (compiler-backend-group-word-operand-with-backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           src-var
           index
           vars
@@ -22694,7 +22609,7 @@
                   [dst-home : String
                     (compiler-backend-var-register-home
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst)]
                   ;; vreg-model: a register-homed 8-byte dst takes the spilled word
                   ;; straight into its home (movq operand, dst-home), skipping the
@@ -22778,7 +22693,7 @@
           "backend: register-group word index must be 0 or 1")))
     (match (compiler-backend-emit-assignment-lookup
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       var)
       [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
         (match location
@@ -22864,7 +22779,7 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Var v)
       (match (compiler-backend-group-word-operand-with-backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         v
         0
         vars
@@ -22884,7 +22799,7 @@
                     reg0
                     (compiler-backend-group-word-sse?
                       type-segment-bases
-                      (compiler-backend-global-shared-view program-index)
+                      program-index
                       (compiler-backend-global-shared-view ty)
                       0))
                   (compiler-backend-emit-group-word-move
@@ -22919,7 +22834,7 @@
   [program-index : CompilerBackendProgramIndex]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-group-word-operand-with-backend-state
-    (compiler-backend-global-shared-view assignments)
+    assignments
     var
     0
     vars
@@ -22939,7 +22854,7 @@
                 word0
                 (compiler-backend-group-word-sse?
                   type-segment-bases
-                  (compiler-backend-global-shared-view program-index)
+                  program-index
                   (compiler-backend-global-shared-view ty)
                   0))
               (compiler-backend-emit-group-word-move
@@ -22961,7 +22876,7 @@
   [word-index : i64]) : String
   (if (compiler-backend-group-word-sse?
     type-segment-bases
-    (compiler-backend-global-shared-view program-index)
+    program-index
     (compiler-backend-global-shared-view ty)
     word-index)
     (if (and
@@ -23031,21 +22946,21 @@
   (match src
     [(compiler_ir_types.CompilerIrValue.Var src-var)
       (match (compiler-backend-group-word-operand-with-backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         src-var
         0
         vars
         backend-state)
         [(ResultCompilerBackend.Ok src0)
           (match (compiler-backend-group-word-operand-with-backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             src-var
             1
             vars
             backend-state)
             [(ResultCompilerBackend.Ok src1)
               (match (compiler-backend-group-word-operand-with-backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 dst
                 0
                 vars
@@ -23062,13 +22977,13 @@
                         [sse0? : bool
                           (compiler-backend-group-word-sse?
                             type-segment-bases
-                            (compiler-backend-global-shared-view program-index)
+                            program-index
                             (compiler-backend-global-shared-view ty)
                             0)]
                         [sse1? : bool
                           (compiler-backend-group-word-sse?
                             type-segment-bases
-                            (compiler-backend-global-shared-view program-index)
+                            program-index
                             (compiler-backend-global-shared-view ty)
                             1)]
                         [reg0 : String
@@ -23224,7 +23139,7 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Var v)
       (match (compiler-backend-group-word-operand-with-backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         v
         0
         vars
@@ -23369,7 +23284,7 @@
     [sse? : bool
       (compiler-backend-group-word-sse?
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view ty)
         word-index)]
     (if (compiler-backend-stack-call-arg-for-banks?
@@ -23505,7 +23420,7 @@
     [sse? : bool
       (compiler-backend-group-word-sse?
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view ty)
         word-index)]
     (if (compiler-backend-stack-call-arg-for-banks?
@@ -23694,18 +23609,14 @@
 (define (compiler-backend-function-or-global-addr-symbol
   [program-index : CompilerBackendProgramIndex]
   [name : i64]) : String
-  (if (compiler-backend-index-function-defines?
-    (compiler-backend-global-shared-view program-index)
-    name)
+  (if (compiler-backend-index-function-defines? program-index name)
     (compiler-backend-function-symbol-index program-index name)
     (compiler-backend-state-user-symbol-id program-index.backend-state name)))
 
 (define (compiler-backend-global-symbol-index
   [program-index : CompilerBackendProgramIndex]
   [name : i64]) : String
-  (if (compiler-backend-index-extern-references?
-    (compiler-backend-global-shared-view program-index)
-    name)
+  (if (compiler-backend-index-extern-references? program-index name)
     (compiler-backend-index-extern-link-symbol program-index name)
     (compiler-backend-state-user-symbol-id program-index.backend-state name)))
 
@@ -25875,8 +25786,7 @@
                                               synth-count
                                               lo
                                               hi)
-                                            (compiler-backend-global-shared-view
-                                              assignments)
+                                            assignments
                                             (compiler-backend-global-shared-view
                                               interval-index)
                                             (compiler_regalloc.compiler-reg-loop-split-region-interval
@@ -26119,7 +26029,7 @@
             (while (< i n)
               (begin
                 (compiler_regalloc.compiler-reg-assignment-table-insert
-                  (compiler-backend-global-shared-view out)
+                  out
                   (+ vars i)
                   (if (=
                     (array-ref regs i)
@@ -28443,19 +28353,19 @@
     [rhs-reg : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs))]
     [rhs-address : String
       (compiler-backend-compare-memory-operand
         type-segment-bases
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs)
         (compiler-backend-global-shared-view ty)
         backend-state)]
     [lhs-reg : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view lhs))]
     [rhs-load-needed : bool
       (if (not (string.eq rhs-reg ""))
@@ -28503,7 +28413,7 @@
           rhs-address))]
     (match (if rhs-load-needed
       (compiler-backend-emit-load-value-with-plan
-        (compiler-backend-global-shared-view assignments)
+        assignments
         rhs
         scav-rhs
         backend-state)
@@ -28611,12 +28521,12 @@
     [lhs-home : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view lhs))]
     [rhs-home : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs))]
     [rhs-in-rcx? : bool (string.eq rhs-home "%rcx")]
     [count-reg : String
@@ -28651,13 +28561,13 @@
     (match (if rhs-in-rcx?
       (ResultCompilerBackend.Ok "")
       (compiler-backend-emit-load-value-with-plan
-        (compiler-backend-global-shared-view assignments)
+        assignments
         rhs
         (compiler-backend-global-shared-view count-reg)
         backend-state))
       [(ResultCompilerBackend.Ok rhs-asm)
         (match (compiler-backend-emit-load-value-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           lhs
           (compiler-backend-global-shared-view result-reg)
           backend-state)
@@ -29079,7 +28989,7 @@
     [rhs-reg : String
       (compiler-backend-float-value-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs))]
     [exclude : (__tl_dyn-array String)
       (if (string.eq rhs-reg "")
@@ -29100,7 +29010,7 @@
         backend-state)]
     [rhs-operand : String
       (compiler-backend-float-direct-rhs-operand
-        (compiler-backend-global-shared-view assignments)
+        assignments
         rhs
         (compiler-backend-global-shared-view fty)
         (compiler-backend-global-shared-view result-reg)
@@ -29112,7 +29022,7 @@
             ""
             "backend: cannot direct spilled float binop")))
       (match (compiler-backend-emit-float-binop-direct
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view result-reg)
         op
         lhs
@@ -29142,10 +29052,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [lhs-reg : String
-      (compiler-backend-float-value-register
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        lhs)]
+      (compiler-backend-float-value-register backend-state assignments lhs)]
     [rhs-operand : String
       (compiler-backend-float-direct-rhs-operand
         assignments
@@ -29187,7 +29094,7 @@
         "%r8"
         backend-state)]
     (match (compiler-backend-emit-float-compare-direct
-      (compiler-backend-global-shared-view assignments)
+      assignments
       (compiler-backend-global-shared-view result-reg)
       op
       lhs
@@ -29222,7 +29129,7 @@
       [rhs-reg : String
         (compiler-backend-float-value-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view rhs))]
       [xmm-exclude : (__tl_dyn-array String)
         (if (string.eq rhs-reg "")
@@ -29243,16 +29150,13 @@
           backend-state)]
       [rhs-operand : String
         (compiler-backend-float-direct-rhs-operand
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view rhs)
           (compiler-backend-global-shared-view fty)
           (compiler-backend-global-shared-view lhs-reg)
           backend-state)]
       [dst-home : String
-        (compiler-backend-var-register-home
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          dst)]
+        (compiler-backend-var-register-home backend-state assignments dst)]
       [result-reg : String
         (if (string.eq dst-home "")
           (compiler-backend-planned-or-scavenge-reg
@@ -29266,7 +29170,7 @@
       [store-result : String
         (if (string.eq dst-home "")
           (compiler-backend-emit-store-typed-var-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             dst
             (compiler-backend-global-shared-view result-reg)
             result-ty
@@ -29286,7 +29190,7 @@
               "%xmm3"
               backend-state)]
           (match (compiler-backend-emit-load-float-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             rhs
             (compiler-backend-global-shared-view fty)
             (compiler-backend-global-shared-view rhs-temp)
@@ -29339,7 +29243,7 @@
         [rhs-reg : String
           (compiler-backend-float-value-register
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view rhs))]
         [exclude : (__tl_dyn-array String)
           (if (string.eq rhs-reg "")
@@ -29360,7 +29264,7 @@
             backend-state)]
         [rhs-operand : String
           (compiler-backend-float-direct-rhs-operand
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view rhs)
             (compiler-backend-global-shared-view fty)
             (compiler-backend-global-shared-view result-reg)
@@ -29379,14 +29283,14 @@
                 "%xmm3"
                 backend-state)]
             (match (compiler-backend-emit-load-float-value-with-plan
-              (compiler-backend-global-shared-view assignments)
+              assignments
               rhs
               (compiler-backend-global-shared-view fty)
               (compiler-backend-global-shared-view rhs-temp)
               backend-state)
               [(ResultCompilerBackend.Ok rhs-asm)
                 (match (compiler-backend-emit-float-binop-direct
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view result-reg)
                   op
                   lhs
@@ -29409,7 +29313,7 @@
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)]))
           (match (compiler-backend-emit-float-binop-direct
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view result-reg)
             op
             lhs
@@ -29613,7 +29517,7 @@
     [(compiler_ir_types.CompilerIrValue.Var id)
       (match (compiler-backend-emit-assignment-lookup
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         id)
         [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
           (match location
@@ -29745,7 +29649,7 @@
   (let
     [stack : String
       (compiler-backend-value-stack-address
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view value)
         backend-state)]
     (if (string.eq stack "")
@@ -30080,7 +29984,7 @@
     [lhs-reg : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view lhs))]
     (if (and
       (not (string.eq lhs-reg ""))
@@ -30190,7 +30094,7 @@
     [lhs-reg : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view lhs))]
     ;; `x + 0` / `x - 0` are x at every width (wrapping included): the
     ;; staged lhs move is the whole result, so no arithmetic follows.
@@ -30230,7 +30134,7 @@
               backend-state)))]
       [(CompilerBackendMaybeAsm.No)
         (match (compiler-backend-emit-load-value-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           lhs
           (compiler-backend-global-shared-view result-reg)
           backend-state)
@@ -30302,7 +30206,7 @@
     [rhs-reg : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs))]
     (if (not (string.eq rhs-reg ""))
       (compiler-backend-sized-reg type-segment-bases rhs-reg ty)
@@ -30329,12 +30233,12 @@
     [rhs-reg : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs))]
     [rhs-operand : String
       (compiler-backend-binop-spill-source-operand
         type-segment-bases
-        (compiler-backend-global-shared-view assignments)
+        assignments
         rhs
         (compiler-backend-global-shared-view operand-ty)
         backend-state)]
@@ -30357,7 +30261,7 @@
         "%r8"
         backend-state)]
     (match (compiler-backend-emit-load-value-with-plan
-      (compiler-backend-global-shared-view assignments)
+      assignments
       lhs
       (compiler-backend-global-shared-view result-reg)
       backend-state)
@@ -30568,17 +30472,14 @@
     [lhs-home : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view lhs))]
     [lhs-live-after : bool
       (compiler-backend-value-live-after-here?
         backend-state
         (compiler-backend-global-shared-view lhs))]
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)]
+      (compiler-backend-var-register-home backend-state assignments dst)]
     [direct-rax-src? : bool
       (and
         lhs-live-after
@@ -30641,7 +30542,7 @@
           "%rax")
         dst-home)]
     (match (compiler-backend-emit-load-value-with-plan
-      (compiler-backend-global-shared-view assignments)
+      assignments
       lhs
       (compiler-backend-global-shared-view src)
       backend-state)
@@ -30704,7 +30605,7 @@
     [lhs-home : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view lhs))]
     [own-src? : bool
       (and
@@ -30786,20 +30687,17 @@
           (compiler-backend-global-shared-view op)
           (compiler-backend-global-shared-view ty))]
       [dst-home : String
-        (compiler-backend-var-register-home
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          dst)]
+        (compiler-backend-var-register-home backend-state assignments dst)]
       [rhs-operand : String
         (compiler-backend-float-direct-rhs-operand
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view rhs)
           (compiler-backend-global-shared-view fty)
           (compiler-backend-global-shared-view dst-home)
           backend-state)]
       [spill-rhs-operand : String
         (compiler-backend-float-direct-rhs-operand
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view rhs)
           (compiler-backend-global-shared-view fty)
           ""
@@ -30807,7 +30705,7 @@
       [lhs-float-reg : String
         (compiler-backend-float-value-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view lhs))]
       [planned0-xmm? : bool
         (compiler-backend-string-prefix-at?
@@ -30866,7 +30764,7 @@
                   (string.eq
                     (compiler-backend-float-value-register
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-global-shared-view rhs))
                     planned0))))))
           (if (string.eq dst-home "")
@@ -30916,10 +30814,7 @@
           (compiler-backend-global-shared-view op)
           ty)]
       [dst-home : String
-        (compiler-backend-var-register-home
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          dst)]
+        (compiler-backend-var-register-home backend-state assignments dst)]
       [mnem : String
         (compiler-backend-binop-direct-mnemonic
           (compiler-backend-global-shared-view op))]
@@ -30932,13 +30827,13 @@
         (not
           (compiler-backend-binop-rcx-shift?
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view op)
             (compiler-backend-global-shared-view rhs)
             (compiler-backend-global-shared-view dst-home))))
         (compiler-backend-emit-binop-spill-direct-shift
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           (compiler-backend-global-shared-view op)
           lhs
@@ -30980,7 +30875,7 @@
                   (string.eq
                     (compiler-backend-binop-spill-source-operand
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-global-shared-view rhs)
                       (compiler-backend-global-shared-view operand-ty)
                       backend-state)
@@ -31003,7 +30898,7 @@
                   backend-state)
                 (compiler-backend-binop-rcx-shift?
                   backend-state
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view op)
                   (compiler-backend-global-shared-view rhs)
                   (compiler-backend-global-shared-view dst-home))))))
@@ -31022,7 +30917,7 @@
               (if (string.eq (compiler-backend-global-shared-view dst-home) "")
                 (compiler-backend-emit-binop-spill-direct-immediate
                   type-segment-bases
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   dst
                   mnem
                   (compiler-backend-global-shared-view op)
@@ -31107,19 +31002,19 @@
                       (if (string.eq rhs-hoist "")
                         (compiler-backend-value-scalar-register
                           backend-state
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           (compiler-backend-global-shared-view rhs))
                         rhs-hoist)]
                     [lhs-reg : String
                       (compiler-backend-value-scalar-register
                         backend-state
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         (compiler-backend-global-shared-view lhs))]
                     [rhs-operand : String
                       (if (string.eq rhs-hoist "")
                         (compiler-backend-binop-spill-source-operand
                           type-segment-bases
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           (compiler-backend-global-shared-view rhs)
                           (compiler-backend-global-shared-view operand-ty)
                           backend-state)
@@ -31195,7 +31090,7 @@
                           ;; clobber it). rhs-reg==dst-home still falls through to the reload
                           ;; (rhs must be saved before lhs overwrites dst-home).
                           (match (compiler-backend-emit-load-value-with-plan
-                            (compiler-backend-global-shared-view assignments)
+                            assignments
                             (compiler-backend-global-shared-view lhs)
                             (compiler-backend-global-shared-view dst-home)
                             backend-state)
@@ -31232,7 +31127,7 @@
                                 "%r8"
                                 backend-state)]
                             (match (compiler-backend-emit-load-value-with-plan
-                              (compiler-backend-global-shared-view assignments)
+                              assignments
                               (compiler-backend-global-shared-view rhs)
                               (compiler-backend-global-shared-view scav-rhs)
                               backend-state)
@@ -31294,14 +31189,14 @@
                       (compiler-backend-scavenge-exclude-regs2
                         (compiler-backend-value-scalar-register
                           backend-state
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           (compiler-backend-global-shared-view rhs))
                         "")
                       7
                       "%rax"
                       backend-state)])]
               (match (compiler-backend-emit-load-value-with-plan
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view lhs)
                 (compiler-backend-global-shared-view staging)
                 backend-state)
@@ -31320,7 +31215,7 @@
                           lhs-asm
                           op-asm
                           (compiler-backend-emit-store-typed-var-with-plan
-                            (compiler-backend-global-shared-view assignments)
+                            assignments
                             dst
                             staging
                             result-ty
@@ -31345,8 +31240,7 @@
                                   lhs-asm
                                   op-asm
                                   (compiler-backend-emit-store-typed-var-with-plan
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     dst
                                     (compiler-backend-global-shared-view
                                       staging)
@@ -31365,8 +31259,7 @@
                                     "%r8"
                                     backend-state)]
                                 (match (compiler-backend-emit-load-value-with-plan
-                                  (compiler-backend-global-shared-view
-                                    assignments)
+                                  assignments
                                   (compiler-backend-global-shared-view rhs)
                                   (compiler-backend-global-shared-view scav-rhs)
                                   backend-state)
@@ -31387,8 +31280,7 @@
                                           ""
                                           backend-state)
                                         (compiler-backend-emit-store-typed-var-with-plan
-                                          (compiler-backend-global-shared-view
-                                            assignments)
+                                          assignments
                                           dst
                                           (compiler-backend-global-shared-view
                                             staging)
@@ -31404,8 +31296,7 @@
                             [rhs-address : String
                               (compiler-backend-binop-rhs-memory-operand
                                 type-segment-bases
-                                (compiler-backend-global-shared-view
-                                  assignments)
+                                assignments
                                 (compiler-backend-global-shared-view rhs)
                                 (compiler-backend-global-shared-view operand-ty)
                                 backend-state)]
@@ -31422,8 +31313,7 @@
                                       lhs-asm
                                       op-asm
                                       (compiler-backend-emit-store-typed-var-with-plan
-                                        (compiler-backend-global-shared-view
-                                          assignments)
+                                        assignments
                                         dst
                                         (compiler-backend-global-shared-view
                                           staging)
@@ -31442,8 +31332,7 @@
                                         "%r8"
                                         backend-state)]
                                     (match (compiler-backend-emit-load-value-with-plan
-                                      (compiler-backend-global-shared-view
-                                        assignments)
+                                      assignments
                                       (compiler-backend-global-shared-view rhs)
                                       (compiler-backend-global-shared-view
                                         scav-rhs)
@@ -31495,15 +31384,13 @@
                                   (if (string.eq rhs-hoist "")
                                     (compiler-backend-value-scalar-register
                                       backend-state
-                                      (compiler-backend-global-shared-view
-                                        assignments)
+                                      assignments
                                       (compiler-backend-global-shared-view rhs))
                                     rhs-hoist)]
                                 [lhs-reg : String
                                   (compiler-backend-value-scalar-register
                                     backend-state
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     lhs)]
                                 ;; Div/mod materialise the dividend in %rax; if the
                                 ;; divisor also lives there, save it before lhs
@@ -31535,8 +31422,7 @@
                                         lhs-asm
                                         op-asm
                                         (compiler-backend-emit-store-typed-var-with-plan
-                                          (compiler-backend-global-shared-view
-                                            assignments)
+                                          assignments
                                           dst
                                           (compiler-backend-global-shared-view
                                             staging)
@@ -31564,8 +31450,7 @@
                                           "%r8"
                                           backend-state)]
                                       (match (compiler-backend-emit-load-value-with-plan
-                                        (compiler-backend-global-shared-view
-                                          assignments)
+                                        assignments
                                         rhs
                                         (compiler-backend-global-shared-view
                                           scav-rhs)
@@ -31590,8 +31475,7 @@
                                                   ""
                                                   backend-state)
                                                 (compiler-backend-emit-store-typed-var-with-plan
-                                                  (compiler-backend-global-shared-view
-                                                    assignments)
+                                                  assignments
                                                   dst
                                                   (compiler-backend-global-shared-view
                                                     staging)
@@ -31773,7 +31657,7 @@
     (let
       [store : String
         (compiler-backend-binop-result-store
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           result-ty
           store-result
@@ -31918,7 +31802,7 @@
   (if (compiler-backend-rax-forwardable-binop?
     (compiler-backend-global-shared-view types)
     (compiler-backend-global-shared-view global-types)
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-global-shared-view op)
     (compiler-backend-global-shared-view lhs)
     (compiler-backend-global-shared-view rhs)
@@ -31933,7 +31817,7 @@
           (compiler-backend-global-shared-view rhs)
           (compiler-backend-global-shared-view ty))]
       (match (compiler-backend-emit-load-value-with-plan
-        (compiler-backend-global-shared-view assignments)
+        assignments
         lhs
         "%rax"
         backend-state)
@@ -31989,7 +31873,7 @@
   (if (compiler-backend-rax-forwardable-binop?
     (compiler-backend-global-shared-view types)
     (compiler-backend-global-shared-view global-types)
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-global-shared-view op)
     (compiler-backend-global-shared-view lhs)
     (compiler-backend-global-shared-view rhs)
@@ -32084,7 +31968,7 @@
   (let
     [rhs-operand : String
       (compiler-backend-float-direct-rhs-operand
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs)
         (compiler-backend-global-shared-view fty)
         "%xmm0"
@@ -32113,7 +31997,7 @@
         [lhs-reg : String
           (compiler-backend-float-value-register
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view lhs))]
         [exclude : (__tl_dyn-array String)
           (if (string.eq lhs-reg "")
@@ -32133,7 +32017,7 @@
             "%xmm2"
             backend-state)]
         (match (compiler-backend-emit-load-float-value-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           rhs
           (compiler-backend-global-shared-view fty)
           (compiler-backend-global-shared-view rhs-temp)
@@ -32175,11 +32059,11 @@
       [lhs-home : String
         (compiler-backend-float-value-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view lhs))]
       [rhs-direct : String
         (compiler-backend-float-direct-rhs-operand
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view rhs)
           (compiler-backend-global-shared-view fty)
           (compiler-backend-global-shared-view lhs-home)
@@ -32198,7 +32082,7 @@
           [rhs-reg : String
             (compiler-backend-float-value-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view rhs))]
           [xmm-exclude : (__tl_dyn-array String)
             (if (string.eq rhs-reg "")
@@ -32219,7 +32103,7 @@
               backend-state)]
           [rhs-operand : String
             (compiler-backend-float-direct-rhs-operand
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view rhs)
               (compiler-backend-global-shared-view fty)
               (compiler-backend-global-shared-view lhs-temp)
@@ -32249,7 +32133,7 @@
                   "%xmm3"
                   backend-state)]
               (match (compiler-backend-emit-load-float-value-with-plan
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 rhs
                 (compiler-backend-global-shared-view fty)
                 (compiler-backend-global-shared-view rhs-temp)
@@ -32310,10 +32194,7 @@
   [rhs : compiler_ir_types.CompilerIrValue]) : String
   (let
     [rhs-home : String
-      (compiler-backend-value-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        rhs)]
+      (compiler-backend-value-register-home backend-state assignments rhs)]
     [lhs-home : String
       (compiler-backend-value-register-home backend-state assignments lhs)]
     ;; A scalar compare only reads its RHS. If that value already has a
@@ -32363,7 +32244,7 @@
     [rhs-home : String
       (compiler-backend-value-register-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs))]
     [frame : String
       (compiler-backend-cycle-temp-slot-with-backend-state backend-state 0)]
@@ -32430,7 +32311,7 @@
       (compiler-backend-return-tail
         backend-state
         source-function
-        (compiler-backend-global-shared-view assignments)
+        assignments
         vars
         blocks)]
     (if (compiler-backend-binop-f64?
@@ -32494,17 +32375,17 @@
           (let
             [lhs-address : String
               (compiler-backend-value-scalar-memory-operand
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view lhs)
                 backend-state)]
             [rhs-home : String
               (compiler-backend-value-register-home
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view rhs))]
             [rhs-address : String
               (compiler-backend-value-scalar-memory-operand
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view rhs)
                 backend-state)]
             [swap-return-compare? : bool
@@ -32543,7 +32424,7 @@
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)])
               (match (compiler-backend-emit-load-value-with-plan
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view lhs)
                 "%rax"
                 backend-state)
@@ -32560,7 +32441,7 @@
                     [(CompilerBackendMaybeAsm.No)
                       (match (compiler-backend-immediate-operand-with-assignments
                         backend-state
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         (compiler-backend-global-shared-view rhs))
                         [(CompilerBackendMaybeImmediate.Some imm)
                           (match (compiler-backend-binop-immediate-asm
@@ -32572,7 +32453,7 @@
                             "%rax"
                             (compiler-backend-value-integer-zero-with-assignments?
                               backend-state
-                              (compiler-backend-global-shared-view assignments)
+                              assignments
                               (compiler-backend-global-shared-view rhs)))
                             [(CompilerBackendMaybeAsm.Some op-asm)
                               (ResultCompilerBackend.Ok
@@ -32582,8 +32463,7 @@
                                 [rhs-reg : String
                                   (compiler-backend-scavenge-binop-return-rhs-reg
                                     backend-state
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     (compiler-backend-global-shared-view op)
                                     (compiler-backend-global-shared-view lhs)
                                     (compiler-backend-global-shared-view rhs))]
@@ -32598,8 +32478,7 @@
                                 (if rhs-frame?
                                   (compiler-backend-emit-return-compare-frame-fallback
                                     type-segment-bases
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     (compiler-backend-global-shared-view op)
                                     (compiler-backend-global-shared-view rhs)
                                     operand-ty
@@ -32607,8 +32486,7 @@
                                     return-tail
                                     backend-state)
                                   (match (compiler-backend-emit-load-value-with-plan
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     rhs
                                     (compiler-backend-global-shared-view
                                       rhs-reg)
@@ -32625,16 +32503,14 @@
                                               (string.eq
                                                 (compiler-backend-value-register-home
                                                   backend-state
-                                                  (compiler-backend-global-shared-view
-                                                    assignments)
+                                                  assignments
                                                   (compiler-backend-global-shared-view
                                                     lhs))
                                                 ""))
                                             (string.eq
                                               (compiler-backend-value-register-home
                                                 backend-state
-                                                (compiler-backend-global-shared-view
-                                                  assignments)
+                                                assignments
                                                 (compiler-backend-global-shared-view
                                                   lhs))
                                               rhs-reg))
@@ -32645,8 +32521,7 @@
                                               (string.eq
                                                 (compiler-backend-value-register-home
                                                   backend-state
-                                                  (compiler-backend-global-shared-view
-                                                    assignments)
+                                                  assignments
                                                   (compiler-backend-global-shared-view
                                                     lhs))
                                                 ""))
@@ -32676,8 +32551,7 @@
                           (let
                             [rhs-address : String
                               (compiler-backend-value-scalar-memory-operand
-                                (compiler-backend-global-shared-view
-                                  assignments)
+                                assignments
                                 (compiler-backend-global-shared-view rhs)
                                 backend-state)]
                             (if (and
@@ -32706,8 +32580,7 @@
                                 [rhs-reg : String
                                   (compiler-backend-scavenge-binop-return-rhs-reg
                                     backend-state
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     (compiler-backend-global-shared-view op)
                                     (compiler-backend-global-shared-view lhs)
                                     (compiler-backend-global-shared-view rhs))]
@@ -32722,8 +32595,7 @@
                                 (if rhs-frame?
                                   (compiler-backend-emit-return-compare-frame-fallback
                                     type-segment-bases
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     op
                                     rhs
                                     operand-ty
@@ -32731,8 +32603,7 @@
                                     return-tail
                                     backend-state)
                                   (match (compiler-backend-emit-load-value-with-plan
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     rhs
                                     (compiler-backend-global-shared-view
                                       rhs-reg)
@@ -32746,16 +32617,14 @@
                                               (string.eq
                                                 (compiler-backend-value-register-home
                                                   backend-state
-                                                  (compiler-backend-global-shared-view
-                                                    assignments)
+                                                  assignments
                                                   (compiler-backend-global-shared-view
                                                     lhs))
                                                 ""))
                                             (string.eq
                                               (compiler-backend-value-register-home
                                                 backend-state
-                                                (compiler-backend-global-shared-view
-                                                  assignments)
+                                                assignments
                                                 (compiler-backend-global-shared-view
                                                   lhs))
                                               rhs-reg))
@@ -32766,8 +32635,7 @@
                                               (string.eq
                                                 (compiler-backend-value-register-home
                                                   backend-state
-                                                  (compiler-backend-global-shared-view
-                                                    assignments)
+                                                  assignments
                                                   (compiler-backend-global-shared-view
                                                     lhs))
                                                 ""))
@@ -33026,10 +32894,7 @@
     [(compiler_ir_types.CompilerIrValue.Var id)
       (let
         [test-asm : String
-          (compiler-backend-branch-test-var-asm
-            (compiler-backend-global-shared-view assignments)
-            id
-            backend-state)]
+          (compiler-backend-branch-test-var-asm assignments id backend-state)]
         (if (string.eq test-asm "")
           (compiler-backend-emit-load-test-branch-with-plan
             assignments
@@ -33531,7 +33396,7 @@
         [rhs-home : String
           (compiler-backend-value-scalar-register-home
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view rhs))]
         (if (not (string.eq rhs-home ""))
           (ResultCompilerBackend.Ok
@@ -33581,7 +33446,7 @@
             [rhs-address : String
               (compiler-backend-compare-memory-operand
                 type-segment-bases
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view rhs)
                 (compiler-backend-global-shared-view ty)
                 backend-state)]
@@ -33711,7 +33576,7 @@
     [rhs-home : String
       (compiler-backend-value-scalar-register-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view rhs))]
     [swapped-op : compiler_ir_types.CompilerIrBinOp
       (compiler-backend-compare-swapped-op
@@ -33737,7 +33602,7 @@
         [lhs-home : String
           (compiler-backend-value-scalar-register-home
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view lhs))]
         ;; M6-I: a scalar GLOBAL read is a legal compare DESTINATION operand
         ;; too, exactly as a spilled lhs already was -- but only when the OTHER
@@ -33761,7 +33626,7 @@
           (let
             [stack : String
               (compiler-backend-value-stack-address
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view lhs)
                 backend-state)]
             (if (string.eq stack "")
@@ -33786,7 +33651,7 @@
             ;; through the branch compare.
             (compiler-backend-emit-compare-branch-with-lhs-operand
               type-segment-bases
-              (compiler-backend-global-shared-view assignments)
+              assignments
               function
               swapped-op
               lhs
@@ -33853,7 +33718,7 @@
                   "%rax"
                   backend-state)]
               (match (compiler-backend-emit-load-value-with-plan
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 lhs
                 (compiler-backend-global-shared-view lhs-stage)
                 backend-state)
@@ -33949,7 +33814,7 @@
           (compiler-backend-address-base-filter-direct
             (compiler-backend-value-scalar-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view ptr)))]
         [scav-base : String
           (if (string.eq base-home "")
@@ -33961,7 +33826,7 @@
               backend-state)
             base-home)]
         (match (compiler-backend-emit-load-value-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           ptr
           (compiler-backend-global-shared-view scav-base)
           backend-state)
@@ -33995,7 +33860,7 @@
                   [rhs-home : String
                     (compiler-backend-value-scalar-register
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-global-shared-view rhs))]
                   (if (not (string.eq rhs-home ""))
                     (ResultCompilerBackend.Ok
@@ -34117,7 +33982,7 @@
                 (compiler-backend-address-base-filter-direct
                   (compiler-backend-value-scalar-register
                     backend-state
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     (compiler-backend-global-shared-view base)))
                 "")]
             [scav-base : String
@@ -34139,7 +34004,7 @@
                   (compiler-backend-global-shared-view scav-base)))]
             (match (if (string.eq rip "")
               (compiler-backend-emit-load-value-with-plan
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 base
                 (compiler-backend-global-shared-view scav-base)
                 backend-state)
@@ -34178,7 +34043,7 @@
                       [rhs-home : String
                         (compiler-backend-value-scalar-register
                           backend-state
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           (compiler-backend-global-shared-view rhs))]
                       (if (not (string.eq rhs-home ""))
                         (ResultCompilerBackend.Ok
@@ -34258,7 +34123,7 @@
         [length-reg : String
           (compiler-backend-value-scalar-register-home
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view length))]
         (if (not (string.eq length-reg ""))
           length-reg
@@ -34389,16 +34254,16 @@
         (compiler_ir_types.CompilerIrCallArgs.Nil)
         (compiler_ast_types.ast-type-list-new)
         false
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [ok-symbol : String (compiler-backend-asm-label function ok-label)]
     [index-reg : String
       (compiler-backend-value-scalar-register-home
         program-index.backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view index))]
     [direct-length-operand : String
       (compiler-backend-bounds-length-operand
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view length)
         program-index.backend-state)]
     ;; Length-load scratch: exclude the index home because the cmp reads index
@@ -34435,7 +34300,7 @@
             (compiler-backend-global-shared-view index))]
         [fold-length-operand : String
           (compiler-backend-bounds-length-operand
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view length)
             program-index.backend-state)]
         (if (and
@@ -34476,7 +34341,7 @@
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)]))
           (match (compiler-backend-emit-load-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             index
             (compiler-backend-global-shared-view index-operand)
             program-index.backend-state)
@@ -34484,7 +34349,7 @@
               (let
                 [length-operand : String
                   (compiler-backend-bounds-length-operand
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     (compiler-backend-global-shared-view length)
                     program-index.backend-state)]
                 (if (not (string.eq length-operand ""))
@@ -34521,7 +34386,7 @@
       (let
         [length-operand : String
           (compiler-backend-bounds-length-operand
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view length)
             program-index.backend-state)]
         (if (not (string.eq length-operand ""))
@@ -34566,10 +34431,7 @@
     (compiler-backend-global-shared-view ty))
     (let
       [dst-home : String
-        (compiler-backend-var-register-home
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          dst)]
+        (compiler-backend-var-register-home backend-state assignments dst)]
       (if (compiler-backend-string-prefix-at?
         (compiler-backend-global-shared-view dst-home)
         "%xmm"
@@ -34598,7 +34460,7 @@
               "%xmm2"
               backend-state)]
           (match (compiler-backend-emit-load-float-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             src
             (compiler-backend-global-shared-view ty)
             (compiler-backend-global-shared-view result-reg)
@@ -34625,10 +34487,7 @@
               (ResultCompilerBackend.Err message)]))))
     (let
       [dst-home : String
-        (compiler-backend-var-register-home
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          dst)]
+        (compiler-backend-var-register-home backend-state assignments dst)]
       (if (string.eq dst-home "")
         (let
           [result-reg : String
@@ -34640,7 +34499,7 @@
               "%r8"
               backend-state)]
           (match (compiler-backend-emit-load-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             src
             (compiler-backend-global-shared-view result-reg)
             backend-state)
@@ -34681,14 +34540,11 @@
     (ResultCompilerBackend.Ok "")
     (let
       [slot : String
-        (compiler-backend-addr-of-source-slot
-          (compiler-backend-global-shared-view assignments)
-          src
-          backend-state)]
+        (compiler-backend-addr-of-source-slot assignments src backend-state)]
       (ResultCompilerBackend.Ok
         (match (compiler-backend-emit-assignment-lookup
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst)
           [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
             (match location
@@ -34963,10 +34819,7 @@
   ;; through to the staged/scavenged path.
   (let
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)]
+      (compiler-backend-var-register-home backend-state assignments dst)]
     ;; IAG-1: `gep @g, k` on an inline aggregate global is a link-time constant
     ;; address; a register-homed result takes it in one `leaq`.
     [rip : String
@@ -34984,7 +34837,7 @@
       (compiler-backend-address-base-filter-direct
         (compiler-backend-value-scalar-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view base)))]
     (if (and (not (string.eq rip "")) (not (string.eq dst-home "")))
       (ResultCompilerBackend.Ok
@@ -35020,7 +34873,7 @@
               [offset-home : String
                 (compiler-backend-value-scalar-register
                   backend-state
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view offset))]
               [scale : i64
                 (compiler-backend-type-size
@@ -35077,10 +34930,7 @@
   (let
     [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)]
+      (compiler-backend-var-register-home backend-state assignments dst)]
     (match (compiler-backend-value-as-i64
       (compiler-backend-global-shared-view offset))
       [(option_i64.Some n)
@@ -35108,7 +34958,7 @@
                 "%r10"
                 backend-state))]
           (match (compiler-backend-emit-load-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             base
             (compiler-backend-global-shared-view result-reg)
             backend-state)
@@ -35143,7 +34993,7 @@
                         "%r8"
                         backend-state)]
                     (match (compiler-backend-emit-load-value-with-plan
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       offset
                       (compiler-backend-global-shared-view scav-idx)
                       backend-state)
@@ -35176,7 +35026,7 @@
           [offset-home : String
             (compiler-backend-value-scalar-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view offset))]
           ;; SS-P5(a): the index only ever needs a staging register when the
           ;; index-composing form WRITES it. `addq idx, base` (scale 1) and
@@ -35239,7 +35089,7 @@
                 "%r8"
                 backend-state))]
           (match (compiler-backend-emit-load-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             base
             (compiler-backend-global-shared-view result-reg)
             backend-state)
@@ -35247,7 +35097,7 @@
               (match (if direct-index?
                 (ResultCompilerBackend.Ok "")
                 (compiler-backend-emit-load-value-with-plan
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   offset
                   (compiler-backend-global-shared-view scav-idx)
                   backend-state))
@@ -35311,10 +35161,7 @@
   ;; compiler-backend-emit-address-base returns the register home directly when
   ;; available, falling back to loading the pointer into the scavenged base. This
   ;; mirrors the store path (compiler-backend-emit-store-ptr).
-  (if (compiler-backend-var-remat-home?
-    backend-state
-    (compiler-backend-global-shared-view assignments)
-    dst)
+  (if (compiler-backend-var-remat-home? backend-state assignments dst)
     ;; R5: same argument as the `mov` arm -- a `load @g` whose destination
     ;; recomputes at every use has a dead definition.
     (ResultCompilerBackend.Ok "")
@@ -35322,7 +35169,7 @@
       [src-home : String
         (compiler-backend-value-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view src))]
       [scav-base : String
         (compiler-backend-planned-or-scavenge-reg-here
@@ -35332,7 +35179,7 @@
           "%r10"
           backend-state)]
       (match (compiler-backend-emit-address-base
-        (compiler-backend-global-shared-view assignments)
+        assignments
         src
         scav-base
         backend-state)
@@ -35351,7 +35198,7 @@
                   [dst-home : String
                     (compiler-backend-var-register-home
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst)]
                   [load-reg : String
                     (if (string.eq dst-home "")
@@ -35406,10 +35253,7 @@
   [backend-state : CompilerBackendState]) : String
   (let
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)]
+      (compiler-backend-var-register-home backend-state assignments dst)]
     [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
     [load-reg : String
       (if (string.eq dst-home "")
@@ -35490,10 +35334,7 @@
   [backend-state : CompilerBackendState]) : String
   (let
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)]
+      (compiler-backend-var-register-home backend-state assignments dst)]
     (if (if (string.eq dst-home "")
       false
       (<=
@@ -35633,7 +35474,7 @@
         (+
           (match (compiler-backend-emit-assignment-lookup
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             var-id)
             [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
               (compiler-backend-param-register-exclude-location-count location)]
@@ -35692,7 +35533,7 @@
         (compiler-backend-param-register-exclude-fill-from
           backend-state
           params
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view out)
           (match (compiler-backend-emit-assignment-lookup
             backend-state
@@ -35730,7 +35571,7 @@
       (compiler-backend-param-register-exclude-count
         backend-state
         (compiler-backend-global-shared-view params)
-        (compiler-backend-global-shared-view assignments))]
+        assignments)]
     [out : (__tl_dyn-array String) (__tl_make-array String n)]
     (begin
       (compiler-backend-param-register-exclude-fill
@@ -36064,7 +35905,7 @@
         (compiler-backend-address-base-filter-direct
           (compiler-backend-value-register-home
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view dst)))]
       [dst-reg : String
         (if (string.eq dst-home "")
@@ -36077,7 +35918,7 @@
           dst-home)]
       (match (if (string.eq dst-home "")
         (compiler-backend-emit-load-value-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           (compiler-backend-global-shared-view dst-reg)
           backend-state)
@@ -36088,7 +35929,7 @@
               (compiler-backend-address-base-filter-direct
                 (compiler-backend-value-register-home
                   backend-state
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view src)))]
             [src-exclude-base : (__tl_dyn-array String)
               (compiler-backend-one-exclude
@@ -36200,12 +36041,12 @@
         (+
           (compiler-backend-copy-run-protect-value-count
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             dst)
           (+
             (compiler-backend-copy-run-protect-value-count
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               src)
             (compiler-backend-copy-run-protect-count
               backend-state
@@ -36216,12 +36057,12 @@
         (+
           (compiler-backend-copy-run-protect-value-count
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             base)
           (+
             (compiler-backend-copy-run-protect-value-count
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               offset)
             (compiler-backend-copy-run-protect-count
               backend-state
@@ -36232,12 +36073,12 @@
         (+
           (compiler-backend-copy-run-protect-value-count
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             dst)
           (+
             (compiler-backend-copy-run-protect-value-count
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               src)
             (compiler-backend-copy-run-protect-count
               backend-state
@@ -36277,13 +36118,13 @@
         [(compiler_ir_types.CompilerIrInstr.CopyBytes dst src _)
           (compiler-backend-copy-run-protect-fill
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             instrs
             rest
             (compiler-backend-global-shared-view out)
             (compiler-backend-copy-run-protect-fill-value
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               src
               (compiler-backend-global-shared-view out)
               (compiler-backend-copy-run-protect-fill-value
@@ -36295,13 +36136,13 @@
         [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
           (compiler-backend-copy-run-protect-fill
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             instrs
             rest
             (compiler-backend-global-shared-view out)
             (compiler-backend-copy-run-protect-fill-value
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               offset
               (compiler-backend-global-shared-view out)
               (compiler-backend-copy-run-protect-fill-value
@@ -36313,13 +36154,13 @@
         [(compiler_ir_types.CompilerIrInstr.StorePtr dst src _)
           (compiler-backend-copy-run-protect-fill
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             instrs
             rest
             (compiler-backend-global-shared-view out)
             (compiler-backend-copy-run-protect-fill-value
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               src
               (compiler-backend-global-shared-view out)
               (compiler-backend-copy-run-protect-fill-value
@@ -36340,7 +36181,7 @@
     [n : i64
       (compiler-backend-copy-run-protect-count
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view instrs)
         index)]
     [out : (__tl_dyn-array String) (__tl_make-array String n)]
@@ -36433,14 +36274,14 @@
         (compiler-backend-address-base-filter-direct
           (compiler-backend-value-scalar-register
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view base)))
         "")]
     [src-home : String
       (compiler-backend-address-base-filter-direct
         (compiler-backend-value-scalar-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view src)))]
     [dst-reg : String
       (if (string.eq base-home "")
@@ -36458,7 +36299,7 @@
         base-home)]
     (match (if (string.eq base-home "")
       (match (compiler-backend-emit-load-value-with-plan
-        (compiler-backend-global-shared-view assignments)
+        assignments
         base
         (compiler-backend-global-shared-view dst-reg)
         backend-state)
@@ -36570,18 +36411,18 @@
       (compiler-backend-address-base-filter
         (compiler-backend-value-scalar-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view base)))]
     [offset-home : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view offset))]
     [src-home : String
       (compiler-backend-address-base-filter
         (compiler-backend-value-scalar-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view src)))]
     ;; When base and index are register-homed under a SIB scale the element
     ;; address does not need to exist: every chunk STORE spells
@@ -36594,7 +36435,7 @@
       (compiler-backend-copy-gep-element-spelling
         backend-state
         type-segment-bases
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view base)
         (compiler-backend-global-shared-view offset)
         elem-ty
@@ -36631,7 +36472,7 @@
             "%r10"
             backend-state)]
         (match (compiler-backend-emit-copy-gep-dyn-address
-          (compiler-backend-global-shared-view assignments)
+          assignments
           base
           offset
           scale
@@ -36818,7 +36659,7 @@
             (compiler-backend-address-base-filter
               (compiler-backend-value-scalar-register
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 base))]
           [offset-home : String
             (compiler-backend-value-scalar-register
@@ -36857,20 +36698,14 @@
     ;; scavenge below so no staged destination load can overwrite the address
     ;; the chunk copies are still reading from.
     [operand-a : String
-      (compiler-backend-value-scalar-register
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        base)]
+      (compiler-backend-value-scalar-register backend-state assignments base)]
     [operand-b : String
-      (compiler-backend-value-scalar-register
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        offset)]
+      (compiler-backend-value-scalar-register backend-state assignments offset)]
     [dst-home : String
       (compiler-backend-address-base-filter-direct
         (compiler-backend-value-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view dst)))]
     [dst-reg : String
       (if (string.eq dst-home "")
@@ -36951,20 +36786,14 @@
     ;; every scavenge so a staged source load cannot overwrite the address the
     ;; chunk stores are still writing through.
     [operand-a : String
-      (compiler-backend-value-scalar-register
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        base)]
+      (compiler-backend-value-scalar-register backend-state assignments base)]
     [operand-b : String
-      (compiler-backend-value-scalar-register
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        offset)]
+      (compiler-backend-value-scalar-register backend-state assignments offset)]
     [src-home : String
       (compiler-backend-address-base-filter-direct
         (compiler-backend-value-scalar-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view src)))]
     [src-reg : String
       (if (string.eq src-home "")
@@ -37057,7 +36886,7 @@
         scav-base
         "\n"))
     (match (compiler-backend-emit-load-value-with-plan
-      (compiler-backend-global-shared-view assignments)
+      assignments
       base
       (compiler-backend-global-shared-view scav-base)
       backend-state)
@@ -37216,7 +37045,7 @@
             (compiler-backend-address-base-filter-direct
               (compiler-backend-value-scalar-register
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view base)))
             "")]
         [base-reg : String
@@ -37241,7 +37070,7 @@
               (compiler-backend-global-shared-view base-reg)))]
         (match (if (string.eq rip "")
           (compiler-backend-emit-load-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             base
             (compiler-backend-global-shared-view base-reg)
             backend-state)
@@ -37290,13 +37119,13 @@
           (compiler-backend-address-base-filter-sib
             (compiler-backend-value-scalar-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view base))
             scale)]
         [offset-home : String
           (compiler-backend-value-scalar-register
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view offset))]
         [use-base-home? : bool
           (and
@@ -37362,7 +37191,7 @@
         (match (if use-base-home?
           (ResultCompilerBackend.Ok "")
           (compiler-backend-emit-load-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             base
             (compiler-backend-global-shared-view base-reg)
             backend-state))
@@ -37370,7 +37199,7 @@
             (match (if use-offset-home?
               (ResultCompilerBackend.Ok "")
               (compiler-backend-emit-load-value-with-plan
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 offset
                 (compiler-backend-global-shared-view index-reg)
                 backend-state))
@@ -37383,7 +37212,7 @@
                       offset-asm
                       addr-asm
                       (compiler-backend-emit-load-float-address-to-var
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         dst
                         load-addr
                         load-ty
@@ -37473,7 +37302,7 @@
             disp
             (compiler-backend-global-shared-view base-reg))]
         (match (compiler-backend-emit-load-value-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           base
           (compiler-backend-global-shared-view base-reg)
           backend-state)
@@ -37700,10 +37529,7 @@
     ;; path never picked the sibling home (occupied in the window), so this
     ;; exclusion only changes emergency picks, i.e. only the buggy case.
     [dst1-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        load-dst1)]
+      (compiler-backend-var-register-home backend-state assignments load-dst1)]
     ;; M-C2: when the shared base is register-homed, address both loads off the
     ;; home directly -- no staging copy (the 1st load's materialization becomes
     ;; an elided self-move) and no scavenge side effects. Guard: the FIRST
@@ -37715,13 +37541,10 @@
       (compiler-backend-address-base-filter-direct
         (compiler-backend-value-scalar-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view base)))]
     [dst0-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        load-dst0)]
+      (compiler-backend-var-register-home backend-state assignments load-dst0)]
     [base-reg : String
       (if (and
         (not (string.eq base-home ""))
@@ -37740,7 +37563,7 @@
           backend-state))]
     (match (compiler-backend-emit-load-from-gep-pair-first
       type-segment-bases
-      (compiler-backend-global-shared-view assignments)
+      assignments
       load-dst0
       base
       offset0
@@ -37861,7 +37684,7 @@
       backend-state)
     (match (compiler-backend-emit-load-from-gep
       type-segment-bases
-      (compiler-backend-global-shared-view assignments)
+      assignments
       load-dst0
       (compiler-backend-global-shared-view base)
       offset0
@@ -37969,7 +37792,7 @@
         [second-home : String
           (compiler-backend-var-register-home
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             second-dst)]
         [base : String
           (if (string.eq second-address "")
@@ -37988,7 +37811,7 @@
           (compiler-backend-base-deref
             (compiler-backend-global-shared-view base))]
         (match (compiler-backend-emit-load-value-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           ptr
           (compiler-backend-global-shared-view base)
           backend-state)
@@ -38058,7 +37881,7 @@
           [src-home : String
             (compiler-backend-float-value-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view src))]
           [store-reg : String
             (if (string.eq src-home "")
@@ -38093,7 +37916,7 @@
           [src-home : String
             (compiler-backend-value-scalar-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view src))]
           [store-reg : String
             (if (string.eq src-home "")
@@ -38137,12 +37960,12 @@
     [dst-home : String
       (compiler-backend-value-register-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view dst))]
     [src-home : String
       (compiler-backend-value-register-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view src))]
     [scav-base : String
       (compiler-backend-planned-or-scavenge-reg-here
@@ -38152,7 +37975,7 @@
         "%r10"
         backend-state)]
     (match (compiler-backend-emit-address-base
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       scav-base
       program-index.backend-state)
@@ -38205,12 +38028,12 @@
         [base-home : String
           (compiler-backend-value-register-home
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view base))]
         [value-home : String
           (compiler-backend-value-register-home
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view value))]
         [scav-base : String
           (compiler-backend-planned-or-scavenge-reg-here
@@ -38220,7 +38043,7 @@
             "%r10"
             backend-state)]
         (match (compiler-backend-emit-address-base
-          (compiler-backend-global-shared-view assignments)
+          assignments
           base
           scav-base
           program-index.backend-state)
@@ -38233,7 +38056,7 @@
                   (compiler_abi.compiler-abi-register-spelling base-plan.reg))]
               (match (compiler-backend-emit-store-value-to-address
                 type-segment-bases
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 value
                 store-ty
                 addr
@@ -38255,7 +38078,7 @@
         [value-home : String
           (compiler-backend-value-scalar-register
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view value))]
         ;; BE-2: a %rbp base at scale 1 spells directly, swapped into the SIB
         ;; index slot (compiler-backend-gep-index-address).
@@ -38263,13 +38086,13 @@
           (compiler-backend-address-base-filter-sib
             (compiler-backend-value-scalar-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view base))
             scale)]
         [offset-home : String
           (compiler-backend-value-scalar-register
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view offset))]
         ;; M-G (B2, M-C2 for stores): base AND index both register-homed with a
         ;; SIB-encodable scale -> address them directly (`mov src, (base,idx,s)`),
@@ -38355,7 +38178,7 @@
           ""
           (compiler-backend-scavenge-exclude-ops2
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view base)
             (compiler-backend-global-shared-view value))
           7
@@ -38378,7 +38201,7 @@
         "%r10"
         backend-state)]
     (match (compiler-backend-emit-address-base-with-avoid
-      (compiler-backend-global-shared-view assignments)
+      assignments
       base
       (compiler-backend-global-shared-view scav-fold)
       (compiler-backend-global-shared-view scav-idx)
@@ -38390,7 +38213,7 @@
         (match (if direct-index?
           (ResultCompilerBackend.Ok "")
           (compiler-backend-emit-load-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             offset
             (compiler-backend-global-shared-view scav-idx)
             backend-state))
@@ -38478,17 +38301,17 @@
     [ptr-home : String
       (compiler-backend-value-register-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view ptr))]
     [value0-home : String
       (compiler-backend-value-register-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view value0))]
     [value1-home : String
       (compiler-backend-value-register-home
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view value1))]
     [scav-base : String
       (compiler-backend-scavenge-reg-here
@@ -38500,7 +38323,7 @@
         "%r10"
         backend-state)]
     (match (compiler-backend-emit-address-base
-      (compiler-backend-global-shared-view assignments)
+      assignments
       ptr
       scav-base
       program-index.backend-state)
@@ -38519,11 +38342,11 @@
               (compiler-backend-global-shared-view base-reg))]
           (match (compiler-backend-emit-store-value-to-address
             type-segment-bases
-            (compiler-backend-global-shared-view assignments)
+            assignments
             value0
             ty0
             addr0
-            (compiler-backend-global-shared-view program-index)
+            program-index
             (compiler-backend-two-exclude
               (compiler-backend-global-shared-view base-reg)
               value1-home)
@@ -38769,10 +38592,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)]
+      (compiler-backend-var-register-home backend-state assignments dst)]
     (if (compiler-backend-string-prefix-at?
       (compiler-backend-global-shared-view dst-home)
       "%xmm"
@@ -38804,7 +38624,7 @@
               "%xmm2"
               backend-state))]
         (match (compiler-backend-emit-load-float-value-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           src
           (compiler-backend-global-shared-view from-ty)
           (compiler-backend-global-shared-view tmp-reg)
@@ -38842,14 +38662,11 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)]
+      (compiler-backend-var-register-home backend-state assignments dst)]
     [src-reg : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view src))]
     (if (and
       (not
@@ -38900,7 +38717,7 @@
           (match (if (string.eq src-reg "")
             (compiler-backend-emit-load-typed-value-to-reg-with-plan
               type-segment-bases
-              (compiler-backend-global-shared-view assignments)
+              assignments
               src
               from-ty
               (compiler-backend-global-shared-view src-tmp)
@@ -38965,7 +38782,7 @@
                   backend-state)))]
           (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
             type-segment-bases
-            (compiler-backend-global-shared-view assignments)
+            assignments
             src
             from-ty
             (compiler-backend-global-shared-view value-reg)
@@ -39004,14 +38821,11 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)]
+      (compiler-backend-var-register-home backend-state assignments dst)]
     [src-reg : String
       (compiler-backend-float-value-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view src))]
     [unsigned-u64? : bool
       (match (& to-ty)
@@ -39073,7 +38887,7 @@
                 backend-state)))]
         (match (if (or unsigned-u64? (string.eq src-reg ""))
           (compiler-backend-emit-load-float-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             src
             (compiler-backend-global-shared-view from-ty)
             (compiler-backend-global-shared-view src-tmp)
@@ -39124,7 +38938,7 @@
       (compiler-backend-global-shared-view to-ty))
     (compiler-backend-value-same-home?
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       (compiler-backend-global-shared-view src)))
     (ResultCompilerBackend.Ok "")
@@ -39137,14 +38951,14 @@
           (compiler-backend-global-shared-view to-ty))]
       [xmm-needed : bool
         (compiler_regalloc.compiler-reg-scratch-cast-xmm-needed?
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           (compiler-backend-global-shared-view src)
           (compiler-backend-global-shared-view from-ty)
           (compiler-backend-global-shared-view to-ty))]
       [gp-count : i64
         (compiler_regalloc.compiler-reg-scratch-cast-gp-count
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           (compiler-backend-global-shared-view src)
           (compiler-backend-global-shared-view from-ty)
@@ -39168,7 +38982,7 @@
       (cond
         [(and from-is-float to-is-float)
           (compiler-backend-emit-float-to-float-cast
-            (compiler-backend-global-shared-view assignments)
+            assignments
             dst
             (compiler-backend-global-shared-view src)
             from-ty
@@ -39205,10 +39019,7 @@
         [else
           (let
             [dst-home : String
-              (compiler-backend-var-register-home
-                backend-state
-                (compiler-backend-global-shared-view assignments)
-                dst)]
+              (compiler-backend-var-register-home backend-state assignments dst)]
             [from-size : i64
               (compiler-backend-type-size
                 type-segment-bases
@@ -39235,7 +39046,7 @@
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-load-typed-var-to-reg-with-plan
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       src-id
                       (compiler-backend-global-shared-view from-ty)
                       dst-home
@@ -39243,7 +39054,7 @@
                 [_
                   (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
                     type-segment-bases
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     (compiler-backend-global-shared-view src)
                     from-ty
                     dst-home
@@ -39279,7 +39090,7 @@
                       dst-home)]
                   (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
                     type-segment-bases
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     src
                     from-ty
                     (compiler-backend-global-shared-view cast-reg)
@@ -39441,14 +39252,11 @@
       [(and from-float to-int)
         (let
           [dst-home : String
-            (compiler-backend-var-register-home
-              backend-state
-              (compiler-backend-global-shared-view assignments)
-              dst)]
+            (compiler-backend-var-register-home backend-state assignments dst)]
           [src-reg : String
             (compiler-backend-float-value-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view src))]
           (if (and
             (not (string.eq dst-home ""))
@@ -39490,7 +39298,7 @@
                     backend-state))]
               (match (if (string.eq src-reg "")
                 (compiler-backend-emit-load-float-value-with-plan
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   src
                   (compiler-backend-global-shared-view from-ty)
                   (compiler-backend-global-shared-view src-tmp)
@@ -39515,14 +39323,11 @@
       [(and from-int to-float)
         (let
           [dst-home : String
-            (compiler-backend-var-register-home
-              backend-state
-              (compiler-backend-global-shared-view assignments)
-              dst)]
+            (compiler-backend-var-register-home backend-state assignments dst)]
           [src-reg : String
             (compiler-backend-value-scalar-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view src))]
           (if (and
             (compiler-backend-string-prefix-at?
@@ -39560,7 +39365,7 @@
               (match (if (string.eq src-reg "")
                 (compiler-backend-emit-load-typed-value-to-reg-with-plan
                   type-segment-bases
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   src
                   from-ty
                   (compiler-backend-global-shared-view src-tmp)
@@ -39575,7 +39380,7 @@
                         src-tmp
                         (compiler-backend-global-shared-view dst-tmp))
                       (compiler-backend-emit-store-float-var-with-plan
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         dst
                         dst-tmp
                         to-ty
@@ -39585,10 +39390,7 @@
       [(and from-int to-int)
         (let
           [dst-home : String
-            (compiler-backend-var-register-home
-              backend-state
-              (compiler-backend-global-shared-view assignments)
-              dst)]
+            (compiler-backend-var-register-home backend-state assignments dst)]
           [tmp-reg : String
             (if (and
               (not (string.eq dst-home ""))
@@ -39606,7 +39408,7 @@
                 backend-state))]
           (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
             type-segment-bases
-            (compiler-backend-global-shared-view assignments)
+            assignments
             src
             from-ty
             (compiler-backend-global-shared-view tmp-reg)
@@ -39616,7 +39418,7 @@
                 (str_cat.str-cat
                   load
                   (compiler-backend-emit-store-typed-var-with-plan
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     dst
                     tmp-reg
                     to-ty
@@ -39626,10 +39428,7 @@
       [(and from-float to-float)
         (let
           [dst-home : String
-            (compiler-backend-var-register-home
-              backend-state
-              (compiler-backend-global-shared-view assignments)
-              dst)]
+            (compiler-backend-var-register-home backend-state assignments dst)]
           [tmp-reg : String
             (if (compiler-backend-string-prefix-at?
               (compiler-backend-global-shared-view dst-home)
@@ -39643,7 +39442,7 @@
                 "%xmm2"
                 backend-state))]
           (match (compiler-backend-emit-load-float-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             src
             from-ty
             (compiler-backend-global-shared-view tmp-reg)
@@ -40804,10 +40603,7 @@
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]) : bool
   (or
-    (compiler-backend-group-type?
-      type-segment-bases
-      (compiler-backend-global-shared-view index)
-      ty)
+    (compiler-backend-group-type? type-segment-bases index ty)
     (compiler-backend-group-var? index.backend-state dst)
     (compiler-backend-value-group-var? index.backend-state src)))
 
@@ -40955,7 +40751,7 @@
             out
             (compiler-backend-late-group-vars-instr
               type-segment-bases
-              (compiler-backend-global-shared-view index)
+              index
               out
               (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)))
           (set! i (+ i 1))))
@@ -40973,7 +40769,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (compiler-backend-late-group-vars-blocks
             type-segment-bases
-            (compiler-backend-global-shared-view index)
+            index
             (compiler-backend-late-group-vars-seq
               type-segment-bases
               index
@@ -40994,7 +40790,7 @@
                     out
                     (compiler-backend-late-group-vars-seq
                       type-segment-bases
-                      (compiler-backend-global-shared-view index)
+                      index
                       out
                       instrs))])
               (set! i (+ i 1))))
@@ -41048,7 +40844,7 @@
     [w0-sse : bool
       (compiler-backend-group-word-sse?
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view ty)
         0)]
     [int1 : i64
@@ -41141,9 +40937,7 @@
   (let
     [tables : (& index CompilerBackendProgramTables)
       (compiler-backend-program-tables index)]
-    (match (compiler-backend-index-extern-reference-slot
-      (compiler-backend-global-shared-view index)
-      name)
+    (match (compiler-backend-index-extern-reference-slot index name)
       [(backend_i64_i64_map.LookupFound slot)
         (array-ref tables.extern-call-infos slot)]
       [(backend_i64_i64_map.LookupMissing) 0])))
@@ -41175,9 +40969,7 @@
   (let
     [tables : (& index CompilerBackendProgramTables)
       (compiler-backend-program-tables index)]
-    (match (compiler-backend-index-function-slot
-      (compiler-backend-global-shared-view index)
-      name)
+    (match (compiler-backend-index-function-slot index name)
       [(backend_i64_i64_map.LookupFound slot)
         (array-ref tables.function-signatures slot)]
       [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)])))
@@ -41200,9 +40992,7 @@
   (let
     [tables : (& index CompilerBackendProgramTables)
       (compiler-backend-program-tables index)]
-    (match (compiler-backend-index-extern-signature-slot
-      (compiler-backend-global-shared-view index)
-      name)
+    (match (compiler-backend-index-extern-signature-slot index name)
       [(backend_i64_i64_map.LookupFound slot)
         (array-ref tables.extern-signature-values slot)]
       [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)])))
@@ -41210,9 +41000,7 @@
 (define (compiler-backend-index-signature
   [index : CompilerBackendProgramIndex]
   [name : i64]) : CompilerBackendMaybeSignature
-  (match (compiler-backend-index-function-signature
-    (compiler-backend-global-shared-view index)
-    name)
+  (match (compiler-backend-index-function-signature index name)
     [(CompilerBackendMaybeSignature.Some args ret-ty)
       (CompilerBackendMaybeSignature.Some args ret-ty)]
     [(CompilerBackendMaybeSignature.No)
@@ -41263,7 +41051,7 @@
   [index : CompilerBackendProgramIndex]
   [name : i64]) : String
   (compiler-backend-symbol-text-index
-    (compiler-backend-global-shared-view index)
+    index
     (compiler-backend-index-extern-link-symbol-id index name)))
 
 (define (compiler-backend-index-extern-provided-id?
@@ -41283,9 +41071,7 @@
   (let
     [tables : (& index CompilerBackendProgramTables)
       (compiler-backend-program-tables index)]
-    (match (compiler-backend-index-extern-signature-slot
-      (compiler-backend-global-shared-view index)
-      name)
+    (match (compiler-backend-index-extern-signature-slot index name)
       [(backend_i64_i64_map.LookupFound slot)
         (array-ref tables.extern-provided slot)]
       [(backend_i64_i64_map.LookupMissing) false])))
@@ -41393,20 +41179,13 @@
       seq-index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
         (let
-          [symbol : String
-            (compiler-backend-function-symbol-index
-              (compiler-backend-global-shared-view index)
-              name)]
+          [symbol : String (compiler-backend-function-symbol-index index name)]
           (cond
             [(and
                 (string.eq
-                  (compiler-backend-symbol-text-index
-                    (compiler-backend-global-shared-view index)
-                    name)
+                  (compiler-backend-symbol-text-index index name)
                   "main")
-                (compiler-backend-index-extern-provided?
-                  (compiler-backend-global-shared-view index)
-                  name))
+                (compiler-backend-index-extern-provided? index name))
               (compiler-backend-symbol-validation-error
                 "backend: main cannot use :export-symbol")]
             [(backend_string_i64_map.contains?
@@ -41417,9 +41196,7 @@
                   "backend: duplicate emitted function symbol "
                   symbol))]
             [(and
-                (compiler-backend-index-extern-provided?
-                  (compiler-backend-global-shared-view index)
-                  name)
+                (compiler-backend-index-extern-provided? index name)
                 (not
                   (compiler-backend-valid-export-symbol?
                     (compiler-backend-global-shared-view symbol))))
@@ -41428,20 +41205,14 @@
                   "backend: invalid exported function symbol "
                   symbol))]
             [(and
-                (compiler-backend-index-extern-provided?
-                  (compiler-backend-global-shared-view index)
-                  name)
+                (compiler-backend-index-extern-provided? index name)
                 (compiler-backend-runtime-helper-known-id?
-                  (compiler-backend-index-extern-link-symbol-id
-                    (compiler-backend-global-shared-view index)
-                    name))
+                  (compiler-backend-index-extern-link-symbol-id index name))
                 (not
                   (compiler-backend-runtime-prelude-string-helper-export?
                     index.backend-state
                     name
-                    (compiler-backend-index-extern-link-symbol-id
-                      (compiler-backend-global-shared-view index)
-                      name))))
+                    (compiler-backend-index-extern-link-symbol-id index name))))
               (compiler-backend-symbol-validation-error
                 (str_cat.str-cat
                   "backend: exported function symbol collides with runtime symbol "
@@ -41547,7 +41318,7 @@
       (match (compiler-backend-validate-function-symbols-into
         functions
         plan
-        (compiler-backend-global-shared-view index)
+        index
         seen)
         [(ResultCompilerBackendSymbolValidation.Ok function-seen)
           (compiler-backend-validate-extern-symbols-into
@@ -41937,7 +41708,7 @@
             aggregate?
             (compiler-backend-group-type?
               type-segment-bases
-              (compiler-backend-global-shared-view program-index)
+              program-index
               declared-ty)
             (<
               (+ arg-index 1)
@@ -42099,9 +41870,7 @@
   [index : CompilerBackendProgramIndex]) : compiler_ast_types.AstTypeList
   (let
     [param-types : compiler_ast_types.AstTypeList
-      (compiler-backend-call-param-types-index
-        name
-        (compiler-backend-global-shared-view index))]
+      (compiler-backend-call-param-types-index name index)]
     [fixed-count : i64
       (compiler-backend-extern-call-info-fixed-count extern-call-info)]
     (if (compiler-backend-extern-call-info-aggregate-params? extern-call-info)
@@ -42274,14 +42043,14 @@
             program-index)]
         [(compiler-backend-group-type?
             type-segment-bases
-            (compiler-backend-global-shared-view program-index)
+            program-index
             (compiler-backend-global-shared-view arg-ty))
           (let
             [linux-group-fits : bool
               (compiler-backend-linux-group-register-banks-fit?
                 type-segment-bases
                 target
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view arg-ty)
                 int-idx
                 float-idx
@@ -42289,7 +42058,7 @@
             [w0-sse : bool
               (compiler-backend-group-word-sse?
                 type-segment-bases
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view arg-ty)
                 0)]
             [w0-stack : bool
@@ -42311,7 +42080,7 @@
             [w1-sse : bool
               (compiler-backend-group-word-sse?
                 type-segment-bases
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 arg-ty
                 1)]
             [w1-stack : bool
@@ -42457,14 +42226,14 @@
           program-index)
         (if (compiler-backend-group-type?
           type-segment-bases
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view arg-ty))
           (let
             [linux-group-fits : bool
               (compiler-backend-linux-group-register-banks-fit?
                 type-segment-bases
                 target
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view arg-ty)
                 int-idx
                 float-idx
@@ -42472,7 +42241,7 @@
             [w0-sse : bool
               (compiler-backend-group-word-sse?
                 type-segment-bases
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view arg-ty)
                 0)]
             [w0-stack : bool
@@ -42493,7 +42262,7 @@
             [w1-sse : bool
               (compiler-backend-group-word-sse?
                 type-segment-bases
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 arg-ty
                 1)]
             [w1-stack : bool
@@ -42564,9 +42333,7 @@
   (compiler-backend-type-list-stack-arg-count
     type-segment-bases
     target
-    (compiler-backend-call-param-types-index
-      source-function
-      (compiler-backend-global-shared-view program-index))
+    (compiler-backend-call-param-types-index source-function program-index)
     0
     0
     0
@@ -42593,7 +42360,7 @@
     false
     (if (compiler-backend-group-type?
       type-segment-bases
-      (compiler-backend-global-shared-view program-index)
+      program-index
       (compiler_ast_types.ast-type-segment-bases-get
         type-segment-bases
         (compiler_ast_types.ast-type-list-get
@@ -42623,7 +42390,7 @@
     (compiler-backend-type-list-group-vars-at
       type-segment-bases
       types
-      (compiler-backend-global-shared-view program-index)
+      program-index
       (+ index 1)
       (if (compiler-backend-group-type?
         type-segment-bases
@@ -42669,18 +42436,16 @@
         0
         0
         0
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     (and
-      (compiler-backend-index-function-defines?
-        (compiler-backend-global-shared-view program-index)
-        name)
+      (compiler-backend-index-function-defines? program-index name)
       (<=
         tail-stack
         (compiler-backend-incoming-stack-arg-count
           type-segment-bases
           target
           source-function
-          (compiler-backend-global-shared-view program-index)))
+          program-index))
       ;; The staged tail-call path stages each arg scalar-wise (one
       ;; 8-byte slot, word0 only), so a register-group arg that needs stack
       ;; staging would lose word1 and shift every later arg. Decline the
@@ -42751,11 +42516,11 @@
                     (= arg-var var-id)
                     (compiler-backend-identity-tail-forwarder-type-ok?
                       type-segment-bases
-                      (compiler-backend-global-shared-view program-index)
+                      program-index
                       source-ty)
                     (compiler-backend-identity-tail-forwarder-type-ok?
                       type-segment-bases
-                      (compiler-backend-global-shared-view program-index)
+                      program-index
                       callee-ty)
                     (not
                       (compiler-backend-stack-call-arg-for-banks?
@@ -42785,14 +42550,10 @@
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [program-index : CompilerBackendProgramIndex]) : bool
-  (if (compiler-backend-index-function-defines?
-    (compiler-backend-global-shared-view program-index)
-    name)
+  (if (compiler-backend-index-function-defines? program-index name)
     (let
       [target-types : compiler_ast_types.AstTypeList
-        (compiler-backend-call-param-types-index
-          name
-          (compiler-backend-global-shared-view program-index))]
+        (compiler-backend-call-param-types-index name program-index)]
       (compiler-backend-identity-tail-forwarder-args?
         type-segment-bases
         target
@@ -42961,10 +42722,7 @@
               arg-index
               (compiler_ast_types.ast-type-id-fallback)))
           (compiler_ast_types.AstType.I64))]
-      (if (compiler-backend-group-type?
-        type-segment-bases
-        (compiler-backend-global-shared-view program-index)
-        arg-ty)
+      (if (compiler-backend-group-type? type-segment-bases program-index arg-ty)
         (compiler-backend-windows-stack-word-count
           type-segment-bases
           args
@@ -43048,9 +42806,7 @@
       (compiler-backend-type-list-stack-arg-count
         type-segment-bases
         target
-        (compiler-backend-call-param-types-index
-          callee
-          (compiler-backend-global-shared-view program-index))
+        (compiler-backend-call-param-types-index callee program-index)
         0
         0
         0
@@ -43111,7 +42867,7 @@
           (compiler-backend-stack-slots-for-size memory-size)
           (if (compiler-backend-group-type?
             type-segment-bases
-            (compiler-backend-global-shared-view program-index)
+            program-index
             arg-ty)
             2
             1))]
@@ -43167,9 +42923,7 @@
           (compiler-backend-windows-stack-arg-space
             type-segment-bases
             args
-            (compiler-backend-call-param-types-index
-              name
-              (compiler-backend-global-shared-view program-index))
+            (compiler-backend-call-param-types-index name program-index)
             program-index)]
         [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
@@ -43177,9 +42931,7 @@
           (compiler-backend-windows-stack-arg-space
             type-segment-bases
             args
-            (compiler-backend-call-param-types-index
-              name
-              (compiler-backend-global-shared-view program-index))
+            (compiler-backend-call-param-types-index name program-index)
             program-index)]
         [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
@@ -43191,9 +42943,7 @@
               (compiler-backend-windows-stack-arg-space
                 type-segment-bases
                 args
-                (compiler-backend-call-param-types-index
-                  name
-                  (compiler-backend-global-shared-view program-index))
+                (compiler-backend-call-param-types-index name program-index)
                 program-index)
               16))]
         [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult
@@ -43221,9 +42971,7 @@
             type-segment-bases
             target
             args
-            (compiler-backend-call-param-types-index
-              name
-              (compiler-backend-global-shared-view program-index))
+            (compiler-backend-call-param-types-index name program-index)
             program-index)]
         [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ args _)
           (compiler-backend-linux-closure-stack-arg-space-actual
@@ -43236,9 +42984,7 @@
             type-segment-bases
             target
             args
-            (compiler-backend-call-param-types-index
-              name
-              (compiler-backend-global-shared-view program-index))
+            (compiler-backend-call-param-types-index name program-index)
             program-index)]
         [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
@@ -43254,9 +43000,7 @@
                 type-segment-bases
                 target
                 args
-                (compiler-backend-call-param-types-index
-                  name
-                  (compiler-backend-global-shared-view program-index))
+                (compiler-backend-call-param-types-index name program-index)
                 true
                 program-index)
               16))]
@@ -43318,7 +43062,7 @@
                       target
                       instr
                       (compiler-backend-global-shared-view types)
-                      (compiler-backend-global-shared-view program-index)))))
+                      program-index))))
               unit)
             (set! index (+ index 1)))))
       (CompilerBackendOutgoingFrameScan needed max-space))))
@@ -43345,7 +43089,7 @@
               instrs
               scan
               (compiler-backend-global-shared-view types)
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             types
             program-index)])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -43381,7 +43125,7 @@
             instrs
             scan
             (compiler-backend-global-shared-view types)
-            (compiler-backend-global-shared-view program-index))
+            program-index)
           types
           program-index)])))
 
@@ -43630,7 +43374,7 @@
             (&mut edges)
             (compiler-backend-arg-move-parallel-edge
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-array-element-shared-view
                 moves.slots
                 cursor)))
@@ -43658,11 +43402,7 @@
   [moves : CompilerBackendArgMoveSeq]
   [all : CompilerBackendArgMoveSeq]) : bool
   (pmove.compiler-parallel-move-seq-has-blocked?
-    (compiler-backend-arg-move-parallel-edges
-      backend-state
-      (compiler-backend-global-shared-view assignments)
-      moves
-      0)
+    (compiler-backend-arg-move-parallel-edges backend-state assignments moves 0)
     (compiler-backend-arg-move-parallel-edges backend-state assignments all 0)))
 
 (define (compiler-backend-arg-move-list-find
@@ -43737,7 +43477,7 @@
                   (if (=
                     (compiler-backend-arg-move-source-reg
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       source)
                     oldreg)
                     (BackendArgMove dest (BackendArgMoveReg newreg))
@@ -43771,7 +43511,7 @@
                   (if (=
                     (compiler-backend-arg-move-source-reg
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       source)
                     oldreg)
                     (BackendArgMove dest (BackendArgMoveStackPop))
@@ -43853,7 +43593,7 @@
                     (compiler-backend-scavenge-reg-id-bit
                       (compiler-backend-arg-move-source-reg
                         backend-state
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         source)))))])
           (set! i (+ i 1))))
       mask)))
@@ -43889,7 +43629,7 @@
       (bit-or
         (compiler-backend-arg-move-list-exclude-mask
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           moves)
         (compiler-backend-arg-move-list-exclude-mask
           backend-state
@@ -43930,7 +43670,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-arg-move-decision
     backend-state
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-global-shared-view moves))
     [(pmove.CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
     [(pmove.CompilerParallelMoveUnblocked move-id)
@@ -43941,7 +43681,7 @@
           (match (compiler-backend-global-shared-view move)
             [(BackendArgMove dest _)
               (match (compiler-backend-emit-arg-move
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 move
                 backend-state)
                 [(ResultCompilerBackend.Ok head)
@@ -43968,13 +43708,13 @@
                 [srcreg : i64
                   (compiler-backend-arg-move-source-reg
                     backend-state
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     source)]
                 ;; Cycle decisions should name a register-sourced move; this
                 ;; branch is defensive if a malformed graph reaches the emitter.
                 (if (= srcreg compiler_abi.compiler-reg-id-invalid)
                   (match (compiler-backend-emit-arg-move
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     move
                     backend-state)
                     [(ResultCompilerBackend.Ok head)
@@ -43993,7 +43733,7 @@
                     [picked : i64
                       (compiler-backend-arg-temp-pick-reg
                         backend-state
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         (compiler-backend-global-shared-view moves)
                         (compiler-backend-global-shared-view all))]
                     (if (= picked compiler_abi.compiler-reg-id-invalid)
@@ -44006,7 +43746,7 @@
                       ;; save/restore-wrapped and could clobber a value homed in
                       ;; %r11 (SCAV1).
                       (match (compiler-backend-emit-arg-move-list-with-all
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         (compiler-backend-arg-move-list-redirect-to-stack
                           backend-state
                           assignments
@@ -44024,7 +43764,7 @@
                         [(ResultCompilerBackend.Err m)
                           (ResultCompilerBackend.Err m)])
                       (match (compiler-backend-emit-arg-move-list-with-all
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         (compiler-backend-arg-move-list-redirect
                           backend-state
                           assignments
@@ -44165,7 +43905,7 @@
         (compiler-backend-float-type? (compiler-backend-global-shared-view ty))
         (compiler-backend-group-type?
           type-segment-bases
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view ty))
         (compiler-backend-c-memory-aggregate-type?
           type-segment-bases
@@ -44277,7 +44017,7 @@
           (match (compiler-backend-emit-c-memory-stack-arg
             type-segment-bases
             target
-            (compiler-backend-global-shared-view arg-assignments)
+            arg-assignments
             value
             stack-idx
             private-memory-size
@@ -44312,7 +44052,7 @@
           (match (compiler-backend-emit-c-memory-stack-arg
             type-segment-bases
             target
-            (compiler-backend-global-shared-view arg-assignments)
+            arg-assignments
             value
             stack-idx
             memory-size
@@ -44345,14 +44085,14 @@
               (ResultCompilerBackend.Err message)])]
         [(compiler-backend-group-type?
             type-segment-bases
-            (compiler-backend-global-shared-view program-index)
+            program-index
             (compiler-backend-global-shared-view arg-ty))
           (let
             [linux-group-fits : bool
               (compiler-backend-linux-group-register-banks-fit?
                 type-segment-bases
                 target
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view arg-ty)
                 int-idx
                 float-idx
@@ -44360,7 +44100,7 @@
             [w0-sse : bool
               (compiler-backend-group-word-sse?
                 type-segment-bases
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view arg-ty)
                 0)]
             [w0-stack : bool
@@ -44385,7 +44125,7 @@
             [w1-sse : bool
               (compiler-backend-group-word-sse?
                 type-segment-bases
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view arg-ty)
                 1)]
             [w1-stack : bool
@@ -44400,13 +44140,13 @@
               (not linux-group-fits))
               (match (compiler-backend-emit-group-stack-arg
                 target
-                (compiler-backend-global-shared-view arg-assignments)
+                arg-assignments
                 value
                 stack-idx
                 vars
                 (compiler-backend-global-shared-view planned-stage)
                 (compiler-backend-global-shared-view arg-ty)
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 backend-state)
                 [(ResultCompilerBackend.Ok head)
                   (begin
@@ -44426,7 +44166,7 @@
                       (+ stack-idx 2)
                       (compiler-backend-global-shared-view planned-stage)
                       func-diag
-                      (compiler-backend-global-shared-view program-index)
+                      program-index
                       vars
                       backend-state))]
                 [(ResultCompilerBackend.Err message)
@@ -44434,7 +44174,7 @@
               (match (compiler-backend-emit-group-word-call-arg
                 type-segment-bases
                 target
-                (compiler-backend-global-shared-view arg-assignments)
+                arg-assignments
                 (compiler-backend-global-shared-view value)
                 0
                 int-idx
@@ -44444,14 +44184,14 @@
                 vars
                 (compiler-backend-global-shared-view planned-stage)
                 (compiler-backend-global-shared-view arg-ty)
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view func-diag)
                 backend-state)
                 [(ResultCompilerBackend.Ok head0)
                   (match (compiler-backend-emit-group-word-call-arg
                     type-segment-bases
                     target
-                    (compiler-backend-global-shared-view arg-assignments)
+                    arg-assignments
                     value
                     1
                     int1
@@ -44461,7 +44201,7 @@
                     vars
                     (compiler-backend-global-shared-view planned-stage)
                     arg-ty
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     (compiler-backend-global-shared-view func-diag)
                     backend-state)
                     [(ResultCompilerBackend.Ok head1)
@@ -44488,7 +44228,7 @@
                             stack1)
                           (compiler-backend-global-shared-view planned-stage)
                           func-diag
-                          (compiler-backend-global-shared-view program-index)
+                          program-index
                           vars
                           backend-state))]
                     [(ResultCompilerBackend.Err message)
@@ -44505,7 +44245,7 @@
             out
             type-segment-bases
             target
-            (compiler-backend-global-shared-view arg-assignments)
+            arg-assignments
             value
             arg-ty
             is-float
@@ -44517,7 +44257,7 @@
                 out
                 type-segment-bases
                 target
-                (compiler-backend-global-shared-view arg-assignments)
+                arg-assignments
                 args
                 types
                 c-abi?
@@ -44528,7 +44268,7 @@
                 (+ stack-idx 1)
                 (compiler-backend-global-shared-view planned-stage)
                 func-diag
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 vars
                 backend-state)]
             [(ResultCompilerBackend.Err message)
@@ -44544,14 +44284,14 @@
               (match (if is-float
                 (compiler-backend-emit-load-float-value-into
                   out
-                  (compiler-backend-global-shared-view arg-assignments)
+                  arg-assignments
                   value
                   arg-ty
                   reg
                   backend-state)
                 (compiler-backend-emit-load-value-with-plan-into
                   out
-                  (compiler-backend-global-shared-view arg-assignments)
+                  arg-assignments
                   value
                   reg
                   backend-state))
@@ -44705,7 +44445,7 @@
           (if (=
             (compiler-backend-arg-move-source-reg
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (BackendArgMoveValue
                 (compiler-backend-call-arg-at
                   (compiler-backend-global-shared-view args)
@@ -44754,7 +44494,7 @@
       (or
         (compiler-backend-arg-moves-conflict?
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-arg-moves-build-from
             target
             (compiler-backend-global-shared-view args)
@@ -44798,7 +44538,7 @@
             (array-ref out (- index prefix))
             (compiler-backend-arg-move-source-reg
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (BackendArgMoveValue
                 (compiler-backend-call-arg-at
                   (compiler-backend-global-shared-view args)
@@ -44873,7 +44613,7 @@
         out
         type-segment-bases
         target
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-call-arg-at
           (compiler-backend-global-shared-view args)
           (+ prefix index))
@@ -44927,7 +44667,7 @@
     [sources : (__tl_dyn-array i64)
       (compiler-backend-stack-arg-sources
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view args)
         prefix
         count)]
@@ -44938,7 +44678,7 @@
         (compiler-backend-global-shared-view sources)
         stack-idx)
       (match (compiler-backend-emit-arg-move-list
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-arg-moves-build-from
           target
           (compiler-backend-global-shared-view args)
@@ -44997,12 +44737,12 @@
       (compiler-backend-global-shared-view args)
       (compiler-backend-global-shared-view types)
       c-abi?
-      (compiler-backend-global-shared-view program-index)
+      program-index
       int-idx
       position)
     (compiler-backend-arg-moves-conflict?
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       (compiler-backend-arg-moves-build-at
         target
         (compiler-backend-global-shared-view args)
@@ -45035,11 +44775,11 @@
       (compiler-backend-call-args-gp-stack-first?
         type-segment-bases
         target
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view types)
         c-abi?
-        (compiler-backend-global-shared-view program-index)
+        program-index
         int-idx
         position
         backend-state))
@@ -45389,7 +45129,7 @@
         (match (compiler-backend-emit-direct-tail-stack-call-arg
           type-segment-bases
           target
-          (compiler-backend-global-shared-view assignments)
+          assignments
           value
           arg-ty
           is-float
@@ -45426,13 +45166,13 @@
           [(ResultBackendReg.Ok reg)
             (match (if is-float
               (compiler-backend-emit-load-float-value-with-plan
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 value
                 arg-ty
                 reg
                 backend-state)
               (compiler-backend-emit-load-value-with-plan
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 value
                 reg
                 backend-state))
@@ -45523,7 +45263,7 @@
     true
     (match (compiler-backend-emit-assignment-lookup
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       left)
       [(compiler_regalloc.CompilerRegMaybeLocation.Some left-location)
         (match (compiler-backend-emit-assignment-lookup
@@ -45646,17 +45386,11 @@
     [(CompilerBackendPhiCopy.Copy dst source _)
       (pmove.ParallelMoveEdge
         dst
-        (compiler-backend-var-parallel-resource0
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          dst)
-        (compiler-backend-var-parallel-resource1
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          dst)
+        (compiler-backend-var-parallel-resource0 backend-state assignments dst)
+        (compiler-backend-var-parallel-resource1 backend-state assignments dst)
         (compiler-backend-phi-source-parallel-resource0
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view source))
         (compiler-backend-phi-source-parallel-resource1
           backend-state
@@ -45680,7 +45414,7 @@
             (&mut edges)
             (compiler-backend-phi-copy-parallel-edge
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-array-element-shared-view
                 copies.slots
                 cursor)))
@@ -45793,7 +45527,7 @@
                   dst
                   (compiler-backend-phi-source-replace-home
                     backend-state
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     source
                     dst-home-var
                     loc)
@@ -45868,7 +45602,7 @@
               [(CompilerBackendPhiCopy.Copy dst _ _)
                 (if (compiler-backend-phi-copy-source-uses-home?
                   backend-state
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view phi-copy)
                   dst)
                   unit
@@ -46347,17 +46081,17 @@
   (if (or
     (compiler-backend-group-type?
       type-segment-bases
-      (compiler-backend-global-shared-view program-index)
+      program-index
       (compiler-backend-global-shared-view ty))
     (compiler-backend-group-var? backend-state dst))
     (match (compiler-backend-emit-phi-group-word-save
       type-segment-bases
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       0
       vars
       (compiler-backend-global-shared-view ty)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       backend-state)
       [(ResultCompilerBackend.Ok w0)
         (match (compiler-backend-emit-phi-group-word-save
@@ -46402,17 +46136,17 @@
   (if (or
     (compiler-backend-group-type?
       type-segment-bases
-      (compiler-backend-global-shared-view program-index)
+      program-index
       (compiler-backend-global-shared-view ty))
     (compiler-backend-group-var? backend-state dst))
     (match (compiler-backend-emit-phi-group-word-restore
       type-segment-bases
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst
       1
       vars
       (compiler-backend-global-shared-view ty)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       backend-state)
       [(ResultCompilerBackend.Ok w1)
         (match (compiler-backend-emit-phi-group-word-restore
@@ -46557,7 +46291,7 @@
                   (compiler-backend-scavenge-reg-bit
                     (compiler-backend-var-register-home
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst))))])
           (set! i (+ i 1))))
       mask)))
@@ -46586,7 +46320,7 @@
                   mask
                   (compiler-backend-phi-dst-home-mask-for-var
                     backend-state
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     dst)))
               (set! i (+ i 1)))]
           [_ (set! i n)]))
@@ -46667,7 +46401,7 @@
           (bit-or
             (compiler-backend-phi-copy-list-dst-home-mask
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               copies)
             (compiler-backend-phi-copy-list-dst-home-mask
               backend-state
@@ -46713,17 +46447,11 @@
             (compiler-backend-global-shared-view ty)))
         (not
           (or
-            (compiler-backend-group-type?
-              type-segment-bases
-              (compiler-backend-global-shared-view program-index)
-              ty)
+            (compiler-backend-group-type? type-segment-bases program-index ty)
             (compiler-backend-group-var? program-index.backend-state dst)))
         (not
           (string.eq
-            (compiler-backend-var-register-home
-              backend-state
-              (compiler-backend-global-shared-view assignments)
-              dst)
+            (compiler-backend-var-register-home backend-state assignments dst)
             ""))
         (match source
           [(CompilerBackendPhiSource.Value value)
@@ -46754,9 +46482,9 @@
             (compiler-backend-phi-copy-reg-swappable?
               backend-state
               type-segment-bases
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-array-element-shared-view copies.slots i)
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             (return false))
           (set! i (+ i 1))))
       true)))
@@ -46778,17 +46506,11 @@
         (compiler-backend-float-type? (compiler-backend-global-shared-view ty))
         (not
           (or
-            (compiler-backend-group-type?
-              type-segment-bases
-              (compiler-backend-global-shared-view program-index)
-              ty)
+            (compiler-backend-group-type? type-segment-bases program-index ty)
             (compiler-backend-group-var? program-index.backend-state dst)))
         (not
           (string.eq
-            (compiler-backend-var-register-home
-              backend-state
-              (compiler-backend-global-shared-view assignments)
-              dst)
+            (compiler-backend-var-register-home backend-state assignments dst)
             ""))
         (match source
           [(CompilerBackendPhiSource.Value value)
@@ -46819,9 +46541,9 @@
             (compiler-backend-phi-copy-xmm-swappable?
               backend-state
               type-segment-bases
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-array-element-shared-view copies.slots i)
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             (return false))
           (set! i (+ i 1))))
       true)))
@@ -46836,10 +46558,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)]
+      (compiler-backend-var-register-home backend-state assignments dst)]
     [phi-planned-stage : String
       (compiler-backend-current-phi-planned-stage backend-state)]
     [src-home : String
@@ -46847,11 +46566,11 @@
         (compiler-backend-global-shared-view ty))
         (compiler-backend-float-value-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view value))
         (compiler-backend-value-scalar-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view value)))]
     [exclude : (__tl_dyn-array String)
       (if (string.eq src-home "")
@@ -46905,7 +46624,7 @@
     ;; compiler-backend-phi-staged-copy-proven?.
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
       type-segment-bases
-      (compiler-backend-global-shared-view assignments)
+      assignments
       value
       (compiler-backend-global-shared-view ty)
       (compiler-backend-global-shared-view reg)
@@ -47004,7 +46723,7 @@
     (CompilerBackendMaybeAsm.No)
     (match (compiler-backend-emit-assignment-lookup
       backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       dst)
       [(compiler_regalloc.CompilerRegMaybeLocation.Some dst-location)
         (match dst-location
@@ -47147,7 +46866,7 @@
   [program-index : CompilerBackendProgramIndex]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-immediate-to-var-home
-    (compiler-backend-global-shared-view assignments)
+    assignments
     dst
     (compiler-backend-global-shared-view value)
     backend-state)
@@ -47182,7 +46901,7 @@
     (match (compiler-backend-global-shared-view value)
       [(compiler_ir_types.CompilerIrValue.Var src-id)
         (match (compiler-backend-emit-phi-var-source-direct
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           src-id
           backend-state)
@@ -47244,7 +46963,7 @@
     [(CompilerBackendPhiSource.Value value)
       (if (compiler-backend-phi-same-home?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         dst
         (compiler-backend-global-shared-view value))
         (ResultCompilerBackend.Ok "")
@@ -47252,14 +46971,14 @@
         ;; fast path, then use the same non-ABI copy path as an ordinary Mov.
         (if (compiler-backend-copy-group?
           type-segment-bases
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view ty)
           dst
           (compiler-backend-global-shared-view value))
           (match (compiler-backend-global-shared-view value)
             [(compiler_ir_types.CompilerIrValue.Var src-id)
               (match (compiler-backend-emit-phi-var-source-direct
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 dst
                 src-id
                 backend-state)
@@ -47362,7 +47081,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-phi-copy-list-decision
     backend-state
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-global-shared-view copies))
     [(pmove.CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
     [(pmove.CompilerParallelMoveUnblocked copy-id)
@@ -47374,9 +47093,9 @@
             [(CompilerBackendPhiCopy.Copy dst _ _)
               (match (compiler-backend-emit-phi-copy-item
                 type-segment-bases
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 phi-copy
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 vars
                 backend-state)
                 [(ResultCompilerBackend.Ok head)
@@ -47416,12 +47135,12 @@
                     (compiler-backend-phi-copy-list-reg-swappable?
                       backend-state
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-global-shared-view copies)
-                      (compiler-backend-global-shared-view program-index)))
+                      program-index))
                     (compiler-backend-phi-temp-pick-reg
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-global-shared-view copies)
                       (compiler-backend-global-shared-view all))
                     "")]
@@ -47434,9 +47153,9 @@
                     (compiler-backend-phi-copy-list-xmm-swappable?
                       backend-state
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-global-shared-view copies)
-                      (compiler-backend-global-shared-view program-index)))]
+                      program-index))]
                 [xmm-reg : String
                   (if (and
                     xmm-candidate
@@ -47451,20 +47170,20 @@
                 (match (if (string.eq reg "")
                   (compiler-backend-emit-phi-temp-save
                     type-segment-bases
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     dst
                     (compiler-backend-global-shared-view ty)
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     vars
                     backend-state)
                   (if (string.eq xmm-reg "")
                     (compiler-backend-emit-phi-temp-save-reg
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       (compiler-backend-global-shared-view reg)
                       backend-state)
                     (compiler-backend-emit-phi-temp-save-xmm
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       (compiler-backend-global-shared-view reg)
                       (compiler-backend-global-shared-view ty)
@@ -47472,17 +47191,17 @@
                   [(ResultCompilerBackend.Ok save)
                     (match (compiler-backend-emit-phi-source-to-var
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       dst
                       source
                       ty
-                      (compiler-backend-global-shared-view program-index)
+                      program-index
                       vars
                       backend-state)
                       [(ResultCompilerBackend.Ok head)
                         (match (compiler-backend-emit-phi-copy-list-with-all
                           type-segment-bases
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           (compiler-backend-phi-copy-list-replace-source-home
                             backend-state
                             assignments
@@ -47531,7 +47250,7 @@
                 (begin
                   (if (compiler-backend-phi-same-home?
                     backend-state
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     dst
                     (compiler-backend-global-shared-view value))
                     unit
@@ -47573,19 +47292,19 @@
   [vars : i64]) : ResultCompilerBackend
   (match (compiler-backend-leading-phi-copies-seq
     program-index.backend-state
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-global-shared-view instrs)
     from-label)
     [(ResultBackendPhiCopies.Ok copies)
       (compiler-backend-emit-phi-copy-list
         type-segment-bases
-        (compiler-backend-global-shared-view assignments)
+        assignments
         copies
         (compiler-backend-phi-leading-dst-home-mask-seq
           program-index.backend-state
           assignments
           instrs)
-        (compiler-backend-global-shared-view program-index)
+        program-index
         vars
         false
         program-index.backend-state)]
@@ -47797,7 +47516,7 @@
           (if (= block-label target-label)
             (match (compiler-backend-leading-phi-copies-seq
               program-index.backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view instrs)
               from-label)
               [(ResultBackendPhiCopies.Ok copies)
@@ -47813,10 +47532,10 @@
                       point)
                     (compiler-backend-emit-phi-copy-list
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-phi-copy-list-drop-same-home
                         program-index.backend-state
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         (compiler-backend-phi-copy-list-replace-source-var
                           copies
                           moved-dst
@@ -47825,7 +47544,7 @@
                         program-index.backend-state
                         assignments
                         instrs)
-                      (compiler-backend-global-shared-view program-index)
+                      program-index
                       vars
                       false
                       program-index.backend-state))
@@ -47886,7 +47605,7 @@
         (if (= block-label target-label)
           (match (compiler-backend-leading-phi-copies-seq
             program-index.backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view instrs)
             from-label)
             [(ResultBackendPhiCopies.Ok copies)
@@ -47899,10 +47618,10 @@
                     point)
                   (compiler-backend-emit-phi-copy-list
                     type-segment-bases
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     (compiler-backend-phi-copy-list-drop-same-home
                       program-index.backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       (compiler-backend-phi-copy-list-replace-source-var
                         copies
                         moved-dst
@@ -47911,7 +47630,7 @@
                       program-index.backend-state
                       assignments
                       instrs)
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     vars
                     false
                     program-index.backend-state))
@@ -48044,7 +47763,7 @@
                         (compiler-backend-global-shared-view instrs)))
                     (match (compiler-backend-leading-phi-copies-seq
                       backend-state
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       instrs
                       from-label)
                       [(ResultBackendPhiCopies.Ok copies) (= copies.len 0)]
@@ -48186,7 +47905,7 @@
               (compiler_ir_types.compiler-ir-label-none)
               (compiler-backend-jump-only-target
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view seq)
                 i))]
           (begin
@@ -48403,11 +48122,11 @@
       program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
-      (compiler-backend-global-shared-view assignments)
+      assignments
       (compiler-backend-global-shared-view blocks)
       true-label
       current-label
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       ""
       ""
@@ -48416,11 +48135,11 @@
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           blocks
           false-label
           current-label
-          (compiler-backend-global-shared-view program-index)
+          program-index
           vars
           ""
           ""
@@ -48510,11 +48229,11 @@
       program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
-      (compiler-backend-global-shared-view assignments)
+      assignments
       (compiler-backend-global-shared-view blocks)
       true-label
       current-label
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       ""
       ""
@@ -48523,11 +48242,11 @@
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           blocks
           false-label
           current-label
-          (compiler-backend-global-shared-view program-index)
+          program-index
           vars
           ""
           ""
@@ -48618,11 +48337,11 @@
       program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
-      (compiler-backend-global-shared-view assignments)
+      assignments
       (compiler-backend-global-shared-view blocks)
       true-label
       current-label
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       ""
       ""
@@ -48631,11 +48350,11 @@
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           blocks
           false-label
           current-label
-          (compiler-backend-global-shared-view program-index)
+          program-index
           vars
           ""
           ""
@@ -48730,11 +48449,11 @@
       program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
-      (compiler-backend-global-shared-view assignments)
+      assignments
       (compiler-backend-global-shared-view blocks)
       true-label
       current-label
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       ""
       ""
@@ -48743,11 +48462,11 @@
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           blocks
           false-label
           current-label
-          (compiler-backend-global-shared-view program-index)
+          program-index
           vars
           ""
           ""
@@ -48940,7 +48659,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
   (compiler-backend-use-shared-return-count?
     backend-state
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-shared-return-count backend-state assignments blocks)))
 
 (define (compiler-backend-use-shared-return-count?
@@ -48982,7 +48701,7 @@
       "    ret\n"
       (if (compiler-backend-use-shared-return-count?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         return-count)
         (str_cat.str-cat
           "    jmp "
@@ -49000,7 +48719,7 @@
   (compiler-backend-return-tail-for-return-count
     backend-state
     source-function
-    (compiler-backend-global-shared-view assignments)
+    assignments
     vars
     (compiler-backend-shared-return-count backend-state assignments blocks)))
 
@@ -49010,10 +48729,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : String
-  (if (compiler-backend-use-shared-return?
-    backend-state
-    (compiler-backend-global-shared-view assignments)
-    blocks)
+  (if (compiler-backend-use-shared-return? backend-state assignments blocks)
     (str_cat.str-cat
       (compiler-backend-return-label backend-state source-function)
       ":\n"
@@ -49169,7 +48885,7 @@
           program-index.backend-state
           source-function
           v
-          (compiler-backend-global-shared-view assignments)
+          assignments
           ret-ty)
           [(ResultCompilerBackend.Ok load)
             (ResultCompilerBackend.Ok
@@ -49185,25 +48901,25 @@
             (ResultCompilerBackend.Err message)])
         (if (compiler-backend-group-type?
           type-segment-bases
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view ret-ty))
           (match (compiler-backend-emit-group-load
             type-segment-bases
-            (compiler-backend-global-shared-view assignments)
+            assignments
             v
             (compiler-backend-group-return-reg
               type-segment-bases
-              (compiler-backend-global-shared-view program-index)
+              program-index
               (compiler-backend-global-shared-view ret-ty)
               0)
             (compiler-backend-group-return-reg
               type-segment-bases
-              (compiler-backend-global-shared-view program-index)
+              program-index
               (compiler-backend-global-shared-view ret-ty)
               1)
             vars
             (compiler-backend-global-shared-view ret-ty)
-            (compiler-backend-global-shared-view program-index)
+            program-index
             program-index.backend-state)
             [(ResultCompilerBackend.Ok load)
               (ResultCompilerBackend.Ok
@@ -49219,10 +48935,10 @@
               (ResultCompilerBackend.Err message)])
           (match (compiler-backend-emit-load-typed-value-with-plan
             type-segment-bases
-            (compiler-backend-global-shared-view assignments)
+            assignments
             v
             ret-ty
-            (compiler-backend-global-shared-view program-index)
+            program-index
             program-index.backend-state)
             [(ResultCompilerBackend.Ok load)
               (ResultCompilerBackend.Ok
@@ -49251,7 +48967,7 @@
     source-function
     (compiler-backend-shared-return-count
       program-index.backend-state
-      (compiler-backend-global-shared-view assignments)
+      assignments
       blocks)
     value
     assignments
@@ -49279,9 +48995,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [extern-call-info : i64
-      (compiler-backend-index-extern-call-info
-        (compiler-backend-global-shared-view program-index)
-        name)]
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : compiler_ast_types.AstTypeList
       (compiler-backend-call-param-types-for-call
         type-segment-bases
@@ -49290,7 +49004,7 @@
         types
         global-types
         extern-call-info
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [c-abi? : bool
       (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
@@ -49299,7 +49013,7 @@
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         c-abi?
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [tail-stack-count : i64
       (compiler-backend-call-stack-arg-count
         type-segment-bases
@@ -49312,12 +49026,9 @@
         0
         0
         0
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [target-symbol : String
-      (compiler-backend-call-symbol-index
-        name
-        plan
-        (compiler-backend-global-shared-view program-index))]
+      (compiler-backend-call-symbol-index name plan program-index)]
     [return-normalize : String
       (compiler-backend-tail-call-return-normalize type-segment-bases ty)]
     [varargs-pre-call : String
@@ -49333,7 +49044,7 @@
       name
       (compiler-backend-global-shared-view args)
       (compiler-backend-global-shared-view param-types)
-      (compiler-backend-global-shared-view program-index))
+      program-index)
       (match (if (compiler-backend-function-state-bool?
         (compiler-backend-state-function-state backend-state)
         compiler-backend-function-bool-identity-tail-forwarder-active)
@@ -49342,7 +49053,7 @@
           (compiler-backend-emit-call-args
             type-segment-bases
             target
-            (compiler-backend-global-shared-view assignments)
+            assignments
             args
             param-types
             c-abi?
@@ -49359,7 +49070,7 @@
           (compiler-backend-emit-direct-tail-call-args
             type-segment-bases
             target
-            (compiler-backend-global-shared-view assignments)
+            assignments
             args
             param-types
             instr-diag
@@ -49378,7 +49089,7 @@
       (match (compiler-backend-emit-call-args
         type-segment-bases
         target
-        (compiler-backend-global-shared-view assignments)
+        assignments
         args
         param-types
         c-abi?
@@ -49389,7 +49100,7 @@
         0
         ""
         instr-diag
-        (compiler-backend-global-shared-view program-index)
+        program-index
         vars
         backend-state)
         [(ResultCompilerBackend.Ok args-asm)
@@ -49402,7 +49113,7 @@
                 args-asm
                 varargs-pre-call
                 (compiler-backend-tail-jump-tail
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   vars
                   target-symbol
                   backend-state)))
@@ -49535,7 +49246,7 @@
               source-function
               (compiler-backend-shared-return-count
                 program-index.backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 blocks)
               instrs
               from-label
@@ -49695,7 +49406,7 @@
               source-function
               (compiler-backend-shared-return-count
                 program-index.backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 blocks)
               instrs
               from-label
@@ -49838,7 +49549,7 @@
       (compiler-backend-mode-scalar? mode)
       (compiler-backend-value-same-home?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         dst
         (compiler-backend-global-shared-view src)))
       (compiler-backend-emit-mov
@@ -49926,19 +49637,19 @@
     [(and
         (compiler-backend-copy-group?
           type-segment-bases
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view ty)
           dst
           (compiler-backend-global-shared-view src))
         (compiler-backend-value-same-home?
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           (compiler-backend-global-shared-view src)))
       (ResultCompilerBackend.Ok "")]
     [(compiler-backend-copy-group?
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view ty)
         dst
         (compiler-backend-global-shared-view src))
@@ -49955,28 +49666,22 @@
         backend-state)]
     [(compiler-backend-value-same-home?
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         dst
         (compiler-backend-global-shared-view src))
       (ResultCompilerBackend.Ok "")]
     ;; R5: a rematerialised destination has no storage and no live use of this
     ;; definition -- every use recomputes -- so the whole `mov` is dead.
-    [(compiler-backend-var-remat-home?
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst)
+    [(compiler-backend-var-remat-home? backend-state assignments dst)
       (ResultCompilerBackend.Ok "")]
     [(compiler-backend-float-type? (compiler-backend-global-shared-view ty))
       (let
         [dst-home : String
-          (compiler-backend-var-register-home
-            backend-state
-            (compiler-backend-global-shared-view assignments)
-            dst)]
+          (compiler-backend-var-register-home backend-state assignments dst)]
         [src-home : String
           (compiler-backend-float-value-register
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view src))]
         [exclude : (__tl_dyn-array String)
           (if (string.eq src-home "")
@@ -49998,7 +49703,7 @@
             dst-home)]
         (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view src)
           (compiler-backend-global-shared-view ty)
           (compiler-backend-global-shared-view reg)
@@ -50009,7 +49714,7 @@
                 (str_cat.str-cat
                   load
                   (compiler-backend-emit-store-typed-var-with-plan
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     dst
                     reg
                     ty
@@ -50019,7 +49724,7 @@
             (ResultCompilerBackend.Err message)]))]
     [else
       (match (compiler-backend-emit-store-immediate-to-var-home
-        (compiler-backend-global-shared-view assignments)
+        assignments
         dst
         (compiler-backend-global-shared-view src)
         backend-state)
@@ -50027,10 +49732,7 @@
         [(CompilerBackendMaybeAsm.No)
           (let
             [dst-home : String
-              (compiler-backend-var-register-home
-                backend-state
-                (compiler-backend-global-shared-view assignments)
-                dst)]
+              (compiler-backend-var-register-home backend-state assignments dst)]
             ;; Load src straight into the destination register home (a plain movq
             ;; / leaq), skipping the %rax staging store. emit-load-value-with-plan
             ;; handles var/global/global-addr sources and elides the move when src
@@ -50054,7 +49756,7 @@
                       (compiler-backend-global-shared-view ty))
                     8)]))
               (compiler-backend-emit-load-value-with-plan
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view src)
                 dst-home
                 backend-state)
@@ -50062,7 +49764,7 @@
                 [src-home : String
                   (compiler-backend-value-scalar-register
                     backend-state
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     (compiler-backend-global-shared-view src))]
                 ;; The mirror image of the load above, and the reason it is
                 ;; worth its own arm: a register-homed source moving to a
@@ -50111,7 +49813,7 @@
                         backend-state)]
                     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       src
                       (compiler-backend-global-shared-view ty)
                       (compiler-backend-global-shared-view reg)
@@ -50162,10 +49864,7 @@
   [ty : compiler_ast_types.AstType]
   [normalize? : bool]
   [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-call-result-store-dead?
-    backend-state
-    (compiler-backend-global-shared-view assignments)
-    dst)
+  (if (compiler-backend-call-result-store-dead? backend-state assignments dst)
     ""
     (str_cat.str-cat
       (compiler-backend-call-result-normalize
@@ -50259,7 +49958,7 @@
   [normalize? : bool]) : ResultCompilerBackend
   (if (compiler-backend-call-result-store-dead?
     program-index.backend-state
-    (compiler-backend-global-shared-view assignments)
+    assignments
     dst)
     (ResultCompilerBackend.Ok "")
     (compiler-backend-emit-call-result-store-live
@@ -50281,7 +49980,7 @@
   [normalize? : bool]) : ResultCompilerBackend
   (if (compiler-backend-group-type?
     type-segment-bases
-    (compiler-backend-global-shared-view program-index)
+    program-index
     (compiler-backend-global-shared-view ty))
     (compiler-backend-emit-group-store
       type-segment-bases
@@ -50289,17 +49988,17 @@
       dst
       (compiler-backend-group-return-reg
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view ty)
         0)
       (compiler-backend-group-return-reg
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view ty)
         1)
       vars
       ty
-      (compiler-backend-global-shared-view program-index)
+      program-index
       program-index.backend-state)
     (ResultCompilerBackend.Ok
       (let
@@ -50334,14 +50033,11 @@
   [program-index : CompilerBackendProgramIndex]
   [normalize? : bool]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-call-result-store-dead?
-    backend-state
-    (compiler-backend-global-shared-view assignments)
-    dst)
+  (if (compiler-backend-call-result-store-dead? backend-state assignments dst)
     (ResultCompilerBackend.Ok "")
     (if (compiler-backend-group-type?
       type-segment-bases
-      (compiler-backend-global-shared-view program-index)
+      program-index
       (compiler-backend-global-shared-view ty))
       (match (compiler-backend-emit-group-store
         type-segment-bases
@@ -50349,12 +50045,12 @@
         dst
         (compiler-backend-group-return-reg
           type-segment-bases
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view ty)
           0)
         (compiler-backend-group-return-reg
           type-segment-bases
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view ty)
           1)
         vars
@@ -50436,9 +50132,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [extern-call-info : i64
-      (compiler-backend-index-extern-call-info
-        (compiler-backend-global-shared-view program-index)
-        name)]
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : compiler_ast_types.AstTypeList
       (compiler-backend-call-param-types-for-call
         type-segment-bases
@@ -50447,7 +50141,7 @@
         types
         global-types
         extern-call-info
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [c-abi? : bool
       (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
@@ -50456,7 +50150,7 @@
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         c-abi?
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     (match (compiler-backend-emit-call-args-with-override
       type-segment-bases
       (compiler-backend-function-state-rax-forward-pending-var backend-state)
@@ -50471,7 +50165,7 @@
       0
       0
       (compiler-backend-global-shared-view instr-diag)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       backend-state)
       [(ResultCompilerBackend.Ok args-asm)
@@ -50734,9 +50428,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [extern-call-info : i64
-      (compiler-backend-index-extern-call-info
-        (compiler-backend-global-shared-view program-index)
-        name)]
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : compiler_ast_types.AstTypeList
       (compiler-backend-call-param-types-for-call
         type-segment-bases
@@ -50745,7 +50437,7 @@
         types
         global-types
         extern-call-info
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [c-abi? : bool
       (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
@@ -50754,7 +50446,7 @@
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         c-abi?
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     (match (compiler-backend-emit-call-args-with-override
       type-segment-bases
       (compiler-backend-function-state-rax-forward-pending-var backend-state)
@@ -50769,7 +50461,7 @@
       0
       0
       (compiler-backend-global-shared-view instr-diag)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       backend-state)
       [(ResultCompilerBackend.Ok args-asm)
@@ -50824,15 +50516,10 @@
       (compiler-backend-fast-alloc-size
         (compiler-backend-global-shared-view args))]
     [call-symbol : String
-      (compiler-backend-call-symbol-index
-        name
-        plan
-        (compiler-backend-global-shared-view program-index))]
+      (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
       (compiler-backend-inline-memory-call-target
-        (compiler-backend-symbol-text-index
-          (compiler-backend-global-shared-view program-index)
-          name)
+        (compiler-backend-symbol-text-index program-index name)
         (compiler-backend-global-shared-view call-symbol))]
     (cond
       [(and
@@ -50879,10 +50566,7 @@
               backend-state)))]
       [(and
           (compiler-backend-tls-current-arena-call-id? name)
-          (not
-            (compiler-backend-index-function-defines?
-              (compiler-backend-global-shared-view program-index)
-              name)))
+          (not (compiler-backend-index-function-defines? program-index name)))
         (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
           type-segment-bases
           target
@@ -50895,7 +50579,7 @@
           types
           global-types
           externs
-          (compiler-backend-global-shared-view program-index)
+          program-index
           vars
           instr-diag
           backend-state)]
@@ -50921,9 +50605,7 @@
       [else
         (let
           [extern-call-info : i64
-            (compiler-backend-index-extern-call-info
-              (compiler-backend-global-shared-view program-index)
-              name)]
+            (compiler-backend-index-extern-call-info program-index name)]
           [param-types : compiler_ast_types.AstTypeList
             (compiler-backend-call-param-types-for-call
               type-segment-bases
@@ -50932,11 +50614,11 @@
               types
               global-types
               extern-call-info
-              (compiler-backend-global-shared-view program-index))]
+              program-index)]
           [effective-arg-assignments : compiler_regalloc.CompilerRegAssignmentTable
             (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
               type-segment-bases
-              (compiler-backend-global-shared-view program-index)
+              program-index
               (compiler-backend-global-shared-view param-types))
               arg-assignments
               assignments)]
@@ -50946,7 +50628,7 @@
           [effective-arg-override : i64
             (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
               type-segment-bases
-              (compiler-backend-global-shared-view program-index)
+              program-index
               (compiler-backend-global-shared-view param-types))
               (compiler-backend-function-state-rax-forward-pending-var
                 backend-state)
@@ -50962,7 +50644,7 @@
               (compiler-backend-global-shared-view args)
               (compiler-backend-global-shared-view param-types)
               c-abi?
-              (compiler-backend-global-shared-view program-index))]
+              program-index)]
           ;; Route the non-tail direct call through the parallel-move wrapper (not
           ;; the raw naive emitter): a register-homed arg's source register can be
           ;; another arg's destination arg register (e.g. once mixed scalar+handle
@@ -50998,7 +50680,7 @@
               0
               0
               (compiler-backend-global-shared-view instr-diag)
-              (compiler-backend-global-shared-view program-index)
+              program-index
               vars
               backend-state)
               [(ResultCompilerBackend.Ok _)
@@ -51259,7 +50941,7 @@
             [mask? : bool (compiler-backend-spmd-class-mask? class)]
             (match (compiler-backend-spmd-avx2-save-value
               type-segment-bases
-              (compiler-backend-global-shared-view assignments)
+              assignments
               value
               ty
               mask?
@@ -51311,7 +50993,7 @@
               (compiler_ast_types.AstType.I8)
               ty)]
           (match (compiler-backend-vector-dst-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             dst
             "private AVX2 SPMD call result"
             "ymm"
@@ -51379,7 +51061,7 @@
                   ty
                   lanes)
                 (match (compiler-backend-vector-register-use
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   value
                   "private SPMD call argument"
                   "zmm"
@@ -51488,7 +51170,7 @@
                   instr-diag
                   "backend: private AVX-512 SPMD call supports at most 5 varying bool arguments")))
             (match (compiler-backend-spmd-private-save-mask-value
-              (compiler-backend-global-shared-view assignments)
+              assignments
               value
               lanes
               (+ base-offset (* 8 (+ mask-index 1)))
@@ -51560,7 +51242,7 @@
             program-index)]
         [(compiler_ir_types.CompilerIrSpmdValueClass.Varying)
           (match (compiler-backend-vector-dst-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             dst
             "private SPMD call result"
             "zmm"
@@ -51593,7 +51275,7 @@
                     message)))])]
         [(compiler_ir_types.CompilerIrSpmdValueClass.Mask)
           (match (compiler-backend-avx512-mask-dst-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             dst
             "private SPMD call mask result"
             "%k7"
@@ -51654,11 +51336,11 @@
         (compiler-backend-global-shared-view call-args)
         (compiler-backend-global-shared-view param-types)
         false
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
-      (compiler-backend-global-shared-view assignments)
+      assignments
       call-args
       param-types
       false
@@ -51669,7 +51351,7 @@
       0
       ""
       instr-diag
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       backend-state)
       [(ResultCompilerBackend.Ok args-asm)
@@ -51683,7 +51365,7 @@
               dst
               ty
               vars
-              (compiler-backend-global-shared-view program-index))])
+              program-index)])
           [(ResultCompilerBackend.Ok result-asm)
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
@@ -51735,7 +51417,7 @@
         (compiler-backend-global-shared-view uniform-args)
         (compiler-backend-global-shared-view uniform-types)
         false
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [mask-count : i64
       (compiler-backend-spmd-call-class-count
         (compiler-backend-global-shared-view args)
@@ -51747,7 +51429,7 @@
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
-      (compiler-backend-global-shared-view assignments)
+      assignments
       uniform-args
       uniform-types
       false
@@ -51758,13 +51440,13 @@
       0
       ""
       (compiler-backend-global-shared-view instr-diag)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       program-index.backend-state)
       [(ResultCompilerBackend.Ok uniform-asm)
         (match (compiler-backend-spmd-private-vector-args-asm
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view args)
           0
           0
@@ -51773,7 +51455,7 @@
           backend-state)
           [(ResultCompilerBackend.Ok vector-asm)
             (match (compiler-backend-spmd-private-save-mask-value
-              (compiler-backend-global-shared-view assignments)
+              assignments
               active-mask
               lanes
               call-space
@@ -51781,7 +51463,7 @@
               backend-state)
               [(ResultCompilerBackend.Ok active-save)
                 (match (compiler-backend-spmd-private-save-mask-args
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   args
                   0
                   0
@@ -51795,7 +51477,7 @@
                       assignments
                       result
                       vars
-                      (compiler-backend-global-shared-view program-index)
+                      program-index
                       instr-diag
                       backend-state)
                       [(ResultCompilerBackend.Ok result-asm)
@@ -51867,7 +51549,7 @@
         (compiler-backend-global-shared-view uniform-args)
         (compiler-backend-global-shared-view uniform-types)
         false
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [special-space : i64
       (*
         32
@@ -51877,7 +51559,7 @@
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
-      (compiler-backend-global-shared-view assignments)
+      assignments
       uniform-args
       uniform-types
       false
@@ -51888,13 +51570,13 @@
       0
       ""
       (compiler-backend-global-shared-view instr-diag)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       program-index.backend-state)
       [(ResultCompilerBackend.Ok uniform-asm)
         (match (compiler-backend-spmd-avx2-save-value
           type-segment-bases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           active-mask
           (compiler_ast_types.AstType.I8)
           true
@@ -51905,7 +51587,7 @@
           [(ResultCompilerBackend.Ok active-save)
             (match (compiler-backend-spmd-avx2-save-args
               type-segment-bases
-              (compiler-backend-global-shared-view assignments)
+              assignments
               args
               0
               1
@@ -51919,7 +51601,7 @@
                   assignments
                   result
                   vars
-                  (compiler-backend-global-shared-view program-index)
+                  program-index
                   instr-diag
                   backend-state)
                   [(ResultCompilerBackend.Ok result-asm)
@@ -52183,9 +51865,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [r11-occupied : bool
-      (compiler-backend-assignments-use-reg?
-        (compiler-backend-global-shared-view assignments)
-        "%r11")]
+      (compiler-backend-assignments-use-reg? assignments "%r11")]
     [exclude : (__tl_dyn-array String)
       (if r11-occupied
         (compiler-backend-scavenge-exclude-append
@@ -52208,7 +51888,7 @@
           (compiler-backend-global-shared-view scratch-reg)
           "\n")
         (compiler-backend-emit-store-typed-var-with-plan
-          (compiler-backend-global-shared-view assignments)
+          assignments
           dst
           scratch-reg
           ty
@@ -52276,7 +51956,7 @@
   ;; solver orders the moves and breaks a true cycle through a temp; the
   ;; subleaf-first list keeps every conflict-free site byte-identical.
   (match (compiler-backend-emit-arg-move-list
-    (compiler-backend-global-shared-view assignments)
+    assignments
     (compiler-backend-cpuid-operand-moves leaf subleaf)
     backend-state)
     [(ResultCompilerBackend.Ok operand-asm)
@@ -52322,7 +52002,7 @@
   [index : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan
-    (compiler-backend-global-shared-view assignments)
+    assignments
     index
     "%rcx"
     backend-state)
@@ -52425,7 +52105,7 @@
         (compiler-backend-call-args-count
           (compiler-backend-global-shared-view args))]
       (match (compiler-backend-emit-arg-move-list
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-syscall-arg-moves-build args count)
         backend-state)
         [(ResultCompilerBackend.Ok setup-asm)
@@ -52668,11 +52348,11 @@
           (if (compiler-backend-symbol-list-contains-id? targets label)
             (match (compiler-backend-emit-phi-edge-copies
               type-segment-bases
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view blocks)
               label
               current-label
-              (compiler-backend-global-shared-view program-index)
+              program-index
               vars
               (compiler-backend-global-shared-view planned-cycle)
               (compiler-backend-global-shared-view planned-stage)
@@ -52934,14 +52614,12 @@
                 (compiler-backend-global-shared-view blocks)))]
           (compiler-backend-emit-switch-tables-function-seq-into
             functions
-            (compiler-backend-global-shared-view program-index)
+            program-index
             (+ index 1)
             (match (compiler-backend-global-shared-view blocks)
               [(compiler_ir_types.CompilerIrBlockList.Array seq)
                 (compiler-backend-emit-switch-tables-seq-into
-                  (compiler-backend-function-label-scope
-                    (compiler-backend-global-shared-view program-index)
-                    name)
+                  (compiler-backend-function-label-scope program-index name)
                   (compiler-backend-function-state-phi-targets
                     (compiler-backend-state-function-state
                       program-index.backend-state))
@@ -52950,9 +52628,7 @@
                   buf)]
               [_
                 (compiler-backend-emit-switch-tables-blocks-into
-                  (compiler-backend-function-label-scope
-                    (compiler-backend-global-shared-view program-index)
-                    name)
+                  (compiler-backend-function-label-scope program-index name)
                   (compiler-backend-function-state-phi-targets
                     (compiler-backend-state-function-state
                       program-index.backend-state))
@@ -53268,7 +52944,7 @@
     [index-home : String
       (compiler-backend-value-scalar-register
         backend-state
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view index))]
     [need-index-scratch : bool (or (not (= base 0)) (string.eq index-home ""))]
     [index-exclude : (__tl_dyn-array String)
@@ -53509,9 +53185,9 @@
           (compiler-backend-global-shared-view function)
           current-label
           cases
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view blocks)
-          (compiler-backend-global-shared-view program-index)
+          program-index
           vars)
           [(ResultCompilerBackend.Ok case-blocks)
             (let
@@ -53524,11 +53200,11 @@
               (match (if default-needs-edge
                 (match (compiler-backend-emit-phi-edge-copies
                   type-segment-bases
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   blocks
                   default-label
                   current-label
-                  (compiler-backend-global-shared-view program-index)
+                  program-index
                   vars
                   ""
                   ""
@@ -54333,13 +54009,13 @@
           name
           args
           ty
-          (compiler-backend-global-shared-view ctx.assignments)
+          ctx.assignments
           ctx.assignments
           ctx.types
           ctx.global-types
           ctx.plan
           ctx.externs
-          (compiler-backend-global-shared-view ctx.program-index)
+          ctx.program-index
           ctx.vars
           instr-diag
           ctx.backend-state)
@@ -54493,7 +54169,7 @@
                       instr-diag)))])
             (if (compiler-backend-group-type?
               ctx.type-segment-bases
-              (compiler-backend-global-shared-view ctx.program-index)
+              ctx.program-index
               (compiler-backend-global-shared-view ty))
               ;; Storing a register-group into a global writes both words
               ;; inline (word0 at sym, word1 at sym+8).
@@ -54501,13 +54177,13 @@
                 [reg0 : String
                   (compiler-backend-group-return-reg
                     ctx.type-segment-bases
-                    (compiler-backend-global-shared-view ctx.program-index)
+                    ctx.program-index
                     (compiler-backend-global-shared-view ty)
                     0)]
                 [reg1 : String
                   (compiler-backend-group-return-reg
                     ctx.type-segment-bases
-                    (compiler-backend-global-shared-view ctx.program-index)
+                    ctx.program-index
                     (compiler-backend-global-shared-view ty)
                     1)]
                 [sym0 : String
@@ -54532,7 +54208,7 @@
                   (compiler-backend-global-shared-view reg1)
                   ctx.vars
                   (compiler-backend-global-shared-view ty)
-                  (compiler-backend-global-shared-view ctx.program-index)
+                  ctx.program-index
                   ctx.backend-state)
                   [(ResultCompilerBackend.Ok load)
                     (ResultCompilerBackend.Ok
@@ -54543,8 +54219,7 @@
                           sym0
                           (compiler-backend-group-word-sse?
                             ctx.type-segment-bases
-                            (compiler-backend-global-shared-view
-                              ctx.program-index)
+                            ctx.program-index
                             (compiler-backend-global-shared-view ty)
                             0))
                         (compiler-backend-emit-group-word-move
@@ -54552,8 +54227,7 @@
                           sym1
                           (compiler-backend-group-word-sse?
                             ctx.type-segment-bases
-                            (compiler-backend-global-shared-view
-                              ctx.program-index)
+                            ctx.program-index
                             (compiler-backend-global-shared-view ty)
                             1))))]
                   [(ResultCompilerBackend.Err message)
@@ -54567,11 +54241,11 @@
                   (__tl_make-array String 0)]
                 (match (compiler-backend-emit-store-value-to-address
                   ctx.type-segment-bases
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.assignments
                   value
                   (compiler-backend-global-shared-view ty)
                   addr
-                  (compiler-backend-global-shared-view ctx.program-index)
+                  ctx.program-index
                   no-exclude
                   0
                   ctx.backend-state)
@@ -54590,19 +54264,19 @@
           ctx.blocks
           target
           ctx.current-label
-          (compiler-backend-global-shared-view ctx.assignments)
+          ctx.assignments
           ctx.vars
           ctx.ret-ty
-          (compiler-backend-global-shared-view ctx.program-index))
+          ctx.program-index)
           [(ResultCompilerBackend.Ok direct-return)
             (if (string.eq direct-return "")
               (match (compiler-backend-emit-phi-edge-copies
                 ctx.type-segment-bases
-                (compiler-backend-global-shared-view ctx.assignments)
+                ctx.assignments
                 (compiler-backend-global-shared-view ctx.blocks)
                 target
                 ctx.current-label
-                (compiler-backend-global-shared-view ctx.program-index)
+                ctx.program-index
                 ctx.vars
                 ""
                 ""
@@ -54671,7 +54345,7 @@
       [(compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label)
         (match (compiler-backend-emit-branch-with-phi-copies-with-plan
           ctx.type-segment-bases
-          (compiler-backend-global-shared-view ctx.assignments)
+          ctx.assignments
           ctx.function
           (compiler-backend-global-shared-view ctx.blocks)
           ctx.current-label
@@ -54679,7 +54353,7 @@
           true-label
           false-label
           fallthrough
-          (compiler-backend-global-shared-view ctx.program-index)
+          ctx.program-index
           ctx.vars
           ""
           "")
@@ -55576,14 +55250,14 @@
         (>= rax-var 0)
         (compiler-backend-rax-call-arg-eligible?
           ctx.type-segment-bases
-          (compiler-backend-global-shared-view ctx.program-index)
+          ctx.program-index
           rax-ty))
         rax-var
         -1)]
     [instr-diag : compiler_diagnostic.CompilerDiagnostic
       (compiler-backend-instr-diagnostic
         (compiler-backend-global-shared-view ctx.spans)
-        (compiler-backend-global-shared-view ctx.source-function)
+        ctx.source-function
         (compiler-backend-global-shared-view instr)
         (compiler-backend-global-shared-view ctx.func-diag)
         "")]
@@ -55592,9 +55266,9 @@
     [_reserved-mask : i64
       (begin
         (compiler-backend-set-current-instr-reserved-mask!
-          (compiler-backend-global-shared-view ctx.function-state)
+          ctx.function-state
           (compiler-backend-instr-reserved-home-mask
-            (compiler-backend-global-shared-view ctx.function-state)
+            ctx.function-state
             (compiler-backend-global-shared-view instr)))
         (compiler-backend-current-instr-reserved-mask ctx.function-state))]
     (match (compiler-backend-global-shared-view instr)
@@ -55620,7 +55294,7 @@
                   name
                   args
                   ty
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.assignments
                   ctx.assignments
                   ctx.types
                   ctx.global-types
@@ -55658,13 +55332,13 @@
                   func
                   args
                   ty
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.assignments
                   ctx.assignments
                   ""
                   (compiler-backend-global-shared-view ctx.types)
                   (compiler-backend-global-shared-view ctx.functions)
                   (compiler-backend-global-shared-view ctx.externs)
-                  (compiler-backend-global-shared-view ctx.program-index)
+                  ctx.program-index
                   ctx.vars
                   instr-diag
                   ctx.backend-state))]
@@ -55873,7 +55547,7 @@
   (begin
     (compiler-backend-emit-store-typed-var-with-plan-into
       out
-      (compiler-backend-global-shared-view ctx.assignments)
+      ctx.assignments
       rax-var
       "%rax"
       rax-ty
@@ -55898,7 +55572,7 @@
           (if (compiler-backend-rax-forwardable-consumer?
             (compiler-backend-global-shared-view ctx.types)
             (compiler-backend-global-shared-view ctx.global-types)
-            (compiler-backend-global-shared-view ctx.assignments)
+            ctx.assignments
             rax-var
             instr)
             (let
@@ -55910,7 +55584,7 @@
                 ctx.type-segment-bases
                 ctx.types
                 (compiler-backend-global-shared-view ctx.global-types)
-                (compiler-backend-global-shared-view ctx.assignments)
+                ctx.assignments
                 rax-var
                 dst
                 op
@@ -55922,14 +55596,12 @@
                   dst
                   (compiler-backend-global-shared-view instrs)
                   rest)
-                (compiler-backend-global-shared-view ctx.backend-state))
+                ctx.backend-state)
                 [(ResultCompilerBackend.Ok head)
                   (begin
                     (compiler-backend-asm-append
                       out
-                      (compiler-backend-emergency-wrap
-                        head
-                        (compiler-backend-global-shared-view ctx.backend-state)))
+                      (compiler-backend-emergency-wrap head ctx.backend-state))
                     (if keep-live
                       (compiler-backend-emit-instrs-with-rax
                         (compiler-backend-global-shared-view ctx)
@@ -55971,11 +55643,11 @@
               (begin
                 (compiler-backend-emit-store-typed-var-with-plan-into
                   out
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.assignments
                   dst
                   "%rax"
                   ty
-                  (compiler-backend-global-shared-view ctx.backend-state))
+                  ctx.backend-state)
                 (compiler-backend-emit-instrs
                   (compiler-backend-global-shared-view ctx)
                   fallthrough
@@ -56002,10 +55674,10 @@
                   (compiler-backend-asm-append
                     out
                     (compiler-backend-return-tail
-                      (compiler-backend-global-shared-view ctx.backend-state)
-                      (compiler-backend-global-shared-view ctx.source-function)
-                      (compiler-backend-global-shared-view ctx.assignments)
-                      (compiler-backend-global-shared-view ctx.vars)
+                      ctx.backend-state
+                      ctx.source-function
+                      ctx.assignments
+                      ctx.vars
                       (compiler-backend-global-shared-view ctx.blocks)))
                   (ResultCompilerBackend.Ok ""))
                 (compiler-backend-emit-instrs-materialize-rax
@@ -56060,7 +55732,7 @@
       (if (compiler-backend-call-rax-forwardable-instr?
         ctx.type-segment-bases
         (compiler-backend-global-shared-view instr)
-        (compiler-backend-global-shared-view ctx.program-index)
+        ctx.program-index
         rax-var
         (compiler-backend-global-shared-view rax-ty))
         (match (compiler-backend-emit-instr-with-call-rax
@@ -56103,7 +55775,7 @@
     ctx.assignments
     (compiler-backend-global-shared-view ctx.function)
     (compiler-backend-global-shared-view ctx.blocks)
-    (compiler-backend-global-shared-view ctx.current-label)
+    ctx.current-label
     (compiler-backend-global-shared-view op)
     (compiler-backend-global-shared-view lhs)
     (compiler-backend-global-shared-view rhs)
@@ -56120,15 +55792,13 @@
       (compiler-backend-global-shared-view instrs)
       index
       fallthrough)
-    (compiler-backend-global-shared-view ctx.program-index)
-    (compiler-backend-global-shared-view ctx.vars))
+    ctx.program-index
+    ctx.vars)
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append
           out
-          (compiler-backend-emergency-wrap
-            head
-            (compiler-backend-global-shared-view ctx.backend-state)))
+          (compiler-backend-emergency-wrap head ctx.backend-state))
         (compiler-backend-emit-instrs
           (compiler-backend-global-shared-view ctx)
           fallthrough
@@ -56142,7 +55812,7 @@
             (deref message)
             (compiler-backend-instr-diagnostic
               (compiler-backend-global-shared-view ctx.spans)
-              (compiler-backend-global-shared-view ctx.source-function)
+              ctx.source-function
               (compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
               ctx.func-diag
               ""))))]))
@@ -56164,10 +55834,10 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
     ctx.type-segment-bases
-    (compiler-backend-global-shared-view ctx.assignments)
+    ctx.assignments
     (compiler-backend-global-shared-view ctx.function)
     (compiler-backend-global-shared-view ctx.blocks)
-    (compiler-backend-global-shared-view ctx.current-label)
+    ctx.current-label
     (compiler-backend-global-shared-view ptr)
     op
     rhs
@@ -56178,15 +55848,13 @@
       (compiler-backend-global-shared-view instrs)
       index
       fallthrough)
-    (compiler-backend-global-shared-view ctx.program-index)
-    (compiler-backend-global-shared-view ctx.vars))
+    ctx.program-index
+    ctx.vars)
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append
           out
-          (compiler-backend-emergency-wrap
-            head
-            (compiler-backend-global-shared-view ctx.backend-state)))
+          (compiler-backend-emergency-wrap head ctx.backend-state))
         (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
@@ -56216,10 +55884,10 @@
   ;; phi-edge copies, instead of materializing the inverted boolean.
   (match (compiler-backend-emit-branch-with-phi-copies-with-plan
     ctx.type-segment-bases
-    (compiler-backend-global-shared-view ctx.assignments)
+    ctx.assignments
     (compiler-backend-global-shared-view ctx.function)
     (compiler-backend-global-shared-view ctx.blocks)
-    (compiler-backend-global-shared-view ctx.current-label)
+    ctx.current-label
     (compiler-backend-global-shared-view src)
     false-label
     true-label
@@ -56227,17 +55895,15 @@
       (compiler-backend-global-shared-view instrs)
       index
       fallthrough)
-    (compiler-backend-global-shared-view ctx.program-index)
-    (compiler-backend-global-shared-view ctx.vars)
+    ctx.program-index
+    ctx.vars
     ""
     "")
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append
           out
-          (compiler-backend-emergency-wrap
-            head
-            (compiler-backend-global-shared-view ctx.backend-state)))
+          (compiler-backend-emergency-wrap head ctx.backend-state))
         (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
@@ -56278,10 +55944,10 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
     ctx.type-segment-bases
-    (compiler-backend-global-shared-view ctx.assignments)
+    ctx.assignments
     (compiler-backend-global-shared-view ctx.function)
     (compiler-backend-global-shared-view ctx.blocks)
-    (compiler-backend-global-shared-view ctx.current-label)
+    ctx.current-label
     (compiler-backend-global-shared-view base)
     (compiler-backend-global-shared-view offset)
     (compiler-backend-global-shared-view elem-ty)
@@ -56294,8 +55960,8 @@
       (compiler-backend-global-shared-view instrs)
       index
       fallthrough)
-    (compiler-backend-global-shared-view ctx.program-index)
-    (compiler-backend-global-shared-view ctx.vars)
+    ctx.program-index
+    ctx.vars
     ;; The comparison result is not materialized in this fusion, so its
     ;; primary scalar slot is the RHS staging home. The address base above is
     ;; owned by the Gep site; these are deliberately different IR points.
@@ -56304,9 +55970,7 @@
       (begin
         (compiler-backend-asm-append
           out
-          (compiler-backend-emergency-wrap
-            head
-            (compiler-backend-global-shared-view ctx.backend-state)))
+          (compiler-backend-emergency-wrap head ctx.backend-state))
         (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
@@ -56386,20 +56050,17 @@
           (let
             [mnem : String (compiler-backend-gep-load-pair-alu-mnemonic op)]
             [dst-home : String
-              (compiler-backend-var-register-home
-                backend-state
-                (compiler-backend-global-shared-view assignments)
-                dst)]
+              (compiler-backend-var-register-home backend-state assignments dst)]
             [base-home : String
               (compiler-backend-address-base-filter
                 (compiler-backend-value-scalar-register
                   backend-state
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   base))]
             [index0-home : String
               (compiler-backend-value-scalar-register
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 offset0)]
             [index1-home : String
               (compiler-backend-value-scalar-register
@@ -56596,7 +56257,7 @@
                         (compiler-backend-divmod-direct-gep-store?
                           ctx.backend-state
                           ctx.type-segment-bases
-                          (compiler-backend-global-shared-view ctx.assignments)
+                          ctx.assignments
                           div-dst
                           gep-dst
                           (compiler-backend-global-shared-view base)
@@ -56732,7 +56393,7 @@
             [div-dst-home : String
               (compiler-backend-var-register-home
                 ctx.backend-state
-                (compiler-backend-global-shared-view ctx.assignments)
+                ctx.assignments
                 div-dst)]
             [direct-store : CompilerBackendMaybeGepLoadPairAluDivmodStore
               (compiler-backend-gep-load-pair-alu-divmod-store-probe
@@ -56745,17 +56406,17 @@
             [base-home : String
               (compiler-backend-value-scalar-register
                 ctx.backend-state
-                (compiler-backend-global-shared-view ctx.assignments)
+                ctx.assignments
                 base)]
             [index0-home : String
               (compiler-backend-value-scalar-register
                 ctx.backend-state
-                (compiler-backend-global-shared-view ctx.assignments)
+                ctx.assignments
                 offset0)]
             [index1-home : String
               (compiler-backend-value-scalar-register
                 ctx.backend-state
-                (compiler-backend-global-shared-view ctx.assignments)
+                ctx.assignments
                 offset1)]
             (if (and
               (compiler-backend-var-single-use?
@@ -56763,7 +56424,7 @@
                 alu-dst)
               (compiler-backend-branch-uses-var? div-lhs alu-dst)
               (compiler-backend-signed-literal-divmod-src-shape?
-                (compiler-backend-global-shared-view ctx.type-segment-bases)
+                ctx.type-segment-bases
                 div-op
                 div-rhs
                 div-ty)
@@ -56856,7 +56517,7 @@
                         (compiler-backend-global-shared-view div-instr)))
                     (match (compiler-backend-emit-gep-load-pair-alu
                       ctx.backend-state
-                      (compiler-backend-global-shared-view ctx.assignments)
+                      ctx.assignments
                       mnem
                       alu-dst
                       addr0
@@ -56878,8 +56539,7 @@
                                   after-store)
                                 (begin
                                   (compiler-backend-function-state-set-emit-current-count!
-                                    (compiler-backend-global-shared-view
-                                      ctx.function-state)
+                                    ctx.function-state
                                     (- saved-count 6))
                                   (match (compiler-backend-emit-divmod-direct-gep-store
                                     (compiler-backend-global-shared-view ctx)
@@ -56999,8 +56659,7 @@
                               (match (compiler-backend-gep-load-pair-alu-probe
                                 ctx.backend-state
                                 ctx.type-segment-bases
-                                (compiler-backend-global-shared-view
-                                  ctx.assignments)
+                                ctx.assignments
                                 (compiler-backend-global-shared-view ctx.types)
                                 (compiler-backend-global-shared-view
                                   ctx.global-types)
@@ -57028,10 +56687,8 @@
                                   (let
                                     [gep-fold-disp2 : i64
                                       (compiler-backend-gep-fold-next!
-                                        (compiler-backend-global-shared-view
-                                          ctx.function-state)
-                                        (compiler-backend-global-shared-view
-                                          ctx.type-segment-bases)
+                                        ctx.function-state
+                                        ctx.type-segment-bases
                                         (compiler-backend-global-shared-view
                                           offset2)
                                         (compiler-backend-global-shared-view
@@ -57039,8 +56696,7 @@
                                     (match (compiler-backend-gep-load-pair-alu-probe
                                       ctx.backend-state
                                       ctx.type-segment-bases
-                                      (compiler-backend-global-shared-view
-                                        ctx.assignments)
+                                      ctx.assignments
                                       (compiler-backend-global-shared-view
                                         ctx.types)
                                       (compiler-backend-global-shared-view
@@ -57098,8 +56754,7 @@
                                                   ctx)
                                                 fallthrough
                                                 (compiler-backend-emit-gep-load-pair-alu
-                                                  (compiler-backend-global-shared-view
-                                                    ctx.backend-state)
+                                                  ctx.backend-state
                                                   ctx.assignments
                                                   mnem
                                                   alu-dst
@@ -57199,12 +56854,12 @@
               [dst-home : String
                 (compiler-backend-var-register-home
                   backend-state
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   dst)]
               [base-home : String
                 (compiler-backend-value-scalar-register
                   backend-state
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   base)]
               [offset-home : String
                 (compiler-backend-value-scalar-register
@@ -57269,10 +56924,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        alu-dst)]
+      (compiler-backend-var-register-home backend-state assignments alu-dst)]
     (match (compiler-backend-value-as-i64
       (compiler-backend-global-shared-view offset))
       [(option_i64.Some n)
@@ -57287,7 +56939,7 @@
             (compiler-backend-address-base-filter-direct
               (compiler-backend-value-scalar-register
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view base)))]
           [base-reg : String
             (if (string.eq base-home "")
@@ -57305,7 +56957,7 @@
               disp
               (compiler-backend-global-shared-view base-reg))]
           (match (compiler-backend-emit-load-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             base
             base-reg
             backend-state)
@@ -57333,12 +56985,12 @@
             (compiler-backend-address-base-filter
               (compiler-backend-value-scalar-register
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view base)))]
           [offset-home : String
             (compiler-backend-value-scalar-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view offset))]
           [use-base-home? : bool
             (and sib-scale? (not (string.eq base-home "")))]
@@ -57396,7 +57048,7 @@
           (match (if use-base-home?
             (ResultCompilerBackend.Ok "")
             (compiler-backend-emit-load-value-with-plan
-              (compiler-backend-global-shared-view assignments)
+              assignments
               base
               base-reg
               backend-state))
@@ -57404,7 +57056,7 @@
               (match (if use-offset-home?
                 (ResultCompilerBackend.Ok "")
                 (compiler-backend-emit-load-value-with-plan
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   offset
                   index-reg
                   backend-state))
@@ -57492,10 +57144,7 @@
         gep-disp)]
     [raw-home : String
       (if (string.eq rip "")
-        (compiler-backend-value-scalar-register
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          base)
+        (compiler-backend-value-scalar-register backend-state assignments base)
         "")]
     [base-home : String
       (compiler-backend-address-base-filter
@@ -57604,10 +57253,7 @@
   [staged-base : String]) : String
   (let
     [raw-base-home : String
-      (compiler-backend-value-scalar-register
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        base)]
+      (compiler-backend-value-scalar-register backend-state assignments base)]
     (if (or
       (string.eq staged-base "")
       (string.eq staged-base "%rbp")
@@ -57937,12 +57583,12 @@
               [src-home : String
                 (compiler-backend-value-scalar-register
                   ctx.backend-state
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.assignments
                   cast-src)]
               [dst-home : String
                 (compiler-backend-var-register-home
                   ctx.backend-state
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.assignments
                   cast-dst)]
               (if (and
                 (not (string.eq src-home ""))
@@ -58095,7 +57741,7 @@
       ok-label
       bounds-instr)
     (match (compiler-backend-emit-load-value-with-plan
-      (compiler-backend-global-shared-view ctx.assignments)
+      ctx.assignments
       staged-value
       staged-base
       ctx.backend-state)
@@ -58223,7 +57869,7 @@
           (compiler_ir_types.CompilerIrCallArgs.Nil)
           (compiler_ast_types.ast-type-list-new)
           false
-          (compiler-backend-global-shared-view ctx.program-index))
+          ctx.program-index)
         (compiler-backend-asm-label ctx.function ok-label)
         ctx.plan
         ctx.program-index))))
@@ -58751,7 +58397,7 @@
                 direct?
                 (=
                   (compiler-backend-type-size
-                    (compiler-backend-global-shared-view ctx.type-segment-bases)
+                    ctx.type-segment-bases
                     (compiler-backend-global-shared-view cmp-ty))
                   8))
               (not
@@ -58869,11 +58515,11 @@
           ctx.backend-state)))
     (match (compiler-backend-emit-phi-edge-copies
       ctx.type-segment-bases
-      (compiler-backend-global-shared-view ctx.assignments)
+      ctx.assignments
       (compiler-backend-global-shared-view ctx.blocks)
       true-label
       ctx.current-label
-      (compiler-backend-global-shared-view ctx.program-index)
+      ctx.program-index
       ctx.vars
       ""
       ""
@@ -58956,7 +58602,7 @@
       false-label
       branch-fallthrough)
     (match (compiler-backend-emit-load-value-with-plan
-      (compiler-backend-global-shared-view ctx.assignments)
+      ctx.assignments
       staged-value
       staged-base
       ctx.backend-state)
@@ -59224,7 +58870,7 @@
       (compiler-backend-gep-load-cmp-address
         ctx.backend-state
         ctx.type-segment-bases
-        (compiler-backend-global-shared-view ctx.assignments)
+        ctx.assignments
         (compiler-backend-global-shared-view base)
         (compiler-backend-global-shared-view offset)
         (compiler-backend-global-shared-view elem-ty)
@@ -59264,7 +58910,7 @@
       (compiler-backend-gep-load-cmp-staged-address
         ctx.backend-state
         ctx.type-segment-bases
-        (compiler-backend-global-shared-view ctx.assignments)
+        ctx.assignments
         (compiler-backend-global-shared-view base)
         (compiler-backend-global-shared-view offset)
         (compiler-backend-global-shared-view elem-ty)
@@ -59276,8 +58922,8 @@
       fallthrough
       direct-addr
       (compiler-backend-gep-load-cmp-staged-value
-        (compiler-backend-global-shared-view ctx.backend-state)
-        (compiler-backend-global-shared-view ctx.assignments)
+        ctx.backend-state
+        ctx.assignments
         (compiler-backend-global-shared-view base)
         (compiler-backend-global-shared-view offset))
       staged-base
@@ -59442,10 +59088,7 @@
   (let
     [base-home : String
       (compiler-backend-address-base-filter
-        (compiler-backend-value-scalar-register
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          base))]
+        (compiler-backend-value-scalar-register backend-state assignments base))]
     [index-home : String
       (compiler-backend-value-scalar-register backend-state assignments offset)]
     (if (or (string.eq base-home "") (string.eq index-home ""))
@@ -59467,10 +59110,7 @@
   [reg : String]) : bool
   (or
     (string.eq
-      (compiler-backend-value-scalar-register
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        base)
+      (compiler-backend-value-scalar-register backend-state assignments base)
       reg)
     (string.eq
       (compiler-backend-value-scalar-register backend-state assignments offset)
@@ -59601,7 +59241,7 @@
           (not
             (=
               (compiler-backend-gep-fold-peek
-                (compiler-backend-global-shared-view ctx.function-state)
+                ctx.function-state
                 ctx.type-segment-bases
                 0
                 (compiler-backend-global-shared-view offset)
@@ -59618,7 +59258,7 @@
                 [(CompilerBackendGepRmwOther.Some other)
                   (compiler-backend-gep-rmw-direct-source
                     ctx.backend-state
-                    (compiler-backend-global-shared-view ctx.assignments)
+                    ctx.assignments
                     other)]
                 [(CompilerBackendGepRmwOther.No) ""])]
             (if (string.eq src "")
@@ -59628,7 +59268,7 @@
                   (compiler-backend-gep-rmw-address
                     ctx.backend-state
                     ctx.type-segment-bases
-                    (compiler-backend-global-shared-view ctx.assignments)
+                    ctx.assignments
                     base
                     (compiler-backend-global-shared-view offset)
                     (compiler-backend-global-shared-view elem-ty)
@@ -59729,7 +59369,7 @@
               [stage : String
                 (compiler-backend-var-register-home
                   ctx.backend-state
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.assignments
                   alu-dst)]
               (if (or
                 (< after-store 0)
@@ -59741,23 +59381,22 @@
                   rhs
                   alu-ty)
                 (compiler-backend-gep-rmw-address-uses-register?
-                  (compiler-backend-global-shared-view ctx.backend-state)
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.backend-state
+                  ctx.assignments
                   (compiler-backend-global-shared-view base)
                   (compiler-backend-global-shared-view offset)
                   (compiler-backend-global-shared-view stage))
                 (compiler-backend-gep-rmw-address-uses-register?
-                  (compiler-backend-global-shared-view ctx.backend-state)
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.backend-state
+                  ctx.assignments
                   (compiler-backend-global-shared-view base1)
                   (compiler-backend-global-shared-view offset1)
                   (compiler-backend-global-shared-view stage))
                 (not
                   (=
                     (compiler-backend-gep-fold-peek
-                      (compiler-backend-global-shared-view ctx.function-state)
-                      (compiler-backend-global-shared-view
-                        ctx.type-segment-bases)
+                      ctx.function-state
+                      ctx.type-segment-bases
                       1
                       (compiler-backend-global-shared-view offset)
                       (compiler-backend-global-shared-view elem-ty))
@@ -59766,10 +59405,9 @@
                 (let
                   [addr : String
                     (compiler-backend-gep-rmw-address
-                      (compiler-backend-global-shared-view ctx.backend-state)
-                      (compiler-backend-global-shared-view
-                        ctx.type-segment-bases)
-                      (compiler-backend-global-shared-view ctx.assignments)
+                      ctx.backend-state
+                      ctx.type-segment-bases
+                      ctx.assignments
                       base
                       (compiler-backend-global-shared-view offset)
                       (compiler-backend-global-shared-view elem-ty)
@@ -59778,12 +59416,12 @@
                     (compiler-backend-gep-rmw-address
                       ctx.backend-state
                       ctx.type-segment-bases
-                      (compiler-backend-global-shared-view ctx.assignments)
+                      ctx.assignments
                       base1
                       (compiler-backend-global-shared-view offset1)
                       (compiler-backend-global-shared-view elem-ty1)
                       (compiler-backend-gep-fold-peek
-                        (compiler-backend-global-shared-view ctx.function-state)
+                        ctx.function-state
                         ctx.type-segment-bases
                         0
                         (compiler-backend-global-shared-view offset1)
@@ -59976,7 +59614,7 @@
   (match (compiler-backend-gep-load-alu-probe
     ctx.backend-state
     ctx.type-segment-bases
-    (compiler-backend-global-shared-view ctx.assignments)
+    ctx.assignments
     (compiler-backend-global-shared-view ctx.types)
     (compiler-backend-global-shared-view ctx.global-types)
     (compiler-backend-global-shared-view ctx.use-counts)
@@ -59991,8 +59629,8 @@
         (compiler-backend-global-shared-view ctx)
         fallthrough
         (compiler-backend-emit-gep-load-alu
-          (compiler-backend-global-shared-view ctx.type-segment-bases)
-          (compiler-backend-global-shared-view ctx.assignments)
+          ctx.type-segment-bases
+          ctx.assignments
           mnem
           alu-dst
           x
@@ -60137,8 +59775,7 @@
                                 ;; advance its ordinal before either pair path.
                                 [gep-fold-disp2 : i64
                                   (compiler-backend-gep-fold-next!
-                                    (compiler-backend-global-shared-view
-                                      ctx.function-state)
+                                    ctx.function-state
                                     ctx.type-segment-bases
                                     (compiler-backend-global-shared-view
                                       offset2)
@@ -60147,8 +59784,7 @@
                                 (match (compiler-backend-gep-load-pair-alu-probe
                                   ctx.backend-state
                                   ctx.type-segment-bases
-                                  (compiler-backend-global-shared-view
-                                    ctx.assignments)
+                                  ctx.assignments
                                   (compiler-backend-global-shared-view
                                     ctx.types)
                                   (compiler-backend-global-shared-view
@@ -60178,10 +59814,8 @@
                                       (compiler-backend-global-shared-view ctx)
                                       fallthrough
                                       (compiler-backend-emit-gep-load-pair-alu
-                                        (compiler-backend-global-shared-view
-                                          ctx.backend-state)
-                                        (compiler-backend-global-shared-view
-                                          ctx.assignments)
+                                        ctx.backend-state
+                                        ctx.assignments
                                         mnem
                                         alu-dst
                                         addr0
@@ -60195,10 +59829,8 @@
                                       (compiler-backend-global-shared-view ctx)
                                       fallthrough
                                       (compiler-backend-emit-load-from-gep-pair-planned
-                                        (compiler-backend-global-shared-view
-                                          ctx.type-segment-bases)
-                                        (compiler-backend-global-shared-view
-                                          ctx.assignments)
+                                        ctx.type-segment-bases
+                                        ctx.assignments
                                         (compiler-backend-global-shared-view
                                           base)
                                         offset
@@ -60215,8 +59847,7 @@
                                         ""
                                         ""
                                         ""
-                                        (compiler-backend-global-shared-view
-                                          ctx.backend-state))
+                                        ctx.backend-state)
                                       instrs
                                       after-load2
                                       out)]))
@@ -60224,10 +59855,8 @@
                                 (compiler-backend-global-shared-view ctx)
                                 fallthrough
                                 (compiler-backend-emit-load-from-gep
-                                  (compiler-backend-global-shared-view
-                                    ctx.type-segment-bases)
-                                  (compiler-backend-global-shared-view
-                                    ctx.assignments)
+                                  ctx.type-segment-bases
+                                  ctx.assignments
                                   load-dst
                                   base
                                   offset
@@ -60247,10 +59876,8 @@
                               (compiler-backend-global-shared-view ctx)
                               fallthrough
                               (compiler-backend-emit-load-from-gep
-                                (compiler-backend-global-shared-view
-                                  ctx.type-segment-bases)
-                                (compiler-backend-global-shared-view
-                                  ctx.assignments)
+                                ctx.type-segment-bases
+                                ctx.assignments
                                 load-dst
                                 base
                                 offset
@@ -60261,8 +59888,7 @@
                                 ""
                                 ""
                                 ""
-                                (compiler-backend-global-shared-view
-                                  ctx.backend-state))
+                                ctx.backend-state)
                               instrs
                               index
                               out)]))
@@ -60270,9 +59896,8 @@
                         (compiler-backend-global-shared-view ctx)
                         fallthrough
                         (compiler-backend-emit-load-from-gep
-                          (compiler-backend-global-shared-view
-                            ctx.type-segment-bases)
-                          (compiler-backend-global-shared-view ctx.assignments)
+                          ctx.type-segment-bases
+                          ctx.assignments
                           load-dst
                           base
                           offset
@@ -60283,8 +59908,7 @@
                           ""
                           ""
                           ""
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
+                          ctx.backend-state)
                         instrs
                         index
                         out))]
@@ -60293,9 +59917,8 @@
                       (compiler-backend-global-shared-view ctx)
                       fallthrough
                       (compiler-backend-emit-load-from-gep
-                        (compiler-backend-global-shared-view
-                          ctx.type-segment-bases)
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.type-segment-bases
+                        ctx.assignments
                         load-dst
                         base
                         offset
@@ -60306,7 +59929,7 @@
                         ""
                         ""
                         ""
-                        (compiler-backend-global-shared-view ctx.backend-state))
+                        ctx.backend-state)
                       instrs
                       index
                       out)])
@@ -60314,8 +59937,8 @@
                   (compiler-backend-global-shared-view ctx)
                   fallthrough
                   (compiler-backend-emit-load-from-gep
-                    (compiler-backend-global-shared-view ctx.type-segment-bases)
-                    (compiler-backend-global-shared-view ctx.assignments)
+                    ctx.type-segment-bases
+                    ctx.assignments
                     load-dst
                     base
                     offset
@@ -60326,7 +59949,7 @@
                     ""
                     ""
                     ""
-                    (compiler-backend-global-shared-view ctx.backend-state))
+                    ctx.backend-state)
                   instrs
                   index
                   out))]
@@ -60408,13 +60031,13 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-to-gep
     ctx.type-segment-bases
-    (compiler-backend-global-shared-view ctx.assignments)
+    ctx.assignments
     (compiler-backend-global-shared-view base)
     (compiler-backend-global-shared-view offset)
     (compiler-backend-global-shared-view elem-ty)
     value
     store-ty
-    (compiler-backend-global-shared-view ctx.program-index)
+    ctx.program-index
     gep-fold-disp
     ctx.backend-state)
     [(ResultCompilerBackend.Ok head)
@@ -60455,27 +60078,27 @@
     (compiler-backend-global-shared-view ctx.blocks)
     target-label
     ctx.current-label
-    (compiler-backend-global-shared-view ctx.assignments)
+    ctx.assignments
     ctx.vars
     (compiler-backend-global-shared-view ctx.ret-ty)
     dst
     (compiler-backend-global-shared-view src)
-    (compiler-backend-global-shared-view ctx.program-index))
+    ctx.program-index)
     [(ResultCompilerBackend.Ok direct-return)
       (if (string.eq direct-return "")
         (if (compiler-backend-var-single-use?
           (compiler-backend-global-shared-view ctx.use-counts)
           dst)
           (match (compiler-backend-emit-mov-phi-copy-edge
-            (compiler-backend-global-shared-view ctx.type-segment-bases)
-            (compiler-backend-global-shared-view ctx.assignments)
+            ctx.type-segment-bases
+            ctx.assignments
             (compiler-backend-global-shared-view ctx.blocks)
             target-label
-            (compiler-backend-global-shared-view ctx.current-label)
+            ctx.current-label
             dst
             (compiler-backend-global-shared-view src)
-            (compiler-backend-global-shared-view ctx.program-index)
-            (compiler-backend-global-shared-view ctx.vars))
+            ctx.program-index
+            ctx.vars)
             [(ResultCompilerBackend.Ok fused-copies)
               (if (string.eq fused-copies "")
                 (compiler-backend-emit-instrs-normal
@@ -60486,15 +60109,15 @@
                   (- index 1)
                   out)
                 (match (compiler-backend-emit-trivial-phi-return-edge
-                  (compiler-backend-global-shared-view ctx.type-segment-bases)
-                  (compiler-backend-global-shared-view ctx.source-function)
+                  ctx.type-segment-bases
+                  ctx.source-function
                   (compiler-backend-global-shared-view ctx.blocks)
                   target-label
-                  (compiler-backend-global-shared-view ctx.current-label)
-                  (compiler-backend-global-shared-view ctx.assignments)
-                  (compiler-backend-global-shared-view ctx.vars)
+                  ctx.current-label
+                  ctx.assignments
+                  ctx.vars
                   (compiler-backend-global-shared-view ctx.ret-ty)
-                  (compiler-backend-global-shared-view ctx.program-index))
+                  ctx.program-index)
                   [(ResultCompilerBackend.Ok plain-direct-return)
                     (begin
                       (compiler-backend-asm-append
@@ -60524,8 +60147,7 @@
                           (deref message)
                           (compiler-backend-instr-diagnostic
                             (compiler-backend-global-shared-view ctx.spans)
-                            (compiler-backend-global-shared-view
-                              ctx.source-function)
+                            ctx.source-function
                             (compiler_ir_types.CompilerIrInstr.Mov dst src ty)
                             (compiler-backend-global-shared-view ctx.func-diag)
                             ""))))]))]
@@ -60536,7 +60158,7 @@
                     (deref message)
                     (compiler-backend-instr-diagnostic
                       (compiler-backend-global-shared-view ctx.spans)
-                      (compiler-backend-global-shared-view ctx.source-function)
+                      ctx.source-function
                       (compiler_ir_types.CompilerIrInstr.Mov dst src ty)
                       (compiler-backend-global-shared-view ctx.func-diag)
                       ""))))])
@@ -60551,7 +60173,7 @@
           (compiler-backend-emergency-append
             out
             direct-return
-            (compiler-backend-global-shared-view ctx.backend-state))
+            ctx.backend-state)
           (compiler-backend-emit-instrs
             (compiler-backend-global-shared-view ctx)
             fallthrough
@@ -60565,7 +60187,7 @@
             (deref message)
             (compiler-backend-instr-diagnostic
               (compiler-backend-global-shared-view ctx.spans)
-              (compiler-backend-global-shared-view ctx.source-function)
+              ctx.source-function
               (compiler_ir_types.CompilerIrInstr.Mov dst src ty)
               ctx.func-diag
               ""))))]))
@@ -60588,20 +60210,13 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [call-symbol : String
-      (compiler-backend-call-symbol-index
-        name
-        plan
-        (compiler-backend-global-shared-view program-index))]
+      (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
       (compiler-backend-inline-memory-call-target
-        (compiler-backend-symbol-text-index
-          (compiler-backend-global-shared-view program-index)
-          name)
+        (compiler-backend-symbol-text-index program-index name)
         (compiler-backend-global-shared-view call-symbol))]
     [extern-call-info : i64
-      (compiler-backend-index-extern-call-info
-        (compiler-backend-global-shared-view program-index)
-        name)]
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : compiler_ast_types.AstTypeList
       (compiler-backend-call-param-types-for-call
         type-segment-bases
@@ -60610,7 +60225,7 @@
         types
         global-types
         extern-call-info
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [c-abi? : bool
       (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
@@ -60619,11 +60234,11 @@
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         c-abi?
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
-      (compiler-backend-global-shared-view assignments)
+      assignments
       args
       (compiler-backend-global-shared-view param-types)
       c-abi?
@@ -60634,16 +60249,13 @@
       0
       ""
       (compiler-backend-global-shared-view instr-diag)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       program-index.backend-state)
       [(ResultCompilerBackend.Ok args-asm)
         (if (and
           (compiler-backend-tls-current-arena-call-id? name)
-          (not
-            (compiler-backend-index-function-defines?
-              (compiler-backend-global-shared-view program-index)
-              name)))
+          (not (compiler-backend-index-function-defines? program-index name)))
           (match (compiler-backend-tls-current-arena-inline-asm
             target
             name
@@ -60895,11 +60507,11 @@
         (compiler-backend-global-shared-view args)
         functions
         externs
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [effective-arg-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view param-types))
         arg-assignments
         assignments)]
@@ -60909,7 +60521,7 @@
     [effective-arg-override : i64
       (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view param-types))
         (compiler-backend-function-state-rax-forward-pending-var backend-state)
         -1)]
@@ -60918,7 +60530,7 @@
         target
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     (match (compiler-backend-emit-call-args-with-override
       type-segment-bases
       effective-arg-override
@@ -60933,7 +60545,7 @@
       1
       0
       (compiler-backend-global-shared-view instr-diag)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       ;; vars must be the real frame var count: group-word1 slots live at
       ;; -(8*(vars+var+1))(%rbp), so 0 here made a stack-homed group arg read
       ;; its word0 slot for BOTH words (closure-arg miscompile).
@@ -60944,11 +60556,11 @@
           [(ResultBackendReg.Ok env-reg)
             (match (compiler-backend-emit-call-result-store
               type-segment-bases
-              (compiler-backend-global-shared-view assignments)
+              assignments
               dst
               ty
               vars
-              (compiler-backend-global-shared-view program-index))
+              program-index)
               [(ResultCompilerBackend.Ok result-store)
                 (match (compiler-backend-global-shared-view func)
                   [(compiler_ir_types.CompilerIrValue.Function name)
@@ -60985,7 +60597,7 @@
                       [overlap : bool
                         (compiler-backend-indirect-call-callee-arg-overlap?
                           target
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           (compiler-backend-global-shared-view func)
                           args
                           backend-state)]
@@ -61089,7 +60701,7 @@
     func
     args
     ty
-    (compiler-backend-global-shared-view assignments)
+    assignments
     assignments
     planned-target
     types
@@ -61125,24 +60737,24 @@
         (compiler-backend-global-shared-view args)
         functions
         externs
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [call-space : i64
       (compiler-backend-closure-call-arg-space
         target
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [register-only : bool
       (compiler-backend-indirect-tail-call-register-only?
         type-segment-bases
         target
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
-      (compiler-backend-global-shared-view assignments)
+      assignments
       args
       param-types
       false
@@ -61153,7 +60765,7 @@
       0
       ""
       (compiler-backend-global-shared-view instr-diag)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       backend-state)
       [(ResultCompilerBackend.Ok args-asm)
@@ -61161,7 +60773,7 @@
           [clo-reg : String
             (compiler-backend-scavenge-tail-call-target-reg backend-state)]
           (match (compiler-backend-emit-load-value-with-plan
-            (compiler-backend-global-shared-view assignments)
+            assignments
             func
             (compiler-backend-global-shared-view clo-reg)
             backend-state)
@@ -61297,7 +60909,7 @@
         (compiler-backend-global-shared-view func)
         functions
         externs
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [param-types : compiler_ast_types.AstTypeList
       (if (compiler-backend-type-list-has-aggregate?
         type-segment-bases
@@ -61308,7 +60920,7 @@
           (CompilerBackendGlobalTypeTable.Empty)
           (compiler-backend-global-shared-view args)
           declared-param-types
-          (compiler-backend-global-shared-view program-index))
+          program-index)
         (if (=
           (compiler-backend-call-args-count
             (compiler-backend-global-shared-view args))
@@ -61326,17 +60938,17 @@
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         true
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [direct-home : String
       (compiler-backend-indirect-c-call-direct-home
         backend-state
         target
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view func))]
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
-      (compiler-backend-global-shared-view assignments)
+      assignments
       args
       param-types
       true
@@ -61359,7 +60971,7 @@
             [call-reg : String
               (compiler-backend-scavenge-call-target-reg "" backend-state)]
             (match (compiler-backend-emit-load-value-with-plan
-              (compiler-backend-global-shared-view assignments)
+              assignments
               func
               (compiler-backend-global-shared-view call-reg)
               backend-state)
@@ -61375,7 +60987,7 @@
                       "\n"
                       (compiler-backend-emit-call-space-add call-space)
                       (compiler-backend-emit-c-abi-call-result-store-reg
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         dst
                         (if (compiler-backend-float-type?
                           (compiler-backend-global-shared-view ty))
@@ -61434,9 +61046,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [extern-call-info : i64
-      (compiler-backend-index-extern-call-info
-        (compiler-backend-global-shared-view program-index)
-        name)]
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : compiler_ast_types.AstTypeList
       (compiler-backend-call-param-types-for-call
         type-segment-bases
@@ -61445,7 +61055,7 @@
         types
         global-types
         extern-call-info
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [c-abi? : bool
       (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
@@ -61455,19 +61065,16 @@
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         c-abi?
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     ;; The args + 16-byte base-save region are reserved in the prologue frame
     ;; (instr-outgoing-stack-space), so no per-call %rsp dip is needed.
     [dip : i64 0]
     [call-symbol : String
-      (compiler-backend-call-symbol-index
-        name
-        plan
-        (compiler-backend-global-shared-view program-index))]
+      (compiler-backend-call-symbol-index name plan program-index)]
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
-      (compiler-backend-global-shared-view assignments)
+      assignments
       args
       (compiler-backend-global-shared-view param-types)
       c-abi?
@@ -61544,7 +61151,7 @@
         (compiler-backend-global-shared-view func)
         functions
         externs
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [param-types : compiler_ast_types.AstTypeList
       (if (compiler-backend-type-list-has-aggregate?
         type-segment-bases
@@ -61555,7 +61162,7 @@
           (CompilerBackendGlobalTypeTable.Empty)
           (compiler-backend-global-shared-view args)
           declared-param-types
-          (compiler-backend-global-shared-view program-index))
+          program-index)
         (if (=
           (compiler-backend-call-args-count
             (compiler-backend-global-shared-view args))
@@ -61574,14 +61181,14 @@
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         true
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     ;; Mirrors the direct C-ABI store-result path: the frame reserves this region
     ;; and the call does not move %rsp.
     [dip : i64 0]
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
-      (compiler-backend-global-shared-view assignments)
+      assignments
       args
       param-types
       true
@@ -61597,7 +61204,7 @@
       backend-state)
       [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-emit-c-abi-return-base-save
-          (compiler-backend-global-shared-view assignments)
+          assignments
           base
           call-space
           backend-state)
@@ -61693,15 +61300,12 @@
       [(compiler_ast_types.AstType.I64) true]
       [_ false])
     (compiler-backend-divmod-fixed-home?
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        dst))
+      (compiler-backend-var-register-home backend-state assignments dst))
     (not
       (string.eq
         (compiler-backend-value-scalar-register
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view lhs))
         ""))
     (match (compiler-backend-immediate-operand
@@ -61726,7 +61330,7 @@
           [lhs-reg : String
             (compiler-backend-value-scalar-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               lhs)]
           [rhs-reg : String
             (compiler-backend-value-scalar-register
@@ -61759,10 +61363,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [lhs-reg : String
-      (compiler-backend-value-scalar-register
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        lhs)]
+      (compiler-backend-value-scalar-register backend-state assignments lhs)]
     (match (compiler-backend-immediate-operand
       backend-state
       (compiler-backend-global-shared-view rhs))
@@ -61911,7 +61512,7 @@
             (compiler-backend-address-base-filter
               (compiler-backend-value-scalar-register
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 base))]
           [offset-home : String
             (compiler-backend-value-scalar-register
@@ -61947,15 +61548,12 @@
       (match (compiler-backend-value-as-i64
         (compiler-backend-global-shared-view offset))
         [(option_i64.Some _)
-          (compiler-backend-value-register-home
-            backend-state
-            (compiler-backend-global-shared-view assignments)
-            base)]
+          (compiler-backend-value-register-home backend-state assignments base)]
         [(option_i64.None)
           (compiler-backend-address-base-filter
             (compiler-backend-value-scalar-register
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               base))])]
     [offset-home : String
       (match (compiler-backend-value-as-i64
@@ -62014,7 +61612,7 @@
         [base-home : String
           (compiler-backend-value-scalar-register
             backend-state
-            (compiler-backend-global-shared-view assignments)
+            assignments
             (compiler-backend-global-shared-view base))]
         [offset-home : String
           (match (compiler-backend-value-as-i64
@@ -62023,7 +61621,7 @@
             [(option_i64.None)
               (compiler-backend-value-scalar-register
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view offset))])]
         (str_cat.str-cat
           (if (and
@@ -62072,7 +61670,7 @@
     [lhs-home : String
       (compiler-backend-value-scalar-register
         ctx.backend-state
-        (compiler-backend-global-shared-view ctx.assignments)
+        ctx.assignments
         (compiler-backend-global-shared-view lhs))]
     [dst-home : String
       (compiler-backend-var-register-home ctx.backend-state ctx.assignments dst)]
@@ -62384,7 +61982,7 @@
               (let
                 [address-restore : String
                   (compiler-backend-divmod-address-emergency-restore-asm
-                    (compiler-backend-global-shared-view ctx.assignments)
+                    ctx.assignments
                     src
                     (compiler-backend-global-shared-view base)
                     (compiler-backend-global-shared-view offset)
@@ -62408,7 +62006,7 @@
     [_restore : unit
       (begin
         (compiler-backend-function-state-set-emit-current-count!
-          (compiler-backend-global-shared-view ctx.function-state)
+          ctx.function-state
           saved-count)
         (compiler-backend-set-current-instr-reserved-mask!
           ctx.function-state
@@ -62475,7 +62073,7 @@
         (match (match producer-instr
           [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs rhs _)
             (compiler-backend-emit-divmod-producer-to-src
-              (compiler-backend-global-shared-view ctx.assignments)
+              ctx.assignments
               op
               lhs
               rhs
@@ -62580,7 +62178,7 @@
         (match (match producer-instr
           [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs rhs _)
             (compiler-backend-emit-divmod-producer-to-src
-              (compiler-backend-global-shared-view ctx.assignments)
+              ctx.assignments
               op
               lhs
               rhs
@@ -62609,13 +62207,12 @@
                     (let
                       [address-restore : String
                         (compiler-backend-divmod-address-emergency-restore-asm
-                          (compiler-backend-global-shared-view ctx.assignments)
+                          ctx.assignments
                           src
                           (compiler-backend-global-shared-view base)
                           (compiler-backend-global-shared-view offset)
                           0
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))]
+                          ctx.backend-state)]
                       (match (compiler-backend-emit-divmod-direct-gep-store
                         (compiler-backend-global-shared-view ctx)
                         gep-dst
@@ -62640,10 +62237,10 @@
     [_restore : unit
       (begin
         (compiler-backend-function-state-set-emit-current-count!
-          (compiler-backend-global-shared-view ctx.function-state)
+          ctx.function-state
           saved-count)
         (compiler-backend-set-current-instr-reserved-mask!
-          (compiler-backend-global-shared-view ctx.function-state)
+          ctx.function-state
           saved-reserved)
         (compiler-backend-divmod-overrides-install!
           ctx.function-state
@@ -62698,11 +62295,9 @@
                         store-ty)
                       (if (and
                         (compiler-backend-divmod-direct-gep-store?
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state)
-                          (compiler-backend-global-shared-view
-                            ctx.type-segment-bases)
-                          (compiler-backend-global-shared-view ctx.assignments)
+                          ctx.backend-state
+                          ctx.type-segment-bases
+                          ctx.assignments
                           div-dst
                           gep-dst
                           (compiler-backend-global-shared-view base)
@@ -62712,7 +62307,7 @@
                           (compiler-backend-global-shared-view store-value))
                         (compiler-backend-divmod-direct-gep-store-clobber-safe?
                           ctx.backend-state
-                          (compiler-backend-global-shared-view ctx.assignments)
+                          ctx.assignments
                           (compiler-backend-global-shared-view src)
                           magic
                           (compiler-backend-global-shared-view base)
@@ -62851,9 +62446,9 @@
                         store-value
                         store-ty)
                       (if (compiler-backend-divmod-direct-gep-store?
-                        (compiler-backend-global-shared-view ctx.backend-state)
+                        ctx.backend-state
                         ctx.type-segment-bases
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.assignments
                         div-dst
                         gep-dst
                         (compiler-backend-global-shared-view base)
@@ -62894,8 +62489,7 @@
                               div-dst)]
                           (if (compiler-backend-divmod-direct-gep-store-clobber-safe?
                             ctx.backend-state
-                            (compiler-backend-global-shared-view
-                              ctx.assignments)
+                            ctx.assignments
                             (compiler-backend-global-shared-view src)
                             magic
                             (compiler-backend-global-shared-view base)
@@ -63435,20 +63029,20 @@
     [protect-n : i64
       (compiler-backend-copy-run-protect-count
         ctx.backend-state
-        (compiler-backend-global-shared-view ctx.assignments)
+        ctx.assignments
         (compiler-backend-global-shared-view instrs)
         index)]
     [protect : (__tl_dyn-array String)
       (compiler-backend-copy-run-protect-exclude
         ctx.backend-state
-        (compiler-backend-global-shared-view ctx.assignments)
+        ctx.assignments
         (compiler-backend-global-shared-view instrs)
         index)]
     (compiler-backend-emit-fused-result-rest
       (compiler-backend-global-shared-view ctx)
       fallthrough
       (compiler-backend-emit-copy-bytes-avoid
-        (compiler-backend-global-shared-view ctx.type-segment-bases)
+        ctx.type-segment-bases
         ctx.assignments
         dst
         src
@@ -63621,7 +63215,7 @@
     (not
       (compiler-backend-copy-group?
         ctx.type-segment-bases
-        (compiler-backend-global-shared-view ctx.program-index)
+        ctx.program-index
         (compiler-backend-global-shared-view ty)
         dst
         (compiler-backend-global-shared-view src))))
@@ -63696,25 +63290,23 @@
                     ;; the legacy plan-less wrapper made pressured div/mod
                     ;; destinations query the Mov's empty scratch site.
                     (match (compiler-backend-emit-binop-with-plan
-                      (compiler-backend-global-shared-view
-                        ctx.type-segment-bases)
+                      ctx.type-segment-bases
                       (compiler-backend-global-shared-view ctx.types)
                       (compiler-backend-global-shared-view ctx.global-types)
-                      (compiler-backend-global-shared-view ctx.assignments)
+                      ctx.assignments
                       bin-dst
                       op
                       lhs
                       src
                       bin-ty
                       ""
-                      (compiler-backend-global-shared-view ctx.backend-state))
+                      ctx.backend-state)
                       [(ResultCompilerBackend.Ok binop-asm)
                         (begin
                           (compiler-backend-emergency-append
                             out
                             binop-asm
-                            (compiler-backend-global-shared-view
-                              ctx.backend-state))
+                            ctx.backend-state)
                           (compiler-backend-emit-instrs
                             (compiler-backend-global-shared-view ctx)
                             fallthrough
@@ -63758,37 +63350,37 @@
               dst)
               (ResultCompilerBackend.Ok "")
               (compiler-backend-emit-mov
-                (compiler-backend-global-shared-view ctx.type-segment-bases)
-                (compiler-backend-global-shared-view ctx.assignments)
+                ctx.type-segment-bases
+                ctx.assignments
                 dst
                 (compiler-backend-global-shared-view src)
                 ty
-                (compiler-backend-global-shared-view ctx.program-index)
-                (compiler-backend-global-shared-view ctx.vars)
-                (compiler-backend-global-shared-view ctx.backend-state)))
+                ctx.program-index
+                ctx.vars
+                ctx.backend-state))
               [(ResultCompilerBackend.Ok prefix)
                 ;; This fusion emits the consumer while the cursor still names
                 ;; the eliminated Mov. Select the BinOp's point-one scratch
                 ;; ordinals explicitly so high-pressure spill paths remain
                 ;; modeled.
                 (match (compiler-backend-emit-binop-with-plan
-                  (compiler-backend-global-shared-view ctx.type-segment-bases)
+                  ctx.type-segment-bases
                   (compiler-backend-global-shared-view ctx.types)
                   (compiler-backend-global-shared-view ctx.global-types)
-                  (compiler-backend-global-shared-view ctx.assignments)
+                  ctx.assignments
                   bin-dst
                   op
                   lhs
                   (compiler-backend-global-shared-view src)
                   bin-ty
                   ""
-                  (compiler-backend-global-shared-view ctx.backend-state))
+                  ctx.backend-state)
                   [(ResultCompilerBackend.Ok binop-asm)
                     (begin
                       (compiler-backend-emergency-append
                         out
                         (str_cat.str-cat prefix binop-asm)
-                        (compiler-backend-global-shared-view ctx.backend-state))
+                        ctx.backend-state)
                       (compiler-backend-emit-instrs
                         (compiler-backend-global-shared-view ctx)
                         fallthrough
@@ -63830,21 +63422,20 @@
               [(compiler_ir_types.CompilerIrMaybeValue.Some value)
                 (if (compiler-backend-branch-uses-var? value dst)
                   (match (compiler-backend-emit-return
-                    (compiler-backend-global-shared-view ctx.type-segment-bases)
-                    (compiler-backend-global-shared-view ctx.source-function)
+                    ctx.type-segment-bases
+                    ctx.source-function
                     (compiler-backend-global-shared-view ctx.blocks)
                     (compiler_ir_types.CompilerIrMaybeValue.Some src)
-                    (compiler-backend-global-shared-view ctx.assignments)
-                    (compiler-backend-global-shared-view ctx.vars)
+                    ctx.assignments
+                    ctx.vars
                     (compiler-backend-global-shared-view ctx.ret-ty)
-                    (compiler-backend-global-shared-view ctx.program-index))
+                    ctx.program-index)
                     [(ResultCompilerBackend.Ok asm)
                       (begin
                         (compiler-backend-emergency-append
                           out
                           asm
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state))
+                          ctx.backend-state)
                         (ResultCompilerBackend.Ok ""))]
                     [(ResultCompilerBackend.Err message)
                       (ResultCompilerBackend.Err
@@ -63853,8 +63444,7 @@
                             (deref message)
                             (compiler-backend-instr-diagnostic
                               (compiler-backend-global-shared-view ctx.spans)
-                              (compiler-backend-global-shared-view
-                                ctx.source-function)
+                              ctx.source-function
                               instr
                               ctx.func-diag
                               ""))))])
@@ -63999,7 +63589,7 @@
         (compiler-backend-copy-gep-element-spelling
           ctx.backend-state
           ctx.type-segment-bases
-          (compiler-backend-global-shared-view ctx.assignments)
+          ctx.assignments
           (compiler-backend-global-shared-view base)
           (compiler-backend-global-shared-view offset)
           (compiler-backend-global-shared-view elem-ty)
@@ -64017,13 +63607,13 @@
         [protect-n : i64
           (compiler-backend-copy-run-protect-count
             ctx.backend-state
-            (compiler-backend-global-shared-view ctx.assignments)
+            ctx.assignments
             (compiler-backend-global-shared-view instrs)
             after-gep)]
         [protect : (__tl_dyn-array String)
           (compiler-backend-copy-run-protect-exclude
             ctx.backend-state
-            (compiler-backend-global-shared-view ctx.assignments)
+            ctx.assignments
             (compiler-backend-global-shared-view instrs)
             after-gep)]
         ;; A dynamic index carries no constant part, so the whole starting
@@ -64033,7 +63623,7 @@
         [src-disp : i64
           (+
             (compiler-backend-gep-const-element-disp
-              (compiler-backend-global-shared-view ctx.type-segment-bases)
+              ctx.type-segment-bases
               (compiler-backend-global-shared-view offset)
               (compiler-backend-global-shared-view elem-ty))
             (compiler-backend-gep-fold-next!
@@ -64045,8 +63635,8 @@
           (compiler-backend-global-shared-view ctx)
           fallthrough
           (compiler-backend-emit-copy-bytes-gep-src
-            (compiler-backend-global-shared-view ctx.type-segment-bases)
-            (compiler-backend-global-shared-view ctx.assignments)
+            ctx.type-segment-bases
+            ctx.assignments
             copy-dst
             base
             offset
@@ -64181,10 +63771,8 @@
                                         fallthrough
                                         gep-dst
                                         (compiler-backend-gep-fold-next!
-                                          (compiler-backend-global-shared-view
-                                            ctx.function-state)
-                                          (compiler-backend-global-shared-view
-                                            ctx.type-segment-bases)
+                                          ctx.function-state
+                                          ctx.type-segment-bases
                                           (compiler-backend-global-shared-view
                                             offset)
                                           (compiler-backend-global-shared-view
@@ -64204,10 +63792,8 @@
                                       fallthrough
                                       gep-dst
                                       (compiler-backend-gep-fold-next!
-                                        (compiler-backend-global-shared-view
-                                          ctx.function-state)
-                                        (compiler-backend-global-shared-view
-                                          ctx.type-segment-bases)
+                                        ctx.function-state
+                                        ctx.type-segment-bases
                                         (compiler-backend-global-shared-view
                                           offset)
                                         (compiler-backend-global-shared-view
@@ -64227,8 +63813,7 @@
                                 fallthrough
                                 gep-dst
                                 (compiler-backend-gep-fold-next!
-                                  (compiler-backend-global-shared-view
-                                    ctx.function-state)
+                                  ctx.function-state
                                   ctx.type-segment-bases
                                   (compiler-backend-global-shared-view offset)
                                   (compiler-backend-global-shared-view elem-ty))
@@ -64245,10 +63830,8 @@
                               fallthrough
                               gep-dst
                               (compiler-backend-gep-fold-next!
-                                (compiler-backend-global-shared-view
-                                  ctx.function-state)
-                                (compiler-backend-global-shared-view
-                                  ctx.type-segment-bases)
+                                ctx.function-state
+                                ctx.type-segment-bases
                                 (compiler-backend-global-shared-view offset)
                                 (compiler-backend-global-shared-view elem-ty))
                               base
@@ -64265,10 +63848,8 @@
                             fallthrough
                             gep-dst
                             (compiler-backend-gep-fold-next!
-                              (compiler-backend-global-shared-view
-                                ctx.function-state)
-                              (compiler-backend-global-shared-view
-                                ctx.type-segment-bases)
+                              ctx.function-state
+                              ctx.type-segment-bases
                               (compiler-backend-global-shared-view offset)
                               (compiler-backend-global-shared-view elem-ty))
                             base
@@ -64284,9 +63865,8 @@
                       fallthrough
                       gep-dst
                       (compiler-backend-gep-fold-next!
-                        (compiler-backend-global-shared-view ctx.function-state)
-                        (compiler-backend-global-shared-view
-                          ctx.type-segment-bases)
+                        ctx.function-state
+                        ctx.type-segment-bases
                         (compiler-backend-global-shared-view offset)
                         (compiler-backend-global-shared-view elem-ty))
                       base
@@ -64311,9 +63891,8 @@
                     fallthrough
                     gep-dst
                     (compiler-backend-gep-fold-next!
-                      (compiler-backend-global-shared-view ctx.function-state)
-                      (compiler-backend-global-shared-view
-                        ctx.type-segment-bases)
+                      ctx.function-state
+                      ctx.type-segment-bases
                       (compiler-backend-global-shared-view offset)
                       (compiler-backend-global-shared-view elem-ty))
                     base
@@ -64343,29 +63922,27 @@
                     (*
                       n
                       (compiler-backend-type-size
-                        (compiler-backend-global-shared-view
-                          ctx.type-segment-bases)
+                        ctx.type-segment-bases
                         (compiler-backend-global-shared-view elem-ty)))))
                   (let
                     [protect-n : i64
                       (compiler-backend-copy-run-protect-count
-                        (compiler-backend-global-shared-view ctx.backend-state)
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.backend-state
+                        ctx.assignments
                         (compiler-backend-global-shared-view instrs)
                         after-load)]
                     [protect : (__tl_dyn-array String)
                       (compiler-backend-copy-run-protect-exclude
-                        (compiler-backend-global-shared-view ctx.backend-state)
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.backend-state
+                        ctx.assignments
                         (compiler-backend-global-shared-view instrs)
                         after-load)]
                     (compiler-backend-emit-fused-result-rest
                       (compiler-backend-global-shared-view ctx)
                       fallthrough
                       (compiler-backend-emit-copy-bytes-from-gep-avoid
-                        (compiler-backend-global-shared-view
-                          ctx.type-segment-bases)
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.type-segment-bases
+                        ctx.assignments
                         base
                         (compiler-backend-global-shared-view offset)
                         (compiler-backend-global-shared-view elem-ty)
@@ -64374,13 +63951,11 @@
                         protect
                         protect-n
                         (compiler-backend-gep-fold-next!
-                          (compiler-backend-global-shared-view
-                            ctx.function-state)
-                          (compiler-backend-global-shared-view
-                            ctx.type-segment-bases)
+                          ctx.function-state
+                          ctx.type-segment-bases
                           (compiler-backend-global-shared-view offset)
                           (compiler-backend-global-shared-view elem-ty))
-                        (compiler-backend-global-shared-view ctx.backend-state))
+                        ctx.backend-state)
                       instrs
                       after-load
                       out))
@@ -64435,43 +64010,39 @@
                     (compiler-backend-global-shared-view load-base)
                     gep-dst)
                     (compiler-backend-emit-gep
-                      (compiler-backend-global-shared-view
-                        ctx.type-segment-bases)
-                      (compiler-backend-global-shared-view ctx.assignments)
+                      ctx.type-segment-bases
+                      ctx.assignments
                       gep-dst
                       base
                       (compiler-backend-global-shared-view offset)
                       (compiler-backend-global-shared-view elem-ty)
                       (compiler-backend-gep-fold-next!
-                        (compiler-backend-global-shared-view ctx.function-state)
-                        (compiler-backend-global-shared-view
-                          ctx.type-segment-bases)
+                        ctx.function-state
+                        ctx.type-segment-bases
                         (compiler-backend-global-shared-view offset)
                         (compiler-backend-global-shared-view elem-ty))
-                      (compiler-backend-global-shared-view ctx.backend-state))
+                      ctx.backend-state)
                     (compiler-backend-emit-gep-staged-avoid
-                      (compiler-backend-global-shared-view
-                        ctx.type-segment-bases)
-                      (compiler-backend-global-shared-view ctx.assignments)
+                      ctx.type-segment-bases
+                      ctx.assignments
                       gep-dst
                       base
                       (compiler-backend-global-shared-view offset)
                       (compiler-backend-global-shared-view elem-ty)
                       (compiler-backend-gep-fold-next!
-                        (compiler-backend-global-shared-view ctx.function-state)
-                        (compiler-backend-global-shared-view
-                          ctx.type-segment-bases)
+                        ctx.function-state
+                        ctx.type-segment-bases
                         (compiler-backend-global-shared-view offset)
                         (compiler-backend-global-shared-view elem-ty))
                       (compiler-backend-value-scalar-register
-                        (compiler-backend-global-shared-view ctx.backend-state)
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.backend-state
+                        ctx.assignments
                         load-base)
                       (compiler-backend-value-scalar-register
-                        (compiler-backend-global-shared-view ctx.backend-state)
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.backend-state
+                        ctx.assignments
                         load-offset)
-                      (compiler-backend-global-shared-view ctx.backend-state)))
+                      ctx.backend-state))
                   instrs
                   index
                   out)]
@@ -64499,10 +64070,8 @@
                               fallthrough
                               gep-dst
                               (compiler-backend-gep-fold-next!
-                                (compiler-backend-global-shared-view
-                                  ctx.function-state)
-                                (compiler-backend-global-shared-view
-                                  ctx.type-segment-bases)
+                                ctx.function-state
+                                ctx.type-segment-bases
                                 (compiler-backend-global-shared-view offset)
                                 (compiler-backend-global-shared-view elem-ty))
                               base
@@ -64549,9 +64118,8 @@
                     fallthrough
                     gep-dst
                     (compiler-backend-gep-fold-next!
-                      (compiler-backend-global-shared-view ctx.function-state)
-                      (compiler-backend-global-shared-view
-                        ctx.type-segment-bases)
+                      ctx.function-state
+                      ctx.type-segment-bases
                       (compiler-backend-global-shared-view offset)
                       (compiler-backend-global-shared-view elem-ty))
                     base
@@ -64576,9 +64144,8 @@
                     fallthrough
                     gep-dst
                     (compiler-backend-gep-fold-next!
-                      (compiler-backend-global-shared-view ctx.function-state)
-                      (compiler-backend-global-shared-view
-                        ctx.type-segment-bases)
+                      ctx.function-state
+                      ctx.type-segment-bases
                       (compiler-backend-global-shared-view offset)
                       (compiler-backend-global-shared-view elem-ty))
                     base
@@ -64606,23 +64173,22 @@
                   (let
                     [protect-n : i64
                       (compiler-backend-copy-run-protect-count
-                        (compiler-backend-global-shared-view ctx.backend-state)
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.backend-state
+                        ctx.assignments
                         (compiler-backend-global-shared-view instrs)
                         after-gep)]
                     [protect : (__tl_dyn-array String)
                       (compiler-backend-copy-run-protect-exclude
                         ctx.backend-state
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.assignments
                         (compiler-backend-global-shared-view instrs)
                         after-gep)]
                     (compiler-backend-emit-fused-result-rest
                       (compiler-backend-global-shared-view ctx)
                       fallthrough
                       (compiler-backend-emit-copy-bytes-from-gep-avoid
-                        (compiler-backend-global-shared-view
-                          ctx.type-segment-bases)
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.type-segment-bases
+                        ctx.assignments
                         base
                         (compiler-backend-global-shared-view offset)
                         (compiler-backend-global-shared-view elem-ty)
@@ -64631,13 +64197,11 @@
                         protect
                         protect-n
                         (compiler-backend-gep-fold-next!
-                          (compiler-backend-global-shared-view
-                            ctx.function-state)
-                          (compiler-backend-global-shared-view
-                            ctx.type-segment-bases)
+                          ctx.function-state
+                          ctx.type-segment-bases
                           (compiler-backend-global-shared-view offset)
                           (compiler-backend-global-shared-view elem-ty))
-                        (compiler-backend-global-shared-view ctx.backend-state))
+                        ctx.backend-state)
                       instrs
                       after-gep
                       out))
@@ -64780,7 +64344,7 @@
         [home : String
           (compiler-backend-var-register-home
             ctx.backend-state
-            (compiler-backend-global-shared-view ctx.assignments)
+            ctx.assignments
             mask-var)]
         (if (string.eq home "")
           (compiler-backend-bit-test-mask-reg ctx dst count-reg)
@@ -64813,7 +64377,7 @@
       (if (string.eq
         (compiler-backend-var-register-home
           ctx.backend-state
-          (compiler-backend-global-shared-view ctx.assignments)
+          ctx.assignments
           mask-var)
         "")
         (compiler-backend-emit-load-typed-var-to-reg-with-plan
@@ -65127,17 +64691,17 @@
                     [source
                       (compiler-backend-value-scalar-register
                         ctx.backend-state
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.assignments
                         lhs)]
                     [base-home
                       (compiler-backend-value-scalar-register
                         ctx.backend-state
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.assignments
                         base)]
                     [temp
                       (compiler-backend-var-register-home
                         ctx.backend-state
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.assignments
                         dst)]
                     [target
                       (compiler-backend-var-register-home
@@ -65369,10 +64933,10 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-branch-with-phi-copies-with-plan
     ctx.type-segment-bases
-    (compiler-backend-global-shared-view ctx.assignments)
+    ctx.assignments
     (compiler-backend-global-shared-view ctx.function)
     (compiler-backend-global-shared-view ctx.blocks)
-    (compiler-backend-global-shared-view ctx.current-label)
+    ctx.current-label
     cond
     true-label
     false-label
@@ -65380,17 +64944,15 @@
       (compiler-backend-global-shared-view instrs)
       index
       fallthrough)
-    (compiler-backend-global-shared-view ctx.program-index)
-    (compiler-backend-global-shared-view ctx.vars)
+    ctx.program-index
+    ctx.vars
     true-jcc
     false-jcc)
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append
           out
-          (compiler-backend-emergency-wrap
-            head
-            (compiler-backend-global-shared-view ctx.backend-state)))
+          (compiler-backend-emergency-wrap head ctx.backend-state))
         (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
@@ -65489,10 +65051,7 @@
                     (if (> (string.string-length location) 0)
                       (compiler-backend-asm-append out location)
                       unit))
-                  (compiler-backend-emergency-append
-                    out
-                    head
-                    (compiler-backend-global-shared-view ctx.backend-state))
+                  (compiler-backend-emergency-append out head ctx.backend-state)
                   (compiler-backend-emit-flags-reuse-branch-rest
                     (compiler-backend-global-shared-view ctx)
                     fallthrough
@@ -65534,7 +65093,7 @@
     (compiler-backend-rax-forwardable-binop?
       (compiler-backend-global-shared-view ctx.types)
       (compiler-backend-global-shared-view ctx.global-types)
-      (compiler-backend-global-shared-view ctx.assignments)
+      ctx.assignments
       (compiler-backend-global-shared-view op)
       (compiler-backend-global-shared-view lhs)
       (compiler-backend-global-shared-view rhs)
@@ -65542,15 +65101,15 @@
     (compiler-backend-rest-starts-rax-forwardable-consumer?
       (compiler-backend-global-shared-view ctx.types)
       (compiler-backend-global-shared-view ctx.global-types)
-      (compiler-backend-global-shared-view ctx.assignments)
+      ctx.assignments
       dst
       (compiler-backend-global-shared-view instrs)
       index))
     (match (compiler-backend-emit-binop-to-rax
-      (compiler-backend-global-shared-view ctx.type-segment-bases)
+      ctx.type-segment-bases
       (compiler-backend-global-shared-view ctx.types)
       (compiler-backend-global-shared-view ctx.global-types)
-      (compiler-backend-global-shared-view ctx.assignments)
+      ctx.assignments
       dst
       op
       lhs
@@ -65561,14 +65120,12 @@
         dst
         (compiler-backend-global-shared-view instrs)
         index)
-      (compiler-backend-global-shared-view ctx.backend-state))
+      ctx.backend-state)
       [(ResultCompilerBackend.Ok head)
         (begin
           (compiler-backend-asm-append
             out
-            (compiler-backend-emergency-wrap
-              head
-              (compiler-backend-global-shared-view ctx.backend-state)))
+            (compiler-backend-emergency-wrap head ctx.backend-state))
           (compiler-backend-emit-instrs-with-rax
             (compiler-backend-global-shared-view ctx)
             fallthrough
@@ -65584,9 +65141,7 @@
         (compiler-backend-var-single-use?
           (compiler-backend-global-shared-view ctx.use-counts)
           dst)
-        (compiler-backend-var-fuse-safe?
-          (compiler-backend-global-shared-view ctx.backend-state)
-          dst))
+        (compiler-backend-var-fuse-safe? ctx.backend-state dst))
       (not
         (compiler-backend-binop-f64?
           (compiler-backend-global-shared-view ctx.types)
@@ -65614,23 +65169,20 @@
                     (if (compiler-backend-branch-uses-var? value dst)
                       (compiler-backend-emit-terminator-into
                         (compiler-backend-emit-binop-return-with-plan
-                          (compiler-backend-global-shared-view
-                            ctx.type-segment-bases)
-                          (compiler-backend-global-shared-view
-                            ctx.backend-state)
-                          (compiler-backend-global-shared-view
-                            ctx.source-function)
+                          ctx.type-segment-bases
+                          ctx.backend-state
+                          ctx.source-function
                           (compiler-backend-global-shared-view ctx.blocks)
                           (compiler-backend-global-shared-view ctx.types)
                           (compiler-backend-global-shared-view ctx.global-types)
-                          (compiler-backend-global-shared-view ctx.assignments)
-                          (compiler-backend-global-shared-view ctx.vars)
+                          ctx.assignments
+                          ctx.vars
                           op
                           lhs
                           rhs
                           (compiler-backend-global-shared-view ty))
                         out
-                        (compiler-backend-global-shared-view ctx.backend-state))
+                        ctx.backend-state)
                       (compiler-backend-emit-instrs-normal
                         (compiler-backend-global-shared-view ctx)
                         fallthrough
@@ -65722,7 +65274,7 @@
                   (compiler-backend-branch-uses-var? select-mask dst))
                   (compiler-backend-emit-select-on-flags
                     ctx.type-segment-bases
-                    (compiler-backend-global-shared-view ctx.assignments)
+                    ctx.assignments
                     select-dst
                     select-true
                     select-false
@@ -65737,7 +65289,7 @@
                       (compiler-backend-global-shared-view lhs)
                       (compiler-backend-global-shared-view rhs)
                       ty)
-                    (compiler-backend-global-shared-view ctx.backend-state))
+                    ctx.backend-state)
                   (CompilerBackendMaybeAsm.No))
                   [(CompilerBackendMaybeAsm.Some head)
                     (compiler-backend-emit-fused-result-rest
@@ -65993,7 +65545,7 @@
                     (if (and
                       (compiler-backend-branch-uses-var? cond dst)
                       (compiler-backend-branch-value-direct?
-                        (compiler-backend-global-shared-view ctx.assignments)
+                        ctx.assignments
                         (compiler-backend-global-shared-view src)
                         ctx.backend-state))
                       (compiler-backend-emit-fused-not-branch-rest
@@ -66385,7 +65937,7 @@
             plan
             functions
             externs
-            (compiler-backend-global-shared-view program-index)
+            program-index
             spans
             span-index
             func-diag
@@ -66495,7 +66047,7 @@
           (compiler-backend-next-block-label-seq
             (compiler-backend-global-shared-view blocks)
             (+ index 1))
-          (compiler-backend-global-shared-view assignments)
+          assignments
           vars
           (compiler-backend-global-shared-view types)
           (compiler-backend-global-shared-view global-types)
@@ -66503,7 +66055,7 @@
           plan
           (compiler-backend-global-shared-view functions)
           (compiler-backend-global-shared-view externs)
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view spans)
           (compiler-backend-global-shared-view span-index)
           (compiler-backend-global-shared-view func-diag)
@@ -66585,7 +66137,7 @@
             block
             (compiler-backend-next-block-label
               (compiler_ir_types.compiler-ir-box-shared-view rest))
-            (compiler-backend-global-shared-view assignments)
+            assignments
             vars
             (compiler-backend-global-shared-view types)
             (compiler-backend-global-shared-view global-types)
@@ -66593,7 +66145,7 @@
             plan
             (compiler-backend-global-shared-view functions)
             (compiler-backend-global-shared-view externs)
-            (compiler-backend-global-shared-view program-index)
+            program-index
             (compiler-backend-global-shared-view spans)
             (compiler-backend-global-shared-view span-index)
             (compiler-backend-global-shared-view func-diag)
@@ -67179,7 +66731,7 @@
                               "backend: private AVX-512 SPMD call supports at most 5 varying bool arguments")))
                         (match (compiler-backend-emit-assignment-lookup
                           backend-state
-                          (compiler-backend-global-shared-view assignments)
+                          assignments
                           var-id)
                           [(compiler_regalloc.CompilerRegMaybeLocation.Some
                               location)
@@ -67246,7 +66798,7 @@
               ty
               (compiler_ast_types.AstType.I8))]
           (match (compiler-backend-vector-dst-reg
-            (compiler-backend-global-shared-view assignments)
+            assignments
             var-id
             "private AVX2 SPMD helper parameter"
             "ymm"
@@ -67283,7 +66835,7 @@
                   "backend: private AVX-512 SPMD call supports at most 8 varying value arguments")))
             (match (compiler-backend-emit-assignment-lookup
               backend-state
-              (compiler-backend-global-shared-view assignments)
+              assignments
               var-id)
               [(compiler_regalloc.CompilerRegMaybeLocation.No)
                 (ResultCompilerBackend.Ok "")]
@@ -67363,7 +66915,7 @@
                 position))]
           (match (if special?
             (compiler-backend-emit-spmd-private-special-param
-              (compiler-backend-global-shared-view assignments)
+              assignments
               name
               ty
               var-id
@@ -67381,7 +66933,7 @@
                         stack-idx))]
                   (if is-float
                     (compiler-backend-emit-load-float-address-to-var
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       var-id
                       addr
                       ty
@@ -67389,7 +66941,7 @@
                       backend-state)
                     (compiler-backend-emit-load-scalar-address-to-var
                       type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       var-id
                       addr
                       ty
@@ -67409,7 +66961,7 @@
                 [(ResultBackendReg.Ok reg)
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-store-typed-var-with-plan
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       var-id
                       reg
                       ty
@@ -67470,7 +67022,7 @@
           (compiler-backend-state-function-state backend-state)))]
     (match (if opmask?
       (compiler-backend-spmd-mask-entry-plan-collect!
-        (compiler-backend-global-shared-view assignments)
+        assignments
         (compiler-backend-global-shared-view params)
         (&mut mask-plan)
         backend-state)
@@ -67510,22 +67062,19 @@
   [backend-state : CompilerBackendState]) : String
   (let
     [home : String
-      (compiler-backend-var-register-home
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        var-id)]
+      (compiler-backend-var-register-home backend-state assignments var-id)]
     (if (string.eq home "")
       (let
         [exclude : (__tl_dyn-array String)
           (compiler-backend-param-register-exclude
             backend-state
             (compiler-backend-global-shared-view all-params)
-            (compiler-backend-global-shared-view assignments))]
+            assignments)]
         [exclude-n : i64
           (compiler-backend-param-register-exclude-count
             backend-state
             all-params
-            (compiler-backend-global-shared-view assignments))]
+            assignments)]
         [scratch : String
           (compiler-backend-scavenge-pick-with-mask
             backend-state
@@ -67595,7 +67144,7 @@
               (match (compiler-backend-emit-param-spills-from
                 type-segment-bases
                 target
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 (compiler-backend-global-shared-view all-params)
                 params
                 (+ param-index 1)
@@ -67626,14 +67175,14 @@
                   (ResultCompilerBackend.Err message)])]
             [(compiler-backend-group-type?
                 type-segment-bases
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view ty))
               (let
                 [linux-group-fits : bool
                   (compiler-backend-linux-group-register-banks-fit?
                     type-segment-bases
                     target
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     (compiler-backend-global-shared-view ty)
                     int-idx
                     float-idx
@@ -67642,16 +67191,16 @@
                   (compiler-backend-param-register-exclude
                     backend-state
                     (compiler-backend-global-shared-view all-params)
-                    (compiler-backend-global-shared-view assignments))]
+                    assignments)]
                 [param-exclude-n : i64
                   (compiler-backend-param-register-exclude-count
                     backend-state
                     (compiler-backend-global-shared-view all-params)
-                    (compiler-backend-global-shared-view assignments))]
+                    assignments)]
                 [w0-sse : bool
                   (compiler-backend-group-word-sse?
                     type-segment-bases
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     (compiler-backend-global-shared-view ty)
                     0)]
                 [w0-stack : bool
@@ -67676,7 +67225,7 @@
                 [w1-sse : bool
                   (compiler-backend-group-word-sse?
                     type-segment-bases
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     (compiler-backend-global-shared-view ty)
                     1)]
                 [w1-stack : bool
@@ -67692,13 +67241,13 @@
                   (match (compiler-backend-emit-group-word-stack-param
                     type-segment-bases
                     target
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     var-id
                     0
                     stack-idx
                     vars
                     (compiler-backend-global-shared-view ty)
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     (compiler-backend-global-shared-view param-exclude)
                     param-exclude-n
                     backend-state)
@@ -67706,13 +67255,13 @@
                       (match (compiler-backend-emit-group-word-stack-param
                         type-segment-bases
                         target
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         var-id
                         1
                         (+ stack-idx 1)
                         vars
                         (compiler-backend-global-shared-view ty)
-                        (compiler-backend-global-shared-view program-index)
+                        program-index
                         param-exclude
                         param-exclude-n
                         backend-state)
@@ -67728,7 +67277,7 @@
                             float-idx
                             (+ position 2)
                             (+ stack-idx 2)
-                            (compiler-backend-global-shared-view program-index)
+                            program-index
                             vars
                             backend-state)
                             [(ResultCompilerBackend.Ok tail)
@@ -67743,7 +67292,7 @@
                   (match (compiler-backend-emit-group-word-param
                     type-segment-bases
                     target
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     var-id
                     0
                     int-idx
@@ -67752,7 +67301,7 @@
                     stack-idx
                     vars
                     (compiler-backend-global-shared-view ty)
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     (compiler-backend-global-shared-view param-exclude)
                     param-exclude-n
                     backend-state)
@@ -67760,7 +67309,7 @@
                       (match (compiler-backend-emit-group-word-param
                         type-segment-bases
                         target
-                        (compiler-backend-global-shared-view assignments)
+                        assignments
                         var-id
                         1
                         int1
@@ -67769,7 +67318,7 @@
                         stack1
                         vars
                         (compiler-backend-global-shared-view ty)
-                        (compiler-backend-global-shared-view program-index)
+                        program-index
                         param-exclude
                         param-exclude-n
                         backend-state)
@@ -67777,7 +67326,7 @@
                           (match (compiler-backend-emit-param-spills-from
                             type-segment-bases
                             target
-                            (compiler-backend-global-shared-view assignments)
+                            assignments
                             all-params
                             params
                             (+ param-index 1)
@@ -67791,7 +67340,7 @@
                             (if w1-stack
                               (+ stack1 1)
                               stack1)
-                            (compiler-backend-global-shared-view program-index)
+                            program-index
                             vars
                             backend-state)
                             [(ResultCompilerBackend.Ok tail)
@@ -67813,7 +67362,7 @@
                 (match (compiler-backend-emit-param-spills-from
                   type-segment-bases
                   target
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view all-params)
                   params
                   (+ param-index 1)
@@ -67821,7 +67370,7 @@
                   next-float
                   (+ position 1)
                   (+ stack-idx 1)
-                  (compiler-backend-global-shared-view program-index)
+                  program-index
                   vars
                   backend-state)
                   [(ResultCompilerBackend.Ok tail)
@@ -67837,16 +67386,16 @@
                           (compiler-backend-param-register-exclude-count
                             backend-state
                             (compiler-backend-global-shared-view all-params)
-                            (compiler-backend-global-shared-view assignments))]
+                            assignments)]
                         [exclude : (__tl_dyn-array String)
                           (compiler-backend-param-register-exclude
                             backend-state
                             all-params
-                            (compiler-backend-global-shared-view assignments))]
+                            assignments)]
                         (str_cat.str-cat
                           (if is-float
                             (compiler-backend-emit-load-float-address-to-var
-                              (compiler-backend-global-shared-view assignments)
+                              assignments
                               var-id
                               addr
                               (compiler-backend-global-shared-view ty)
@@ -67854,7 +67403,7 @@
                               backend-state)
                             (compiler-backend-emit-load-scalar-address-to-var
                               type-segment-bases
-                              (compiler-backend-global-shared-view assignments)
+                              assignments
                               var-id
                               addr
                               (compiler-backend-global-shared-view ty)
@@ -67886,7 +67435,7 @@
                     (match (compiler-backend-emit-param-spills-from
                       type-segment-bases
                       target
-                      (compiler-backend-global-shared-view assignments)
+                      assignments
                       all-params
                       params
                       (+ param-index 1)
@@ -68591,7 +68140,7 @@
         assignments
         vars)]
     (CompilerBackendScavengeAssignments
-      (compiler-backend-global-shared-view view)
+      view
       (compiler-backend-scavenge-assignment-mask view))))
 
 (define (compiler-backend-assignments-have-register-home?
@@ -68770,7 +68319,7 @@
       (compiler-backend-scavenge-occupancy-build
         (compiler-backend-global-shared-view starts)
         (compiler-backend-global-shared-view ends)
-        (compiler-backend-global-shared-view assignment-index)
+        assignment-index
         segments
         vars)]
     (compiler-backend-set-scavenge-ctx-ready!
@@ -68972,10 +68521,7 @@
   [v2 : compiler_ir_types.CompilerIrValue]) : (__tl_dyn-array String)
   (let
     [h1 : String
-      (compiler-backend-value-scalar-register
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        v1)]
+      (compiler-backend-value-scalar-register backend-state assignments v1)]
     [h2 : String
       (compiler-backend-value-scalar-register backend-state assignments v2)]
     (__tl_make-array
@@ -70465,7 +70011,7 @@
               (not (= reg-id compiler_abi.compiler-reg-id-invalid))
               (compiler-backend-callee-needs-save?
                 backend-state
-                (compiler-backend-global-shared-view assignments)
+                assignments
                 reg-id))
               (begin
                 (set!
@@ -78573,7 +78119,7 @@
               split-temp-start
               cold-call-split?
               (compiler-backend-global-shared-view alloc-types)
-              (compiler-backend-global-shared-view alloc-preassignments)))]
+              alloc-preassignments))]
         [alloc-reg-plan : compiler_regalloc.CompilerRegPlan
           (if (= alloc-vars split-vars)
             raw-alloc-reg-plan
@@ -78898,7 +78444,7 @@
                 (compiler-backend-function-state-set-assignment-index!
                   function-state
                   (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     scratch-vars))
                 (compiler-backend-function-state-set-bool!
                   function-state
@@ -78913,9 +78459,7 @@
             ;; compiler-backend-plan-uses-reg? answers from. Unlike the dense
             ;; index this is installed for EVERY function -- it is one machine
             ;; word, so there is no size threshold to trade against.
-            (compiler-backend-set-emit-plan-reg-mask!
-              backend-state
-              (compiler-backend-global-shared-view assignments))
+            (compiler-backend-set-emit-plan-reg-mask! backend-state assignments)
             (compiler-backend-function-state-set-i64!
               function-state
               compiler-backend-function-i64-rax-override-var
@@ -78965,7 +78509,7 @@
         [csr-body-mask : i64
           (if (compiler_regalloc.compiler-reg-debug-trace-homes?)
             (compiler-backend-plan-body-reg-mask
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view emit-blocks-list)
               (compiler-backend-global-shared-view emit-params))
             0)]
@@ -78997,7 +78541,7 @@
             scratch-vars
             (compiler-backend-global-shared-view emit-blocks-list)
             (if (compiler-backend-assignments-have-register-home?
-              (compiler-backend-global-shared-view scavenge-assignments))
+              scavenge-assignments)
               (let
                 [scavenge-func : compiler_ir_types.CompilerIrFunction
                   (compiler_ir_types.CompilerIrFunction.Function
@@ -79043,7 +78587,7 @@
           (compiler_regalloc.compiler-reg-group-vars-fixpoint
             (compiler-backend-late-group-vars-blocks
               type-segment-bases
-              (compiler-backend-global-shared-view program-index)
+              program-index
               emit-group-vars-base
               (compiler-backend-global-shared-view emit-blocks-list))
             (compiler-backend-global-shared-view emit-blocks-list))]
@@ -79064,13 +78608,9 @@
               emit-group-vars
               addressable-group-vars))]
         [symbol : String
-          (compiler-backend-function-symbol-index
-            (compiler-backend-global-shared-view program-index)
-            name)]
+          (compiler-backend-function-symbol-index program-index name)]
         [label-scope : String
-          (compiler-backend-function-label-scope
-            (compiler-backend-global-shared-view program-index)
-            name)]
+          (compiler-backend-function-label-scope program-index name)]
         [use-counts : (__tl_dyn-array i64) (__tl_make-array i64 scratch-vars)]
         [fuse-free-counts : (__tl_dyn-array i64)
           (__tl_make-array i64 scratch-vars)]
@@ -79086,7 +78626,7 @@
             name
             (compiler-backend-global-shared-view emit-params)
             (compiler-backend-global-shared-view emit-blocks-list)
-            (compiler-backend-global-shared-view program-index))]
+            program-index)]
         ;; #jump-forward: the shrink-wrap guard prefix rendered just below is a
         ;; textual needle that has to match the emitted body byte for byte. The
         ;; body's forwarding table cannot exist yet -- it reads the const-hoist
@@ -79137,14 +78677,14 @@
               target
               (compiler-backend-global-shared-view emit-params)
               scratch-vars
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view label-scope)
               name
               (compiler-backend-global-shared-view emit-blocks-list)
               (compiler-backend-global-shared-view shrinkwrap-bare-label)
               shrinkwrap-prefix-count
               (compiler-backend-global-shared-view ret-ty)
-              (compiler-backend-global-shared-view program-index)
+              program-index
               false))]
         [shrinkwrap-incoming-prefix : String
           (if (or
@@ -79156,14 +78696,14 @@
               target
               (compiler-backend-global-shared-view emit-params)
               scratch-vars
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view label-scope)
               name
               (compiler-backend-global-shared-view emit-blocks-list)
               (compiler-backend-global-shared-view shrinkwrap-bare-label)
               shrinkwrap-prefix-count
               (compiler-backend-global-shared-view ret-ty)
-              (compiler-backend-global-shared-view program-index)
+              program-index
               true))]
         [shrinkwrap-incoming-guard : String
           (if (string.eq shrinkwrap-incoming-prefix "")
@@ -79188,9 +78728,7 @@
             (not (string.eq shrinkwrap-incoming-guard ""))
             (not
               (string.eq
-                (compiler-backend-symbol-text-index
-                  (compiler-backend-global-shared-view program-index)
-                  name)
+                (compiler-backend-symbol-text-index program-index name)
                 "main")))]
         ;; M-F: loop-hoisted divmod magic constants. Built over the FINAL
         ;; emitted IR + the same fresh intervals the scavenge occupancy uses,
@@ -79212,7 +78750,7 @@
               type-segment-bases
               target
               (compiler-backend-global-shared-view emit-blocks-list)
-              (compiler-backend-global-shared-view assignments)
+              assignments
               (compiler-backend-global-shared-view scavenge-intervals)
               scratch-vars
               (compiler-backend-frame-slots-emergency-max
@@ -79299,7 +78837,7 @@
                 compiler-backend-function-i64-array-jump-forward
                 (compiler-backend-jump-forward-build
                   program-index.backend-state
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view emit-blocks-list)))]
             ;; Must precede the parameter spills: those store incoming registers
             ;; into frame slots, and their references have to count.
@@ -79313,20 +78851,20 @@
                 (compiler-backend-emit-spmd-private-param-spills
                   type-segment-bases
                   target
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view emit-params)
                   slot-vars
                   program-index.backend-state)
                 (compiler-backend-emit-param-spills
                   type-segment-bases
                   target
-                  (compiler-backend-global-shared-view assignments)
+                  assignments
                   (compiler-backend-global-shared-view emit-params)
                   0
                   0
                   0
                   0
-                  (compiler-backend-global-shared-view program-index)
+                  program-index
                   slot-vars
                   program-index.backend-state)))
               [(ResultCompilerBackend.Ok spills)
@@ -79371,7 +78909,7 @@
                       target
                       (compiler-backend-global-shared-view emit-blocks-list)
                       plan-types
-                      (compiler-backend-global-shared-view program-index))]
+                      program-index)]
                   ;; The base the dynamic bottom-of-frame slots (cycle temps,
                   ;; emergency spill) count down from: the maximum callee-save
                   ;; area, and NOTHING else. The outgoing stack-arg area is
@@ -79450,7 +78988,7 @@
                     name
                     (compiler-backend-global-shared-view emit-blocks-list)
                     (compiler-backend-global-shared-view emit-blocks-list)
-                    (compiler-backend-global-shared-view assignments)
+                    assignments
                     slot-vars
                     types
                     (compiler-backend-global-shared-view global-types)
@@ -79458,7 +78996,7 @@
                     plan
                     (compiler-backend-global-shared-view functions)
                     (compiler-backend-global-shared-view externs)
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     emit-spans
                     (compiler-backend-global-shared-view span-index)
                     (compiler-backend-global-shared-view func-diag)
@@ -79479,8 +79017,7 @@
                                 (str_cat.str-cat
                                   "backend: gep displacement ordinal drift in "
                                   (compiler-backend-symbol-text-index
-                                    (compiler-backend-global-shared-view
-                                      program-index)
+                                    program-index
                                     name)))
                               func-diag)))
                         (let
@@ -79544,8 +79081,7 @@
                                             emit-blocks-list)))
                                         (compiler-backend-frame-slots-with-groups
                                           slot-vars
-                                          (compiler-backend-global-shared-view
-                                            assignments)
+                                          assignments
                                           has-group-vars
                                           program-index.backend-state)
                                         0))
@@ -79572,31 +79108,27 @@
                           [saving-prologue-body : String
                             (str_cat.str-cat
                               (compiler-backend-emit-save-callee-regs
-                                (compiler-backend-global-shared-view
-                                  assignments)
+                                assignments
                                 slot-vars
                                 program-index.backend-state)
                               (compiler-backend-emit-windows-main-argv-capture
                                 target
                                 (compiler-backend-symbol-text-index
-                                  (compiler-backend-global-shared-view
-                                    program-index)
+                                  program-index
                                   name)
                                 emit-entry
                                 plan)
                               (compiler-backend-emit-linux-crt-main-argv-capture
                                 target
                                 (compiler-backend-symbol-text-index
-                                  (compiler-backend-global-shared-view
-                                    program-index)
+                                  program-index
                                   name)
                                 crt-entry
                                 plan)
                               (if (and
                                 (string.eq
                                   (compiler-backend-symbol-text-index
-                                    (compiler-backend-global-shared-view
-                                      program-index)
+                                    program-index
                                     name)
                                   "main")
                                 (or
@@ -79605,8 +79137,7 @@
                                 (compiler-backend-global-initializers
                                   type-segment-bases
                                   (compiler-backend-global-shared-view globals)
-                                  (compiler-backend-global-shared-view
-                                    program-index))
+                                  program-index)
                                 "")
                               spills
                               "")]
@@ -79663,8 +79194,7 @@
                               (compiler-backend-return-epilogue
                                 program-index.backend-state
                                 name
-                                (compiler-backend-global-shared-view
-                                  assignments)
+                                assignments
                                 slot-vars
                                 (compiler-backend-global-shared-view
                                   emit-blocks-list))
@@ -79703,8 +79233,7 @@
                           [push-count : i64
                             (if fpo-target
                               (compiler-backend-fill-push-csr-regs!
-                                (compiler-backend-global-shared-view
-                                  assignments)
+                                assignments
                                 (compiler-backend-global-shared-view push-regs)
                                 program-index.backend-state)
                               0)]
@@ -79717,11 +79246,9 @@
                               (compiler-backend-trace-csr-line!
                                 program-index.backend-state
                                 (compiler-backend-symbol-text-index
-                                  (compiler-backend-global-shared-view
-                                    program-index)
+                                  program-index
                                   name)
-                                (compiler-backend-global-shared-view
-                                  assignments)
+                                assignments
                                 csr-body-mask
                                 push-count)
                               unit)]
@@ -79742,8 +79269,7 @@
                                   (and
                                     target-policy.windows
                                     (compiler-backend-plan-uses-win64-xmm-callee-regs?
-                                      (compiler-backend-global-shared-view
-                                        assignments)
+                                      assignments
                                       program-index.backend-state)))
                                 (= (bit-and push-count 1) 1)))]
                           [_fpo-bare : unit
@@ -79810,8 +79336,7 @@
                                 0)
                               (<
                                 (compiler-backend-win64-xmm-callee-highest
-                                  (compiler-backend-global-shared-view
-                                    assignments)
+                                  assignments
                                   program-index.backend-state)
                                 0))
                               0
@@ -79862,8 +79387,7 @@
                                 (and
                                   target-policy.windows
                                   (compiler-backend-plan-uses-win64-xmm-callee-regs?
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     program-index.backend-state))))]
                           [trim-regs : (__tl_dyn-array String)
                             (if csr-trim-ok?
@@ -79925,7 +79449,7 @@
                             (not fpo-ok)
                             (compiler-backend-plan-uses-reg?
                               backend-state
-                              (compiler-backend-global-shared-view assignments)
+                              assignments
                               compiler_abi.compiler-reg-id-rbp))
                             ;; DEMOTE: the FPO audit failed but the plan homes a
                             ;; value in %rbp (which has no frame base to fall
@@ -79953,8 +79477,7 @@
                                 global-types
                                 externs
                                 plan
-                                (compiler-backend-global-shared-view
-                                  program-index)
+                                program-index
                                 spans
                                 span-index
                                 emit-entry
@@ -80014,8 +79537,7 @@
                                   (not
                                     (string.eq
                                       (compiler-backend-symbol-text-index
-                                        (compiler-backend-global-shared-view
-                                          program-index)
+                                        program-index
                                         name)
                                       "main")))]
                               [swb-plan : CompilerBackendSwbPlan
@@ -80081,8 +79603,7 @@
                                       backend-state
                                       entry-symbol
                                       fpo-frame
-                                      (compiler-backend-global-shared-view
-                                        assignments)
+                                      assignments
                                       slot-vars
                                       final-push-regs
                                       final-push-count)
@@ -80101,8 +79622,7 @@
                                     target-policy
                                     entry-symbol
                                     frame
-                                    (compiler-backend-global-shared-view
-                                      assignments)
+                                    assignments
                                     slot-vars
                                     program-index.backend-state))]
                               [emitted-body : String
@@ -80136,8 +79656,7 @@
                                     global-types
                                     externs
                                     plan
-                                    (compiler-backend-global-shared-view
-                                      program-index)
+                                    program-index
                                     spans
                                     span-index
                                     emit-entry
@@ -80160,8 +79679,7 @@
                                     global-types
                                     externs
                                     plan
-                                    (compiler-backend-global-shared-view
-                                      program-index)
+                                    program-index
                                     spans
                                     span-index
                                     emit-entry
@@ -80207,8 +79725,7 @@
                                     global-types
                                     externs
                                     plan
-                                    (compiler-backend-global-shared-view
-                                      program-index)
+                                    program-index
                                     spans
                                     span-index
                                     emit-entry
@@ -80250,8 +79767,7 @@
                                     (ResultCompilerBackend.Ok
                                       (str_cat.str-cat
                                         (compiler-backend-function-symbol-map-comment
-                                          (compiler-backend-global-shared-view
-                                            program-index)
+                                          program-index
                                           name)
                                         ".globl "
                                         (compiler-backend-global-shared-view
@@ -80259,8 +79775,7 @@
                                         "\n"
                                         (compiler-backend-debug-function-location
                                           target
-                                          (compiler-backend-global-shared-view
-                                            program-index)
+                                          program-index
                                           span-index
                                           (compiler-backend-global-shared-view
                                             spans)
@@ -80289,12 +79804,10 @@
                                         emitted-body
                                         (compiler-backend-debug-function-end-label
                                           target
-                                          (compiler-backend-global-shared-view
-                                            program-index)
+                                          program-index
                                           name)
                                         (compiler-backend-backtrace-function-end-label
-                                          (compiler-backend-global-shared-view
-                                            program-index)
+                                          program-index
                                           name)
                                         (if (and
                                           (compiler_ir_types.compiler-debug-info-enabled?)
@@ -80647,7 +80160,7 @@
           (compiler-backend-global-shared-view global-types)
           (compiler-backend-global-shared-view externs)
           plan
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view spans)
           (compiler-backend-global-shared-view span-index)
           emit-entry
@@ -80780,7 +80293,7 @@
           (compiler-backend-global-shared-view global-types)
           (compiler-backend-global-shared-view externs)
           plan
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view spans)
           (compiler-backend-global-shared-view span-index)
           emit-entry
@@ -80912,9 +80425,7 @@
   [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match (compiler-backend-index-signature
-    (compiler-backend-global-shared-view program-index)
-    name)
+  (match (compiler-backend-index-signature program-index name)
     [(CompilerBackendMaybeSignature.Some _ _)
       (text_buf.append
         buf
@@ -80936,7 +80447,7 @@
       (+ index 1)
       (compiler-backend-global-shared-view functions)
       (compiler-backend-global-shared-view externs)
-      (compiler-backend-global-shared-view program-index)
+      program-index
       (compiler-backend-emit-closure-descriptor-entry-into
         (array-ref names.slots index)
         functions
@@ -81014,9 +80525,7 @@
             (compiler-backend-global-shared-view param-types))
           0))]
     [extern-call-info : i64
-      (compiler-backend-index-extern-call-info
-        (compiler-backend-global-shared-view program-index)
-        name)]
+      (compiler-backend-index-extern-call-info program-index name)]
     [frame : i64
       (+
         (compiler-backend-frame-size
@@ -81029,21 +80538,21 @@
             (compiler-backend-type-list-has-group?
               type-segment-bases
               (compiler-backend-global-shared-view param-types)
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             program-index.backend-state))
         (compiler-backend-closure-adapter-outgoing-frame-space
           type-segment-bases
           target
           (compiler-backend-global-shared-view args)
           (compiler-backend-global-shared-view param-types)
-          (compiler-backend-global-shared-view program-index)))]
+          program-index))]
     [call-space : i64
       (compiler-backend-call-arg-space
         target
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         false
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [diag : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
     (match (compiler-backend-emit-param-spills
@@ -81055,7 +80564,7 @@
       0
       1
       0
-      (compiler-backend-global-shared-view program-index)
+      program-index
       vars
       program-index.backend-state)
       [(ResultCompilerBackend.Ok spills)
@@ -81073,7 +80582,7 @@
           0
           ""
           diag
-          (compiler-backend-global-shared-view program-index)
+          program-index
           vars
           program-index.backend-state)
           [(ResultCompilerBackend.Ok args-asm)
@@ -81083,9 +80592,7 @@
                   (compiler-backend-state-emission-target-policy
                     program-index.backend-state)
                   (compiler-backend-closure-entry-label
-                    (compiler-backend-symbol-text-index
-                      (compiler-backend-global-shared-view program-index)
-                      name))
+                    (compiler-backend-symbol-text-index program-index name))
                   frame
                   (compiler_regalloc.compiler-reg-assignment-table-empty)
                   vars
@@ -81112,7 +80619,7 @@
                       (compiler-backend-call-symbol-index
                         name
                         plan
-                        (compiler-backend-global-shared-view program-index))
+                        program-index)
                       "\n"
                       (str_cat.str-cat
                         (compiler-backend-emit-call-space-add call-space)
@@ -81167,7 +80674,7 @@
       (compiler-backend-type-list-group-vars
         type-segment-bases
         (compiler-backend-global-shared-view param-types)
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [_groups : unit
       (begin
         (compiler-backend-current-slot-vars-set!
@@ -81217,9 +80724,7 @@
     (ResultCompilerBackendBuffer.Ok buf)
     (let
       [name : i64 (array-ref names.slots index)]
-      (match (compiler-backend-index-signature
-        (compiler-backend-global-shared-view program-index)
-        name)
+      (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (match (compiler-backend-emit-closure-entry-adapter-owned
             type-segment-bases
@@ -81230,7 +80735,7 @@
             plan
             (compiler-backend-global-shared-view functions)
             (compiler-backend-global-shared-view externs)
-            (compiler-backend-global-shared-view program-index))
+            program-index)
             [(ResultCompilerBackend.Ok head)
               (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
                 type-segment-bases
@@ -81270,9 +80775,7 @@
     (ResultCompilerBackendBuffer.Ok buf)
     (let
       [name : i64 (array-ref names.slots index)]
-      (match (compiler-backend-index-signature
-        (compiler-backend-global-shared-view program-index)
-        name)
+      (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (let
             [caller-arena : arena.Arena (arena.current)]
@@ -81290,7 +80793,7 @@
                 plan
                 (compiler-backend-global-shared-view functions)
                 (compiler-backend-global-shared-view externs)
-                (compiler-backend-global-shared-view program-index))
+                program-index)
                 [(ResultCompilerBackend.Ok head)
                   (begin
                     (compiler-backend-assembly-stream-process-string!
@@ -82564,7 +82067,7 @@
   [value : compiler_ir_types.CompilerIrValue]) : i64
   (if (compiler-backend-iag-boxed-cell?
     type-segment-bases
-    (compiler-backend-global-shared-view program-index)
+    program-index
     ty
     (compiler-backend-global-shared-view value))
     (match value
@@ -83025,7 +82528,7 @@
               "inline-aggregate-global: "
               "inline-aggregate-global excluded: ")
             (compiler-backend-symbol-text-index
-              (compiler-backend-global-shared-view program-index)
+              program-index
               (array-ref census.ids c))
             " size="
             (string.int->string (array-ref census.sizes c))
@@ -83068,14 +82571,14 @@
               (when
                 (compiler-backend-iag-boxed-cell?
                   type-segment-bases
-                  (compiler-backend-global-shared-view program-index)
+                  program-index
                   (compiler-backend-global-shared-view ty)
                   (compiler-backend-global-shared-view value))
                 (let
                   [size : i64
                     (compiler-backend-iag-candidate-size
                       type-segment-bases
-                      (compiler-backend-global-shared-view program-index)
+                      program-index
                       (compiler-backend-global-shared-view functions)
                       (compiler-backend-global-shared-view ty)
                       value)]
@@ -83263,7 +82766,7 @@
       (compiler-backend-address-base-filter-direct
         (compiler-backend-value-register-home
           backend-state
-          (compiler-backend-global-shared-view assignments)
+          assignments
           (compiler-backend-global-shared-view value)))]
     [src-reg : String
       (if (string.eq src-home "")
@@ -83483,7 +82986,7 @@
       (compiler_ir_types.compiler-ir-global-seq-ref
         (compiler-backend-global-shared-view globals)
         index)
-      (compiler-backend-global-shared-view program-index))
+      program-index)
       [(ResultCompilerBackend.Ok head)
         (compiler-backend-emit-globals-buffer-from
           type-segment-bases
@@ -83583,7 +83086,7 @@
                 name
                 init
                 ty
-                (compiler-backend-global-shared-view program-index))]
+                program-index)]
             [_ ""])
           (compiler-backend-global-initializers-from
             type-segment-bases
@@ -85075,7 +84578,7 @@
                     closure-names
                     (compiler-backend-global-shared-view entry-functions)
                     (compiler-backend-global-shared-view externs)
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     lane-id-buf)]
                 (begin
                   (cfg
@@ -85090,7 +84593,7 @@
                     [switch-buf : text_buf.TextBuf
                       (compiler-backend-emit-switch-tables-functions-into
                         entry-functions
-                        (compiler-backend-global-shared-view program-index)
+                        program-index
                         descriptor-buf)]
                     [runtime-data-buf : text_buf.TextBuf
                       (text_buf.append
@@ -85191,7 +84694,7 @@
     [census : CompilerBackendIagCensusCell
       (compiler-backend-iag-prepare
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view globals)
         (compiler-backend-global-shared-view entry-functions))]
     [collections : CompilerBackendProgramCollections
@@ -85211,7 +84714,7 @@
       (compiler-backend-iag-finish!
         program-index.backend-state
         census
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     (match (compiler-backend-emit-globals-buffer-into
       type-segment-bases
       target
@@ -85321,7 +84824,7 @@
             (compiler-backend-global-shared-view externs)
             plan
             (& runtime-features)
-            (compiler-backend-global-shared-view program-index)
+            program-index
             runtime-index
             (compiler-backend-global-shared-view closure-names)
             referenced-symbols
@@ -85342,7 +84845,7 @@
               (compiler-backend-debug-prefix
                 target
                 (compiler-backend-global-shared-view entry-functions)
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 (compiler-backend-global-shared-view span-index)))
             (compiler-backend-backtrace-map-prefix target))]
         [function-input : text_buf.TextBuf
@@ -85394,7 +84897,7 @@
             global-types
             (compiler-backend-global-shared-view externs)
             plan
-            (compiler-backend-global-shared-view program-index)
+            program-index
             spans
             span-index
             emit-entry
@@ -85405,8 +84908,7 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish
-                    (profile_state.compiler-profile-state-shared-view
-                      program-index.profile-state)
+                    program-index.profile-state
                     "functions"))
                 (cfg
                   compile-profile-summary
@@ -85422,7 +84924,7 @@
                   (compiler-backend-global-shared-view entry-functions)
                   externs
                   plan
-                  (compiler-backend-global-shared-view program-index)
+                  program-index
                   (text_buf.append
                     with-functions
                     (str_cat.str-cat
@@ -85430,14 +84932,13 @@
                       (compiler-backend-debug-trailer
                         target
                         entry-functions
-                        (compiler-backend-global-shared-view program-index)))))
+                        program-index))))
                   [(ResultCompilerBackendBuffer.Ok with-adapters)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-backend-profile-finish
-                          (profile_state.compiler-profile-state-shared-view
-                            program-index.profile-state)
+                          program-index.profile-state
                           "adapters"))
                       (cfg
                         compile-profile
@@ -85460,15 +84961,13 @@
                                 plan
                                 globals
                                 crt-entry
-                                (compiler-backend-global-shared-view
-                                  program-index))
+                                program-index)
                               ""))]
                         (begin
                           (cfg
                             compile-profile
                             (compiler-backend-profile-finish
-                              (profile_state.compiler-profile-state-shared-view
-                                program-index.profile-state)
+                              program-index.profile-state
                               "compose_tail"))
                           (ResultCompilerBackendBuffer.Ok
                             (if (compiler-backend-assembly-stream-active?
@@ -85489,8 +84988,7 @@
                       (cfg
                         compile-profile
                         (compiler-backend-profile-finish
-                          (profile_state.compiler-profile-state-shared-view
-                            program-index.profile-state)
+                          program-index.profile-state
                           "adapters"))
                       (ResultCompilerBackendBuffer.Err message))]))]
             [(ResultCompilerBackendBuffer.Err message)
@@ -85498,8 +84996,7 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish
-                    (profile_state.compiler-profile-state-shared-view
-                      program-index.profile-state)
+                    program-index.profile-state
                     "functions"))
                 (cfg
                   compile-profile-summary
@@ -85607,7 +85104,7 @@
                       (compiler-backend-global-shared-view globals)
                       (compiler-backend-global-shared-view entry-functions)
                       (compiler-backend-global-shared-view spans)
-                      (compiler-backend-global-shared-view program-index))
+                      program-index)
                       [(ResultCompilerBackendGlobalsAndCollections.Ok
                           globals-buf
                           collections)
@@ -85626,7 +85123,7 @@
                               entry-functions)
                             (compiler-backend-global-shared-view externs)
                             plan
-                            (compiler-backend-global-shared-view program-index))
+                            program-index)
                             [(ResultCompilerBackendSymbolValidation.Ok _)
                               (compiler-backend-emit-program-buffer-after-index
                                 type-segment-bases
@@ -85814,7 +85311,7 @@
         (compiler_ir_types.compiler-ir-value-seq-ref
           (compiler-backend-global-shared-view values)
           index)
-        (compiler-backend-global-shared-view program-index))
+        program-index)
       site
       values
       program-index
@@ -86464,7 +85961,7 @@
               (compiler-backend-global-shared-view words)
               0)
             "%rax"
-            (compiler-backend-global-shared-view program-index))
+            program-index)
           site
           (compiler_ir_types.compiler-ir-value-seq-ref words 1)
           "%rdx"
@@ -86565,7 +86062,7 @@
         (compiler-backend-global-shared-view site)
         base
         "%rax"
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [with-offset : object_target.CompilerBackendObjectTargetParts
       (match (compiler-backend-global-shared-view offset)
         [(compiler_ir_types.CompilerIrValue.I64 n)
@@ -86895,7 +86392,7 @@
           (compiler-backend-global-shared-view site)
           lhs
           (compiler-backend-global-shared-view ty)
-          (compiler-backend-global-shared-view program-index))
+          program-index)
         site
         rhs
         ty
@@ -86911,7 +86408,7 @@
                 (compiler-backend-global-shared-view site)
                 rhs
                 "%r8"
-                (compiler-backend-global-shared-view program-index)))
+                program-index))
             site
             lhs
             "%rax"
@@ -86939,11 +86436,11 @@
             (compiler-backend-global-shared-view site)
             on-false
             "%rax"
-            (compiler-backend-global-shared-view program-index))
+            program-index)
           (compiler-backend-global-shared-view site)
           on-true
           "%r8"
-          (compiler-backend-global-shared-view program-index))
+          program-index)
         site
         condition
         "%r11"
@@ -87026,7 +86523,7 @@
                 (compiler-backend-global-shared-view args)
                 index)
               (- index (compiler-backend-object-call-reg-count target))
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             target
             site
             args
@@ -87040,7 +86537,7 @@
             (compiler-backend-global-shared-view args)
             index)
           (compiler-backend-object-call-arg-reg target index)
-          (compiler-backend-global-shared-view program-index))
+          program-index)
         target
         site
         args
@@ -87177,7 +86674,7 @@
                 [(ResultBackendValue.Ok value)
                   (if (compiler-backend-copy-group?
                     type-segment-bases
-                    (compiler-backend-global-shared-view program-index)
+                    program-index
                     (compiler-backend-global-shared-view ty)
                     dst
                     (compiler-backend-global-shared-view value))
@@ -87273,7 +86770,7 @@
                   value
                   ty
                   "%rax"
-                  (compiler-backend-global-shared-view program-index))
+                  program-index)
                 (compiler-backend-object-store-rax-rsp-bytes (* index 8)))
               site
               copies
@@ -87405,7 +86902,7 @@
     compiler-backend-object-use-ref
     (compiler-backend-global-shared-view site)
     (compiler-backend-global-shared-view ty)
-    (compiler-backend-global-shared-view program-index)))
+    program-index))
 
 (define (compiler-backend-object-instr
   [type-segment-bases : i64]
@@ -87422,7 +86919,7 @@
     [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
       (if (compiler-backend-copy-group?
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view ty)
         dst
         (compiler-backend-global-shared-view src))
@@ -87488,10 +86985,7 @@
     [(compiler_ir_types.CompilerIrInstr.Call dst name args _)
       (let
         [call-target : String
-          (compiler-backend-call-symbol-index
-            name
-            plan
-            (compiler-backend-global-shared-view program-index))]
+          (compiler-backend-call-symbol-index name plan program-index)]
         (compiler-backend-object-store-reg-to-var
           (compiler-backend-object-direct-call
             parts
@@ -87524,11 +87018,11 @@
                   (compiler-backend-global-shared-view function)
                   args
                   0
-                  (compiler-backend-global-shared-view program-index))
+                  program-index)
                 (compiler-backend-global-shared-view function)
                 callee
                 "%r11"
-                (compiler-backend-global-shared-view program-index))
+                program-index)
               (cobj.CompilerObjectX64Instr.Bytes
                 (compiler-backend-object-call-r11-bytes)))
             (compiler-backend-object-add-rsp-bytes space))
@@ -87540,28 +87034,22 @@
         [name (compiler-backend-box-field-shared-view payload-box name)]
         [args (compiler-backend-box-field-shared-view payload-box args)]
         [call-target : String
-          (compiler-backend-call-symbol-index
-            name
-            plan
-            (compiler-backend-global-shared-view program-index))]
+          (compiler-backend-call-symbol-index name plan program-index)]
         (compiler-backend-object-direct-call
           (compiler-backend-object-value-ref
             parts
             (compiler-backend-global-shared-view function)
             base
-            (compiler-backend-global-shared-view program-index))
+            program-index)
           target
           (compiler-backend-global-shared-view function)
           call-target
           args
-          (compiler-backend-global-shared-view program-index)))]
+          program-index))]
     [(compiler_ir_types.CompilerIrInstr.TailCall name args _)
       (let
         [call-target : String
-          (compiler-backend-call-symbol-index
-            name
-            plan
-            (compiler-backend-global-shared-view program-index))]
+          (compiler-backend-call-symbol-index name plan program-index)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
             (compiler-backend-object-add-nonempty-bytes
@@ -87571,7 +87059,7 @@
                 (compiler-backend-global-shared-view function)
                 args
                 0
-                (compiler-backend-global-shared-view program-index))
+                program-index)
               (compiler-backend-object-leave-bytes))
             (compiler-backend-global-shared-view function)
             (cobj.CompilerObjectRelocationKind.TailCall)
@@ -87628,10 +87116,10 @@
               (compiler-backend-object-edge-phi-copies
                 type-segment-bases
                 blocks
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 target
                 current-label)
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             (compiler-backend-global-shared-view function)
             (cobj.CompilerObjectRelocationKind.Branch)
             (compiler-backend-global-shared-view symbol))
@@ -87650,14 +87138,14 @@
           (compiler-backend-object-edge-phi-copies
             type-segment-bases
             (compiler-backend-global-shared-view blocks)
-            (compiler-backend-global-shared-view program-index)
+            program-index
             true-label
             current-label)]
         [false-copies : CompilerBackendPhiCopySeq
           (compiler-backend-object-edge-phi-copies
             type-segment-bases
             blocks
-            (compiler-backend-global-shared-view program-index)
+            program-index
             false-label
             current-label)]
         (if (and
@@ -87673,7 +87161,7 @@
                   (compiler-backend-global-shared-view function)
                   cond
                   "%rax"
-                  (compiler-backend-global-shared-view program-index))
+                  program-index)
                 (compiler-backend-global-shared-view function)
                 (cobj.CompilerObjectRelocationKind.Branch)
                 (compiler-backend-global-shared-view true-symbol))
@@ -87715,8 +87203,7 @@
                                           function)
                                         cond
                                         "%rax"
-                                        (compiler-backend-global-shared-view
-                                          program-index))
+                                        program-index)
                                       (compiler-backend-global-shared-view
                                         function)
                                       (cobj.CompilerObjectRelocationKind.Branch)
@@ -87738,7 +87225,7 @@
                               (cobj.CompilerObjectX64Instr.Label true-edge))
                             (compiler-backend-global-shared-view function)
                             true-copies
-                            (compiler-backend-global-shared-view program-index))
+                            program-index)
                           (compiler-backend-global-shared-view function)
                           (cobj.CompilerObjectRelocationKind.Branch)
                           (compiler-backend-global-shared-view true-symbol))
@@ -87749,7 +87236,7 @@
                     (cobj.CompilerObjectX64Instr.Label false-edge))
                   (compiler-backend-global-shared-view function)
                   false-copies
-                  (compiler-backend-global-shared-view program-index))
+                  program-index)
                 (compiler-backend-global-shared-view function)
                 (cobj.CompilerObjectRelocationKind.Branch)
                 (compiler-backend-global-shared-view false-symbol))
@@ -87768,7 +87255,7 @@
         blocks
         (compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label)
         plan
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.Return value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
@@ -87816,22 +87303,22 @@
           parts
           (compiler-backend-global-shared-view function)
           dst
-          (compiler-backend-global-shared-view program-index))
+          program-index)
         (compiler-backend-global-shared-view function)
         src
         ty
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.StoreOwned dst src ty)
       (compiler-backend-object-value-ref-with-type
         (compiler-backend-object-value-ref
           parts
           (compiler-backend-global-shared-view function)
           dst
-          (compiler-backend-global-shared-view program-index))
+          program-index)
         (compiler-backend-global-shared-view function)
         src
         ty
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.Cast dst src from-ty _)
       (compiler-backend-object-move-value-to-var
         parts
@@ -87839,7 +87326,7 @@
         dst
         src
         from-ty
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.Bitcast dst src from-ty _)
       (compiler-backend-object-move-value-to-var
         parts
@@ -87847,7 +87334,7 @@
         dst
         src
         from-ty
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.Splat _ _ _ elem-ty)
       (compiler-backend-object-uses-ref
         parts
@@ -87909,15 +87396,15 @@
                 parts
                 (compiler-backend-global-shared-view function)
                 mask
-                (compiler-backend-global-shared-view program-index))
+                program-index)
               (compiler-backend-global-shared-view function)
               on-true
               (compiler-backend-global-shared-view ty)
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             (compiler-backend-global-shared-view function)
             on-false
             ty
-            (compiler-backend-global-shared-view program-index))))]
+            program-index)))]
     [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
       (let
         [base (compiler-backend-box-field-shared-view payload-box base)]
@@ -87930,14 +87417,14 @@
               parts
               (compiler-backend-global-shared-view function)
               base
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             (compiler-backend-global-shared-view function)
             index
-            (compiler-backend-global-shared-view program-index))
+            program-index)
           (compiler-backend-global-shared-view function)
           value
           elem-ty
-          (compiler-backend-global-shared-view program-index)))]
+          program-index))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
       (let
         [base (compiler-backend-box-field-shared-view payload-box base)]
@@ -87952,14 +87439,14 @@
                 parts
                 (compiler-backend-global-shared-view function)
                 base
-                (compiler-backend-global-shared-view program-index))
+                program-index)
               (compiler-backend-global-shared-view function)
               index
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             (compiler-backend-global-shared-view function)
             value
             elem-ty
-            (compiler-backend-global-shared-view program-index))
+            program-index)
           (compiler-backend-global-shared-view function)
           mask
           program-index))]
@@ -87980,10 +87467,10 @@
               (compiler-backend-global-shared-view function)
               source
               elem-ty
-              (compiler-backend-global-shared-view program-index))
+              program-index)
             (compiler-backend-global-shared-view function)
             selector-low
-            (compiler-backend-global-shared-view program-index))]
+            program-index)]
         [with-high : object_target.CompilerBackendObjectTargetParts
           (match selector-high
             [(compiler_ir_types.CompilerIrMaybeValue.Some value)
@@ -87991,7 +87478,7 @@
                 with-low
                 (compiler-backend-global-shared-view function)
                 value
-                (compiler-backend-global-shared-view program-index))]
+                program-index)]
             [(compiler_ir_types.CompilerIrMaybeValue.No) with-low])]
         (compiler-backend-object-value-ref
           with-high
@@ -88004,7 +87491,7 @@
         function
         dst
         words
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.Word dst src index _)
       (compiler-backend-object-word-to-var
         parts
@@ -88012,7 +87499,7 @@
         dst
         src
         index
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
       (compiler-backend-object-addr-of-to-var parts dst src)]
     [(compiler_ir_types.CompilerIrInstr.Switch index base cases default-label)
@@ -88026,7 +87513,7 @@
         cases
         default-label
         (compiler_ir_types.compiler-ir-label-none)
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
         index
         base
@@ -88078,7 +87565,7 @@
         (compiler-backend-global-shared-view blocks)
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
         plan
-        (compiler-backend-global-shared-view program-index))
+        program-index)
       target
       function
       label-scope
@@ -88126,7 +87613,7 @@
                 blocks
                 instrs
                 plan
-                (compiler-backend-global-shared-view program-index)
+                program-index
                 0)
               target
               function-symbol
@@ -88184,7 +87671,7 @@
                 (compiler-backend-global-shared-view blocks))
               instrs
               plan
-              (compiler-backend-global-shared-view program-index)
+              program-index
               0)
             target
             function-symbol
@@ -88235,13 +87722,9 @@
           function-abi)
         (let
           [symbol : String
-            (compiler-backend-function-symbol-index
-              (compiler-backend-global-shared-view program-index)
-              name)]
+            (compiler-backend-function-symbol-index program-index name)]
           [label-scope : String
-            (compiler-backend-function-label-scope
-              (compiler-backend-global-shared-view program-index)
-              name)]
+            (compiler-backend-function-label-scope program-index name)]
           [types : compiler_regalloc.CompilerRegVarTypes
             (compiler_regalloc.compiler-reg-function-var-types-with-metrics
               (compiler_ir_types.CompilerIrFunction.Function
@@ -88301,7 +87784,7 @@
               label-scope
               blocks
               plan
-              (compiler-backend-global-shared-view program-index))]
+              program-index)]
           [_group-disable : unit
             (compiler-backend-group-vars-disable! program-index.backend-state)]
           (compiler-backend-object-function-seq
@@ -88454,7 +87937,7 @@
                 symbol
                 ty
                 value
-                (compiler-backend-global-shared-view program-index)))
+                program-index))
             target
             globals
             program-index
@@ -88660,17 +88143,13 @@
     (let
       [name : i64 (array-ref names.slots index)]
       [name-text : String
-        (compiler-backend-symbol-text-index
-          (compiler-backend-global-shared-view program-index)
-          name)]
+        (compiler-backend-symbol-text-index program-index name)]
       [descriptor : String
         (compiler-backend-closure-descriptor-label
           (compiler-backend-global-shared-view name-text))]
       [entry : String (compiler-backend-closure-entry-label name-text)]
       (compiler-backend-object-closure-descriptors
-        (match (compiler-backend-index-signature
-          (compiler-backend-global-shared-view program-index)
-          name)
+        (match (compiler-backend-index-signature program-index name)
           [(CompilerBackendMaybeSignature.Some _ _)
             (object_target.compiler-backend-object-add-rodata
               (object_target.compiler-backend-object-add-rodata
@@ -88954,7 +88433,7 @@
     [census : CompilerBackendIagCensusCell
       (compiler-backend-iag-prepare
         type-segment-bases
-        (compiler-backend-global-shared-view program-index)
+        program-index
         (compiler-backend-global-shared-view globals)
         (compiler-backend-global-shared-view entry-functions))]
     [collections : CompilerBackendProgramCollections
@@ -88968,7 +88447,7 @@
       (compiler-backend-iag-finish!
         program-index.backend-state
         census
-        (compiler-backend-global-shared-view program-index))]
+        program-index)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions
         (compiler-backend-global-shared-view collections))]
@@ -89007,13 +88486,13 @@
                           target
                           entry-functions
                           plan
-                          (compiler-backend-global-shared-view program-index))
+                          program-index)
                         target
                         globals
-                        (compiler-backend-global-shared-view program-index))
+                        program-index)
                       (compiler-backend-global-shared-view closure-names)
                       0
-                      (compiler-backend-global-shared-view program-index))
+                      program-index)
                     strings
                     0)
                   bytes
@@ -89653,7 +89132,7 @@
         (match (compiler-backend-object-instr-abi-eligibility
           type-segment-bases
           target
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view types)
           (compiler-backend-global-shared-view global-types)
           (compiler-backend-global-shared-view function-ret)
@@ -89684,7 +89163,7 @@
                 (match (compiler-backend-object-instrs-abi-eligibility
                   type-segment-bases
                   target
-                  (compiler-backend-global-shared-view program-index)
+                  program-index
                   (compiler-backend-global-shared-view types)
                   (compiler-backend-global-shared-view global-types)
                   (compiler-backend-global-shared-view function-ret)
@@ -89705,7 +89184,7 @@
                       (match (compiler-backend-object-instrs-abi-eligibility
                         type-segment-bases
                         target
-                        (compiler-backend-global-shared-view program-index)
+                        program-index
                         (compiler-backend-global-shared-view types)
                         (compiler-backend-global-shared-view global-types)
                         (compiler-backend-global-shared-view function-ret)
@@ -89734,13 +89213,9 @@
         blocks
         _)
       (if (compiler-backend-stdlib-runtime-function-name?
-        (compiler-backend-symbol-text-index
-          (compiler-backend-global-shared-view program-index)
-          name))
+        (compiler-backend-symbol-text-index program-index name))
         CompilerBackendObjectEligibility.Eligible
-        (match (compiler-backend-index-function-signature
-          (compiler-backend-global-shared-view program-index)
-          name)
+        (match (compiler-backend-index-function-signature program-index name)
           [(CompilerBackendMaybeSignature.No)
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
@@ -89813,7 +89288,7 @@
         (match (compiler-backend-object-function-abi-eligibility
           type-segment-bases
           target
-          (compiler-backend-global-shared-view program-index)
+          program-index
           (compiler-backend-global-shared-view global-types)
           (compiler-backend-global-array-element-shared-view
             functions.slots
@@ -89927,7 +89402,7 @@
                 (compiler-backend-global-shared-view entry-functions)
                 (compiler-backend-global-shared-view externs)
                 plan
-                (compiler-backend-global-shared-view program-index))
+                program-index)
                 [(ResultCompilerBackendSymbolValidation.Ok _)
                   (match (compiler-backend-switch-validate-functions
                     (compiler-backend-global-shared-view entry-functions))
@@ -102843,12 +102318,12 @@
         (compiler-backend-function-state-set-assignment-index!
           function-a
           (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
-            (compiler-backend-global-shared-view assignments-a)
+            assignments-a
             4))
         (compiler-backend-function-state-set-assignment-index!
           function-b
           (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
-            (compiler-backend-global-shared-view assignments-b)
+            assignments-b
             4))
         (compiler-backend-function-state-set-bool!
           function-a
@@ -102948,12 +102423,8 @@
           function-b
           compiler-backend-function-i64-use-home-mask-value
           170)
-        (compiler-backend-set-emit-plan-reg-mask!
-          state-a
-          (compiler-backend-global-shared-view assignments-a))
-        (compiler-backend-set-emit-plan-reg-mask!
-          state-b
-          (compiler-backend-global-shared-view assignments-b))
+        (compiler-backend-set-emit-plan-reg-mask! state-a assignments-a)
+        (compiler-backend-set-emit-plan-reg-mask! state-b assignments-b)
         (compiler-backend-function-state-set-current-phi-target-point!
           state-a
           11)
@@ -103022,10 +102493,7 @@
         (let
           [ok : bool
             (compiler-backend-test-location-register?
-              (compiler-backend-emit-assignment-lookup
-                state-b
-                (compiler-backend-global-shared-view assignments-b)
-                0)
+              (compiler-backend-emit-assignment-lookup state-b assignments-b 0)
               compiler_abi.compiler-reg-id-rax)]
           (begin
             (compiler-backend-function-state-set-bool!
@@ -103068,40 +102536,22 @@
     (and
       fallback-rax-override
       (compiler-backend-test-location-register?
-        (compiler-backend-emit-assignment-lookup
-          state-a
-          (compiler-backend-global-shared-view assignments-a)
-          0)
+        (compiler-backend-emit-assignment-lookup state-a assignments-a 0)
         compiler_abi.compiler-reg-id-rax)
       (compiler-backend-test-location-register?
-        (compiler-backend-emit-assignment-lookup
-          state-b
-          (compiler-backend-global-shared-view assignments-b)
-          0)
+        (compiler-backend-emit-assignment-lookup state-b assignments-b 0)
         compiler_abi.compiler-reg-id-r13)
       (compiler-backend-test-location-spill?
-        (compiler-backend-emit-assignment-lookup
-          state-a
-          (compiler-backend-global-shared-view assignments-a)
-          1)
+        (compiler-backend-emit-assignment-lookup state-a assignments-a 1)
         24)
       (compiler-backend-test-location-spill?
-        (compiler-backend-emit-assignment-lookup
-          state-b
-          (compiler-backend-global-shared-view assignments-b)
-          1)
+        (compiler-backend-emit-assignment-lookup state-b assignments-b 1)
         40)
       (compiler-backend-test-location-register?
-        (compiler-backend-emit-assignment-lookup
-          state-a
-          (compiler-backend-global-shared-view assignments-a)
-          2)
+        (compiler-backend-emit-assignment-lookup state-a assignments-a 2)
         compiler_abi.compiler-reg-id-rdx)
       (compiler-backend-test-location-register?
-        (compiler-backend-emit-assignment-lookup
-          state-b
-          (compiler-backend-global-shared-view assignments-b)
-          2)
+        (compiler-backend-emit-assignment-lookup state-b assignments-b 2)
         compiler_abi.compiler-reg-id-rbx)
       (= (compiler-backend-function-state-rax-forward-pending-var state-a) 30)
       (= (compiler-backend-function-state-rax-forward-pending-var state-b) 40)
@@ -103146,7 +102596,7 @@
         170)
       (compiler-backend-plan-uses-reg?
         state-a
-        (compiler-backend-global-shared-view assignments-a)
+        assignments-a
         compiler_abi.compiler-reg-id-r12)
       (not
         (compiler-backend-plan-uses-reg?

@@ -3300,7 +3300,7 @@
             unit
             (begin
               (compiler-reg-assignment-table-insert
-                (compiler-reg-global-shared-view dst)
+                dst
                 index
                 (clone (array-ref items index)))
               unit))
@@ -8410,7 +8410,7 @@
     (while (< index (compiler-reg-interval-seq-count candidates))
       (begin
         (compiler-reg-assignment-table-unassign
-          (compiler-reg-global-shared-view assignments)
+          assignments
           (__tl-project-field
             (compiler-reg-interval-seq-ref candidates index)
             var))
@@ -13735,7 +13735,7 @@
                         v
                         (compiler-reg-trace-reason-remat))
                       (compiler-reg-assignment-table-insert
-                        (compiler-reg-global-shared-view assignments)
+                        assignments
                         v
                         (CompilerRegLocation.Remat
                           (compiler-reg-global-array-element-shared-view vals v)))
@@ -16844,9 +16844,7 @@
           (compiler-reg-loop-split-coalesce-root? parents var)
           (not
             (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))))
-      (match (compiler-reg-assignment-lookup
-        (compiler-reg-global-shared-view assignments)
-        var)
+      (match (compiler-reg-assignment-lookup assignments var)
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Spill _)
@@ -16927,7 +16925,7 @@
                               copy-count))
                             (match (compiler-reg-loop-split-first-register
                               (compiler-reg-global-shared-view candidate-regs)
-                              (compiler-reg-global-shared-view assignments)
+                              assignments
                               (compiler-reg-global-shared-view intervals)
                               (compiler-reg-global-shared-view region-intervals)
                               var)
@@ -17006,7 +17004,7 @@
       vars
       var
       (compiler-reg-global-shared-view type-info)
-      (compiler-reg-global-shared-view assignments)
+      assignments
       (compiler-reg-global-shared-view intervals)
       group-vars
       parents
@@ -17124,7 +17122,7 @@
                 vars
                 0
                 (compiler-reg-global-shared-view type-info)
-                (compiler-reg-global-shared-view assignments)
+                assignments
                 (compiler-reg-global-shared-view intervals)
                 group-vars
                 parents
@@ -17281,7 +17279,7 @@
                       vars
                       0
                       (compiler-reg-global-shared-view type-info)
-                      (compiler-reg-global-shared-view assignments)
+                      assignments
                       (compiler-reg-global-shared-view intervals)
                       group-vars
                       parents
@@ -17653,9 +17651,7 @@
     (compiler-reg-loop-split-coalesce-root? parents var)
     (compiler-reg-loop-split-phi-carried-group? header-instrs parents var)
     (compiler-reg-interval-index-var-has-segments? intervals var))
-    (match (compiler-reg-assignment-lookup
-      (compiler-reg-global-shared-view assignments)
-      var)
+    (match (compiler-reg-assignment-lookup assignments var)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Spill _)
@@ -17695,7 +17691,7 @@
                           (compiler-reg-edge-copy-list-count copies)))
                         (match (compiler-reg-loop-split-first-register
                           (compiler-reg-global-shared-view candidate-regs)
-                          (compiler-reg-global-shared-view assignments)
+                          assignments
                           (compiler-reg-global-shared-view intervals)
                           (compiler-reg-global-shared-view region-intervals)
                           var)
@@ -17786,9 +17782,7 @@
         region-lo
         end-idx
         var)))
-    (match (compiler-reg-assignment-lookup
-      (compiler-reg-global-shared-view assignments)
-      var)
+    (match (compiler-reg-assignment-lookup assignments var)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Spill _)
@@ -17821,7 +17815,7 @@
                           (compiler-reg-edge-copy-list-count copies)))
                         (match (compiler-reg-loop-split-first-register
                           (compiler-reg-global-shared-view candidate-regs)
-                          (compiler-reg-global-shared-view assignments)
+                          assignments
                           (compiler-reg-global-shared-view intervals)
                           (compiler-reg-global-shared-view region-intervals)
                           var)
@@ -17903,7 +17897,7 @@
       vars
       var
       (compiler-reg-global-shared-view type-info)
-      (compiler-reg-global-shared-view assignments)
+      assignments
       (compiler-reg-global-shared-view intervals)
       group-vars
       parents
@@ -17925,7 +17919,7 @@
           vars
           var
           (compiler-reg-global-shared-view type-info)
-          (compiler-reg-global-shared-view assignments)
+          assignments
           (compiler-reg-global-shared-view intervals)
           group-vars
           parents
@@ -18046,7 +18040,7 @@
             vars
             0
             (compiler-reg-global-shared-view type-info)
-            (compiler-reg-global-shared-view assignments)
+            assignments
             (compiler-reg-global-shared-view intervals)
             group-vars
             parents
@@ -18595,9 +18589,7 @@
         var)
       0))
     CompilerRegLeafCsrSplitCandidate.NoCandidate
-    (match (compiler-reg-assignment-lookup
-      (compiler-reg-global-shared-view assignments)
-      var)
+    (match (compiler-reg-assignment-lookup assignments var)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Register csr)
@@ -18720,7 +18712,7 @@
       var
       param-vars
       (compiler-reg-global-shared-view type-info)
-      (compiler-reg-global-shared-view assignments)
+      assignments
       intervals
       group-vars
       parents
@@ -18832,7 +18824,7 @@
             0
             param-vars
             (compiler-reg-global-shared-view type-info)
-            (compiler-reg-global-shared-view assignments)
+            assignments
             intervals
             group-vars
             parents
@@ -19372,7 +19364,7 @@
                   0
                   vars
                   (compiler-reg-global-shared-view type-info)
-                  (compiler-reg-global-shared-view assignments)
+                  assignments
                   (compiler-reg-global-shared-view intervals)
                   group-vars
                   parents
@@ -19394,7 +19386,7 @@
                       depths
                       vars
                       (compiler-reg-global-shared-view type-info)
-                      (compiler-reg-global-shared-view assignments)
+                      assignments
                       (compiler-reg-global-shared-view intervals)
                       group-vars
                       parents
@@ -19619,9 +19611,7 @@
             (live.compiler-live-set-contains? block-defs var)))
         (compiler-reg-interval-index-var-has-segments? intervals var)
         (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var))))
-      (match (compiler-reg-assignment-lookup
-        (compiler-reg-global-shared-view assignments)
-        var)
+      (match (compiler-reg-assignment-lookup assignments var)
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Spill _)
@@ -19706,7 +19696,7 @@
           vars
           var
           (compiler-reg-global-shared-view type-info)
-          (compiler-reg-global-shared-view assignments)
+          assignments
           (compiler-reg-global-shared-view intervals)
           group-vars
           parents
@@ -19802,7 +19792,7 @@
                     vars
                     0
                     (compiler-reg-global-shared-view type-info)
-                    (compiler-reg-global-shared-view assignments)
+                    assignments
                     (compiler-reg-global-shared-view intervals)
                     group-vars
                     parents
@@ -19963,7 +19953,7 @@
                   vars
                   0
                   (compiler-reg-global-shared-view type-info)
-                  (compiler-reg-global-shared-view assignments)
+                  assignments
                   (compiler-reg-global-shared-view intervals)
                   group-vars
                   parents
@@ -20038,7 +20028,7 @@
             (compiler-reg-global-shared-view blocks)
             in-vars
             current-vars
-            (compiler-reg-global-shared-view extra-assignments)
+            extra-assignments
             (compiler-reg-global-shared-view extra-types)))]
       [round-plan-types : CompilerRegVarTypes
         (compiler-reg-plan-types (compiler-reg-global-shared-view round-plan))]
@@ -22423,7 +22413,7 @@
           (if (compiler-reg-call-hole-eligible-var?
             type-segment-bases
             (compiler-reg-global-shared-view type-info)
-            (compiler-reg-global-shared-view assignments)
+            assignments
             ineligible
             var)
             (begin
@@ -22529,7 +22519,7 @@
           (if (compiler-reg-call-hole-eligible-var?
             type-segment-bases
             (compiler-reg-global-shared-view type-info)
-            (compiler-reg-global-shared-view assignments)
+            assignments
             ineligible
             var)
             (begin
@@ -22539,7 +22529,7 @@
               type-segment-bases
               target-abi
               (compiler-reg-global-shared-view type-info)
-              (compiler-reg-global-shared-view assignments)
+              assignments
               ineligible
               var)
               (begin
@@ -24124,16 +24114,11 @@
           (let
             [var : i64 (array-ref selected index)]
             (if (and
-              (compiler-reg-call-hole-register-homed?
-                (compiler-reg-global-shared-view assignments)
-                var)
+              (compiler-reg-call-hole-register-homed? assignments var)
               (not
                 (and
                   (array-ref csr var)
-                  (compiler-reg-call-hole-csr-home?
-                    target-abi
-                    (compiler-reg-global-shared-view assignments)
-                    var))))
+                  (compiler-reg-call-hole-csr-home? target-abi assignments var))))
               unit
               (begin
                 (set! (array-ref dropped var) true)
@@ -24159,9 +24144,7 @@
     (begin
       (while (< var vars)
         (begin
-          (match (compiler-reg-assignment-lookup
-            (compiler-reg-global-shared-view assignments)
-            var)
+          (match (compiler-reg-assignment-lookup assignments var)
             [(CompilerRegMaybeLocation.No) unit]
             [(CompilerRegMaybeLocation.Some location)
               (match location
@@ -24255,7 +24238,7 @@
             representations
             target-abi
             params
-            (compiler-reg-global-shared-view assignments)
+            assignments
             (if is-float
               int-idx
               (+ int-idx 1))
@@ -24315,7 +24298,7 @@
             representations
             target-abi
             params
-            (compiler-reg-global-shared-view assignments)
+            assignments
             0
             0
             0
@@ -24327,9 +24310,7 @@
       (compiler-reg-call-hole-ref-weights! (&mut refs) seq weights)
       (while (< var vars)
         (begin
-          (if (compiler-reg-call-hole-register-homed?
-            (compiler-reg-global-shared-view assignments)
-            var)
+          (if (compiler-reg-call-hole-register-homed? assignments var)
             unit
             (set! total (+ total (array-ref refs var))))
           (set! var (+ var 1))))
@@ -25584,7 +25565,7 @@
                       (compiler-reg-loop-park-through-eligible?
                         type-segment-bases
                         (compiler-reg-global-shared-view type-info)
-                        (compiler-reg-global-shared-view assignments)
+                        assignments
                         ineligible
                         var))
                     (when
@@ -26666,9 +26647,7 @@
             (when
               (and
                 (not (= mask 0))
-                (compiler-reg-call-hole-register-homed?
-                  (compiler-reg-global-shared-view assignments)
-                  var))
+                (compiler-reg-call-hole-register-homed? assignments var))
               (set! rescued (bit-or rescued mask))))
           (set! var (+ var 1))))
       (let
@@ -30713,10 +30692,7 @@
               (match (compiler-reg-assignment-table-lookup assignments rr)
                 [(CompilerRegMaybeLocation.Some loc)
                   (begin
-                    (compiler-reg-assignment-table-insert
-                      (compiler-reg-global-shared-view out)
-                      v
-                      loc)
+                    (compiler-reg-assignment-table-insert out v loc)
                     unit)]
                 [(CompilerRegMaybeLocation.No) unit]))
             unit)
@@ -31821,7 +31797,7 @@
                   other))
                 (begin
                   (compiler-reg-greedy-assignment-unassign!
-                    (compiler-reg-global-shared-view assignments)
+                    assignments
                     occupancy
                     other)
                   (if (< other (array-length pending))
@@ -32162,7 +32138,7 @@
                       (compiler-reg-trace-reason-csr-evict-lower)
                       (compiler-reg-trace-reason-evict-lower)))
                   (compiler-reg-greedy-evict-requeue!
-                    (compiler-reg-global-shared-view assignments)
+                    assignments
                     occupancy
                     interval-index
                     pending
@@ -32666,7 +32642,7 @@
         (let
           [stg : i64
             (compiler-reg-greedy-alloc-one!
-              (compiler-reg-global-shared-view assignments)
+              assignments
               (compiler-reg-global-shared-view occupancy)
               (compiler-reg-global-shared-view interval-index)
               ref-counts
@@ -32769,7 +32745,7 @@
         0)]
     [occupancy : CompilerRegGreedyOccupancy
       (compiler-reg-greedy-occupancy-make
-        (compiler-reg-global-shared-view assignments)
+        assignments
         (compiler-reg-global-shared-view interval-index)
         reg-arr
         rcount)]
@@ -32807,7 +32783,7 @@
         (compiler-reg-global-shared-view pending)
         (compiler-reg-global-shared-view evict-count)
         (&mut heap)
-        (compiler-reg-global-shared-view assignments)
+        assignments
         (compiler-reg-global-shared-view occupancy)
         (compiler-reg-global-shared-view interval-index)
         ref-counts
@@ -33825,7 +33801,7 @@
           float-idx
           position
           parents
-          (compiler-reg-global-shared-view assignments))
+          assignments)
         (compiler-reg-float-arg-demote-array!
           target-abi
           values
@@ -33870,7 +33846,7 @@
             0
             position
             parents
-            (compiler-reg-global-shared-view assignments))
+            assignments)
           (compiler-reg-float-arg-demote-value!
             target-abi
             (compiler-reg-global-shared-view b)
@@ -33988,7 +33964,7 @@
           (compiler-reg-global-array-element-shared-view slots i)
           (compiler-reg-global-shared-view types)
           parents
-          (compiler-reg-global-shared-view assignments))
+          assignments)
         (set! i (+ i 1))))))
 
 (define (compiler-reg-float-arg-demote-blocks!
@@ -34008,7 +33984,7 @@
               instrs
               (compiler-reg-global-shared-view types)
               parents
-              (compiler-reg-global-shared-view assignments))])
+              assignments)])
         (compiler-reg-float-arg-demote-blocks!
           target-abi
           (deref rest)
@@ -34028,7 +34004,7 @@
                   instrs
                   (compiler-reg-global-shared-view types)
                   parents
-                  (compiler-reg-global-shared-view assignments))])
+                  assignments)])
             (set! i (+ i 1)))))]))
 
 (define (compiler-reg-float-call-args-demote!
@@ -34108,7 +34084,7 @@
             order
             0
             count
-            (compiler-reg-global-shared-view assignments)
+            assignments
             interval-index
             ref-counts
             copy-hints
@@ -34712,7 +34688,7 @@
                     (let
                       [_spill : CompilerRegAssignmentTable
                         (compiler-reg-assignment-table-insert
-                          (compiler-reg-global-shared-view assignments)
+                          assignments
                           idx
                           (CompilerRegLocation.Spill
                             (compiler-reg-stack-slot-offset idx)))]
@@ -34985,7 +34961,7 @@
                     (&mut parents)
                     (&mut members)
                     (compiler-reg-global-shared-view interval-index)
-                    (compiler-reg-global-shared-view assignments)
+                    assignments
                     weights
                     call-points
                     (compiler-reg-global-shared-view split))
@@ -35144,12 +35120,12 @@
                 [m : i64 0]
                 (begin
                   (compiler-reg-group-pair-evict-reg-conflicts!
-                    (compiler-reg-global-shared-view assignments)
+                    assignments
                     conflicts
                     conflict-count
                     reg0)
                   (compiler-reg-group-pair-evict-reg-conflicts!
-                    (compiler-reg-global-shared-view assignments)
+                    assignments
                     conflicts
                     conflict-count
                     reg1)
@@ -35161,7 +35137,7 @@
                             (array-ref members m)
                             (compiler-reg-trace-reason-group-pair))
                           (compiler-reg-assignment-table-insert
-                            (compiler-reg-global-shared-view assignments)
+                            assignments
                             (array-ref members m)
                             (compiler-reg-global-shared-view pair)))]
                       (set! m (+ m 1))))))
@@ -35221,7 +35197,7 @@
                         unit
                         (begin
                           (compiler-reg-assignment-table-unassign
-                            (compiler-reg-global-shared-view assignments)
+                            assignments
                             var-id)
                           unit)))]
                   [_ unit])]
@@ -36000,7 +35976,7 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-param-pins-demote!
           (compiler-reg-global-shared-view func)
-          (compiler-reg-global-shared-view assignment-table)
+          assignment-table
           coalesce
           (compiler-reg-global-shared-view eff-index)
           clobber-points
@@ -36016,7 +35992,7 @@
         (compiler-reg-global-shared-view func)
         (compiler-reg-global-shared-view eff-index)
         (compiler-reg-global-shared-view type-info)
-        (compiler-reg-global-shared-view assignment-table)
+        assignment-table
         allow-caller-saved-zero-call)]
     [allocation-index : CompilerRegIntervalIndex
       early-scratch-model.interval-index]
@@ -36267,7 +36243,7 @@
           (compiler-reg-global-shared-view func)
           (compiler-reg-global-shared-view eff-index)
           (compiler-reg-global-shared-view type-info)
-          (compiler-reg-global-shared-view base-integer-assignments)
+          base-integer-assignments
           true))]
     [allocation-table : CompilerRegAssignmentTable
       colored-early-scratch-model.assignments]
@@ -36275,7 +36251,7 @@
       colored-early-scratch-model.scratch-excluded]
     [scratch-input-assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-with-scratch
-        (compiler-reg-global-shared-view base-integer-assignments)
+        base-integer-assignments
         allocation-table
         early-scratch-base
         early-scratch-count)]
@@ -36388,7 +36364,7 @@
           (compiler-reg-global-shared-view func)
           (compiler-reg-global-shared-view type-info)
           coalesce
-          (compiler-reg-global-shared-view scalar-assignments))
+          scalar-assignments)
         unit)]
     [vector-vars : live.CompilerLiveI64Set vector-mask-defs.uses]
     [mask-vars : live.CompilerLiveI64Set vector-mask-defs.defs]
@@ -36429,7 +36405,7 @@
           blocked))]
     [_vector-class-reset : unit
       (compiler-reg-unassign-special-candidates!
-        (compiler-reg-global-shared-view scalar-assignments)
+        scalar-assignments
         (compiler-reg-global-shared-view vector-candidates))]
     [vector-state
       : CompilerRegAssignState
@@ -36467,7 +36443,7 @@
       ;; pressure remains unassigned and is emitted through the existing
       ;; stack-slot spill path instead of reaching the backend as a GP home.
       (compiler-reg-unassign-special-candidates!
-        (compiler-reg-global-shared-view vector-assignments)
+        vector-assignments
         (compiler-reg-special-candidates
           (compiler-reg-global-shared-view intervals)
           mask-candidate-vars
@@ -39233,10 +39209,7 @@
   ;; Stack-only plans have a genuinely empty table, not a vars-wide table of
   ;; spills. Preserve that representation after coloring: otherwise every
   ;; backend `plan-uses-reg?` query scans a vars-wide all-zero presence array.
-  (if (=
-    (compiler-reg-assignment-count
-      (compiler-reg-global-shared-view assignments))
-    0)
+  (if (= (compiler-reg-assignment-count assignments) 0)
     (compiler-reg-assignment-table-empty)
     (let
       [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -40970,10 +40943,7 @@
         ;; Preserve a logically empty assignment table through coloring;
         ;; indexed lookup already returns `No` for every variable in it.
         [empty-assignments? : bool
-          (=
-            (compiler-reg-assignment-count
-              (compiler-reg-global-shared-view assignments))
-            0)]
+          (= (compiler-reg-assignment-count assignments) 0)]
         [assignment-index : CompilerRegAssignmentTable
           (if empty-assignments?
             (compiler-reg-assignment-table-empty)
@@ -41519,9 +41489,7 @@
         base
         (array-length (compiler-reg-assignment-table-present extra)))]
     (begin
-      (compiler-reg-assignment-table-overlay!
-        (compiler-reg-global-shared-view out)
-        extra)
+      (compiler-reg-assignment-table-overlay! out extra)
       out)))
 
 (define (compiler-reg-var-types-merge
@@ -41613,7 +41581,7 @@
             unit
             (begin
               (compiler-reg-assignment-table-insert
-                (compiler-reg-global-shared-view out)
+                out
                 var
                 (CompilerRegLocation.Remat (ir.CompilerIrValue.Bool false)))
               unit))
@@ -41920,13 +41888,9 @@
   (match instr
     [(ir.CompilerIrInstr.BinOp dst _ lhs rhs _)
       (compiler-reg-id-seq-append
-        (compiler-reg-scratch-location-registers
-          (compiler-reg-global-shared-view assignments)
-          dst)
+        (compiler-reg-scratch-location-registers assignments dst)
         (compiler-reg-id-seq-append
-          (compiler-reg-scratch-value-registers
-            (compiler-reg-global-shared-view assignments)
-            lhs)
+          (compiler-reg-scratch-value-registers assignments lhs)
           (compiler-reg-scratch-value-registers assignments rhs)))]
     [_ (compiler-reg-id-seq-empty)]))
 
@@ -42178,8 +42142,8 @@
                   (while (< ordinal slot-count)
                     (begin
                       (compiler-reg-early-scratch-mark-one!
-                        (compiler-reg-global-shared-view assignment-view)
-                        (compiler-reg-global-shared-view assignment-table)
+                        assignment-view
+                        assignment-table
                         (compiler-reg-global-shared-view instr)
                         (* 2 instruction)
                         ordinal
@@ -42227,8 +42191,8 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-early-scratch-fill-seq!
-            (compiler-reg-global-shared-view assignment-view)
-            (compiler-reg-global-shared-view assignment-table)
+            assignment-view
+            assignment-table
             instrs
             (compiler-reg-loop-depth-weight (array-ref depths block-index))
             instruction-start
@@ -42270,8 +42234,8 @@
               (match (ir.compiler-ir-block-seq-ref seq i)
                 [(ir.CompilerIrBlock.Block _ instrs)
                   (match (compiler-reg-early-scratch-fill-seq!
-                    (compiler-reg-global-shared-view assignment-view)
-                    (compiler-reg-global-shared-view assignment-table)
+                    assignment-view
+                    assignment-table
                     instrs
                     (compiler-reg-loop-depth-weight
                       (array-ref depths (+ block-index i)))
@@ -42360,7 +42324,7 @@
                 0)
               (compiler-reg-early-scratch-fill-blocks!
                 assignment-view
-                (compiler-reg-global-shared-view assignments)
+                assignments
                 blocks
                 depths
                 0
@@ -42488,10 +42452,7 @@
         (match (compiler-reg-assignment-table-lookup src v)
           [(CompilerRegMaybeLocation.Some location)
             (begin
-              (compiler-reg-assignment-table-insert
-                (compiler-reg-global-shared-view dst)
-                v
-                location)
+              (compiler-reg-assignment-table-insert dst v location)
               unit)]
           [(CompilerRegMaybeLocation.No) unit])
         (set! v (+ v 1))))))
@@ -42507,11 +42468,7 @@
       [out : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make vars)]
       (begin
-        (compiler-reg-assignment-table-copy-range!
-          (compiler-reg-global-shared-view out)
-          assignments
-          0
-          vars)
+        (compiler-reg-assignment-table-copy-range! out assignments 0 vars)
         out))))
 
 (define (compiler-reg-assignment-table-prefix-eq?
@@ -42547,12 +42504,12 @@
         (compiler-reg-assignment-table-make out-vars)]
       (begin
         (compiler-reg-assignment-table-copy-range!
-          (compiler-reg-global-shared-view out)
+          out
           real-assignments
           0
           scratch-base)
         (compiler-reg-assignment-table-copy-range!
-          (compiler-reg-global-shared-view out)
+          out
           scratch-assignments
           scratch-base
           out-vars)
@@ -42699,14 +42656,10 @@
       (let
         [operands : i64
           (+
-            (if (compiler-reg-scratch-value-spilled?
-              (compiler-reg-global-shared-view assignments)
-              base)
+            (if (compiler-reg-scratch-value-spilled? assignments base)
               1
               0)
-            (if (compiler-reg-scratch-value-spilled?
-              (compiler-reg-global-shared-view assignments)
-              offset)
+            (if (compiler-reg-scratch-value-spilled? assignments offset)
               1
               0))]
         (if (compiler-reg-scratch-var-register-homed? assignments dst)
@@ -42716,9 +42669,7 @@
           operands))]
     [(ir.CompilerIrInstr.Load dst src _)
       (+
-        (if (compiler-reg-scratch-value-spilled?
-          (compiler-reg-global-shared-view assignments)
-          src)
+        (if (compiler-reg-scratch-value-spilled? assignments src)
           1
           0)
         (if (compiler-reg-scratch-var-spilled? assignments dst)
@@ -42726,9 +42677,7 @@
           0))]
     [(ir.CompilerIrInstr.StorePtr address value _)
       (+
-        (if (compiler-reg-scratch-value-spilled?
-          (compiler-reg-global-shared-view assignments)
-          address)
+        (if (compiler-reg-scratch-value-spilled? assignments address)
           1
           0)
         (if (compiler-reg-scratch-value-spilled? assignments value)
@@ -42736,9 +42685,7 @@
           0))]
     [(ir.CompilerIrInstr.StoreOwned address value _)
       (+
-        (if (compiler-reg-scratch-value-spilled?
-          (compiler-reg-global-shared-view assignments)
-          address)
+        (if (compiler-reg-scratch-value-spilled? assignments address)
           1
           0)
         (if (compiler-reg-scratch-value-spilled? assignments value)
@@ -42750,9 +42697,7 @@
         0)]
     [(ir.CompilerIrInstr.Mov dst src _)
       (if (and
-        (compiler-reg-scratch-var-spilled?
-          (compiler-reg-global-shared-view assignments)
-          dst)
+        (compiler-reg-scratch-var-spilled? assignments dst)
         (compiler-reg-scratch-value-spilled? assignments src))
         1
         0)]
@@ -42870,7 +42815,7 @@
                     (let
                       [demand : i64
                         (compiler-reg-scratch-borrow-demand
-                          (compiler-reg-global-shared-view assignments)
+                          assignments
                           (compiler-reg-global-array-element-shared-view
                             slots
                             i))]
@@ -43976,9 +43921,7 @@
     [base : i64 (compiler-reg-remat-recipe-base-var table var)]
     (if (< base 0)
       true
-      (match (compiler-reg-assignment-lookup
-        (compiler-reg-global-shared-view assignments)
-        base)
+      (match (compiler-reg-assignment-lookup assignments base)
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Register reg)
@@ -44247,13 +44190,13 @@
                         (< var vars)
                         (compiler-reg-remat-table-eligible?
                           table
-                          (compiler-reg-global-shared-view assignments)
+                          assignments
                           parents
                           merged-roots
                           var)
                         (compiler-reg-remat-base-available?
                           table
-                          (compiler-reg-global-shared-view assignments)
+                          assignments
                           intervals
                           point
                           var))
@@ -44421,11 +44364,11 @@
             vars
             out-next-var
             (compiler-reg-global-shared-view table)
-            (compiler-reg-global-shared-view assignments)
+            assignments
             intervals
             parents
             merged-roots
-            (compiler-reg-global-shared-view out-extra-assignments)
+            out-extra-assignments
             (compiler-reg-global-shared-view out-extra-types)
             (compiler-reg-global-shared-view remap)
             (compiler-reg-global-shared-view marks)
@@ -44486,7 +44429,7 @@
               vars
               next-var
               (compiler-reg-global-shared-view table)
-              (compiler-reg-global-shared-view assignments)
+              assignments
               intervals
               parents
               merged-roots
@@ -44574,11 +44517,11 @@
                   vars
                   out-next-var
                   (compiler-reg-global-shared-view table)
-                  (compiler-reg-global-shared-view assignments)
+                  assignments
                   intervals
                   parents
                   merged-roots
-                  (compiler-reg-global-shared-view out-extra-assignments)
+                  out-extra-assignments
                   (compiler-reg-global-shared-view out-extra-types)
                   (compiler-reg-global-shared-view remap)
                   (compiler-reg-global-shared-view marks)

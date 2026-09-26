@@ -1886,14 +1886,14 @@
             (compiler_ir_types.compiler-ir-instr-seq-empty))))]
     (and
       (compiler-backend-object-test-call-category?
-        (owned_view.compiler-owned-shared-view index)
+        index
         unknown-owner
         missing-name
         compiler_ir_types.CompilerIrCallArgs.Nil
         (compiler_ast_types.AstType.I64)
         "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-test-call-category?
-        (owned_view.compiler-owned-shared-view index)
+        index
         argument-owner
         bool-param-name
         (compiler_ir_types.CompilerIrCallArgs.One
@@ -1901,14 +1901,14 @@
         (compiler_ast_types.AstType.I64)
         "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-test-call-category?
-        (owned_view.compiler-owned-shared-view index)
+        index
         count-owner
         bool-param-name
         compiler_ir_types.CompilerIrCallArgs.Nil
         (compiler_ast_types.AstType.I64)
         "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-test-call-category?
-        (owned_view.compiler-owned-shared-view index)
+        index
         result-owner
         bool-param-name
         (compiler_ir_types.CompilerIrCallArgs.One
@@ -4536,7 +4536,7 @@
           (compiler_ast_types.AstType.I64)
           3
           blocks
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -4800,7 +4800,7 @@
           (compiler_ast_types.AstType.Unit)
           3
           blocks
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -7356,14 +7356,11 @@
         (ci.intern-compat-state-capture-active))]
     (and
       (string.eq
-        (compiler-backend-test-emit-load-var-with-plan
-          (owned_view.compiler-owned-shared-view assignments)
-          0
-          "%rax")
+        (compiler-backend-test-emit-load-var-with-plan assignments 0 "%rax")
         "    movq %r8, %rax\n")
       (string.eq
         (compiler_backend.compiler-backend-emit-store-var-with-plan
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           1
           "%rax"
           backend-state)
@@ -7376,7 +7373,7 @@
         "    movl %r8d, %eax\n")
       (not
         (compiler_backend.compiler-backend-plan-uses-callee-regs?
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state))
       (=
         (compiler_backend.compiler-backend-frame-slots
@@ -7593,7 +7590,7 @@
       (compiler_backend.compiler-backend-return-epilogue
         shared-state
         shared-name
-        (owned_view.compiler-owned-shared-view five)
+        five
         1
         (compiler-backend-callee-save-double-return-blocks))]
     (and
@@ -7606,7 +7603,7 @@
           "    movq -32(%rbp), %r12\n")
         (string.eq
           (compiler_backend.compiler-backend-emit-restore-callee-regs
-            (owned_view.compiler-owned-shared-view two)
+            two
             3
             shared-state)
           "    leaq -40(%rbp), %rsp\n    popq %r13\n    popq %r12\n")
@@ -7618,7 +7615,7 @@
           "    leaq -40(%rbp), %rsp\n    popq %r14\n    popq %r13\n    popq %r12\n")
         (string.eq
           (compiler_backend.compiler-backend-emit-restore-callee-regs
-            (owned_view.compiler-owned-shared-view four)
+            four
             2
             shared-state)
           "    leaq -48(%rbp), %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n")
@@ -8135,23 +8132,23 @@
       (compiler-backend-win64-callee-save-full-assignments)]
     [save : String
       (compiler_backend.compiler-backend-emit-save-callee-regs
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         3
         backend-state)]
     [restore : String
       (compiler_backend.compiler-backend-emit-restore-callee-regs
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         3
         backend-state)]
     [full-restore : String
       (compiler_backend.compiler-backend-emit-restore-callee-regs
-        (owned_view.compiler-owned-shared-view full)
+        full
         1
         backend-state)]
     [ok : bool
       (and
         (compiler_backend.compiler-backend-plan-uses-callee-regs?
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (=
           (compiler_backend.compiler-backend-frame-slots
@@ -8200,14 +8197,14 @@
       (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         (owned_view.compiler-owned-shared-view push-regs)
         backend-state)]
     [frame : i64
       (compiler_backend.compiler-backend-frame-size
         (compiler_backend.compiler-backend-frame-slots
           1
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state))]
     [prologue : String
       (compiler_backend.compiler-backend-emit-function-entry-fpo-windows
@@ -8216,7 +8213,7 @@
         backend-state
         "_tl_win64_fpo"
         frame
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         1
         (owned_view.compiler-owned-shared-view push-regs)
         push-count)]
@@ -8265,7 +8262,7 @@
         (=
           (compiler_backend.compiler-backend-frame-slots
             1
-            (owned_view.compiler-owned-shared-view assignments)
+            assignments
             backend-state)
           9)
         (compiler_backend.compiler-backend-string-contains?
@@ -8338,33 +8335,27 @@
           (compiler_regalloc_tests.compiler-reg-f64-call-live-function)))]
     [planned-frame : i64
       (compiler_backend.compiler-backend-frame-size
-        (compiler_backend.compiler-backend-frame-slots
-          3
-          (owned_view.compiler-owned-shared-view planned)
-          backend-state))]
+        (compiler_backend.compiler-backend-frame-slots 3 planned backend-state))]
     [planned-save : String
       (compiler_backend.compiler-backend-emit-save-win64-xmm-callee-regs
         (compiler_backend.CompilerBackendTarget.Windows)
-        (owned_view.compiler-owned-shared-view planned)
+        planned
         3
         planned-frame
         backend-state)]
     [frame : i64
       (compiler_backend.compiler-backend-frame-size
-        (compiler_backend.compiler-backend-frame-slots
-          3
-          (owned_view.compiler-owned-shared-view sparse)
-          backend-state))]
+        (compiler_backend.compiler-backend-frame-slots 3 sparse backend-state))]
     [save : String
       (compiler_backend.compiler-backend-emit-save-win64-xmm-callee-regs
         (compiler_backend.CompilerBackendTarget.Windows)
-        (owned_view.compiler-owned-shared-view sparse)
+        sparse
         3
         frame
         backend-state)]
     [restore : String
       (compiler_backend.compiler-backend-emit-restore-callee-regs
-        (owned_view.compiler-owned-shared-view sparse)
+        sparse
         3
         backend-state)]
     [entry : String
@@ -8373,15 +8364,12 @@
           compiler_backend.CompilerBackendTarget.Windows)
         "_tl_xmm_sparse"
         frame
-        (owned_view.compiler-owned-shared-view sparse)
+        sparse
         3
         backend-state)]
     [large-frame : i64
       (compiler_backend.compiler-backend-frame-size
-        (compiler_backend.compiler-backend-frame-slots
-          600
-          (owned_view.compiler-owned-shared-view xmm15)
-          backend-state))]
+        (compiler_backend.compiler-backend-frame-slots 600 xmm15 backend-state))]
     [large-entry : String
       (compiler_backend.compiler-backend-emit-function-entry
         (compiler_backend.compiler-backend-target-policy-new
@@ -8393,14 +8381,11 @@
         backend-state)]
     [full-frame : i64
       (compiler_backend.compiler-backend-frame-size
-        (compiler_backend.compiler-backend-frame-slots
-          1
-          (owned_view.compiler-owned-shared-view full)
-          backend-state))]
+        (compiler_backend.compiler-backend-frame-slots 1 full backend-state))]
     [full-save : String
       (compiler_backend.compiler-backend-emit-save-win64-xmm-callee-regs
         (compiler_backend.CompilerBackendTarget.Windows)
-        (owned_view.compiler-owned-shared-view full)
+        full
         1
         full-frame
         backend-state)]
@@ -8420,12 +8405,12 @@
         backend-state)]
     [inline-tail : String
       (compiler_backend.compiler-backend-inline-return-tail
-        (owned_view.compiler-owned-shared-view sparse)
+        sparse
         3
         backend-state)]
     [jump-tail : String
       (compiler_backend.compiler-backend-tail-jump-tail
-        (owned_view.compiler-owned-shared-view sparse)
+        sparse
         3
         "_tl_xmm_target"
         backend-state)]
@@ -8433,7 +8418,7 @@
       (compiler_backend.compiler-backend-return-epilogue
         backend-state
         shared-name
-        (owned_view.compiler-owned-shared-view sparse)
+        sparse
         3
         (compiler-backend-callee-save-double-return-blocks))]
     [ok : bool
@@ -8449,19 +8434,16 @@
             planned-save
             "%xmm7"))
         (compiler_backend.compiler-backend-plan-uses-callee-regs?
-          (owned_view.compiler-owned-shared-view sparse)
+          sparse
           backend-state)
         (= frame 240)
         (=
-          (compiler_backend.compiler-backend-frame-slots
-            3
-            (owned_view.compiler-owned-shared-view sparse)
-            backend-state)
+          (compiler_backend.compiler-backend-frame-slots 3 sparse backend-state)
           30)
         (=
           (compiler_backend.compiler-backend-frame-slots-with-groups
             3
-            (owned_view.compiler-owned-shared-view sparse)
+            sparse
             true
             backend-state)
           36)
@@ -8474,14 +8456,14 @@
         (=
           (compiler_backend.compiler-backend-win64-xmm-callee-slot-offset
             backend-state
-            (owned_view.compiler-owned-shared-view sparse)
+            sparse
             3
             0)
           -96)
         (=
           (compiler_backend.compiler-backend-win64-xmm-callee-slot-offset
             backend-state
-            (owned_view.compiler-owned-shared-view sparse)
+            sparse
             3
             9)
           -240)
@@ -8489,14 +8471,14 @@
           (compiler_backend.compiler-backend-group-word0-slot
             0
             3
-            (owned_view.compiler-owned-shared-view sparse)
+            sparse
             backend-state)
           -256)
         (=
           (compiler_backend.compiler-backend-group-word1-slot
             0
             3
-            (owned_view.compiler-owned-shared-view sparse)
+            sparse
             backend-state)
           -248)
         (string.eq
@@ -8581,19 +8563,16 @@
       ok
       (=
         (compiler_backend.compiler-backend-win64-xmm-callee-highest
-          (owned_view.compiler-owned-shared-view sparse)
+          sparse
           backend-state)
         -1)
       (=
-        (compiler_backend.compiler-backend-frame-slots
-          3
-          (owned_view.compiler-owned-shared-view sparse)
-          backend-state)
+        (compiler_backend.compiler-backend-frame-slots 3 sparse backend-state)
         7)
       (string.eq
         (compiler_backend.compiler-backend-emit-save-win64-xmm-callee-regs
           (compiler_backend.CompilerBackendTarget.Linux)
-          (owned_view.compiler-owned-shared-view sparse)
+          sparse
           3
           64
           backend-state)
@@ -8638,21 +8617,18 @@
           (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     (and
       (string.eq
-        (compiler-backend-test-emit-load-var-with-plan
-          (owned_view.compiler-owned-shared-view assignments)
-          0
-          "%r12")
+        (compiler-backend-test-emit-load-var-with-plan assignments 0 "%r12")
         "")
       (string.eq
         (compiler_backend.compiler-backend-emit-store-var-with-plan
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           0
           "%r12"
           backend-state)
         "")
       (string.eq
         (compiler_backend.compiler-backend-emit-load-f64-var-with-plan
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           1
           "%xmm0"
           backend-state)
@@ -8666,7 +8642,7 @@
         "    movsd %xmm0, %xmm2\n")
       (match (compiler_backend.compiler-backend-emit-mov
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view coalesced)
+        coalesced
         2
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
@@ -8683,7 +8659,7 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler_ir_types.compiler-ir-label "entry")
-        (owned_view.compiler-owned-shared-view coalesced)
+        coalesced
         2
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
@@ -8707,7 +8683,7 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler_ir_types.compiler-ir-label "entry")
-        (owned_view.compiler-owned-shared-view coalesced)
+        coalesced
         2
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
@@ -8745,7 +8721,7 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler_ir_types.compiler-ir-label "entry")
-        (owned_view.compiler-owned-shared-view casted)
+        casted
         2
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
@@ -8807,7 +8783,7 @@
         0
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ast_types.AstType.I64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         8
         backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -8858,7 +8834,7 @@
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         2
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -8878,7 +8854,7 @@
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.F64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         2
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -8926,7 +8902,7 @@
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -40))
-        (owned_view.compiler-owned-shared-view slot-assignments))]
+        slot-assignments)]
     (and
       ;; unassigned destination -> its bare slot, one store
       (match (compiler_backend.compiler-backend-emit-mov
@@ -8935,7 +8911,7 @@
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         2
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -8944,11 +8920,11 @@
       ;; spilled destination -> its frame offset, one store
       (match (compiler_backend.compiler-backend-emit-mov
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view spill-assignments)
+        spill-assignments
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         2
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -8961,7 +8937,7 @@
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I32)
-        (owned_view.compiler-owned-shared-view index)
+        index
         2
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -9231,28 +9207,28 @@
         24)
       (compiler_backend.compiler-backend-group-type?
         bases
-        (owned_view.compiler-owned-shared-view index)
+        index
         (owned_view.compiler-owned-shared-view group0))
       (compiler_backend.compiler-backend-group-type?
         bases
-        (owned_view.compiler-owned-shared-view index)
+        index
         (owned_view.compiler-owned-shared-view group2))
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view group0))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view group2))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view group0))
         0)
       (=
@@ -9340,48 +9316,44 @@
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view type0))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           type0)
         0)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view type1))
         1)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view type2))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           type3)
         3)
       (compiler_backend.compiler-backend-group-word-sse?
         bases
-        (owned_view.compiler-owned-shared-view index)
+        index
         (owned_view.compiler-owned-shared-view type1)
         0)
       (not
-        (compiler_backend.compiler-backend-group-word-sse?
-          bases
-          (owned_view.compiler-owned-shared-view index)
-          type1
-          1))
+        (compiler_backend.compiler-backend-group-word-sse? bases index type1 1))
       (not
         (compiler_backend.compiler-backend-group-word-sse?
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view type2)
           0))
       (compiler_backend.compiler-backend-group-word-sse? bases index type2 1))))
@@ -9464,7 +9436,7 @@
         dynamic-args
         (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
-        (owned_view.compiler-owned-shared-view index))]
+        index)]
     [effective-dynamic-type : compiler_ast_types.AstType
       (compiler_ast_types.ast-type-segment-bases-get
         bases
@@ -9478,7 +9450,7 @@
         compiler_backend.CompilerBackendTarget.Linux
         dynamic-instr
         dynamic-types
-        (owned_view.compiler-owned-shared-view index))]
+        index)]
     [stack-count : i64
       (compiler_backend.compiler-backend-call-stack-arg-count
         bases
@@ -9492,7 +9464,7 @@
         0
         0
         0
-        (owned_view.compiler-owned-shared-view index))]
+        index)]
     [asm : compiler_backend.ResultCompilerBackend
       (begin
         (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
@@ -9501,7 +9473,7 @@
         (compiler_backend.compiler-backend-emit-call-args
           bases
           compiler_backend.CompilerBackendTarget.Linux
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           (compiler_ir_types.CompilerIrCallArgs.One
             (compiler_ir_types.CompilerIrValue.Var 0))
           types
@@ -9513,7 +9485,7 @@
           0
           "%r14"
           (owned_view.compiler-owned-shared-view diag)
-          (owned_view.compiler-owned-shared-view index)
+          index
           1
           index.backend-state))]
     [asm-text : String
@@ -9533,12 +9505,12 @@
         0
         0
         0
-        (owned_view.compiler-owned-shared-view index))]
+        index)]
     [asm9 : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-call-args
         bases
         compiler_backend.CompilerBackendTarget.Linux
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.Var 0))
         types9
@@ -9550,7 +9522,7 @@
         0
         "%r14"
         (owned_view.compiler-owned-shared-view diag)
-        (owned_view.compiler-owned-shared-view index)
+        index
         1
         index.backend-state)]
     [asm9-text : String
@@ -9570,7 +9542,7 @@
         0
         0
         0
-        (owned_view.compiler-owned-shared-view index))]
+        index)]
     [asm11 : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-call-args
         bases
@@ -9587,7 +9559,7 @@
         0
         "%r14"
         diag
-        (owned_view.compiler-owned-shared-view index)
+        index
         1
         index.backend-state)]
     [asm11-text : String
@@ -9625,7 +9597,7 @@
         0
         0
         0
-        (owned_view.compiler-owned-shared-view index)
+        index
         2
         index.backend-state)]
     [_reset-xmm : unit
@@ -9785,50 +9757,50 @@
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view ref))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view mut-ref))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view ordinary-ref))
         1)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view bare-slice))
         1)
       (compiler_backend.compiler-backend-group-type?
         bases
-        (owned_view.compiler-owned-shared-view index)
+        index
         (owned_view.compiler-owned-shared-view ref))
       (compiler_backend.compiler-backend-group-type?
         bases
-        (owned_view.compiler-owned-shared-view index)
+        index
         (owned_view.compiler-owned-shared-view mut-ref))
       (not
         (compiler_backend.compiler-backend-group-type?
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view ordinary-ref)))
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view ref))
         0)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view mut-ref))
         0)
       (compiler_regalloc.compiler-reg-type-register-group?
@@ -10078,7 +10050,7 @@
       1
       src
       ty
-      (owned_view.compiler-owned-shared-view index)
+      index
       4
       index.backend-state)
       [(compiler_backend.ResultCompilerBackend.Err diag)
@@ -10111,7 +10083,7 @@
       0
       ""
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-      (owned_view.compiler-owned-shared-view index)
+      index
       4
       index.backend-state)
       [(compiler_backend.ResultCompilerBackend.Err diag)
@@ -10369,7 +10341,7 @@
     [packed : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-pack
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         0
         (compiler_ir_types.compiler-ir-value-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 123)
@@ -10378,13 +10350,13 @@
             (compiler_ir_types.compiler-ir-value-seq-empty)))
         ty
         3
-        (owned_view.compiler-owned-shared-view index)
+        index
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [data : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-word
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         0
@@ -10483,7 +10455,7 @@
     [packed : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-pack
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         0
         (compiler_ir_types.compiler-ir-value-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 123)
@@ -10492,13 +10464,13 @@
             (compiler_ir_types.compiler-ir-value-seq-empty)))
         (owned_view.compiler-owned-shared-view ty)
         4
-        (owned_view.compiler-owned-shared-view index)
+        index
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [data : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-word
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         0
@@ -10509,7 +10481,7 @@
     [length : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-word
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         2
         (compiler_ir_types.CompilerIrValue.Var 0)
         1
@@ -10524,7 +10496,7 @@
         3
         (compiler_ir_types.CompilerIrValue.Var 0)
         ty
-        (owned_view.compiler-owned-shared-view index)
+        index
         4
         index.backend-state)]
     [_group-disable : unit
@@ -10676,7 +10648,7 @@
       (=
         (compiler_backend.compiler-backend-group-word-count
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (owned_view.compiler-owned-shared-view program-index)
+          program-index
           (compiler_ast_types.AstType.String))
         1)
       (not
@@ -11397,79 +11369,79 @@
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view struct-plain))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view struct-args-root))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view enum-qualified))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view enum-args-qualified))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view region-qualified))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view opaque-struct))
         1)
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (compiler_ast_types.AstType.I64))
         1)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view struct-plain))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view struct-args-root))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view enum-qualified))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view enum-args-qualified))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view region-qualified))
         2)
       (=
         (compiler_backend.compiler-backend-group-word-class-mask
           bases
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view opaque-struct))
         0)
       (compiler_regalloc.compiler-reg-type-register-group?
@@ -11567,7 +11539,7 @@
           values
           (owned_view.compiler-owned-shared-view ty))
         plan
-        (owned_view.compiler-owned-shared-view index))]
+        index)]
     [worded : object_target.CompilerBackendObjectTargetParts
       (compiler_backend.compiler-backend-object-instr
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -11628,7 +11600,7 @@
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_regalloc.compiler-reg-var-types-empty)
       (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-      (owned_view.compiler-owned-shared-view assignments)
+      assignments
       2
       (compiler_ir_types.CompilerIrBinOp.Add)
       (compiler_ir_types.CompilerIrValue.Var 0)
@@ -11641,7 +11613,7 @@
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (compiler_regalloc.compiler-reg-var-types-empty)
           (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           2
           (compiler_ir_types.CompilerIrBinOp.Mul)
           (compiler_ir_types.CompilerIrValue.Var 0)
@@ -11654,7 +11626,7 @@
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
               (compiler_regalloc.compiler-reg-var-types-empty)
               (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-              (owned_view.compiler-owned-shared-view assignments)
+              assignments
               2
               (compiler_ir_types.CompilerIrBinOp.Shl
                 (compiler_ast_types.AstType.I64))
@@ -11668,7 +11640,7 @@
                   (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
                   (compiler_regalloc.compiler-reg-var-types-empty)
                   (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-                  (owned_view.compiler-owned-shared-view assignments)
+                  assignments
                   2
                   (compiler_ir_types.CompilerIrBinOp.Lt)
                   (compiler_ir_types.CompilerIrValue.Var 0)
@@ -13448,7 +13420,7 @@
         runtime-plan
         (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
-        (owned_view.compiler-owned-shared-view program-index)
+        program-index
         (compiler_ir_types.compiler-source-spans-empty)
         (compiler_backend.compiler-backend-source-span-index-build
           (compiler_ir_types.compiler-source-spans-empty))
@@ -13664,7 +13636,7 @@
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_regalloc.compiler-reg-var-types-empty)
       (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-      (owned_view.compiler-owned-shared-view rhs-spill)
+      rhs-spill
       2
       (compiler_ir_types.CompilerIrBinOp.Add)
       (compiler_ir_types.CompilerIrValue.Var 0)
@@ -15225,7 +15197,7 @@ g:
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-peephole-assignments)]
     (match (compiler_backend.compiler-backend-emit-branch
-      (owned_view.compiler-owned-shared-view assignments)
+      assignments
       "branch"
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.compiler-ir-label "then")
@@ -15993,7 +15965,7 @@ g:
     (and
       (match (compiler_backend.compiler-backend-emit-word
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         1
         (compiler_ir_types.CompilerIrValue.Var 2)
         0
@@ -17447,7 +17419,7 @@ g:
         (compiler-backend-phi-same-home-blocks)
         (compiler_ir_types.compiler-ir-label "join")
         (compiler_ir_types.compiler-ir-label "entry")
-        (owned_view.compiler-owned-shared-view program-index)
+        program-index
         0
         ""
         ""
@@ -17771,7 +17743,7 @@ g:
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          (owned_view.compiler-owned-shared-view index)
+          index
           2
           ""
           ""
@@ -17811,7 +17783,7 @@ g:
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          (owned_view.compiler-owned-shared-view index)
+          index
           2
           ""
           ""
@@ -17831,7 +17803,7 @@ g:
           (compiler-backend-phi-f32-three-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          (owned_view.compiler-owned-shared-view index)
+          index
           3
           ""
           ""
@@ -21532,7 +21504,7 @@ g:
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         "native_mask"
         (compiler_ir_types.compiler-ir-label "entry")
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         3
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.I64 0)
@@ -21551,7 +21523,7 @@ g:
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         "native_mask"
         (compiler_ir_types.compiler-ir-label "entry")
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.CompilerIrValue.Var 2)
@@ -21566,7 +21538,7 @@ g:
         [(compiler_backend.ResultCompilerBackend.Err _) false])
       (match (compiler_backend.compiler-backend-emit-avx2-select
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         3
         (compiler_ir_types.CompilerIrValue.Var 4)
         (compiler_ir_types.CompilerIrValue.Var 2)
@@ -21585,7 +21557,7 @@ g:
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         "narrow_mask"
         (compiler_ir_types.compiler-ir-label "entry")
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         3
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.I64 0)
@@ -21753,7 +21725,7 @@ g:
       (compiler-backend-vector-prefix-source-carry-spill-assignments)]
     (and
       (match (compiler_backend.compiler-backend-emit-avx2-vector-prefix
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         2
         (compiler_ir_types.CompilerIrVectorPrefixOp.Sum)
         (compiler_ir_types.CompilerIrValue.Var 0)
@@ -21859,7 +21831,7 @@ g:
       (compiler-backend-vector-prefix-spill-assignments)]
     (and
       (match (compiler_backend.compiler-backend-emit-avx512-vector-prefix
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         2
         (compiler_ir_types.CompilerIrVectorPrefixOp.Min)
         (compiler_ir_types.CompilerIrValue.Var 0)
@@ -24778,9 +24750,7 @@ g:
     false
     (or
       (compiler-backend-maybe-location-mask-stack?
-        (compiler_regalloc.compiler-reg-assignment-lookup
-          (owned_view.compiler-owned-shared-view assignments)
-          var))
+        (compiler_regalloc.compiler-reg-assignment-lookup assignments var))
       (compiler-backend-avx512-mask-spill-assignment? assignments (+ var 1)))))
 
 (define (compiler-backend-avx512-mask-spill-plan-ok?) : bool
@@ -26494,7 +26464,7 @@ g:
         (compiler_backend.compiler-backend-state-function-state backend-state)
         (owned_view.compiler-owned-shared-view prev-starts)
         (owned_view.compiler-owned-shared-view prev-ends)
-        (owned_view.compiler-owned-shared-view prev-assignment-index)
+        prev-assignment-index
         (if (compiler_backend.compiler-backend-target-windows? target)
           (bit-or
             prev-plan-mask
@@ -26579,7 +26549,7 @@ g:
           (compiler_backend.compiler-backend-state-function-state backend-state)
           (owned_view.compiler-owned-shared-view prev-starts)
           (owned_view.compiler-owned-shared-view prev-ends)
-          (owned_view.compiler-owned-shared-view prev-assignment-index)
+          prev-assignment-index
           (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
             (compiler_backend.compiler-backend-state-function-state
               backend-state))
@@ -29190,7 +29160,7 @@ g:
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-seq-empty))
-        (owned_view.compiler-owned-shared-view src-r9)
+        src-r9
         3)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq -8(%rbp), %r10\n    movq %r9, (%r10)\n")]
@@ -29279,11 +29249,11 @@ g:
     (and
       (match (compiler_backend.compiler-backend-emit-store-ptr
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.I64 7)
         (compiler_ast_types.AstType.I64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -29299,7 +29269,7 @@ g:
         (compiler_ast_types.AstType.U64)
         (compiler_ir_types.CompilerIrValue.I64 9)
         (compiler_ast_types.AstType.I64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         0
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -29314,7 +29284,7 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.I64 11)
         (compiler_ast_types.AstType.I64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -29546,7 +29516,7 @@ g:
           (compiler_ast_types.AstType.I64)
           8
           blocks
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -29873,7 +29843,7 @@ g:
           (compiler_ast_types.AstType.I64)
           40
           blocks
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -30103,7 +30073,7 @@ g:
           (compiler_ast_types.AstType.I64)
           6
           blocks
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -30256,7 +30226,7 @@ g:
           (compiler_ast_types.AstType.I64)
           10
           blocks
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -30367,7 +30337,7 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 5)
         (compiler_ast_types.AstType.I8)
         (compiler_ast_types.AstType.I64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         ""
         ""
         index.backend-state)
@@ -30383,7 +30353,7 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 5)
         (compiler_ast_types.AstType.U8)
         (compiler_ast_types.AstType.U64)
-        (owned_view.compiler-owned-shared-view index)
+        index
         ""
         ""
         index.backend-state)
@@ -30523,7 +30493,7 @@ g:
         (owned_view.compiler-owned-shared-view words)
         (owned_view.compiler-owned-shared-view ty)
         4
-        (owned_view.compiler-owned-shared-view index)
+        index
         (owned_view.compiler-owned-shared-view diag)
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -30536,7 +30506,7 @@ g:
         words
         ty
         4
-        (owned_view.compiler-owned-shared-view index)
+        index
         diag
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
@@ -33614,7 +33584,7 @@ g:
           (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     (and
       (compiler_regalloc.compiler-reg-scratch-cast-xmm-needed?
-        (owned_view.compiler-owned-shared-view direct)
+        direct
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.F64)
@@ -33628,7 +33598,7 @@ g:
           (compiler_ast_types.AstType.U64))
         0)
       (compiler_regalloc.compiler-reg-scratch-cast-xmm-needed?
-        (owned_view.compiler-owned-shared-view spilled)
+        spilled
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.F32)
@@ -35469,7 +35439,7 @@ g:
           (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     (and
       (match (compiler_backend.compiler-backend-emit-unop
-        (owned_view.compiler-owned-shared-view direct)
+        direct
         1
         (compiler_ir_types.CompilerIrUnOp.Sqrt)
         (compiler_ir_types.CompilerIrValue.Var 0)
@@ -35491,7 +35461,7 @@ g:
           (string.eq asm "    movss %xmm2, %xmm3\n    sqrtss %xmm3, %xmm3\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
       (match (compiler_backend.compiler-backend-emit-unop
-        (owned_view.compiler-owned-shared-view spill)
+        spill
         1
         (compiler_ir_types.CompilerIrUnOp.Sqrt)
         (compiler_ir_types.CompilerIrValue.Var 0)
@@ -36552,7 +36522,7 @@ g:
           (compiler_backend.compiler-backend-state-function-state backend-state)
           starts
           ends
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           2)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -37151,7 +37121,7 @@ g:
       (compiler-backend-direct-compare-branch-assignments)]
     (match (compiler_backend.compiler-backend-emit-compare-branch
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (owned_view.compiler-owned-shared-view assignments)
+      assignments
       "cmp_branch"
       (compiler_ir_types.CompilerIrBinOp.Lt)
       (compiler_ir_types.CompilerIrValue.Var 0)
@@ -37809,13 +37779,13 @@ g:
       (compiler_backend.compiler-backend-frame-size
         (compiler_backend.compiler-backend-frame-slots
           slot-vars
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state))]
     [push-regs : (__tl_dyn-array String)
       (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         (owned_view.compiler-owned-shared-view push-regs)
         backend-state)]
     [vars : compiler_regalloc.CompilerRegVarTypes
@@ -37830,7 +37800,7 @@ g:
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       vars
       (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-      (owned_view.compiler-owned-shared-view assignments)
+      assignments
       1
       (compiler_ir_types.CompilerIrBinOp.Add)
       (compiler_ir_types.CompilerIrValue.Var 0)
@@ -37843,7 +37813,7 @@ g:
             (compiler_backend.compiler-backend-rsp-rebase-full-result
               (str_cat.str-cat
                 (compiler_backend.compiler-backend-emit-save-callee-regs
-                  (owned_view.compiler-owned-shared-view assignments)
+                  assignments
                   slot-vars
                   backend-state)
                 binop-asm
@@ -38464,7 +38434,7 @@ g:
           (compiler_ast_types.AstType.I64)
           8
           blocks
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -38784,7 +38754,7 @@ g:
           (compiler_ast_types.AstType.I64)
           15
           blocks
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -40243,7 +40213,7 @@ g:
       2
       ""
       ty
-      (owned_view.compiler-owned-shared-view index)
+      index
       index.backend-state)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -40291,7 +40261,7 @@ g:
         0
         6
         0
-        (owned_view.compiler-owned-shared-view index)
+        index
         1
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -40320,7 +40290,7 @@ g:
         0
         6
         0
-        (owned_view.compiler-owned-shared-view index)
+        index
         1
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -40384,7 +40354,7 @@ g:
         0
         6
         0
-        (owned_view.compiler-owned-shared-view index)
+        index
         1
         index.backend-state)]
     [pending-after : i64
@@ -40591,7 +40561,7 @@ g:
         0
         "%r14"
         (owned_view.compiler-owned-shared-view diag)
-        (owned_view.compiler-owned-shared-view index)
+        index
         1
         index.backend-state)]
     [pressure-call : String
@@ -40622,7 +40592,7 @@ g:
         0
         0
         0
-        (owned_view.compiler-owned-shared-view index)
+        index
         7
         index.backend-state)]
     [pressure-param : String
@@ -40651,7 +40621,7 @@ g:
         0
         0
         0
-        (owned_view.compiler-owned-shared-view index)
+        index
         7
         index.backend-state)]
     [memory-param : String
@@ -40680,7 +40650,7 @@ g:
       (compiler_backend.compiler-backend-emit-call-args
         bases
         target
-        (owned_view.compiler-owned-shared-view mixed-assignments)
+        mixed-assignments
         (owned_view.compiler-owned-shared-view mixed-args)
         (owned_view.compiler-owned-shared-view mixed-types)
         false
@@ -40691,7 +40661,7 @@ g:
         0
         "%r14"
         (owned_view.compiler-owned-shared-view diag)
-        (owned_view.compiler-owned-shared-view index)
+        index
         1
         index.backend-state)]
     [mixed-call : String
@@ -40713,7 +40683,7 @@ g:
         0
         0
         0
-        (owned_view.compiler-owned-shared-view index)
+        index
         1
         index.backend-state)]
     [mixed-param : String
@@ -40750,7 +40720,7 @@ g:
       (compiler_backend.compiler-backend-emit-call-args
         bases
         target
-        (owned_view.compiler-owned-shared-view exhausted-assignments)
+        exhausted-assignments
         (owned_view.compiler-owned-shared-view exhausted-args)
         (owned_view.compiler-owned-shared-view exhausted-types)
         false
@@ -40761,7 +40731,7 @@ g:
         0
         "%r14"
         diag
-        (owned_view.compiler-owned-shared-view index)
+        index
         2
         index.backend-state)]
     [exhausted-call : String
@@ -40788,7 +40758,7 @@ g:
         0
         6
         0
-        (owned_view.compiler-owned-shared-view index)
+        index
         2
         index.backend-state)]
     [exhausted-param : String
@@ -40800,7 +40770,7 @@ g:
         (compiler_backend.compiler-backend-linux-group-register-banks-fit?
           bases
           target
-          (owned_view.compiler-owned-shared-view index)
+          index
           int-group
           5
           0
@@ -40808,7 +40778,7 @@ g:
       (compiler_backend.compiler-backend-linux-group-register-banks-fit?
         bases
         target
-        (owned_view.compiler-owned-shared-view index)
+        index
         (owned_view.compiler-owned-shared-view mixed-group)
         0
         0
@@ -40817,7 +40787,7 @@ g:
         (compiler_backend.compiler-backend-linux-group-register-banks-fit?
           bases
           target
-          (owned_view.compiler-owned-shared-view index)
+          index
           (owned_view.compiler-owned-shared-view mixed-group)
           6
           0
@@ -40826,7 +40796,7 @@ g:
         (compiler_backend.compiler-backend-linux-group-register-banks-fit?
           bases
           target
-          (owned_view.compiler-owned-shared-view index)
+          index
           mixed-group
           0
           8
@@ -40843,7 +40813,7 @@ g:
           0
           0
           0
-          (owned_view.compiler-owned-shared-view index))
+          index)
         2)
       (=
         (compiler_backend.compiler-backend-type-list-stack-arg-count
@@ -40854,7 +40824,7 @@ g:
           0
           0
           0
-          (owned_view.compiler-owned-shared-view index))
+          index)
         2)
       (compiler_backend.compiler-backend-string-contains?
         (owned_view.compiler-owned-shared-view pressure-call)
@@ -40983,7 +40953,7 @@ g:
           0
           0
           0
-          (owned_view.compiler-owned-shared-view index))
+          index)
         0)
       (compiler_backend.compiler-backend-string-contains?
         (owned_view.compiler-owned-shared-view mixed-call)
@@ -41011,7 +40981,7 @@ g:
           0
           6
           0
-          (owned_view.compiler-owned-shared-view index))
+          index)
         2)
       (=
         (compiler_backend.compiler-backend-type-list-stack-arg-count
@@ -41591,7 +41561,7 @@ g:
           (compiler_ast_types.AstType.I64)
           1
           (owned_view.compiler-owned-shared-view blocks)
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -41720,7 +41690,7 @@ g:
           plan
           (compiler_ir_types.compiler-ir-function-seq-empty)
           externs
-          (owned_view.compiler-owned-shared-view index)
+          index
           (compiler_diagnostic.compiler-diagnostic-at-start "" "")
           index.backend-state)]
       [(compiler_backend.ResultBackendRuntimePlan.Err message)
@@ -42076,7 +42046,7 @@ g:
             (compiler_regalloc.compiler-reg-var-types-empty)
             functions
             (compiler_ir_types.compiler-ir-extern-seq-empty)
-            (owned_view.compiler-owned-shared-view index)
+            index
             2
             (compiler_diagnostic.compiler-diagnostic-at-start "" "")
             index.backend-state)]
@@ -42160,7 +42130,7 @@ g:
           (compiler_regalloc.compiler-reg-var-types-empty)
           functions
           (compiler_ir_types.compiler-ir-extern-seq-empty)
-          (owned_view.compiler-owned-shared-view index)
+          index
           2
           (compiler_diagnostic.compiler-diagnostic-at-start "" "")
           index.backend-state)
@@ -43027,7 +42997,7 @@ g:
           (compiler_ast_types.AstType.I64)
           50
           blocks
-          (owned_view.compiler-owned-shared-view assignments)
+          assignments
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -44268,87 +44238,81 @@ g:
           referenced-link-id))]
     (and
       (compiler_backend.compiler-backend-index-function-defines-id?
-        (owned_view.compiler-owned-shared-view index)
+        index
         short-fn-id)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-index-function-defines-id?
-          (owned_view.compiler-owned-shared-view index)
+          index
           fn-id)
-        (compiler_backend.compiler-backend-index-function-defines?
-          (owned_view.compiler-owned-shared-view index)
-          fn-id)
+        (compiler_backend.compiler-backend-index-function-defines? index fn-id)
         (not
           (compiler_backend.compiler-backend-index-function-defines-id?
-            (owned_view.compiler-owned-shared-view index)
+            index
             missing-id))
         (compiler-backend-signature-i64-to-i64?
           (compiler_backend.compiler-backend-index-function-signature-id
-            (owned_view.compiler-owned-shared-view index)
+            index
             fn-id))
         (compiler-backend-signature-i64-to-i64?
           (compiler_backend.compiler-backend-index-function-signature
-            (owned_view.compiler-owned-shared-view index)
+            index
             fn-id))
         (string.eq
-          (compiler_backend.compiler-backend-function-symbol-index
-            (owned_view.compiler-owned-shared-view index)
-            fn-id)
+          (compiler_backend.compiler-backend-function-symbol-index index fn-id)
           "_tl_f0")
         (string.eq
-          (compiler_backend.compiler-backend-function-label-scope
-            (owned_view.compiler-owned-shared-view index)
-            fn-id)
+          (compiler_backend.compiler-backend-function-label-scope index fn-id)
           "f0")
         (compiler-backend-signature-unit-to-i64?
           (compiler_backend.compiler-backend-index-extern-signature-id
-            (owned_view.compiler-owned-shared-view index)
+            index
             provided-id)))
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-index-extern-provided-id?
-          (owned_view.compiler-owned-shared-view index)
+          index
           provided-id)
         (compiler_backend.compiler-backend-index-extern-provided?
-          (owned_view.compiler-owned-shared-view index)
+          index
           provided-id)
         (not
           (compiler_backend.compiler-backend-index-extern-provided-id?
-            (owned_view.compiler-owned-shared-view index)
+            index
             provided-link-id))
         (compiler_backend.compiler-backend-index-extern-references-id?
-          (owned_view.compiler-owned-shared-view index)
+          index
           referenced-id)
         (not
           (compiler_backend.compiler-backend-index-extern-references-id?
-            (owned_view.compiler-owned-shared-view index)
+            index
             referenced-link-id))
         (=
           (compiler_backend.compiler-backend-index-extern-link-symbol-id
-            (owned_view.compiler-owned-shared-view index)
+            index
             referenced-id)
           referenced-link-id)
         (=
           (compiler_backend.compiler-backend-index-extern-link-symbol-id
-            (owned_view.compiler-owned-shared-view index)
+            index
             referenced-link-id)
           referenced-link-id)
         (=
           (compiler_backend.compiler-backend-index-extern-link-symbol-id
-            (owned_view.compiler-owned-shared-view index)
+            index
             missing-id)
           missing-id))
       (compiler_backend.backend-and4
         (string.eq
           (compiler_backend.compiler-backend-function-symbol-map-comment
-            (owned_view.compiler-owned-shared-view index)
+            index
             fn-id)
           "#t _tl_f0 _tl_really_long_backend_index_function\n")
         (string.eq
           (compiler_backend.compiler-backend-function-symbol-index
-            (owned_view.compiler-owned-shared-view index)
+            index
             provided-id)
           "provided_link")
         (compiler_backend.compiler-backend-index-extern-references?
-          (owned_view.compiler-owned-shared-view index)
+          index
           referenced-link-id)
         (string.eq
           (compiler_backend.compiler-backend-index-extern-link-symbol
@@ -44415,38 +44379,38 @@ g:
         (= source-count-before (ci.intern-pool-len))
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-index-function-defines-id?
-            (owned_view.compiler-owned-shared-view index)
+            index
             fn-id)
           (compiler_backend.compiler-backend-index-function-defines?
-            (owned_view.compiler-owned-shared-view index)
+            index
             fn-id)
           (compiler-backend-signature-unit-to-i64?
             (compiler_backend.compiler-backend-index-extern-signature-id
-              (owned_view.compiler-owned-shared-view index)
+              index
               extern-id))
           (compiler-backend-signature-i64-to-i64?
             (compiler_backend.compiler-backend-index-extern-signature-id
-              (owned_view.compiler-owned-shared-view index)
+              index
               same-name-id))
           (compiler_backend.compiler-backend-index-extern-references-id?
-            (owned_view.compiler-owned-shared-view index)
+            index
             extern-id)
           (compiler_backend.compiler-backend-index-extern-references-id?
-            (owned_view.compiler-owned-shared-view index)
+            index
             same-name-id)
           (=
             (compiler_backend.compiler-backend-index-extern-link-symbol-id
-              (owned_view.compiler-owned-shared-view index)
+              index
               extern-id)
             extern-link-id)
           (=
             (compiler_backend.compiler-backend-index-extern-link-symbol-id
-              (owned_view.compiler-owned-shared-view index)
+              index
               same-name-id)
             same-name-link-id))
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-index-extern-references?
-            (owned_view.compiler-owned-shared-view index)
+            index
             extern-link-id)
           (compiler_backend.compiler-backend-index-extern-references?
             index
@@ -44810,7 +44774,7 @@ g:
             starts
             ends
             (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
-              (owned_view.compiler-owned-shared-view assignments)
+              assignments
               7)
             7
             5
@@ -44826,7 +44790,7 @@ g:
             starts
             ends
             (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
-              (owned_view.compiler-owned-shared-view assignments)
+              assignments
               7)
             7
             5
@@ -46494,7 +46458,7 @@ g:
           (compiler_backend.compiler-backend-scavenge-occupancy-build
             (owned_view.compiler-owned-shared-view starts)
             (owned_view.compiler-owned-shared-view ends)
-            (owned_view.compiler-owned-shared-view assignment-index)
+            assignment-index
             (__tl_make-array compiler_regalloc.CompilerRegIntervalSeq 0)
             5)]
         (and
@@ -47065,7 +47029,7 @@ g:
       (set! (array-ref starts 2) target-point)
       (set! (array-ref ends 2) target-point)
       (match (compiler_backend.compiler-backend-scavenge-assignments-build
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         3)
         [(compiler_backend.CompilerBackendScavengeAssignments
             assignment-index
@@ -47098,11 +47062,11 @@ g:
         -128)
       (match (compiler_backend.compiler-backend-emit-phi-source-load-store
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (owned_view.compiler-owned-shared-view assignments)
+        assignments
         0
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ast_types.AstType.F64)
-        (owned_view.compiler-owned-shared-view program-index)
+        program-index
         backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok back-edge)
           (let

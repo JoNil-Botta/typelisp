@@ -125724,7 +125724,7 @@
                 type-segment-bases
                 (cabi.CompilerRegTargetAbi.Linux)
                 params
-                types.representations
+                (reg.compiler-reg-var-types-representations types)
                 (compiler-opt-global-shared-view seq)
                 (compiler-opt-global-shared-view weights)
                 vars

@@ -12602,8 +12602,8 @@
           extra
           (reg.compiler-reg-global-shared-view base))]
       (and
-        (= (array-ref base.present 2) 1)
-        (= (array-ref base.present 3) 0)
+        (= (array-ref (reg.compiler-reg-var-types-present base) 2) 1)
+        (= (array-ref (reg.compiler-reg-var-types-present base) 3) 0)
         (match (reg.compiler-reg-var-types-lookup
           (reg.compiler-reg-global-shared-view base)
           2)
@@ -17366,7 +17366,7 @@
           (set! (array-ref present index) 1)
           (set! (array-ref types index) (compiler-reg-i64-ty))
           (set! index (+ index 1))))
-      (reg.CompilerRegVarTypes
+      (reg.compiler-reg-var-types-new
         present
         types
         (ir.compiler-ir-representation-index-empty)
@@ -22039,7 +22039,8 @@
           "planning records edge-precise liveness in the caller's owner")
         (match plan
           [(reg.CompilerRegPlan.Plan _ _ _ returned-types _ _)
-            (reg.compiler-reg-liveness-census-reset! returned-types.metrics)])
+            (reg.compiler-reg-liveness-census-reset!
+              (reg.compiler-reg-var-types-metrics returned-types))])
         (test.assert-i64-eq
           (reg.compiler-reg-liveness-census-baseline-count
             (owned_view.compiler-owned-shared-view metrics))

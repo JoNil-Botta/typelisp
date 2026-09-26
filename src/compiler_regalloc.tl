@@ -126,13 +126,67 @@
 ;; variable IDs are a dense monotonic domain bounded by the function's `vars`
 ;; watermark. `present` distinguishes real definitions from holes in that
 ;; domain; `items` carries the exact type for each present ID.
-(defstruct CompilerRegVarTypes
+;;
+;; The view is a Copy handle: the address of its data cell, read field by field
+;; at constant offsets. Growth builds a fresh cell, as it built a fresh value
+;; before. `representations` comes last because comptime offset-of does not
+;; size its hashmap fields reliably in every compilation root.
+(defstruct CompilerRegVarTypesData
   (present (__tl_dyn-array i64))
   (items (__tl_dyn-array ast.AstType))
-  (representations ir.CompilerIrRepresentationIndex)
   ;; The census owner follows the already-ubiquitous type view through every
   ;; planning and rewrite path. Ordinary builds carry only its zero sentinel.
-  (metrics profile_state.CompilerProfileMetrics))
+  (metrics profile_state.CompilerProfileMetrics)
+  (representations ir.CompilerIrRepresentationIndex))
+
+(defstruct CompilerRegVarTypes
+  (address u64))
+
+(define (compiler-reg-var-types-new
+  [present : (__tl_dyn-array i64)]
+  [items : (__tl_dyn-array ast.AstType)]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegVarTypes
+  (let
+    [cell : (Box CompilerRegVarTypesData)
+      (box (CompilerRegVarTypesData present items metrics representations))]
+    (CompilerRegVarTypes
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64)))))))
+
+(defmacro (compiler-reg-var-types-field
+  [types : Expr]
+  [field : Expr]
+  [_T : type]) : Expr
+  `(unsafe
+    (ptr-read
+      (int->ptr
+        (+
+          (__tl-project-field-name ,types "address")
+          (cast
+            (comptime (offset-of (type CompilerRegVarTypesData) ,field))
+            : u64))
+        : (Ptr ,_T)))))
+
+(define (compiler-reg-var-types-present [types : CompilerRegVarTypes]) : (__tl_dyn-array
+    i64)
+  (compiler-reg-var-types-field types present (__tl_dyn-array i64)))
+
+(define (compiler-reg-var-types-items [types : CompilerRegVarTypes]) : (__tl_dyn-array
+    ast.AstType)
+  (compiler-reg-var-types-field types items (__tl_dyn-array ast.AstType)))
+
+(define (compiler-reg-var-types-metrics [types : CompilerRegVarTypes]) : profile_state.CompilerProfileMetrics
+  (compiler-reg-var-types-field
+    types
+    metrics
+    profile_state.CompilerProfileMetrics))
+
+(define (compiler-reg-var-types-representations [types : CompilerRegVarTypes]) : ir.CompilerIrRepresentationIndex
+  (compiler-reg-var-types-field
+    types
+    representations
+    ir.CompilerIrRepresentationIndex))
 
 (defenum CompilerRegMaybeType
   (No)
@@ -1798,7 +1852,7 @@
     (compiler-reg-handle-type? ty)))
 
 (define (compiler-reg-var-types-empty) : CompilerRegVarTypes
-  (CompilerRegVarTypes
+  (compiler-reg-var-types-new
     (__tl_make-array i64 0)
     (__tl_make-array ast.AstType 0)
     (ir.compiler-ir-representation-index-empty)
@@ -1806,7 +1860,7 @@
 
 (define (compiler-reg-var-types-empty-with-representations
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
-  (CompilerRegVarTypes
+  (compiler-reg-var-types-new
     (__tl_make-array i64 0)
     (__tl_make-array ast.AstType 0)
     representations
@@ -1816,8 +1870,8 @@
   [types : CompilerRegVarTypes]
   [var : i64]) : CompilerRegMaybeType
   (let
-    [present : (__tl_dyn-array i64) types.present]
-    [items : (__tl_dyn-array ast.AstType) types.items]
+    [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
+    [items : (__tl_dyn-array ast.AstType) (compiler-reg-var-types-items types)]
     (if (or (< var 0) (>= var (array-length present)))
       CompilerRegMaybeType.No
       (if (= (array-ref present var) 0)
@@ -1837,8 +1891,10 @@
   (if (< var 0)
     types
     (let
-      [old-present : (__tl_dyn-array i64) types.present]
-      [old-items : (__tl_dyn-array ast.AstType) types.items]
+      [old-present : (__tl_dyn-array i64)
+        (compiler-reg-var-types-present types)]
+      [old-items : (__tl_dyn-array ast.AstType)
+        (compiler-reg-var-types-items types)]
       [old-len : i64 (array-length old-present)]
       (if (< var old-len)
         (begin
@@ -1866,11 +1922,11 @@
                 (set! index (+ index 1))))
             (set! (array-ref present var) 1)
             (set! (array-ref items var) ty)
-            (CompilerRegVarTypes
+            (compiler-reg-var-types-new
               present
               items
-              types.representations
-              types.metrics)))))))
+              (compiler-reg-var-types-representations types)
+              (compiler-reg-var-types-metrics types))))))))
 
 (define (compiler-reg-addr-of-result-type) : ast.AstType
   (ast.ast-ty-mut-ptr (ast.AstType.U8)))
@@ -2028,7 +2084,7 @@
             blocks
             (&mut present)
             (&mut types))
-          (CompilerRegVarTypes present types representations metrics)))]))
+          (compiler-reg-var-types-new present types representations metrics)))]))
 
 (define (compiler-reg-function-var-types-with-representations
   [func : ir.CompilerIrFunction]
@@ -6296,12 +6352,12 @@
 ;; When handles-ok? is true (scalar path) 8-byte aggregate handles are register
 ;; eligible; when false (SIMD/AVX path, unchanged) only CPU scalars/pointers are.
 (define (compiler-reg-ineligible-non-scalars
-  [types : (& types CompilerRegVarTypes)]
+  [types : CompilerRegVarTypes]
   [set : live.CompilerLiveI64Set]
   [handles-ok? : bool]) : live.CompilerLiveI64Set
   (let
-    [present : (__tl_dyn-array i64) types.present]
-    [items : (__tl_dyn-array ast.AstType) types.items]
+    [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
+    [items : (__tl_dyn-array ast.AstType) (compiler-reg-var-types-items types)]
     [index : i64 0]
     [out : live.CompilerLiveI64Set set]
     (begin
@@ -7329,7 +7385,7 @@
             (not
               (compiler-reg-type-register-group?
                 type-segment-bases
-                types.representations
+                (compiler-reg-var-types-representations types)
                 ty)))]
         [(CompilerRegMaybeType.No) false])]
     [(ir.CompilerIrValue.F64 _) false]
@@ -7470,7 +7526,7 @@
         [(CompilerRegMaybeType.Some ty)
           (compiler-reg-type-register-group?
             type-segment-bases
-            types.representations
+            (compiler-reg-var-types-representations types)
             ty)]
         [(CompilerRegMaybeType.No) true])]
     [_ false]))
@@ -7936,7 +7992,7 @@
 ;; non-rescued scalar spill would.
 (define (compiler-reg-ineligible-vars-simd
   [func : ir.CompilerIrFunction]
-  [types : (& types CompilerRegVarTypes)]
+  [types : CompilerRegVarTypes]
   [intervals : CompilerRegIntervalSeq]) : live.CompilerLiveI64Set
   (match (compiler-reg-global-shared-view func)
     [(ir.CompilerIrFunction.Function _ params _ _ blocks _)
@@ -19288,7 +19344,7 @@
             (compiler-reg-liveness-handle-make
               (compiler-reg-global-shared-view func)
               false
-              (compiler-reg-global-shared-view type-info.metrics))]
+              (compiler-reg-var-types-metrics type-info))]
           (compiler-reg-loop-split-rewrite-fueled
             type-segment-bases
             target-abi
@@ -19483,8 +19539,7 @@
                                     (compiler-reg-liveness-handle-make
                                       new-func
                                       false
-                                      (compiler-reg-global-shared-view
-                                        type-info.metrics))
+                                      (compiler-reg-var-types-metrics type-info))
                                     (compiler-reg-global-shared-view new-blocks)
                                     new-vars
                                     type-info
@@ -20035,7 +20090,7 @@
       [round-type-info : CompilerRegVarTypes
         (compiler-reg-function-var-types-with-metrics
           (compiler-reg-global-shared-view func)
-          round-plan-types.metrics)]
+          (compiler-reg-var-types-metrics round-plan-types))]
       (match (compiler-reg-loop-split-rewrite-one
         type-segment-bases
         target-abi
@@ -21301,7 +21356,7 @@
               [(CompilerRegMaybeType.Some ty)
                 (if (compiler-reg-cold-call-protectable-type?
                   type-segment-bases
-                  type-info.representations
+                  (compiler-reg-var-types-representations type-info)
                   (compiler-reg-global-shared-view ty))
                   (begin
                     (if (< count (array-length selected))
@@ -22393,7 +22448,7 @@
               [(CompilerRegMaybeType.Some ty)
                 (compiler-reg-cold-call-protectable-type?
                   type-segment-bases
-                  type-info.representations
+                  (compiler-reg-var-types-representations type-info)
                   ty)])]
           [_ false])])))
 
@@ -22494,7 +22549,7 @@
         [(CompilerRegMaybeType.Some ty)
           (compiler-reg-cold-call-protectable-type?
             type-segment-bases
-            type-info.representations
+            (compiler-reg-var-types-representations type-info)
             ty)])
       false)))
 
@@ -24488,9 +24543,8 @@
                 [split-types : CompilerRegVarTypes
                   (compiler-reg-function-var-types-with-representations-and-metrics
                     (compiler-reg-global-shared-view split-func)
-                    (compiler-reg-global-shared-view
-                      ctx.type-info.representations)
-                    (compiler-reg-global-shared-view ctx.type-info.metrics))]
+                    (compiler-reg-var-types-representations ctx.type-info)
+                    (compiler-reg-var-types-metrics ctx.type-info))]
                 [split-plan
                   : CompilerRegPlan
                   ;; `cold-split?` is FALSE and never observed: cycle 20's
@@ -24542,7 +24596,7 @@
                         ctx.type-segment-bases
                         ctx.target-abi
                         params
-                        ctx.type-info.representations
+                        (compiler-reg-var-types-representations ctx.type-info)
                         (live.compiler-live-ir-block-list-to-seq split-blocks)
                         ctx.weights
                         split-vars
@@ -24674,7 +24728,7 @@
                             type-segment-bases
                             target-abi
                             (compiler-reg-function-params func)
-                            type-info.representations
+                            (compiler-reg-var-types-representations type-info)
                             seq
                             (compiler-reg-global-shared-view weights)
                             vars
@@ -25322,7 +25376,7 @@
               [(CompilerRegMaybeType.Some ty)
                 (compiler-reg-cold-call-protectable-type?
                   type-segment-bases
-                  type-info.representations
+                  (compiler-reg-var-types-representations type-info)
                   ty)])]
           [_ false])])))
 
@@ -26736,9 +26790,8 @@
                 [park-types : CompilerRegVarTypes
                   (compiler-reg-function-var-types-with-representations-and-metrics
                     (compiler-reg-global-shared-view park-func)
-                    (compiler-reg-global-shared-view
-                      rd.type-info.representations)
-                    rd.type-info.metrics)]
+                    (compiler-reg-var-types-representations rd.type-info)
+                    (compiler-reg-var-types-metrics rd.type-info))]
                 [park-plan : CompilerRegPlan
                   (compiler-reg-plan-function-scalar-forced-spill-with-types
                     rd.type-segment-bases
@@ -26757,7 +26810,7 @@
                     rd.type-segment-bases
                     rd.target-abi
                     (compiler-reg-function-params rd.func)
-                    rd.type-info.representations
+                    (compiler-reg-var-types-representations rd.type-info)
                     (live.compiler-live-ir-block-list-to-seq
                       (compiler-reg-global-shared-view park-blocks))
                     (compiler-reg-loop-park-block-weights
@@ -26924,7 +26977,7 @@
                             type-segment-bases
                             target-abi
                             (compiler-reg-function-params func)
-                            type-info.representations
+                            (compiler-reg-var-types-representations type-info)
                             seq
                             weights
                             vars
@@ -30361,7 +30414,7 @@
     [(CompilerRegMaybeType.Some ty)
       (compiler-reg-type-register-group-has-sse?
         type-segment-bases
-        types.representations
+        (compiler-reg-var-types-representations types)
         ty)]
     [(CompilerRegMaybeType.No) false]))
 
@@ -30372,8 +30425,8 @@
   [types : CompilerRegVarTypes]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (let
-    [present : (__tl_dyn-array i64) types.present]
-    [items : (__tl_dyn-array ast.AstType) types.items]
+    [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
+    [items : (__tl_dyn-array ast.AstType) (compiler-reg-var-types-items types)]
     [count : i64 (array-length present)]
     [index : i64 0]
     [out : live.CompilerLiveI64Set set]
@@ -30386,7 +30439,7 @@
             unit
             (if (compiler-reg-type-register-group?
               type-segment-bases
-              types.representations
+              (compiler-reg-var-types-representations types)
               (compiler-reg-global-array-element-shared-view items index))
               (set! out (live.compiler-live-set-insert out index))
               unit))
@@ -36093,7 +36146,7 @@
           [(ir.CompilerIrFunction.Function _ params _ _ _ _)
             (compiler-reg-param-entry-forbidden
               type-segment-bases
-              (compiler-reg-global-shared-view type-info.representations)
+              (compiler-reg-var-types-representations type-info)
               target-abi
               params
               coalesce.parents
@@ -36557,7 +36610,7 @@
       (compiler-reg-liveness-handle-make
         (compiler-reg-global-shared-view func)
         false
-        (compiler-reg-global-shared-view type-info.metrics))]
+        (compiler-reg-var-types-metrics type-info))]
     [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals
@@ -36650,7 +36703,7 @@
       (compiler-reg-liveness-handle-make
         (compiler-reg-global-shared-view func)
         false
-        (compiler-reg-global-shared-view type-info.metrics))]
+        (compiler-reg-var-types-metrics type-info))]
     [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals
@@ -37113,7 +37166,7 @@
       (compiler-reg-liveness-handle-make
         (compiler-reg-global-shared-view func)
         true
-        type-info.metrics)]
+        (compiler-reg-var-types-metrics type-info))]
     [vars : i64
       (match (compiler-reg-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ function-vars _ _) function-vars])]
@@ -37183,7 +37236,7 @@
           [param-plan : CompilerRegParamAssignPlan
             (compiler-reg-param-assign-plan
               type-segment-bases
-              type-info.representations
+              (compiler-reg-var-types-representations type-info)
               target-abi
               (compiler-reg-global-shared-view func)
               (compiler-reg-global-shared-view interval-index)
@@ -37368,8 +37421,8 @@
   [types : CompilerRegVarTypes]
   [flags : (&mut flags (__tl_dyn-array bool))]) : unit
   (let
-    [present : (__tl_dyn-array i64) types.present]
-    [items : (__tl_dyn-array ast.AstType) types.items]
+    [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
+    [items : (__tl_dyn-array ast.AstType) (compiler-reg-var-types-items types)]
     [index : i64 0]
     [limit : i64
       (if (< (array-length present) (array-length flags))
@@ -37415,8 +37468,8 @@
   [types : CompilerRegVarTypes]
   [tys : (&mut tys (__tl_dyn-array ast.AstType))]) : unit
   (let
-    [present : (__tl_dyn-array i64) types.present]
-    [items : (__tl_dyn-array ast.AstType) types.items]
+    [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
+    [items : (__tl_dyn-array ast.AstType) (compiler-reg-var-types-items types)]
     [index : i64 0]
     [limit : i64
       (if (< (array-length present) (array-length tys))
@@ -39131,10 +39184,12 @@
   [remap : (__tl_dyn-array i64)]
   [present : (&mut present (__tl_dyn-array i64))]
   [items : (&mut items (__tl_dyn-array ast.AstType))]
-  [types : (& types CompilerRegVarTypes)]) : unit
+  [types : CompilerRegVarTypes]) : unit
   (let
-    [source-present : (__tl_dyn-array i64) types.present]
-    [source-items : (__tl_dyn-array ast.AstType) types.items]
+    [source-present : (__tl_dyn-array i64)
+      (compiler-reg-var-types-present types)]
+    [source-items : (__tl_dyn-array ast.AstType)
+      (compiler-reg-var-types-items types)]
     [index : i64 0]
     (while (< index (array-length source-present))
       (begin
@@ -39160,7 +39215,11 @@
     [items : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType vars)]
     (begin
       (compiler-reg-color-scatter-types remap (&mut present) (&mut items) types)
-      (CompilerRegVarTypes present items types.representations types.metrics))))
+      (compiler-reg-var-types-new
+        present
+        items
+        (compiler-reg-var-types-representations types)
+        (compiler-reg-var-types-metrics types)))))
 
 ;; Spilled scalars are dropped: the id remap re-homes them, so emission's
 ;; formula-slot fallback covers the new id and a stale Spill offset keyed by
@@ -41496,10 +41555,13 @@
   [extra : CompilerRegVarTypes]
   [base : CompilerRegVarTypes]) : CompilerRegVarTypes
   (let
-    [extra-present : (__tl_dyn-array i64) extra.present]
-    [extra-items : (__tl_dyn-array ast.AstType) extra.items]
-    [base-present : (__tl_dyn-array i64) base.present]
-    [base-items : (__tl_dyn-array ast.AstType) base.items]
+    [extra-present : (__tl_dyn-array i64)
+      (compiler-reg-var-types-present extra)]
+    [extra-items : (__tl_dyn-array ast.AstType)
+      (compiler-reg-var-types-items extra)]
+    [base-present : (__tl_dyn-array i64) (compiler-reg-var-types-present base)]
+    [base-items : (__tl_dyn-array ast.AstType)
+      (compiler-reg-var-types-items base)]
     (if (= (array-length extra-present) 0)
       base
       (let
@@ -41526,7 +41588,11 @@
                   (set! (array-ref present index) 1)
                   (set! (array-ref items index) (array-ref extra-items index))))
               (set! index (+ index 1))))
-          (CompilerRegVarTypes present items base.representations base.metrics))))))
+          (compiler-reg-var-types-new
+            present
+            items
+            (compiler-reg-var-types-representations base)
+            (compiler-reg-var-types-metrics base)))))))
 
 (define (compiler-reg-plan-with-call-save-rewrite
   [plan : CompilerRegPlan]
@@ -41650,7 +41716,7 @@
   [types : CompilerRegVarTypes]
   [best : i64]) : i64
   (let
-    [present : (__tl_dyn-array i64) types.present]
+    [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
     [index : i64 (- (array-length present) 1)]
     (begin
       (while (if (< index 0)
@@ -42303,6 +42369,10 @@
               (compiler-reg-assignment-table-copy-with-capacity
                 assignment-view
                 out-vars)]
+            [base-present : (__tl_dyn-array i64)
+              (compiler-reg-var-types-present base-types)]
+            [base-items : (__tl_dyn-array ast.AstType)
+              (compiler-reg-var-types-items base-types)]
             (begin
               (compiler-reg-fill-i64-array
                 (compiler-reg-global-shared-view starts)
@@ -42317,11 +42387,8 @@
                 (&mut segments)
                 base-index.segments
                 0)
-              (compiler-reg-copy-i64-array! (&mut present) base-types.present 0)
-              (compiler-reg-copy-ast-type-array!
-                (&mut types)
-                base-types.items
-                0)
+              (compiler-reg-copy-i64-array! (&mut present) base-present 0)
+              (compiler-reg-copy-ast-type-array! (&mut types) base-items 0)
               (compiler-reg-early-scratch-fill-blocks!
                 assignment-view
                 assignments
@@ -42340,11 +42407,11 @@
                 (&mut scratch-excluded))
               (CompilerRegEarlyScratchModel
                 (CompilerRegIntervalIndex starts ends segments)
-                (CompilerRegVarTypes
+                (compiler-reg-var-types-new
                   present
                   types
-                  base-types.representations
-                  base-types.metrics)
+                  (compiler-reg-var-types-representations base-types)
+                  (compiler-reg-var-types-metrics base-types))
                 assignments
                 scratch-weights
                 scratch-excluded
@@ -42903,8 +42970,7 @@
                       type-segment-bases
                       target-abi
                       (compiler-reg-global-shared-view params)
-                      (compiler-reg-global-shared-view
-                        type-info.representations)
+                      (compiler-reg-var-types-representations type-info)
                       (compiler-reg-global-shared-view seq)
                       (compiler-reg-global-shared-view weights)
                       vars
@@ -42932,8 +42998,7 @@
                       type-segment-bases
                       target-abi
                       params
-                      (compiler-reg-global-shared-view
-                        type-info.representations)
+                      (compiler-reg-var-types-representations type-info)
                       seq
                       weights
                       vars
@@ -44768,7 +44833,7 @@
             (compiler-reg-liveness-handle-make
               (compiler-reg-global-shared-view func)
               false
-              (compiler-reg-global-shared-view type-info.metrics))]
+              (compiler-reg-var-types-metrics type-info))]
           [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
           (compiler-reg-live-interval-selection
             (compiler-reg-global-shared-view func)

@@ -27335,7 +27335,7 @@
         params
         ret
         frame
-        (opt.opt-inline-block-append
+        (opt.opt-blocks-append
           blocks
           (irt.blocks "entry__ssa_entry:
                return 0"))
@@ -48352,9 +48352,9 @@
             (opt-merged-loop-test-params)
             (ast.AstType.I64)
             102
-            (opt.opt-inline-block-append
+            (opt.opt-blocks-append
               entry-blocks
-              (opt.opt-inline-block-append cloned tail-blocks))
+              (opt.opt-blocks-append cloned tail-blocks))
             ir.CompilerIrFunctionAbi.Ordinary))])))
 
 ;; The unroller's multi-block companion must pick up the check-free versioned

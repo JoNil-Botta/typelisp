@@ -6577,7 +6577,8 @@
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackendSimdIndexedAddress.Err message)]))])))
 
-(define (compiler-backend-emit-avx2-vector-load
+(define (compiler-backend-emit-vector-load
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -6587,13 +6588,15 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (match (compiler-backend-vector-dst-reg
       assignments
       dst
       "load dst"
-      "ymm"
-      (compiler-backend-vector-spill-scratch "ymm" 0)
+      (compiler-backend-mode-width mode)
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-mode-width mode)
+        0)
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
@@ -6612,7 +6615,7 @@
                   addr-asm
                   (str_cat.str-cat
                     "    "
-                    (compiler-backend-avx2-vector-move elem-ty)
+                    (compiler-backend-mode-vector-move mode elem-ty)
                     " "
                     addr
                     ", ")
@@ -6622,7 +6625,7 @@
                     (compiler-backend-vector-store-dst
                       assignments
                       dst
-                      "ymm"
+                      (compiler-backend-mode-width mode)
                       elem-ty
                       dst-reg
                       backend-state)))))]
@@ -6638,7 +6641,8 @@
             (compiler_diagnostic.compiler-diagnostic-with-message
               instr-diag
               message)))])
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
@@ -6698,11 +6702,40 @@
           ", "))]
     [(CompilerBackendMaybeStackOperand.No) (CompilerBackendMaybeAsm.No)]))
 
-(define (compiler-backend-avx2-splat-load
+;; AVX-512 broadcasts a GPR directly; AVX2 moves it into XMM first.
+(define (compiler-backend-simd-splat-gpr-asm
+  [mode : CompilerBackendMode]
+  [asm : String]
+  [move : String]
+  [broadcast : String]
+  [gp : String]
+  [xmm : String]) : String
+  (match mode
+    [(CompilerBackendMode.Avx512)
+      (str_cat.str-cat asm "    " broadcast " " gp ", ")]
+    [_
+      (str_cat.str-cat
+        asm
+        "    "
+        move
+        " "
+        gp
+        ", "
+        xmm
+        "\n    "
+        broadcast
+        " "
+        xmm
+        ", ")]))
+
+(define (compiler-backend-simd-splat-load
+  [mode : CompilerBackendMode]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
+  [planned-gp : String]
+  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-splat-memory-load
     assignments
@@ -6714,23 +6747,27 @@
       (let
         [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
         [gp-reg : String
-          (compiler-backend-scavenge-reg
-            dst
-            (compiler-backend-global-shared-view no-exclude)
-            0
-            "%r8"
-            backend-state)]
+          (if (> (string.string-length planned-gp) 0)
+            planned-gp
+            (compiler-backend-scavenge-reg
+              dst
+              (compiler-backend-global-shared-view no-exclude)
+              0
+              "%r8"
+              backend-state))]
         [gp32 : String
           (compiler-backend-reg-part
             (compiler-backend-global-shared-view gp-reg)
             4)]
         [xmm-reg : String
-          (compiler-backend-scavenge-xmm-reg
-            dst
-            no-exclude
-            0
-            "%xmm2"
-            backend-state)]
+          (if (> (string.string-length planned-xmm) 0)
+            planned-xmm
+            (compiler-backend-scavenge-xmm-reg
+              dst
+              no-exclude
+              0
+              "%xmm2"
+              backend-state))]
         (match (compiler-backend-global-shared-view elem-ty)
           [(compiler_ast_types.AstType.F64)
             (match (compiler-backend-emit-load-float-value-with-plan
@@ -6764,15 +6801,13 @@
               backend-state)
               [(ResultCompilerBackend.Ok asm)
                 (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
+                  (compiler-backend-simd-splat-gpr-asm
+                    mode
                     asm
-                    "    vmovd "
+                    "vmovd"
+                    "vpbroadcastd"
                     gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastd "
-                    xmm-reg
-                    ", "))]
+                    xmm-reg))]
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.U32)
@@ -6783,15 +6818,13 @@
               backend-state)
               [(ResultCompilerBackend.Ok asm)
                 (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
+                  (compiler-backend-simd-splat-gpr-asm
+                    mode
                     asm
-                    "    vmovd "
+                    "vmovd"
+                    "vpbroadcastd"
                     gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastd "
-                    xmm-reg
-                    ", "))]
+                    xmm-reg))]
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.I16)
@@ -6878,19 +6911,18 @@
               backend-state)
               [(ResultCompilerBackend.Ok asm)
                 (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
+                  (compiler-backend-simd-splat-gpr-asm
+                    mode
                     asm
-                    "    vmovq "
+                    "vmovq"
+                    "vpbroadcastq"
                     gp-reg
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastq "
-                    xmm-reg
-                    ", "))]
+                    xmm-reg))]
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]))]))
 
-(define (compiler-backend-emit-avx2-splat
+(define (compiler-backend-emit-vector-splat
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -6899,20 +6931,25 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (match (compiler-backend-vector-dst-reg
       assignments
       dst
       "splat dst"
-      "ymm"
-      (compiler-backend-vector-spill-scratch "ymm" 0)
+      (compiler-backend-mode-width mode)
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-mode-width mode)
+        0)
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
-        (match (compiler-backend-avx2-splat-load
+        (match (compiler-backend-simd-splat-load
+          mode
           assignments
           dst
           value
           (compiler-backend-global-shared-view elem-ty)
+          ""
+          ""
           backend-state)
           [(ResultCompilerBackend.Ok load-asm)
             (ResultCompilerBackend.Ok
@@ -6923,7 +6960,7 @@
                 (compiler-backend-vector-store-dst
                   assignments
                   dst
-                  "ymm"
+                  (compiler-backend-mode-width mode)
                   elem-ty
                   dst-reg
                   backend-state)))]
@@ -6939,7 +6976,8 @@
             (compiler_diagnostic.compiler-diagnostic-with-message
               instr-diag
               message)))])
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
@@ -7125,7 +7163,8 @@
             instr-diag
             message)))]))
 
-(define (compiler-backend-emit-avx2-vector-binop
+(define (compiler-backend-emit-vector-binop
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -7136,12 +7175,14 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (let
       [mnemonic : String
-        (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
+        (compiler-backend-mode-vector-binop-mnemonic mode op elem-ty)]
       (cond
-        [(compiler-backend-word-vector-shift? op elem-ty)
+        [(and
+            (compiler-backend-mode-avx2? mode)
+            (compiler-backend-word-vector-shift? op elem-ty))
           (compiler-backend-emit-avx2-word-vector-shift
             assignments
             dst
@@ -7159,7 +7200,7 @@
             lhs
             rhs
             elem-ty
-            "ymm"
+            (compiler-backend-mode-width mode)
             instr-diag
             backend-state)]
         [(compiler-backend-byte-vector-mul? op elem-ty)
@@ -7169,10 +7210,12 @@
             lhs
             rhs
             elem-ty
-            "ymm"
+            (compiler-backend-mode-width mode)
             instr-diag
             backend-state)]
-        [(compiler-backend-avx2-i64-vector-mul? op elem-ty)
+        [(and
+            (compiler-backend-mode-avx2? mode)
+            (compiler-backend-avx2-i64-vector-mul? op elem-ty))
           (compiler-backend-emit-avx2-i64-vector-mul
             assignments
             dst
@@ -7180,7 +7223,9 @@
             rhs
             instr-diag
             backend-state)]
-        [(compiler-backend-avx2-i64-vector-shr? op elem-ty)
+        [(and
+            (compiler-backend-mode-avx2? mode)
+            (compiler-backend-avx2-i64-vector-shr? op elem-ty))
           (compiler-backend-emit-avx2-i64-vector-shr
             assignments
             dst
@@ -7193,15 +7238,17 @@
             (box
               (compiler_diagnostic.compiler-diagnostic-with-message
                 instr-diag
-                "backend: unsupported AVX2 vector binary op")))]
+                (compiler-backend-mode-unsupported mode "vector binary op"))))]
         [else
           (match (compiler-backend-vector-register-use
             assignments
             lhs
             "lhs"
-            "ymm"
+            (compiler-backend-mode-width mode)
             elem-ty
-            (compiler-backend-vector-spill-scratch "ymm" 0)
+            (compiler-backend-vector-spill-scratch
+              (compiler-backend-mode-width mode)
+              0)
             backend-state)
             [(ResultBackendVectorUse.Ok lhs-use)
               (match lhs-use
@@ -7210,7 +7257,7 @@
                     assignments
                     rhs
                     "rhs"
-                    "ymm"
+                    (compiler-backend-mode-width mode)
                     elem-ty
                     backend-state)
                     [(ResultBackendVectorUse.Ok rhs-use)
@@ -7220,8 +7267,10 @@
                             assignments
                             dst
                             "binop dst"
-                            "ymm"
-                            (compiler-backend-vector-spill-scratch "ymm" 0)
+                            (compiler-backend-mode-width mode)
+                            (compiler-backend-vector-spill-scratch
+                              (compiler-backend-mode-width mode)
+                              0)
                             backend-state)
                             [(ResultBackendReg.Ok dst-reg)
                               (ResultCompilerBackend.Ok
@@ -7241,7 +7290,7 @@
                                     (compiler-backend-vector-store-dst
                                       assignments
                                       dst
-                                      "ymm"
+                                      (compiler-backend-mode-width mode)
                                       elem-ty
                                       dst-reg
                                       backend-state))))]
@@ -7263,13 +7312,15 @@
                   (compiler_diagnostic.compiler-diagnostic-with-message
                     instr-diag
                     message)))])]))
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
       lanes)))
 
-(define (compiler-backend-emit-avx2-vector-binop-memory-source
+(define (compiler-backend-emit-vector-binop-memory-source
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -7281,23 +7332,25 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (let
       [mnemonic : String
-        (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
+        (compiler-backend-mode-vector-binop-mnemonic mode op elem-ty)]
       (if (= (string.string-length mnemonic) 0)
         (ResultCompilerBackend.Err
           (box
             (compiler_diagnostic.compiler-diagnostic-with-message
               instr-diag
-              "backend: unsupported AVX2 vector binary op")))
+              (compiler-backend-mode-unsupported mode "vector binary op"))))
         (match (compiler-backend-vector-register-use
           assignments
           reg-value
           "memory binop register operand"
-          "ymm"
+          (compiler-backend-mode-width mode)
           elem-ty
-          (compiler-backend-vector-spill-scratch "ymm" 0)
+          (compiler-backend-vector-spill-scratch
+            (compiler-backend-mode-width mode)
+            0)
           backend-state)
           [(ResultBackendVectorUse.Ok reg-use)
             (match reg-use
@@ -7306,8 +7359,10 @@
                   assignments
                   dst
                   "binop dst"
-                  "ymm"
-                  (compiler-backend-vector-spill-scratch "ymm" 0)
+                  (compiler-backend-mode-width mode)
+                  (compiler-backend-vector-spill-scratch
+                    (compiler-backend-mode-width mode)
+                    0)
                   backend-state)
                   [(ResultBackendReg.Ok dst-reg)
                     (match (compiler-backend-emit-simd-indexed-address
@@ -7338,7 +7393,7 @@
                                 (compiler-backend-vector-store-dst
                                   assignments
                                   dst
-                                  "ymm"
+                                  (compiler-backend-mode-width mode)
                                   elem-ty
                                   dst-reg
                                   backend-state)))))]
@@ -7360,13 +7415,15 @@
                 (compiler_diagnostic.compiler-diagnostic-with-message
                   instr-diag
                   message)))])))
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
       lanes)))
 
-(define (compiler-backend-emit-avx2-vector-store
+(define (compiler-backend-emit-vector-store
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
@@ -7376,14 +7433,16 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (match (compiler-backend-vector-register-use
       assignments
       value
       "store value"
-      "ymm"
+      (compiler-backend-mode-width mode)
       elem-ty
-      (compiler-backend-vector-spill-scratch "ymm" 0)
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-mode-width mode)
+        0)
       backend-state)
       [(ResultBackendVectorUse.Ok value-use)
         (match value-use
@@ -7405,7 +7464,7 @@
                       addr-asm
                       (str_cat.str-cat
                         "    "
-                        (compiler-backend-avx2-vector-move elem-ty)
+                        (compiler-backend-mode-vector-move mode elem-ty)
                         " "
                         value-reg
                         ", ")
@@ -7422,7 +7481,8 @@
             (compiler_diagnostic.compiler-diagnostic-with-message
               instr-diag
               message)))])
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
@@ -7485,6 +7545,78 @@
     [(compiler_ast_types.AstType.I8) "vmovdqu8"]
     [(compiler_ast_types.AstType.U8) "vmovdqu8"]
     [_ ""]))
+
+;; The shared SIMD emitters take the vector ISA as a CompilerBackendMode: Avx2
+;; works in ymm registers, Avx512 in zmm. A shape that fills a zmm is emitted
+;; with AVX-512; every other shape goes to AVX2, which diagnoses the ones that
+;; fit neither.
+(define (compiler-backend-vector-mode
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [lanes : i64]) : CompilerBackendMode
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (CompilerBackendMode.Avx512)
+    (CompilerBackendMode.Avx2)))
+
+(define (compiler-backend-mode-width [mode : CompilerBackendMode]) : String
+  (match mode
+    [(CompilerBackendMode.Avx512) "zmm"]
+    [_ "ymm"]))
+
+(define (compiler-backend-mode-shape-ok?
+  [mode : CompilerBackendMode]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [lanes : i64]) : bool
+  (match mode
+    [(CompilerBackendMode.Avx512)
+      (compiler-backend-avx512-shape-ok? elem-ty lanes)]
+    [_ (compiler-backend-avx2-shape-ok? elem-ty lanes)]))
+
+(define (compiler-backend-mode-shape-diagnostic
+  [mode : CompilerBackendMode]
+  [type-segment-bases : i64]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [elem-ty : compiler_ast_types.AstType]
+  [lanes : i64]) : ResultCompilerBackend
+  (match mode
+    [(CompilerBackendMode.Avx512)
+      (compiler-backend-avx512-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes)]
+    [_
+      (compiler-backend-avx2-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes)]))
+
+(define (compiler-backend-mode-unsupported
+  [mode : CompilerBackendMode]
+  [what : String]) : String
+  (str_cat.str-cat
+    "backend: unsupported "
+    (match mode
+      [(CompilerBackendMode.Avx512) "AVX-512"]
+      [_ "AVX2"])
+    " "
+    what))
+
+(define (compiler-backend-mode-vector-move
+  [mode : CompilerBackendMode]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
+  (match mode
+    [(CompilerBackendMode.Avx512) (compiler-backend-avx512-vector-move elem-ty)]
+    [_ (compiler-backend-avx2-vector-move elem-ty)]))
+
+(define (compiler-backend-mode-vector-binop-mnemonic
+  [mode : CompilerBackendMode]
+  [op : (& op compiler_ir_types.CompilerIrBinOp)]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
+  (match mode
+    [(CompilerBackendMode.Avx512)
+      (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
+    [_ (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]))
 
 (define (compiler-backend-vector-move-for-width
   [width : (& width str)]
@@ -8011,180 +8143,6 @@
     [(compiler_ir_types.CompilerIrBinOp.Gt) " $6, "]
     [_ ""]))
 
-(define (compiler-backend-avx512-splat-load
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [value : compiler_ir_types.CompilerIrValue]
-  [elem-ty : compiler_ast_types.AstType]
-  [planned-gp : String]
-  [planned-xmm : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-splat-memory-load
-    assignments
-    (compiler-backend-global-shared-view value)
-    elem-ty
-    backend-state)
-    [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
-    [(CompilerBackendMaybeAsm.No)
-      (let
-        [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
-        [gp-reg : String
-          (if (> (string.string-length planned-gp) 0)
-            planned-gp
-            (compiler-backend-scavenge-reg
-              dst
-              (compiler-backend-global-shared-view no-exclude)
-              0
-              "%r8"
-              backend-state))]
-        [gp32 : String
-          (compiler-backend-reg-part
-            (compiler-backend-global-shared-view gp-reg)
-            4)]
-        [xmm-reg : String
-          (if (> (string.string-length planned-xmm) 0)
-            planned-xmm
-            (compiler-backend-scavenge-xmm-reg
-              dst
-              no-exclude
-              0
-              "%xmm2"
-              backend-state))]
-        (match (compiler-backend-global-shared-view elem-ty)
-          [(compiler_ast_types.AstType.F64)
-            (match (compiler-backend-emit-load-float-value-with-plan
-              assignments
-              value
-              elem-ty
-              (compiler-backend-global-shared-view xmm-reg)
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vbroadcastsd " xmm-reg ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.F32)
-            (match (compiler-backend-emit-load-float-value-with-plan
-              assignments
-              value
-              elem-ty
-              (compiler-backend-global-shared-view xmm-reg)
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vbroadcastss " xmm-reg ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.I32)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vpbroadcastd " gp32 ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.U32)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vpbroadcastd " gp32 ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.I16)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    asm
-                    "    vmovd "
-                    gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastw "
-                    xmm-reg
-                    ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.U16)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    asm
-                    "    vmovd "
-                    gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastw "
-                    xmm-reg
-                    ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.I8)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    asm
-                    "    vmovd "
-                    gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastb "
-                    xmm-reg
-                    ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.U8)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    asm
-                    "    vmovd "
-                    gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastb "
-                    xmm-reg
-                    ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [_
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              (compiler-backend-global-shared-view gp-reg)
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vpbroadcastq " gp-reg ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]))]))
-
 (define (compiler-backend-avx512-vector-reduce-op-mnemonic
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
@@ -8434,372 +8392,6 @@
         instr-diag
         elem-ty
         lanes))))
-
-(define (compiler-backend-emit-avx512-vector-load
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-dst-reg
-      assignments
-      dst
-      "load dst"
-      "zmm"
-      (compiler-backend-vector-spill-scratch "zmm" 0)
-      backend-state)
-      [(ResultBackendReg.Ok dst-reg)
-        (match (compiler-backend-emit-simd-indexed-address
-          type-segment-bases
-          assignments
-          base
-          index
-          (compiler-backend-global-shared-view elem-ty)
-          backend-state)
-          [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-            (let
-              [addr-asm : String addr-plan.asm]
-              [addr : String addr-plan.addr]
-              (ResultCompilerBackend.Ok
-                (str_cat.str-cat
-                  addr-asm
-                  (str_cat.str-cat
-                    "    "
-                    (compiler-backend-avx512-vector-move elem-ty)
-                    " "
-                    addr
-                    ", ")
-                  (str_cat.str-cat
-                    dst-reg
-                    "\n"
-                    (compiler-backend-vector-store-dst
-                      assignments
-                      dst
-                      "zmm"
-                      elem-ty
-                      dst-reg
-                      backend-state)))))]
-          [(ResultCompilerBackendSimdIndexedAddress.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
-      [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-avx512-splat
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [value : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-dst-reg
-      assignments
-      dst
-      "splat dst"
-      "zmm"
-      (compiler-backend-vector-spill-scratch "zmm" 0)
-      backend-state)
-      [(ResultBackendReg.Ok dst-reg)
-        (match (compiler-backend-avx512-splat-load
-          assignments
-          dst
-          value
-          (compiler-backend-global-shared-view elem-ty)
-          ""
-          ""
-          backend-state)
-          [(ResultCompilerBackend.Ok load-asm)
-            (ResultCompilerBackend.Ok
-              (str_cat.str-cat
-                load-asm
-                dst-reg
-                "\n"
-                (compiler-backend-vector-store-dst
-                  assignments
-                  dst
-                  "zmm"
-                  elem-ty
-                  dst-reg
-                  backend-state)))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
-      [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-vector-splat
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [value : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-splat
-      type-segment-bases
-      assignments
-      dst
-      value
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-splat
-      type-segment-bases
-      assignments
-      dst
-      value
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
-
-(define (compiler-backend-emit-avx512-vector-binop
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [lhs : compiler_ir_types.CompilerIrValue]
-  [rhs : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (let
-      [mnemonic : String
-        (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
-      (cond
-        [(compiler-backend-byte-vector-shift? op elem-ty)
-          (compiler-backend-emit-byte-vector-shift
-            assignments
-            dst
-            op
-            lhs
-            rhs
-            elem-ty
-            "zmm"
-            instr-diag
-            backend-state)]
-        [(compiler-backend-byte-vector-mul? op elem-ty)
-          (compiler-backend-emit-byte-vector-mul
-            assignments
-            dst
-            lhs
-            rhs
-            elem-ty
-            "zmm"
-            instr-diag
-            backend-state)]
-        [(= (string.string-length mnemonic) 0)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                "backend: unsupported AVX-512 vector binary op")))]
-        [else
-          (match (compiler-backend-vector-register-use
-            assignments
-            lhs
-            "lhs"
-            "zmm"
-            elem-ty
-            (compiler-backend-vector-spill-scratch "zmm" 0)
-            backend-state)
-            [(ResultBackendVectorUse.Ok lhs-use)
-              (match lhs-use
-                [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
-                  (match (compiler-backend-vector-memory-or-register-use
-                    assignments
-                    rhs
-                    "rhs"
-                    "zmm"
-                    elem-ty
-                    backend-state)
-                    [(ResultBackendVectorUse.Ok rhs-use)
-                      (match rhs-use
-                        [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
-                          (match (compiler-backend-vector-dst-reg
-                            assignments
-                            dst
-                            "binop dst"
-                            "zmm"
-                            (compiler-backend-vector-spill-scratch "zmm" 0)
-                            backend-state)
-                            [(ResultBackendReg.Ok dst-reg)
-                              (ResultCompilerBackend.Ok
-                                (str_cat.str-cat
-                                  lhs-asm
-                                  rhs-asm
-                                  "    "
-                                  mnemonic
-                                  " "
-                                  rhs-op
-                                  ", "
-                                  lhs-reg
-                                  ", "
-                                  dst-reg
-                                  "\n"
-                                  (compiler-backend-vector-store-dst
-                                    assignments
-                                    dst
-                                    "zmm"
-                                    elem-ty
-                                    dst-reg
-                                    backend-state)))]
-                            [(ResultBackendReg.Err message)
-                              (ResultCompilerBackend.Err
-                                (box
-                                  (compiler_diagnostic.compiler-diagnostic-with-message
-                                    instr-diag
-                                    message)))])])]
-                    [(ResultBackendVectorUse.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler_diagnostic.compiler-diagnostic-with-message
-                            instr-diag
-                            message)))])])]
-            [(ResultBackendVectorUse.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])]))
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-avx512-vector-binop-memory-source
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [reg-value : compiler_ir_types.CompilerIrValue]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (let
-      [mnemonic : String
-        (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
-      (if (= (string.string-length mnemonic) 0)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              "backend: unsupported AVX-512 vector binary op")))
-        (match (compiler-backend-vector-register-use
-          assignments
-          reg-value
-          "memory binop register operand"
-          "zmm"
-          elem-ty
-          (compiler-backend-vector-spill-scratch "zmm" 0)
-          backend-state)
-          [(ResultBackendVectorUse.Ok reg-use)
-            (match reg-use
-              [(CompilerBackendVectorUse.Use reg-asm reg)
-                (match (compiler-backend-vector-dst-reg
-                  assignments
-                  dst
-                  "binop dst"
-                  "zmm"
-                  (compiler-backend-vector-spill-scratch "zmm" 0)
-                  backend-state)
-                  [(ResultBackendReg.Ok dst-reg)
-                    (match (compiler-backend-emit-simd-indexed-address
-                      type-segment-bases
-                      assignments
-                      base
-                      index
-                      (compiler-backend-global-shared-view elem-ty)
-                      backend-state)
-                      [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-                        (let
-                          [addr-asm : String addr-plan.asm]
-                          [addr : String addr-plan.addr]
-                          (ResultCompilerBackend.Ok
-                            (str_cat.str-cat
-                              reg-asm
-                              addr-asm
-                              "    "
-                              mnemonic
-                              " "
-                              addr
-                              ", "
-                              reg
-                              ", "
-                              dst-reg
-                              "\n"
-                              (compiler-backend-vector-store-dst
-                                assignments
-                                dst
-                                "zmm"
-                                elem-ty
-                                dst-reg
-                                backend-state))))]
-                      [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler-backend-apply-instr-diagnostic
-                              (deref message)
-                              instr-diag)))])]
-                  [(ResultBackendReg.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          message)))])])]
-          [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
 
 (define (compiler-backend-emit-avx512-vector-compare
   [type-segment-bases : i64]
@@ -9311,100 +8903,6 @@
       instr-diag
       backend-state)))
 
-(define (compiler-backend-emit-avx512-vector-store
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [value : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-register-use
-      assignments
-      value
-      "store value"
-      "zmm"
-      elem-ty
-      (compiler-backend-vector-spill-scratch "zmm" 0)
-      backend-state)
-      [(ResultBackendVectorUse.Ok value-use)
-        (match value-use
-          [(CompilerBackendVectorUse.Use value-asm value-reg)
-            (match (compiler-backend-emit-simd-indexed-address
-              type-segment-bases
-              assignments
-              base
-              index
-              (compiler-backend-global-shared-view elem-ty)
-              backend-state)
-              [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-                (let
-                  [addr-asm : String addr-plan.asm]
-                  [addr : String addr-plan.addr]
-                  (ResultCompilerBackend.Ok
-                    (str_cat.str-cat
-                      value-asm
-                      addr-asm
-                      (str_cat.str-cat
-                        "    "
-                        (compiler-backend-avx512-vector-move elem-ty)
-                        " "
-                        value-reg
-                        ", ")
-                      (str_cat.str-cat addr "\n"))))]
-              [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))])])]
-      [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-vector-load
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-vector-load
-      type-segment-bases
-      assignments
-      dst
-      base
-      index
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-vector-load
-      type-segment-bases
-      assignments
-      dst
-      base
-      index
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
-
 (define (compiler-backend-avx2-gather-mnemonic
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
@@ -9449,18 +8947,24 @@
   [backend-state : CompilerBackendState]) : ResultBackendGatherAdjust
   (if (not lane-offset)
     (ResultBackendGatherAdjust.Ok (CompilerBackendGatherAdjust "" ""))
-    (match (compiler-backend-avx2-splat-load
+    (match (compiler-backend-simd-splat-load
+      (CompilerBackendMode.Avx2)
       assignments
       dst
       (compiler-backend-global-shared-view logical-base)
       (compiler_ast_types.AstType.I64)
+      ""
+      ""
       backend-state)
       [(ResultCompilerBackend.Ok first-load)
-        (match (compiler-backend-avx2-splat-load
+        (match (compiler-backend-simd-splat-load
+          (CompilerBackendMode.Avx2)
           assignments
           dst
           logical-base
           (compiler_ast_types.AstType.I64)
+          ""
+          ""
           backend-state)
           [(ResultCompilerBackend.Ok second-load)
             (let
@@ -9492,7 +8996,8 @@
   [backend-state : CompilerBackendState]) : ResultBackendGatherAdjust
   (if (not lane-offset)
     (ResultBackendGatherAdjust.Ok (CompilerBackendGatherAdjust "" ""))
-    (match (compiler-backend-avx512-splat-load
+    (match (compiler-backend-simd-splat-load
+      (CompilerBackendMode.Avx512)
       assignments
       dst
       (compiler-backend-global-shared-view logical-base)
@@ -9501,7 +9006,8 @@
       ""
       backend-state)
       [(ResultCompilerBackend.Ok first-load)
-        (match (compiler-backend-avx512-splat-load
+        (match (compiler-backend-simd-splat-load
+          (CompilerBackendMode.Avx512)
           assignments
           dst
           logical-base
@@ -10487,41 +9993,6 @@
                   instr-diag
                   message)))])))))
 
-(define (compiler-backend-emit-vector-binop
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [lhs : compiler_ir_types.CompilerIrValue]
-  [rhs : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-vector-binop
-      type-segment-bases
-      assignments
-      dst
-      op
-      lhs
-      rhs
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-vector-binop
-      type-segment-bases
-      assignments
-      dst
-      op
-      lhs
-      rhs
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
-
 (define (compiler-backend-vector-binop-memory-source-supported?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [lanes : i64]
@@ -10537,44 +10008,6 @@
           (compiler-backend-avx2-vector-binop-mnemonic op elem-ty))
         0)
       false)))
-
-(define (compiler-backend-emit-vector-binop-memory-source
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [reg-value : compiler_ir_types.CompilerIrValue]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-vector-binop-memory-source
-      type-segment-bases
-      assignments
-      dst
-      op
-      reg-value
-      base
-      index
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-vector-binop-memory-source
-      type-segment-bases
-      assignments
-      dst
-      op
-      reg-value
-      base
-      index
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
 
 (define (compiler-backend-vector-load-binop-fold-value
   [load-dst : i64]
@@ -11745,7 +11178,8 @@
                         ", "
                         dst-reg
                         "\n"))]
-                  (match (compiler-backend-avx512-splat-load
+                  (match (compiler-backend-simd-splat-load
+                    (CompilerBackendMode.Avx512)
                     assignments
                     dst
                     carry
@@ -12007,38 +11441,6 @@
       dst
       op
       src
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
-
-(define (compiler-backend-emit-vector-store
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [value : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-vector-store
-      type-segment-bases
-      assignments
-      base
-      index
-      value
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-vector-store
-      type-segment-bases
-      assignments
-      base
-      index
-      value
       lanes
       elem-ty
       instr-diag
@@ -52850,6 +52252,7 @@
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.Splat dst value lanes elem-ty)
         (compiler-backend-emit-vector-splat
+          (compiler-backend-vector-mode elem-ty lanes)
           ctx.type-segment-bases
           ctx.assignments
           dst
@@ -52867,6 +52270,7 @@
           [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-binop
+            (compiler-backend-vector-mode elem-ty lanes)
             ctx.type-segment-bases
             ctx.assignments
             dst
@@ -52982,6 +52386,7 @@
           lanes
           elem-ty)
         (compiler-backend-emit-vector-load
+          (compiler-backend-vector-mode elem-ty lanes)
           ctx.type-segment-bases
           ctx.assignments
           dst
@@ -52999,6 +52404,7 @@
           [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-store
+            (compiler-backend-vector-mode elem-ty lanes)
             ctx.type-segment-bases
             ctx.assignments
             base
@@ -61984,6 +61390,7 @@
                     (compiler-backend-global-shared-view ctx)
                     fallthrough
                     (compiler-backend-emit-vector-binop-memory-source
+                      (compiler-backend-vector-mode bin-elem-ty bin-lanes)
                       ctx.type-segment-bases
                       ctx.assignments
                       bin-dst

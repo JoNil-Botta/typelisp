@@ -20806,7 +20806,8 @@ g:
         [(compiler_backend.CompilerBackendMaybeStackOperand.No) true]))))
 
 (define (compiler-backend-avx2-stack-splat-i64-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-avx2-splat
+  (match (compiler_backend.compiler-backend-emit-vector-splat
+    (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-dst-only-assignments)
     0
@@ -20824,7 +20825,8 @@ g:
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-stack-splat-f64-spill-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-avx2-splat
+  (match (compiler_backend.compiler-backend-emit-vector-splat
+    (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-spill-assignments -40)
     0
@@ -20841,7 +20843,8 @@ g:
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-stack-splat-i64-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-avx512-splat
+  (match (compiler_backend.compiler-backend-emit-vector-splat
+    (compiler_backend.CompilerBackendMode.Avx512)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-dst-only-assignments)
     0
@@ -20859,7 +20862,8 @@ g:
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-stack-splat-f64-spill-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-avx512-splat
+  (match (compiler_backend.compiler-backend-emit-vector-splat
+    (compiler_backend.CompilerBackendMode.Avx512)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-spill-assignments -40)
     0
@@ -20877,7 +20881,8 @@ g:
 
 (define (compiler-backend-register-splat-fallback-ok?) : bool
   (and
-    (match (compiler_backend.compiler-backend-emit-avx2-splat
+    (match (compiler_backend.compiler-backend-emit-vector-splat
+      (compiler_backend.CompilerBackendMode.Avx2)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-register-assignments)
       0
@@ -20895,7 +20900,8 @@ g:
           (not (compiler_backend.compiler-backend-string-contains? asm "%rax"))
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
-    (match (compiler_backend.compiler-backend-emit-avx2-splat
+    (match (compiler_backend.compiler-backend-emit-vector-splat
+      (compiler_backend.CompilerBackendMode.Avx2)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-float-register-assignments)
       0
@@ -20912,7 +20918,8 @@ g:
             "    movsd %xmm3, %xmm2\n    vbroadcastsd %xmm2, %ymm6\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
-    (match (compiler_backend.compiler-backend-emit-avx512-splat
+    (match (compiler_backend.compiler-backend-emit-vector-splat
+      (compiler_backend.CompilerBackendMode.Avx512)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-register-assignments)
       0
@@ -20927,7 +20934,8 @@ g:
           (string.eq asm "    movq %r12, %r8\n    vpbroadcastq %r8, %zmm6\n")
           (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
-    (match (compiler_backend.compiler-backend-emit-avx512-splat
+    (match (compiler_backend.compiler-backend-emit-vector-splat
+      (compiler_backend.CompilerBackendMode.Avx512)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-float-register-assignments)
       0
@@ -21164,7 +21172,8 @@ g:
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-avx2-vector-load-spill-dst-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-avx2-vector-load
+  (match (compiler_backend.compiler-backend-emit-vector-load
+    (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
@@ -21182,7 +21191,8 @@ g:
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-vector-binop-spill-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-avx2-vector-binop
+  (match (compiler_backend.compiler-backend-emit-vector-binop
+    (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
@@ -21848,7 +21858,8 @@ g:
       "(%rdi,%r9,8)")))
 
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-avx2-vector-load
+  (match (compiler_backend.compiler-backend-emit-vector-load
+    (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     3
@@ -21864,7 +21875,8 @@ g:
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-vector-store-address-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-avx2-vector-store
+  (match (compiler_backend.compiler-backend-emit-vector-store
+    (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -24502,7 +24514,8 @@ g:
   [elem-ty : compiler_ast_types.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (compiler_backend.compiler-backend-emit-avx2-vector-binop
+  (match (compiler_backend.compiler-backend-emit-vector-binop
+    (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -24522,7 +24535,8 @@ g:
   [elem-ty : compiler_ast_types.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (compiler_backend.compiler-backend-emit-avx512-vector-binop
+  (match (compiler_backend.compiler-backend-emit-vector-binop
+    (compiler_backend.CompilerBackendMode.Avx512)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -24542,7 +24556,8 @@ g:
   [elem-ty : compiler_ast_types.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (compiler_backend.compiler-backend-emit-avx2-vector-binop
+  (match (compiler_backend.compiler-backend-emit-vector-binop
+    (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -24565,7 +24580,8 @@ g:
   [elem-ty : compiler_ast_types.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (compiler_backend.compiler-backend-emit-avx512-vector-binop
+  (match (compiler_backend.compiler-backend-emit-vector-binop
+    (compiler_backend.CompilerBackendMode.Avx512)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -24592,7 +24608,8 @@ g:
   [shift : String]
   [stack-bytes : i64]) : bool
   (match (if avx512
-    (compiler_backend.compiler-backend-emit-avx512-vector-binop
+    (compiler_backend.compiler-backend-emit-vector-binop
+      (compiler_backend.CompilerBackendMode.Avx512)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-vector-binop-test-assignments)
       2
@@ -24604,7 +24621,8 @@ g:
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
-    (compiler_backend.compiler-backend-emit-avx2-vector-binop
+    (compiler_backend.compiler-backend-emit-vector-binop
+      (compiler_backend.CompilerBackendMode.Avx2)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-vector-binop-test-assignments)
       2
@@ -24705,7 +24723,8 @@ g:
 
 (define (compiler-backend-byte-vector-shift-spill-ok? [avx512 : bool]) : bool
   (match (if avx512
-    (compiler_backend.compiler-backend-emit-avx512-vector-binop
+    (compiler_backend.compiler-backend-emit-vector-binop
+      (compiler_backend.CompilerBackendMode.Avx512)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
       2
@@ -24717,7 +24736,8 @@ g:
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
-    (compiler_backend.compiler-backend-emit-avx2-vector-binop
+    (compiler_backend.compiler-backend-emit-vector-binop
+      (compiler_backend.CompilerBackendMode.Avx2)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
       2
@@ -24758,7 +24778,8 @@ g:
   [elem-ty : compiler_ast_types.AstType]
   [widen : String]
   [shift : String]) : bool
-  (match (compiler_backend.compiler-backend-emit-avx2-vector-binop
+  (match (compiler_backend.compiler-backend-emit-vector-binop
+    (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -24799,7 +24820,8 @@ g:
 
 (define (compiler-backend-word-vector-shift-spill-ok? [avx512 : bool]) : bool
   (match (if avx512
-    (compiler_backend.compiler-backend-emit-avx512-vector-binop
+    (compiler_backend.compiler-backend-emit-vector-binop
+      (compiler_backend.CompilerBackendMode.Avx512)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
       2
@@ -24811,7 +24833,8 @@ g:
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
-    (compiler_backend.compiler-backend-emit-avx2-vector-binop
+    (compiler_backend.compiler-backend-emit-vector-binop
+      (compiler_backend.CompilerBackendMode.Avx2)
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
       2

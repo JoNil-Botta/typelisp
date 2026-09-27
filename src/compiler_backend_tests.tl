@@ -38558,11 +38558,11 @@ b_keep:
 (define (compiler-backend-peephole-local-frame-slot-operand?
   [operand : (& operand str)]) : bool
   (or
-    (backend.compiler-backend-string-contains? operand "(%rsp)")
+    (asm-has? operand "(%rsp)")
     (and
       (> (string.string-length operand) 0)
       (= (string.string-ref operand 0) '-')
-      (backend.compiler-backend-string-contains? operand "(%rbp)"))))
+      (asm-has? operand "(%rbp)"))))
 
 (define (compiler-backend-peephole-forward-frame-load-operands?
   [src : (& src str)]
@@ -38612,9 +38612,7 @@ b_keep:
   [end : i64]) : bool
   (match (compiler-backend-peephole-movq-range asm asm-data start end)
     [(CompilerBackendPeepholeMove.Move src dst)
-      (and
-        (string.eq dst "%r10")
-        (not (backend.compiler-backend-string-contains? src "%r10")))]
+      (and (string.eq dst "%r10") (asm-lacks? src "%r10"))]
     [(CompilerBackendPeepholeMove.NoMove) false]))
 
 (define (compiler-backend-peephole-r10-dead-after?
@@ -38956,82 +38954,37 @@ b_keep:
 (define (compiler-backend-no-stdlib-forwarding-labels? [asm : String]) : bool
   (and
     (backend.backend-and8
-      (not (backend.compiler-backend-string-contains? asm "tl_print_err:\n"))
-      (not (backend.compiler-backend-string-contains? asm "tl_print_string:\n"))
-      (not (backend.compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
-      (not (backend.compiler-backend-string-contains? asm ".L_tl_arg:\n"))
-      (not (backend.compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm ".L_tl_file_exists:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_file_open_status:\n")))
+      (asm-lacks? asm "tl_print_err:\n")
+      (asm-lacks? asm "tl_print_string:\n")
+      (asm-lacks? asm ".L_tl_arg_count:\n")
+      (asm-lacks? asm ".L_tl_arg:\n")
+      (asm-lacks? asm ".L_tl_read_file:\n")
+      (asm-lacks? asm ".L_tl_write_file:\n")
+      (asm-lacks? asm ".L_tl_file_exists:\n")
+      (asm-lacks? asm ".L_tl_file_open_status:\n"))
     (backend.backend-and8
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_file_close_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_file_read_chunk_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_file_write_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_file_flush_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_file_read_chunk_bytes:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_file_read_chunk_eof:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_mkdir_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")))
+      (asm-lacks? asm ".L_tl_file_close_status:\n")
+      (asm-lacks? asm ".L_tl_file_read_chunk_status:\n")
+      (asm-lacks? asm ".L_tl_file_write_status:\n")
+      (asm-lacks? asm ".L_tl_file_flush_status:\n")
+      (asm-lacks? asm ".L_tl_file_read_chunk_bytes:\n")
+      (asm-lacks? asm ".L_tl_file_read_chunk_eof:\n")
+      (asm-lacks? asm ".L_tl_fs_mkdir_status:\n")
+      (asm-lacks? asm ".L_tl_fs_process_id:\n"))
     (backend.backend-and8
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_read_stdin_line:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_read_stdin_bytes:\n"))
-      (not (backend.compiler-backend-string-contains? asm ".L_tl_stdin_eof:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm "tl_env_var_exists:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm "tl_env_var_value:\n"))
-      (not (backend.compiler-backend-string-contains? asm "tl_cpuid_eax:\n"))
-      (not (backend.compiler-backend-string-contains? asm "tl_xgetbv:\n")))
+      (asm-lacks? asm ".L_tl_read_stdin_line:\n")
+      (asm-lacks? asm ".L_tl_read_stdin_bytes:\n")
+      (asm-lacks? asm ".L_tl_stdin_eof:\n")
+      (asm-lacks? asm ".L_tl_flush_stdout:\n")
+      (asm-lacks? asm "tl_env_var_exists:\n")
+      (asm-lacks? asm "tl_env_var_value:\n")
+      (asm-lacks? asm "tl_cpuid_eax:\n")
+      (asm-lacks? asm "tl_xgetbv:\n"))
     (backend.backend-and4
-      (not (backend.compiler-backend-string-contains? asm "tl_print_char:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_remove_file_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_remove_dir_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_rename_status:\n")))))
+      (asm-lacks? asm "tl_print_char:\n")
+      (asm-lacks? asm ".L_tl_fs_remove_file_status:\n")
+      (asm-lacks? asm ".L_tl_fs_remove_dir_status:\n")
+      (asm-lacks? asm ".L_tl_fs_rename_status:\n"))))
 
 ;; Backend-smoke regression for the fail-closed splice predicate.  Exercise a
 ;; missing needle at each of the three stages, plus the fully replaced and
@@ -39112,121 +39065,46 @@ b_keep:
       (and
         (compiler-backend-shrinkwrap-splice-fallback-ok?)
         (backend.backend-and8
-          (backend.compiler-backend-string-contains? asm ".globl tl_alloc\n")
-          (backend.compiler-backend-string-contains? asm "tl_alloc:\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_oob_abort\n"))
-          (not
-            (backend.compiler-backend-string-contains? asm "tl_oob_abort:\n"))
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_substring\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_string_concat\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_string_concat3\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_string_concat4\n"))
+          (asm-has? asm ".globl tl_alloc\n")
+          (asm-has? asm "tl_alloc:\n")
+          (asm-lacks? asm ".globl tl_oob_abort\n")
+          (asm-lacks? asm "tl_oob_abort:\n")
+          (asm-has? asm "    call tl_substring\n")
+          (asm-has? asm "    call tl_string_concat\n")
+          (asm-has? asm "    call tl_string_concat3\n")
+          (asm-has? asm "    call tl_string_concat4\n"))
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_string_concat5\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_int_to_string\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_substring\n"))
-          (not
-            (backend.compiler-backend-string-contains? asm "tl_substring:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_string_concat\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_string_concat:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_string_concat5\n"))
-          (and
-            (not (backend.compiler-backend-string-contains? asm "getrandom:\n"))
-            (not (backend.compiler-backend-string-contains? asm "getcwd:\n"))))
+          (asm-has? asm "    call tl_string_concat5\n")
+          (asm-has? asm "    call tl_int_to_string\n")
+          (asm-lacks? asm ".globl tl_substring\n")
+          (asm-lacks? asm "tl_substring:\n")
+          (asm-lacks? asm ".globl tl_string_concat\n")
+          (asm-lacks? asm "tl_string_concat:\n")
+          (asm-lacks? asm ".globl tl_string_concat5\n")
+          (asm-lacks? asm "getrandom:\n" "getcwd:\n"))
         (backend.backend-and8
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_string_eq\n"))
-          (not
-            (backend.compiler-backend-string-contains? asm "tl_string_eq:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_string_to_int\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_string_to_int:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_int_to_string\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_int_to_string:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_process_output:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_random_system_seed:\n")))
+          (asm-lacks? asm ".globl tl_string_eq\n")
+          (asm-lacks? asm "tl_string_eq:\n")
+          (asm-lacks? asm ".globl tl_string_to_int\n")
+          (asm-lacks? asm "tl_string_to_int:\n")
+          (asm-lacks? asm ".globl tl_int_to_string\n")
+          (asm-lacks? asm "tl_int_to_string:\n")
+          (asm-lacks? asm "tl_process_output:\n")
+          (asm-lacks? asm "tl_random_system_seed:\n"))
         (backend.backend-and4
-          (backend.compiler-backend-string-contains? asm "    call tl_alloc\n")
-          (not
-            (backend.compiler-backend-string-contains? asm ".extern tl_alloc\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern tl_substring\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern tl_string_concat\n")))
+          (asm-has? asm "    call tl_alloc\n")
+          (asm-lacks? asm ".extern tl_alloc\n")
+          (asm-lacks? asm ".extern tl_substring\n")
+          (asm-lacks? asm ".extern tl_string_concat\n"))
         (backend.backend-and4
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern tl_int_to_string\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_int_to_string_digit_loop:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_int_to_string_copy_loop:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern tl_process_output\n")))
+          (asm-lacks? asm ".extern tl_int_to_string\n")
+          (asm-lacks? asm ".L_tl_int_to_string_digit_loop:\n")
+          (asm-lacks? asm ".L_tl_int_to_string_copy_loop:\n")
+          (asm-lacks? asm ".extern tl_process_output\n"))
         (backend.backend-and4
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "__errno_location:\n"))
-          (not (backend.compiler-backend-string-contains? asm "_errno:\n"))
-          (not (backend.compiler-backend-string-contains? asm "tl_errno:\n"))
+          (asm-lacks? asm "__errno_location:\n")
+          (asm-lacks? asm "_errno:\n")
+          (asm-lacks? asm "tl_errno:\n")
           (compiler-backend-no-stdlib-forwarding-labels? asm)))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -39247,37 +39125,19 @@ b_keep:
     (compiler-backend-str-view-helper-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains? asm "    call tl_str_view\n")
-        (not
-          (backend.compiler-backend-string-contains? asm ".globl tl_str_view\n"))
-        (not (backend.compiler-backend-string-contains? asm "tl_str_view:\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_arena_make_atomic\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_arena_set\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_str_view_arena:\n"))
+        (asm-has? asm "    call tl_str_view\n")
+        (asm-lacks?
+          asm
+          ".globl tl_str_view\n"
+          "tl_str_view:\n"
+          "    call tl_arena_make_atomic\n"
+          "    call tl_arena_set\n"
+          ".L_tl_str_view_arena:\n")
         (backend.backend-and4
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern tl_str_view\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_substring\n"))
-          (not
-            (backend.compiler-backend-string-contains? asm "tl_substring:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern tl_substring\n"))))]
+          (asm-lacks? asm ".extern tl_str_view\n")
+          (asm-lacks? asm ".globl tl_substring\n")
+          (asm-lacks? asm "tl_substring:\n")
+          (asm-lacks? asm ".extern tl_substring\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-unused-str-view-extern-program) : ir.CompilerIrProgram
@@ -39319,17 +39179,11 @@ b_keep:
         (ast.AstType.I64)))))
 
 (define (compiler-backend-unused-str-view-extern-ok?) : bool
-  (match (backend.compiler-backend-emit-program-linux
-    (compiler-backend-unused-str-view-extern-program))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm ".globl tl_str_view\n")
-        (backend.compiler-backend-string-contains? asm "tl_str_view:\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_str_view\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-linux
+      (compiler-backend-unused-str-view-extern-program))
+    (has ".globl tl_str_view\n" "tl_str_view:\n")
+    (lacks ".extern tl_str_view\n")))
 
 (define (compiler-backend-unused-foreign-link-extern-program) : ir.CompilerIrProgram
   (let
@@ -39365,14 +39219,10 @@ b_keep:
           false)))))
 
 (define (compiler-backend-unused-foreign-link-extern-ok?) : bool
-  (match (backend.compiler-backend-emit-program-linux
-    (compiler-backend-unused-foreign-link-extern-program))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern unused_foreign_symbol\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-linux
+      (compiler-backend-unused-foreign-link-extern-program))
+    (lacks ".extern unused_foreign_symbol\n")))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-program) : ir.CompilerIrProgram
   (let
@@ -39418,108 +39268,53 @@ b_keep:
             false))))))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
-  (match (backend.compiler-backend-emit-program-linux
-    (compiler-backend-source-referenced-foreign-link-extern-program))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (backend.compiler-backend-string-contains?
-        asm
-        ".extern required_foreign_symbol\n")]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-linux
+      (compiler-backend-source-referenced-foreign-link-extern-program))
+    (has ".extern required_foreign_symbol\n")))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool
-  (match (backend.compiler-backend-emit-source
-    "(extern (io.file-open-status [arg0 : String] [arg1 : i64]) : i64 (:symbol \"tl_file_open_status\"))
+  (asm-ok?
+    (backend.compiler-backend-emit-source
+      "(extern (io.file-open-status [arg0 : String] [arg1 : i64]) : i64 (:symbol \"tl_file_open_status\"))
 (extern (io.file-close-status [arg0 : i64]) : i64 (:symbol \"tl_file_close_status\"))
 (define (main) : i64
   (let
     [handle : i64 (io.file-open-status \"input.txt\" 0)]
     (+ handle (io.file-close-status handle))))")
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_file_open_status:\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_file_close_status:\n"))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_file_open_status\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_file_close_status\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_file_open_status\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_file_close_status\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+    (lacks ".L_tl_file_open_status:\n" ".L_tl_file_close_status:\n")
+    (has
+      "    call tl_file_open_status\n"
+      "    call tl_file_close_status\n"
+      ".extern tl_file_open_status\n"
+      ".extern tl_file_close_status\n")))
 
 (define (compiler-backend-alloc-runtime-arena-ok?) : bool
-  (match (backend.compiler-backend-emit-source
-    (compiler-backend-runtime-helper-source))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          ".section .tbss,\"awT\",@nobits\n")
-        (backend.compiler-backend-string-contains? asm "tl_current_arena:\n")
-        (backend.compiler-backend-string-contains? asm "tl_thread_init:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "tl_arena_make_atomic:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %fs:tl_current_arena@tpoff, %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_alloc_new_arena:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq $0x4000000, %rdx\n")
-        (backend.compiler-backend-string-contains? asm "    addq $64, %rcx\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq $0, 32(%rax)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r10, 0(%rax)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r9, 40(%rax)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq $0, 48(%rax)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rax, 56(%r9)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq 64(%rax), %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rax, 40(%rax)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq $1, 48(%rax)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq 64(%rax), %rcx\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r9, %fs:tl_current_arena@tpoff\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, %fs:tl_current_arena@tpoff\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_alloc_size_ready:\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source
+      (compiler-backend-runtime-helper-source))
+    (has
+      ".section .tbss,\"awT\",@nobits\n"
+      "tl_current_arena:\n"
+      "tl_thread_init:\n"
+      "tl_arena_make_atomic:\n"
+      "    movq %fs:tl_current_arena@tpoff, %r8\n"
+      ".L_tl_alloc_new_arena:\n"
+      "    movq $0x4000000, %rdx\n"
+      "    addq $64, %rcx\n"
+      "    movq $0, 32(%rax)\n"
+      "    movq %r10, 0(%rax)\n"
+      "    movq %r9, 40(%rax)\n"
+      "    movq $0, 48(%rax)\n"
+      "    movq %rax, 56(%r9)\n"
+      "    leaq 64(%rax), %r8\n"
+      "    movq %rax, 40(%rax)\n"
+      "    movq $1, 48(%rax)\n"
+      "    leaq 64(%rax), %rcx\n"
+      "    movq %r9, %fs:tl_current_arena@tpoff\n")
+    (lacks
+      "    movq %rax, %fs:tl_current_arena@tpoff\n"
+      ".L_tl_alloc_size_ready:\n")))
 
 (define (compiler-backend-alloc-runtime-shape-ok?) : bool
   (match (backend.compiler-backend-emit-source
@@ -39527,39 +39322,20 @@ b_keep:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains? asm "    addq $7, %rdi\n")
-          (backend.compiler-backend-string-contains? asm "    andq $-8, %rdi\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 16(%r9), %rcx\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, 16(%r9)\n")
-          (backend.compiler-backend-string-contains? asm "    movq $9, %rax\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq $0x22, %r10\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    jc .L_tl_alloc_abort\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    js .L_tl_alloc_abort\n"))
+          (asm-has? asm "    addq $7, %rdi\n")
+          (asm-has? asm "    andq $-8, %rdi\n")
+          (asm-has? asm "    movq 16(%r9), %rcx\n")
+          (asm-has? asm "    movq %rcx, 16(%r9)\n")
+          (asm-has? asm "    movq $9, %rax\n")
+          (asm-has? asm "    movq $0x22, %r10\n")
+          (asm-has? asm "    jc .L_tl_alloc_abort\n")
+          (asm-has? asm "    js .L_tl_alloc_abort\n"))
         (backend.backend-and4
-          (backend.compiler-backend-string-contains?
-            asm
-            "    testq $1, 48(%r8)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    lock cmpxchgq %rcx, 16(%r8)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    lock cmpxchgq %rcx, 48(%r9)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, 56(%r9)\n"))
-        (backend.compiler-backend-string-contains? asm ".L_tl_alloc_abort:\n")
-        (backend.compiler-backend-string-contains? asm "    jmp tl_oom_abort\n"))]
+          (asm-has? asm "    testq $1, 48(%r8)\n")
+          (asm-has? asm "    lock cmpxchgq %rcx, 16(%r8)\n")
+          (asm-has? asm "    lock cmpxchgq %rcx, 48(%r9)\n")
+          (asm-has? asm "    movq %rax, 56(%r9)\n"))
+        (asm-has? asm ".L_tl_alloc_abort:\n" "    jmp tl_oom_abort\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-user-helper-name-program) : ir.CompilerIrProgram
@@ -39606,15 +39382,11 @@ b_keep:
     (compiler-backend-user-helper-name-program))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
+        (or (asm-has? asm ".globl _tl_tl_alloc") (asm-has? asm ".globl _tl_f"))
         (or
-          (backend.compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
-          (backend.compiler-backend-string-contains? asm ".globl _tl_f"))
-        (or
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call _tl_tl_alloc")
-          (backend.compiler-backend-string-contains? asm "    call _tl_f"))
-        (not (backend.compiler-backend-string-contains? asm ".L_tl_alloc_msg")))]
+          (asm-has? asm "    call _tl_tl_alloc")
+          (asm-has? asm "    call _tl_f"))
+        (asm-lacks? asm ".L_tl_alloc_msg"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-runtime-coexist-program) : ir.CompilerIrProgram
@@ -39674,28 +39446,17 @@ b_keep:
     (compiler-backend-runtime-coexist-program))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (or
-          (backend.compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
-          (backend.compiler-backend-string-contains? asm ".globl _tl_f"))
-        (not
-          (backend.compiler-backend-string-contains? asm ".globl tl_alloc\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_substring\n"))
-        (not (backend.compiler-backend-string-contains? asm "tl_substring:\n"))
-        (or
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call _tl_tl_alloc")
-          (backend.compiler-backend-string-contains? asm "    call _tl_f"))
-        (backend.compiler-backend-string-contains?
+        (or (asm-has? asm ".globl _tl_tl_alloc") (asm-has? asm ".globl _tl_f"))
+        (asm-lacks?
           asm
-          "    call tl_substring\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_substring\n")))]
+          ".globl tl_alloc\n"
+          ".globl tl_substring\n"
+          "tl_substring:\n")
+        (or
+          (asm-has? asm "    call _tl_tl_alloc")
+          (asm-has? asm "    call _tl_f"))
+        (asm-has? asm "    call tl_substring\n")
+        (asm-lacks? asm ".extern tl_substring\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-module-symbol-program) : ir.CompilerIrProgram
@@ -39738,18 +39499,11 @@ b_keep:
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-module-symbol-ok?) : bool
-  (match (backend.compiler-backend-emit-program-linux
-    (compiler-backend-module-symbol-program))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm ".globl _tl_lib_helper")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call _tl_lib_helper")
-        (not (backend.compiler-backend-string-contains? asm "_u2e"))
-        (not (backend.compiler-backend-string-contains? asm "_colon"))
-        (not (backend.compiler-backend-string-contains? asm "_slash")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-linux
+      (compiler-backend-module-symbol-program))
+    (has ".globl _tl_lib_helper" "    call _tl_lib_helper")
+    (lacks "_u2e" "_colon" "_slash")))
 
 ;; Test-only dotted-import mutation boundary.
 ;; Production globals stay owned by this module; split test fixtures mutate

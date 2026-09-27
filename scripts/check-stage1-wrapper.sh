@@ -227,7 +227,6 @@ run_expect_failure() {
 }
 
 echo "[host-action-cli] compile"
-# cli-gate-case stage1-wrapper-compile wrapper run_capture
 run_capture compile "$COMPILER" compile "$SRC" -o "$ASM"
 [ -f "$ASM" ] || {
     echo "compile did not write $ASM" >&2
@@ -243,7 +242,6 @@ SYNTH_ASM="$WORKDIR/synthesized-entry.s"
 cat > "$SYNTH_SRC" <<'EOF'
 (define SYNTHETIC-VALUE : i64 7)
 EOF
-# cli-gate-case stage1-wrapper-compile-synthesized-entry wrapper run_capture
 run_capture compile-synthesized-entry \
     "$COMPILER" compile "$SYNTH_SRC" -o "$SYNTH_ASM"
 [ -f "$SYNTH_ASM" ] || {
@@ -260,7 +258,6 @@ cat > "$CFG_SRC" <<'EOF'
 (cfg (not feature) (define marker : String "disabled-cfg-feature"))
 (define (main) : i64 (string.string-length marker))
 EOF
-# cli-gate-case stage1-wrapper-compile-cfg wrapper run_capture
 run_capture compile-cfg "$COMPILER" compile "$CFG_SRC" -o "$CFG_ASM" --cfg feature
 assert_contains "$CFG_ASM" "enabled-cfg-feature"
 assert_not_contains "$CFG_ASM" "disabled-cfg-feature"
@@ -286,7 +283,6 @@ printf '%s|%s\n%s|%s\n' \
     "$CFG_BATCH_ONE" "$CFG_BATCH_ONE_ASM" \
     "$CFG_BATCH_TWO" "$CFG_BATCH_TWO_ASM" \
     > "$CFG_BATCH_LIST"
-# cli-gate-case stage1-wrapper-compile-cfg-batch wrapper run_capture
 run_capture compile-cfg-batch "$COMPILER" compile --batch "$CFG_BATCH_LIST" --cfg feature
 assert_contains "$CFG_BATCH_ONE_ASM" "enabled-cfg-batch-one"
 assert_not_contains "$CFG_BATCH_ONE_ASM" "disabled-cfg-batch-one"
@@ -294,7 +290,6 @@ assert_contains "$CFG_BATCH_TWO_ASM" "enabled-cfg-batch-two"
 assert_not_contains "$CFG_BATCH_TWO_ASM" "disabled-cfg-batch-two"
 
 echo "[host-action-cli] compile --emit-ir"
-# cli-gate-case stage1-wrapper-compile-ir wrapper run_capture
 run_capture compile-ir "$COMPILER" compile "$SRC" --emit-ir
 [ -f "$IR" ] || {
     echo "compile --emit-ir did not write $IR" >&2
@@ -303,7 +298,6 @@ run_capture compile-ir "$COMPILER" compile "$SRC" --emit-ir
 assert_contains "$WORKDIR/compile-ir.stdout" "Wrote $IR"
 assert_contains "$IR" "typelisp-ir-summary v1"
 
-# cli-gate-case stage1-wrapper-compile-missing-source wrapper run_expect_failure
 run_expect_failure compile-missing-source "$COMPILER" compile
 assert_empty "$WORKDIR/compile-missing-source.stdout"
 assert_contains "$WORKDIR/compile-missing-source.stderr" "compile: expected source path"
@@ -323,7 +317,6 @@ cat > "$UNRESOLVED_SUITE" <<'EOF'
 (define (main) : i64 0)
 EOF
 set +e
-# cli-gate-case stage1-wrapper-compile-unresolved-qualified-name direct "$COMPILER"
 "$COMPILER" compile "$UNRESOLVED_SUITE" -o "$WORKDIR/unresolved-qualified.s" \
   > "$WORKDIR/compile-unresolved-qualified-name.stdout" \
   2> "$WORKDIR/compile-unresolved-qualified-name.stderr"
@@ -340,11 +333,9 @@ assert_contains "$WORKDIR/compile-unresolved-qualified-name.stderr" \
 assert_contains "$WORKDIR/compile-unresolved-qualified-name.stderr" \
   "unresolved-qualified-helper.tl"
 
-# cli-gate-case stage1-wrapper-help wrapper run_capture
 run_capture help "$COMPILER" help
 assert_empty "$WORKDIR/help.stdout"
 
-# cli-gate-case stage1-wrapper-check wrapper run_capture
 run_capture check "$COMPILER" check "$SRC"
 assert_empty "$WORKDIR/check.stderr"
 assert_contains "$WORKDIR/check.stdout" "Type checking passed!"
@@ -358,14 +349,12 @@ cat > "$CHECK_ROOT/app/main.tl" <<'EOF'
 (import stdlib.helper)
 (define (main) : i64 (helper.helper))
 EOF
-# cli-gate-case stage1-wrapper-check-stdlib-root wrapper run_capture
 run_capture check-stdlib-root "$COMPILER" check "$CHECK_ROOT/app/main.tl" --stdlib-root "$CHECK_ROOT/repo-stdlib"
 assert_empty "$WORKDIR/check-stdlib-root.stderr"
 assert_contains "$WORKDIR/check-stdlib-root.stdout" "Type checking passed!"
 cp "$WORKDIR/check-stdlib-root.stdout" "$WORKDIR/check-stdlib-root.expected"
 
 echo "[host-action-cli] build"
-# cli-gate-case stage1-wrapper-build wrapper run_capture
 run_capture build "$COMPILER" build "$SRC" -o "$BIN"
 [ -x "$BIN" ] || {
     echo "build did not write executable $BIN" >&2
@@ -427,11 +416,9 @@ EOF
     cat > "$PKG/vendor/math/src/non_entry_bad.tl" <<'EOF'
 (define (nested-package-source) : i64 true)
 EOF
-    # cli-gate-case stage1-wrapper-check-package wrapper run_capture
     run_capture check-package "$COMPILER" check --manifest-path "$PKG/typelisp.pkg"
     assert_empty "$WORKDIR/check-package.stderr"
     assert_contains "$WORKDIR/check-package.stdout" "Type checking passed!"
-    # cli-gate-case stage1-wrapper-check-package-discover wrapper run_capture_cwd
     run_capture_cwd check-package-discover "$PKG/src/nested/deeper" "$COMPILER" check
     assert_empty "$WORKDIR/check-package-discover.stderr"
     assert_contains "$WORKDIR/check-package-discover.stdout" "Type checking passed!"
@@ -439,17 +426,14 @@ EOF
     cat > "$BAD_PKG_SOURCE" <<'EOF'
 (define (package-non-entry) : i64 true)
 EOF
-    # cli-gate-case stage1-wrapper-check-package-orphan-bad wrapper run_capture
     run_capture check-package-orphan-bad "$COMPILER" check --manifest-path "$PKG/typelisp.pkg"
     assert_empty "$WORKDIR/check-package-orphan-bad.stderr"
     assert_contains "$WORKDIR/check-package-orphan-bad.stdout" "Type checking passed!"
-    # cli-gate-case stage1-wrapper-check-file-bad wrapper run_expect_failure
     run_expect_failure check-file-bad "$COMPILER" check "$BAD_PKG_SOURCE"
     assert_empty "$WORKDIR/check-file-bad.stdout"
     assert_contains "$WORKDIR/check-file-bad.stderr" "non_entry_bad.tl"
     assert_not_contains "$WORKDIR/check-file-bad.stderr" "${BAD_PKG_SOURCE}${BAD_PKG_SOURCE}"
     rm "$BAD_PKG_SOURCE"
-    # cli-gate-case stage1-wrapper-check-file-manifest wrapper run_expect_failure
     run_expect_failure check-file-manifest "$COMPILER" check "$SRC" --manifest-path "$PKG/typelisp.pkg"
     assert_empty "$WORKDIR/check-file-manifest.stdout"
     assert_contains "$WORKDIR/check-file-manifest.stderr" "cannot combine input path with --manifest-path"
@@ -465,7 +449,6 @@ EOF
     PKG_DEV_TLCI="$PKG_DEV_OUT_DIR/stage1_pkg.tlci"
     MATH_DEV_ARCHIVE="$PKG/vendor/math/target/dev/libstage1_math.a"
     MATH_DEV_TLCI="$PKG/vendor/math/target/dev/stage1_math.tlci"
-    # cli-gate-case stage1-wrapper-build-package wrapper run_capture
     run_capture build-package "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
     [ -x "$PKG_BIN" ] || {
         echo "package build did not write executable $PKG_BIN" >&2
@@ -494,7 +477,6 @@ EOF
     assert_contains "$PKG_ASM" "main:"
     assert_contains "$PKG_ASM" ".extern _tl_stage1_math_src_lib_add_one"
     assert_not_contains "$PKG_ASM" "_tl_stage1_math_src_lib_add_one:"
-    # cli-gate-case stage1-wrapper-inspect-package-tlci wrapper run_capture
     run_capture inspect-package-tlci "$COMPILER" inspect "$PKG_TLCI"
     PRODUCER_IDENTITY=$($COMPILER --producer-identity)
     assert_empty "$WORKDIR/inspect-package-tlci.stderr"
@@ -518,7 +500,6 @@ EOF
     # user-facing one. Do not "fix" it by deleting the case: it is the only
     # end-to-end proof that a package's emitted .tlci dispatches its macros
     # natively, and it caught a real producer bug in #5712.
-    # cli-gate-case stage1-wrapper-package-tlci-native-verify wrapper run_capture
     run_capture package-tlci-native-verify \
         "$COMPILER" run "$ROOT/src/tests/compiler_tlci_native_producer_smoke.tl" \
         --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -- \
@@ -530,7 +511,6 @@ EOF
     assert_empty "$WORKDIR/package-tlci-native-verify.stdout"
     assert_empty "$WORKDIR/package-tlci-native-verify.stderr"
     cp "$PKG_TLCI" "$WORKDIR/stage1_pkg.first.tlci"
-    # cli-gate-case stage1-wrapper-build-package-repeat wrapper run_capture
     run_capture build-package-repeat "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
     if ! cmp -s "$WORKDIR/stage1_pkg.first.tlci" "$PKG_TLCI"; then
         echo "package build rewrote $PKG_TLCI nondeterministically" >&2
@@ -538,7 +518,6 @@ EOF
     fi
     BAD_TLCI="$WORKDIR/bad.tlci"
     printf 'bad' > "$BAD_TLCI"
-    # cli-gate-case stage1-wrapper-inspect-bad-tlci wrapper run_expect_failure
     run_expect_failure inspect-bad-tlci "$COMPILER" inspect "$BAD_TLCI"
     assert_empty "$WORKDIR/inspect-bad-tlci.stdout"
     assert_contains "$WORKDIR/inspect-bad-tlci.stderr" "inspect: $BAD_TLCI: tlci: truncated header"
@@ -552,7 +531,6 @@ EOF
     fi
 
     rm -rf "$PKG/target"
-    # cli-gate-case stage1-wrapper-build-package-dev wrapper run_capture
     run_capture build-package-dev "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --profile dev
     [ -x "$PKG_DEV_BIN" ] || {
         echo "package dev profile build did not write executable $PKG_DEV_BIN" >&2
@@ -580,7 +558,6 @@ EOF
     assert_contains "$WORKDIR/build-package-dev.stdout" "Built $PKG_DEV_TLCI"
 
     rm -rf "$PKG/target"
-    # cli-gate-case stage1-wrapper-build-package-discover wrapper run_capture_cwd
     run_capture_cwd build-package-discover "$PKG/src/nested/deeper" "$COMPILER" build
     [ -x "$PKG_BIN" ] || {
         echo "package discovery did not write executable $PKG_BIN" >&2
@@ -606,7 +583,6 @@ EOF
 EOF
     LIB_ARCHIVE="$LIBPKG/target/release/libstage1_lib.a"
     LIB_TLCI="$LIBPKG/target/release/stage1_lib.tlci"
-    # cli-gate-case stage1-wrapper-build-package-lib wrapper run_capture
     run_capture build-package-lib "$COMPILER" build --manifest-path "$LIBPKG/typelisp.pkg"
     [ -s "$LIB_ARCHIVE" ] || {
         echo "package lib build did not write static archive $LIB_ARCHIVE" >&2
@@ -619,18 +595,15 @@ EOF
     assert_contains "$WORKDIR/build-package-lib.stdout" "Built $LIB_ARCHIVE"
     assert_contains "$WORKDIR/build-package-lib.stdout" "Built $LIB_TLCI"
 
-# cli-gate-case stage1-wrapper-build-package-missing wrapper run_expect_failure
 run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
 assert_empty "$WORKDIR/build-package-missing.stdout"
 assert_contains "$WORKDIR/build-package-missing.stderr" "cannot read package manifest"
-# cli-gate-case stage1-wrapper-check-package-missing wrapper run_expect_failure
 run_expect_failure check-package-missing "$COMPILER" check --manifest-path "$WORKDIR/missing.pkg"
 assert_empty "$WORKDIR/check-package-missing.stdout"
 assert_contains "$WORKDIR/check-package-missing.stderr" "cannot read package manifest"
 
 echo "[host-action-cli] run"
 set +e
-# cli-gate-case stage1-wrapper-run direct "$COMPILER"
 "$COMPILER" run "$SRC" > "$WORKDIR/run.stdout" 2> "$WORKDIR/run.stderr"
 run_status=$?
 set -e
@@ -658,7 +631,6 @@ cat > "$RUN_CFG_SRC" <<'EOF'
 (define (main) : i64 (cfg feature 11 3))
 EOF
 set +e
-# cli-gate-case stage1-wrapper-run-cfg direct "$COMPILER"
 "$COMPILER" run "$RUN_CFG_SRC" --cfg feature > "$WORKDIR/run-cfg.stdout" 2> "$WORKDIR/run-cfg.stderr"
 run_cfg_status=$?
 set -e
@@ -675,7 +647,6 @@ assert_empty "$WORKDIR/run-cfg.stderr"
 
 echo "[host-action-cli] repl"
 : > "$WORKDIR/repl-empty.in"
-# cli-gate-case stage1-wrapper-repl-empty wrapper run_stdin_capture
 run_stdin_capture repl-empty "$WORKDIR/repl-empty.in" "$COMPILER" repl
 assert_contains "$WORKDIR/repl-empty.stdout" "TypeLisp REPL. Type .help for commands."
 assert_contains "$WORKDIR/repl-empty.stdout" "tl> "
@@ -687,7 +658,6 @@ cat > "$WORKDIR/repl-session.in" <<'EOF'
 (+ 1 2)
 .exit
 EOF
-# cli-gate-case stage1-wrapper-repl-session wrapper run_stdin_capture
 run_stdin_capture repl-session "$WORKDIR/repl-session.in" "$COMPILER" repl
 assert_contains "$WORKDIR/repl-session.stdout" "TypeLisp REPL commands:"
 assert_contains "$WORKDIR/repl-session.stdout" ".type <expr>"
@@ -695,7 +665,6 @@ assert_contains "$WORKDIR/repl-session.stdout" "bool"
 assert_contains "$WORKDIR/repl-session.stdout" "tl> 3"
 assert_empty "$WORKDIR/repl-session.stderr"
 
-# cli-gate-case stage1-wrapper-repl-args wrapper run_expect_failure
 run_expect_failure repl-args "$COMPILER" repl unexpected
 assert_empty "$WORKDIR/repl-args.stdout"
 assert_contains "$WORKDIR/repl-args.stderr" "Error: repl does not accept arguments"
@@ -705,7 +674,6 @@ LSP_INIT="$WORKDIR/lsp-init-shutdown.in"
 : > "$LSP_INIT"
 lsp_frame_append "$LSP_INIT" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
 lsp_frame_append "$LSP_INIT" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
-# cli-gate-case stage1-wrapper-lsp-init-shutdown wrapper run_stdin_capture
 run_stdin_capture lsp-init-shutdown "$LSP_INIT" "$COMPILER" lsp
 assert_empty "$WORKDIR/lsp-init-shutdown.stderr"
 assert_contains "$WORKDIR/lsp-init-shutdown.stdout" '"id":1'
@@ -713,7 +681,6 @@ assert_contains "$WORKDIR/lsp-init-shutdown.stdout" '"textDocumentSync"'
 assert_contains "$WORKDIR/lsp-init-shutdown.stdout" '"id":2'
 
 printf 'X-Test: 1\r\n\r\n' > "$WORKDIR/lsp-missing-length.in"
-# cli-gate-case stage1-wrapper-lsp-missing-length wrapper run_stdin_expect_failure
 run_stdin_expect_failure lsp-missing-length "$WORKDIR/lsp-missing-length.in" "$COMPILER" lsp
 assert_contains "$WORKDIR/lsp-missing-length.stdout" '"code":-32700'
 assert_contains "$WORKDIR/lsp-missing-length.stderr" "lsp: missing Content-Length"
@@ -727,7 +694,6 @@ lsp_frame_append "$LSP_DIAG" '{"jsonrpc":"2.0","id":1,"method":"initialize","par
 lsp_frame_append "$LSP_DIAG" '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$LSP_URI"'","languageId":"typelisp","version":1,"text":"(define (main) : i64 true)"}}}'
 lsp_frame_append "$LSP_DIAG" '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$LSP_URI"'","version":2},"contentChanges":[{"text":"(define (main) : i64 0)"}]}}'
 lsp_frame_append "$LSP_DIAG" '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$LSP_URI"'"}}}'
-# cli-gate-case stage1-wrapper-lsp-diagnostics wrapper run_stdin_capture
 run_stdin_capture lsp-diagnostics "$LSP_DIAG" "$COMPILER" lsp
 assert_empty "$WORKDIR/lsp-diagnostics.stderr"
 assert_contains "$WORKDIR/lsp-diagnostics.stdout" '"code":"E0206"'
@@ -767,7 +733,6 @@ EOF
 ;: Entry docs.
 (define (main) : i64 (+ local.local-answer docfixture.stdlib-answer))
 EOF
-    # cli-gate-case stage1-wrapper-doc wrapper run_capture
     run_capture doc "$COMPILER" doc "$DOC_ENTRY" -o "$DOC_MD" --stdlib-root "$DOC_STDLIB"
     assert_empty "$WORKDIR/doc.stderr"
     assert_contains "$WORKDIR/doc.stdout" "Wrote $DOC_MD"
@@ -776,7 +741,6 @@ EOF
     assert_contains "$DOC_MD" "Stdlib module docs."
 
     echo "[host-action-cli] doc --test"
-    # cli-gate-case stage1-wrapper-doc-test wrapper run_capture
     run_capture doc-test "$COMPILER" doc --test "$DOC_ENTRY" --stdlib-root "$DOC_STDLIB"
     assert_empty "$WORKDIR/doc-test.stderr"
 assert_contains "$WORKDIR/doc-test.stdout" "Doc tests passed: 1 example(s)"
@@ -791,7 +755,6 @@ echo "[host-action-cli] test --check"
 (test inc-basic
   (test.assert-i64-eq (inc 41) 42 "inc result"))
 EOF
-    # cli-gate-case stage1-wrapper-test-check wrapper run_capture
     run_capture test-check "$COMPILER" test --check "$TEST_SRC" --target linux-x86_64 --opt-level 2 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-check.stderr"
     assert_contains "$WORKDIR/test-check.stdout" "TypeLisp test typecheck passed: 1 test(s)"
@@ -808,7 +771,6 @@ EOF
 EOF
     TEST_BATCH_LIST="$WORKDIR/inline-test-batch.txt"
     printf '%s\n' "$TEST_SRC" "$TEST_BATCH_SRC" > "$TEST_BATCH_LIST"
-    # cli-gate-case stage1-wrapper-test-check-batch wrapper run_capture
     run_capture test-check-batch "$COMPILER" test --check --batch "$TEST_BATCH_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-check-batch.stderr"
     assert_contains "$WORKDIR/test-check-batch.stdout" "TypeLisp test file: $TEST_SRC (1 test(s))"
@@ -816,12 +778,10 @@ EOF
     assert_contains "$WORKDIR/test-check-batch.stdout" "TypeLisp test file: $TEST_BATCH_SRC (2 test(s))"
     assert_contains "$WORKDIR/test-check-batch.stdout" "TypeLisp test typecheck passed: 2 test(s)"
     assert_contains "$WORKDIR/test-check-batch.stdout" "TypeLisp test batch typecheck passed: 3 test(s) in 2 file(s)"
-    # cli-gate-case stage1-wrapper-test-check-batch-with-file wrapper run_expect_failure
     run_expect_failure test-check-batch-with-file "$COMPILER" test --check --batch "$TEST_BATCH_LIST" "$TEST_SRC" --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-check-batch-with-file.stderr" "test: cannot combine input paths with --batch"
 
     echo "[host-action-cli] test --batch"
-    # cli-gate-case stage1-wrapper-test-run-batch wrapper run_capture
     run_capture test-run-batch "$COMPILER" test --batch "$TEST_BATCH_LIST" --target linux-x86_64 --opt-level 2 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch.stdout" "TypeLisp test file: $TEST_SRC (1 test(s))"
     assert_contains "$WORKDIR/test-run-batch.stdout" "TypeLisp test file: $TEST_BATCH_SRC (2 test(s))"
@@ -850,14 +810,12 @@ EOF
 EOF
     TEST_BATCH_FAIL_LIST="$WORKDIR/inline-test-batch-fail.txt"
     printf '%s\n' "$TEST_SRC" "$TEST_BATCH_FAIL_SRC" "$TEST_BATCH_SENTINEL_SRC" > "$TEST_BATCH_FAIL_LIST"
-    # cli-gate-case stage1-wrapper-test-run-batch-failure wrapper run_expect_failure
     run_expect_failure test-run-batch-failure "$COMPILER" test --batch "$TEST_BATCH_FAIL_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-failure.stderr" "intentional batch failure"
     assert_contains "$WORKDIR/test-run-batch-failure.stderr" "FAILED intentional-batch-failure"
     assert_contains "$WORKDIR/test-run-batch-failure.stderr" "ok runs-after-failed-file"
     assert_not_contains "$WORKDIR/test-run-batch-failure.stderr" "test: batch source failed: $TEST_BATCH_FAIL_SRC"
     assert_contains "$WORKDIR/test-run-batch-failure.stdout" "TypeLisp test batch failed: 1 of 3 file(s) failed; 3 test(s)"
-    # cli-gate-case stage1-wrapper-test-run-batch-sentinel-fresh wrapper run_capture
     run_capture test-run-batch-sentinel-fresh "$COMPILER" test "$TEST_BATCH_SENTINEL_SRC" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-sentinel-fresh.stderr" "ok runs-after-failed-file"
 
@@ -868,7 +826,6 @@ EOF
 EOF
     TEST_BATCH_BAD_LIST="$WORKDIR/inline-test-batch-bad.txt"
     printf '%s\n' "$TEST_BATCH_BAD_SRC" "$TEST_BATCH_SENTINEL_SRC" > "$TEST_BATCH_BAD_LIST"
-    # cli-gate-case stage1-wrapper-test-run-batch-compile-error wrapper run_expect_failure
     run_expect_failure test-run-batch-compile-error "$COMPILER" test --batch "$TEST_BATCH_BAD_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-compile-error.stderr" "unbound name missing-inline-test-name"
     assert_contains "$WORKDIR/test-run-batch-compile-error.stderr" "test: batch source failed: $TEST_BATCH_BAD_SRC"
@@ -883,14 +840,12 @@ EOF
 EOF
     TEST_BATCH_LOWER_BAD_LIST="$WORKDIR/inline-test-batch-lower-bad.txt"
     printf '%s\n' "$TEST_BATCH_LOWER_BAD_SRC" "$TEST_BATCH_SENTINEL_SRC" > "$TEST_BATCH_LOWER_BAD_LIST"
-    # cli-gate-case stage1-wrapper-test-run-batch-lower-error wrapper run_expect_failure
     run_expect_failure test-run-batch-lower-error "$COMPILER" test --batch "$TEST_BATCH_LOWER_BAD_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-lower-error.stderr" "Expr value is compile-time only"
     assert_contains "$WORKDIR/test-run-batch-lower-error.stderr" "test: batch source failed: $TEST_BATCH_LOWER_BAD_SRC"
     assert_not_contains "$WORKDIR/test-run-batch-lower-error.stderr" "runs-after-failed-file"
 
     echo "[host-action-cli] test"
-    # cli-gate-case stage1-wrapper-test-run wrapper run_capture
     run_capture test-run "$COMPILER" test "$TEST_SRC" --opt-level 1 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-run.stdout"
     assert_contains "$WORKDIR/test-run.stderr" "test inc-basic"
@@ -906,17 +861,14 @@ EOF
     cat > "$NO_TEST_SRC" <<'EOF'
 (define (main) : i64 0)
 EOF
-    # cli-gate-case stage1-wrapper-test-no-tests-check wrapper run_capture
     run_capture test-no-tests-check "$COMPILER" test --check "$NO_TEST_SRC"
     assert_empty "$WORKDIR/test-no-tests-check.stderr"
     assert_contains "$WORKDIR/test-no-tests-check.stdout" "TypeLisp test typecheck passed: 0 test(s)"
-    # cli-gate-case stage1-wrapper-test-no-tests-run wrapper run_capture
     run_capture test-no-tests-run "$COMPILER" test "$NO_TEST_SRC"
     assert_empty "$WORKDIR/test-no-tests-run.stdout"
     assert_contains "$WORKDIR/test-no-tests-run.stderr" "TypeLisp tests: 0 passed; 0 failed; 0 ignored; 0 slow-skipped; 0 total"
     TEST_BATCH_ZERO_LIST="$WORKDIR/inline-test-batch-zero.txt"
     printf '%s\n' "$NO_TEST_SRC" "$TEST_SRC" > "$TEST_BATCH_ZERO_LIST"
-    # cli-gate-case stage1-wrapper-test-run-batch-zero wrapper run_capture
     run_capture test-run-batch-zero "$COMPILER" test --batch "$TEST_BATCH_ZERO_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-zero.stdout" "TypeLisp test file: $NO_TEST_SRC (0 test(s))"
     assert_contains "$WORKDIR/test-run-batch-zero.stdout" "TypeLisp test batch passed: 1 test(s) in 2 file(s)"
@@ -1003,7 +955,6 @@ EOF
     cat > "$TEST_PKG/tests/vendor/child/src/fail.tl" <<'EOF'
 (define (main) : i64 9)
 EOF
-    # cli-gate-case stage1-wrapper-test-package-check wrapper run_capture_cwd
     run_capture_cwd test-package-check "$TEST_PKG/src/nested" "$COMPILER" test --check --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-package-check.stderr"
     assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp test file:"
@@ -1011,7 +962,6 @@ EOF
     assert_contains_any "$WORKDIR/test-package-check.stdout" \
         "TypeLisp package test typecheck passed: 4 test(s) in 4 file(s)" \
         "TypeLisp package test typecheck passed: 4 test(s) in 12 file(s)"
-    # cli-gate-case stage1-wrapper-test-package-run wrapper run_capture_cwd
     run_capture_cwd test-package-run "$TEST_PKG/src/nested" "$COMPILER" test --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-package-run.stdout" "TypeLisp integration test file:"
     assert_contains_any "$WORKDIR/test-package-run.stdout" \
@@ -1034,7 +984,6 @@ EOF
     cat > "$TEST_EMPTY_PKG/src/main.tl" <<'EOF'
 (define (main) : i64 0)
 EOF
-    # cli-gate-case stage1-wrapper-test-package-no-tests wrapper run_capture_cwd
     run_capture_cwd test-package-no-tests "$TEST_EMPTY_PKG" "$COMPILER" test --check --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-package-no-tests.stderr"
     assert_contains_any "$WORKDIR/test-package-no-tests.stdout" \
@@ -1050,7 +999,6 @@ EOF
   (test.assert-i64-eq 1 2 "inline failure message"))
 EOF
     set +e
-    # cli-gate-case stage1-wrapper-test-fail direct TYPELISP_STAGE1_HEARTBEAT_FD=3
     TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test "$FAIL_SRC" --stdlib-root "$ROOT/stdlib" 3>&2 > "$WORKDIR/test-fail.stdout" 2> "$WORKDIR/test-fail.stderr"
     fail_status=$?
     set -e
@@ -1085,7 +1033,6 @@ EOF
 (define (main) : i64 7)
 EOF
     set +e
-    # cli-gate-case stage1-wrapper-test-package-integration-fail direct TYPELISP_STAGE1_HEARTBEAT_FD=3
     TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --target linux-x86_64 --manifest-path "$FAIL_PKG/typelisp.pkg" 3>&2 > "$WORKDIR/test-package-integration-fail.stdout" 2> "$WORKDIR/test-package-integration-fail.stderr"
     pkg_fail_status=$?
     set -e
@@ -1115,7 +1062,6 @@ EOF
     0))
 EOF
     set +e
-    # cli-gate-case stage1-wrapper-test-package-integration-lower-diagnostic direct TYPELISP_STAGE1_HEARTBEAT_FD=3
     TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --target linux-x86_64 --manifest-path "$DIAG_PKG/typelisp.pkg" 3>&2 > "$WORKDIR/test-package-integration-lower-diagnostic.stdout" 2> "$WORKDIR/test-package-integration-lower-diagnostic.stderr"
     pkg_diag_status=$?
     set -e
@@ -1135,7 +1081,6 @@ EOF
   (missing-inline-test-name))
 EOF
     set +e
-    # cli-gate-case stage1-wrapper-test-bad direct TYPELISP_STAGE1_HEARTBEAT_FD=3
     TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --check "$BAD_SRC" 3>&2 > "$WORKDIR/test-bad.stdout" 2> "$WORKDIR/test-bad.stderr"
     bad_status=$?
     set -e
@@ -1147,7 +1092,6 @@ EOF
     assert_contains "$WORKDIR/test-bad.stderr" "typecheck: unbound name missing-inline-test-name"
 
     set +e
-    # cli-gate-case stage1-wrapper-test-missing-opt direct TYPELISP_STAGE1_HEARTBEAT_FD=3
     TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test "$TEST_SRC" --opt-level 3>&2 > "$WORKDIR/test-missing-opt.stdout" 2> "$WORKDIR/test-missing-opt.stderr"
     missing_opt_status=$?
     set -e
@@ -1159,7 +1103,6 @@ EOF
     assert_contains "$WORKDIR/test-missing-opt.stderr" "test: --opt-level requires a value"
 
     set +e
-    # cli-gate-case stage1-wrapper-test-invalid-opt direct TYPELISP_STAGE1_HEARTBEAT_FD=3
     TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test "$TEST_SRC" --opt-level 3 3>&2 > "$WORKDIR/test-invalid-opt.stdout" 2> "$WORKDIR/test-invalid-opt.stderr"
     invalid_opt_status=$?
     set -e
@@ -1171,7 +1114,6 @@ EOF
     assert_contains "$WORKDIR/test-invalid-opt.stderr" "test: invalid --opt-level 3; expected 0, 1, or 2"
 
     set +e
-    # cli-gate-case stage1-wrapper-test-bad-target direct TYPELISP_STAGE1_HEARTBEAT_FD=3
     TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --check "$TEST_SRC" --target nope 3>&2 > "$WORKDIR/test-bad-target.stdout" 2> "$WORKDIR/test-bad-target.stderr"
     bad_target_status=$?
     set -e
@@ -1189,19 +1131,16 @@ cat > "$WORKDIR/fmt-changed.tl" <<'EOF'
     x))
 EOF
 cp "$WORKDIR/fmt-changed.tl" "$WORKDIR/fmt-changed.expected"
-# cli-gate-case stage1-wrapper-fmt-check-changed wrapper run_expect_failure
 run_expect_failure fmt-check-changed "$COMPILER" fmt --check "$WORKDIR/fmt-changed.tl"
 assert_empty "$WORKDIR/fmt-check-changed.stdout"
 assert_contains "$WORKDIR/fmt-check-changed.stderr" "fmt: would reformat"
 check_file_exact "$WORKDIR/fmt-changed.tl" "$WORKDIR/fmt-changed.expected"
 
-# cli-gate-case stage1-wrapper-fmt-missing wrapper run_expect_failure
 run_expect_failure fmt-missing "$COMPILER" fmt "$WORKDIR/missing.tl"
 assert_empty "$WORKDIR/fmt-missing.stdout"
 assert_nonempty "$WORKDIR/fmt-missing.stderr"
 
 printf '(define (' > "$WORKDIR/fmt-parse-error.tl"
-# cli-gate-case stage1-wrapper-fmt-parse-error wrapper run_expect_failure
 run_expect_failure fmt-parse-error "$COMPILER" fmt "$WORKDIR/fmt-parse-error.tl"
 assert_empty "$WORKDIR/fmt-parse-error.stdout"
 assert_nonempty "$WORKDIR/fmt-parse-error.stderr"
@@ -1231,32 +1170,26 @@ cat > "$FMTLINT_PKG/src/lint_bad.tl" <<'EOF'
       [b : i64 (+ a 1)]
       (+ a b))))
 EOF
-# cli-gate-case stage1-wrapper-fmt-package-check wrapper run_expect_failure
 run_expect_failure fmt-package-check "$COMPILER" fmt --manifest-path "$FMTLINT_PKG/typelisp.pkg" --check
 assert_empty "$WORKDIR/fmt-package-check.stdout"
 assert_contains "$WORKDIR/fmt-package-check.stderr" "needs_fmt.tl"
-# cli-gate-case stage1-wrapper-fmt-package-rewrite wrapper run_capture
 run_capture fmt-package-rewrite "$COMPILER" fmt --manifest-path "$FMTLINT_PKG/typelisp.pkg"
 assert_empty "$WORKDIR/fmt-package-rewrite.stdout"
 assert_empty "$WORKDIR/fmt-package-rewrite.stderr"
 assert_contains "$FMTLINT_PKG/src/needs_fmt.tl" "  (+ 1 2)"
-# cli-gate-case stage1-wrapper-fmt-package-discover wrapper run_capture_cwd
 run_capture_cwd fmt-package-discover "$FMTLINT_PKG/src/nested/deeper" "$COMPILER" fmt --check
 assert_empty "$WORKDIR/fmt-package-discover.stdout"
 assert_empty "$WORKDIR/fmt-package-discover.stderr"
-# cli-gate-case stage1-wrapper-fmt-file-manifest wrapper run_expect_failure
 run_expect_failure fmt-file-manifest "$COMPILER" fmt "$SRC" --manifest-path "$FMTLINT_PKG/typelisp.pkg"
 assert_empty "$WORKDIR/fmt-file-manifest.stdout"
 assert_contains "$WORKDIR/fmt-file-manifest.stderr" "cannot combine input paths with --manifest-path"
 FMT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-fmt-nopkg.XXXXXX")
-# cli-gate-case stage1-wrapper-fmt-no-manifest wrapper run_expect_failure_cwd
 run_expect_failure_cwd fmt-no-manifest "$FMT_NOPKG" "$COMPILER" fmt --check
 assert_empty "$WORKDIR/fmt-no-manifest.stdout"
 assert_contains "$WORKDIR/fmt-no-manifest.stderr" "could not find typelisp.pkg"
 rm -rf "$FMT_NOPKG"
 
 echo "[host-action-cli] lint"
-# cli-gate-case stage1-wrapper-lint-help wrapper run_capture
 run_capture lint-help "$COMPILER" lint --help
 assert_empty "$WORKDIR/lint-help.stdout"
 assert_contains "$WORKDIR/lint-help.stderr" "Usage:"
@@ -1264,18 +1197,15 @@ assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--che
 assert_contains "$WORKDIR/lint-help.stderr" "Summary:"
 
 LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")
-# cli-gate-case stage1-wrapper-lint-missing wrapper run_expect_failure_cwd
 run_expect_failure_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint
 assert_empty "$WORKDIR/lint-missing.stdout"
 assert_contains "$WORKDIR/lint-missing.stderr" "could not find typelisp.pkg"
 rm -rf "$LINT_NOPKG"
 
-# cli-gate-case stage1-wrapper-lint-clean wrapper run_capture
 run_capture lint-clean "$COMPILER" lint "$SRC"
 assert_empty "$WORKDIR/lint-clean.stderr"
 assert_contains "$WORKDIR/lint-clean.stdout" "lint: 0 finding(s)"
 
-# cli-gate-case stage1-wrapper-lint-clean-check wrapper run_capture
 run_capture lint-clean-check "$COMPILER" lint "$SRC" --check
 assert_empty "$WORKDIR/lint-clean-check.stderr"
 assert_contains "$WORKDIR/lint-clean-check.stdout" "lint: 0 finding(s)"
@@ -1290,12 +1220,10 @@ cat > "$LINT_DOTTED_COMPAT_SRC" <<'EOF'
     (set! p.x y)
     (__tl-project-field p x)))
 EOF
-# cli-gate-case stage1-wrapper-lint-dotted-compat wrapper run_capture
 run_capture lint-dotted-compat "$COMPILER" lint "$LINT_DOTTED_COMPAT_SRC" --prefer-dotted-field
 assert_empty "$WORKDIR/lint-dotted-compat.stderr"
 assert_contains "$WORKDIR/lint-dotted-compat.stdout" "lint: 0 finding(s)"
 
-# cli-gate-case stage1-wrapper-lint-dotted-compat-check wrapper run_capture
 run_capture lint-dotted-compat-check "$COMPILER" lint "$LINT_DOTTED_COMPAT_SRC" --prefer-dotted-field --check
 assert_empty "$WORKDIR/lint-dotted-compat-check.stderr"
 assert_contains "$WORKDIR/lint-dotted-compat-check.stdout" "lint: 0 finding(s)"
@@ -1309,7 +1237,6 @@ cat > "$LINT_SRC" <<'EOF'
       [b : i64 (+ a 1)]
       (+ a b))))
 EOF
-# cli-gate-case stage1-wrapper-lint-nested-let wrapper run_capture
 run_capture lint-nested-let "$COMPILER" lint "$LINT_SRC"
 assert_empty "$WORKDIR/lint-nested-let.stderr"
 assert_contains "$WORKDIR/lint-nested-let.stdout" "lint_bad.tl:"
@@ -1317,14 +1244,12 @@ assert_contains "$WORKDIR/lint-nested-let.stdout" "nested let"
 assert_contains "$WORKDIR/lint-nested-let.stdout" "merge bindings"
 assert_contains "$WORKDIR/lint-nested-let.stdout" "lint: 1 finding(s)"
 
-# cli-gate-case stage1-wrapper-lint-nested-let-check wrapper run_expect_failure
 run_expect_failure lint-nested-let-check "$COMPILER" lint "$LINT_SRC" --check
 assert_empty "$WORKDIR/lint-nested-let-check.stderr"
 assert_contains "$WORKDIR/lint-nested-let-check.stdout" "lint_bad.tl:"
 assert_contains "$WORKDIR/lint-nested-let-check.stdout" "nested let"
 assert_contains "$WORKDIR/lint-nested-let-check.stdout" "lint: 1 finding(s)"
 
-# cli-gate-case stage1-wrapper-lint-multi wrapper run_capture
 run_capture lint-multi "$COMPILER" lint "$SRC" "$LINT_SRC"
 assert_empty "$WORKDIR/lint-multi.stderr"
 assert_contains "$WORKDIR/lint-multi.stdout" "--- $SRC"
@@ -1338,36 +1263,29 @@ if [ "$lint_multi_clean_line" -ge "$lint_multi_bad_line" ]; then
     fail "lint multi-file output did not preserve input path order"
 fi
 
-# cli-gate-case stage1-wrapper-lint-package-check wrapper run_expect_failure
 run_expect_failure lint-package-check "$COMPILER" lint --manifest-path "$FMTLINT_PKG/typelisp.pkg" --check
 assert_empty "$WORKDIR/lint-package-check.stderr"
 assert_contains "$WORKDIR/lint-package-check.stdout" "lint_bad.tl:"
 assert_contains "$WORKDIR/lint-package-check.stdout" "lint: 1 finding(s)"
-# cli-gate-case stage1-wrapper-lint-package-discover wrapper run_capture_cwd
 run_capture_cwd lint-package-discover "$FMTLINT_PKG/src/nested/deeper" "$COMPILER" lint
 assert_empty "$WORKDIR/lint-package-discover.stderr"
 assert_contains "$WORKDIR/lint-package-discover.stdout" "lint_bad.tl:"
-# cli-gate-case stage1-wrapper-lint-file-manifest wrapper run_expect_failure
 run_expect_failure lint-file-manifest "$COMPILER" lint "$SRC" --manifest-path "$FMTLINT_PKG/typelisp.pkg"
 assert_empty "$WORKDIR/lint-file-manifest.stdout"
 assert_contains "$WORKDIR/lint-file-manifest.stderr" "cannot combine input paths with --manifest-path"
-# cli-gate-case stage1-wrapper-lint-files-manifest wrapper run_expect_failure
 run_expect_failure lint-files-manifest "$COMPILER" lint "$SRC" "$LINT_SRC" --manifest-path "$FMTLINT_PKG/typelisp.pkg"
 assert_empty "$WORKDIR/lint-files-manifest.stdout"
 assert_contains "$WORKDIR/lint-files-manifest.stderr" "cannot combine input paths with --manifest-path"
 
-# cli-gate-case stage1-wrapper-lint-missing-file wrapper run_expect_failure
 run_expect_failure lint-missing-file "$COMPILER" lint "$WORKDIR/missing-lint.tl"
 assert_empty "$WORKDIR/lint-missing-file.stdout"
 assert_nonempty "$WORKDIR/lint-missing-file.stderr"
 
 printf '(define (' > "$WORKDIR/lint-parse-error.tl"
-# cli-gate-case stage1-wrapper-lint-parse-error wrapper run_expect_failure
 run_expect_failure lint-parse-error "$COMPILER" lint "$WORKDIR/lint-parse-error.tl"
 assert_empty "$WORKDIR/lint-parse-error.stdout"
 assert_nonempty "$WORKDIR/lint-parse-error.stderr"
 
-# cli-gate-case stage1-wrapper-lint-parse-error-check wrapper run_expect_failure
 run_expect_failure lint-parse-error-check "$COMPILER" lint "$WORKDIR/lint-parse-error.tl" --check
 assert_empty "$WORKDIR/lint-parse-error-check.stdout"
 assert_nonempty "$WORKDIR/lint-parse-error-check.stderr"
@@ -1472,7 +1390,6 @@ EOF
 chmod +x "$HANDOFF_SEED" "$HANDOFF_GENERATED" "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
 
 : > "$HANDOFF_LOG"
-# cli-gate-case stage1-wrapper-opt2-handoff-supplied delegated run_capture
 run_capture opt2-handoff-supplied \
     env \
     TYPELISP_BIN="$HANDOFF_SEED" \
@@ -1489,7 +1406,6 @@ assert_contains "$WORKDIR/opt2-handoff-supplied.stdout" "reference: reuse valida
 assert_contains "$WORKDIR/opt2-handoff-supplied.stdout" "cross-fixpoint holds"
 
 : > "$HANDOFF_LOG"
-# cli-gate-case stage1-wrapper-opt2-handoff-standalone delegated run_capture
 run_capture opt2-handoff-standalone \
     env -u TYPELISP_OPT2_CLI_REFERENCE_ASM \
     TYPELISP_BIN="$HANDOFF_SEED" \
@@ -1501,7 +1417,6 @@ assert_contains "$HANDOFF_LOG" "seed|compile|src/main.tl|-o|$HANDOFF_ROOT/target
 assert_contains "$WORKDIR/opt2-handoff-standalone.stdout" "reference: converged compiler compiles src/main.tl at opt1"
 assert_contains "$WORKDIR/opt2-handoff-standalone.stdout" "cross-fixpoint holds"
 
-# cli-gate-case stage1-wrapper-opt2-handoff-empty-reference delegated run_expect_failure
 run_expect_failure opt2-handoff-empty-reference \
     env \
     TYPELISP_BIN="$HANDOFF_SEED" \
@@ -1512,7 +1427,6 @@ run_expect_failure opt2-handoff-empty-reference \
     "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
 assert_contains "$WORKDIR/opt2-handoff-empty-reference.stderr" "supplied opt1 reference path is empty"
 
-# cli-gate-case stage1-wrapper-opt2-handoff-missing-release delegated run_expect_failure
 run_expect_failure opt2-handoff-missing-release \
     env \
     TYPELISP_BIN="$HANDOFF_SEED" \
@@ -1524,7 +1438,6 @@ run_expect_failure opt2-handoff-missing-release \
     "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
 assert_contains "$WORKDIR/opt2-handoff-missing-release.stderr" "generated compiler is missing or empty"
 
-# cli-gate-case stage1-wrapper-opt2-handoff-cross-mismatch delegated run_expect_failure
 run_expect_failure opt2-handoff-cross-mismatch \
     env \
     TYPELISP_BIN="$HANDOFF_SEED" \

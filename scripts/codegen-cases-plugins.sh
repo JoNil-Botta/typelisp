@@ -245,3 +245,26 @@ plugin_ispc_driver() {
     esac
     echo "[codegen-cases] ISPC $2 driver passed"
 }
+
+# cc_dir_link LINK TARGET / cc_dir_unlink LINK: a directory symlink (a junction
+# on Windows), for `sh` rows.
+cc_dir_link() {
+    if [ "$CC_HOST" = windows ]; then
+        TYPELISP_TEST_JUNCTION_LINK=$(cygpath -aw "$1") \
+            TYPELISP_TEST_JUNCTION_TARGET=$(cygpath -aw "$2") \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+            '$null = New-Item -ItemType Junction -Path $env:TYPELISP_TEST_JUNCTION_LINK -Target $env:TYPELISP_TEST_JUNCTION_TARGET' > /dev/null
+    else
+        ln -s "$2" "$1"
+    fi
+}
+
+cc_dir_unlink() {
+    if [ "$CC_HOST" = windows ]; then
+        TYPELISP_TEST_JUNCTION_LINK=$(cygpath -aw "$1") \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+            '[System.IO.Directory]::Delete($env:TYPELISP_TEST_JUNCTION_LINK)' > /dev/null
+    else
+        rm "$1"
+    fi
+}

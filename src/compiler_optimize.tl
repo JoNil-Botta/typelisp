@@ -20609,7 +20609,7 @@
   ;; falls back to the loop-wide answer.
   (global-cell-writes i64)
   ;; IAG-2. The packed set of globals whose OWN STORAGE this body may write,
-  ;; read against the program's OptGlobalObjModRef index. Distinct from
+  ;; read against the program's storage-table index. Distinct from
   ;; `global-cell-writes`, which answers only for `Store g` (the `set!`
   ;; lowering): after IAG-1 a memory aggregate's `slots`/`len` words live in
   ;; the `.comm` cell itself, so a `(&mut g)` helper that grows the vector
@@ -20919,7 +20919,7 @@
   [header-admit : opt_i64_i64_map.Map]) : OptLicmGlobalFacts
   (let
     [mod-ref : OptGlobalModRef cells.mod-ref]
-    [obj : OptGlobalObjModRef cells.obj-mod-ref]
+    [obj : OptGlobalModRef cells.obj-mod-ref]
     (OptLicmGlobalFacts
       clean?
       mask
@@ -21861,14 +21861,15 @@
       (and
         (not clean?)
         (opt-global-mod-ref-mask-may-write? mod-ref.index cell-writes name))
-      (opt-global-obj-mask-may-write? obj.index obj-writes name))))
+      (opt-global-mod-ref-mask-may-write? obj.index obj-writes name))))
 
 (define (opt-licm-global-storage-invariant?
   [facts : (& facts OptLicmGlobalFacts)]
   [name : i64]) : bool
   (and
     (opt-licm-global-facts-invariant? facts name)
-    (not (opt-global-obj-mask-may-write? facts.obj-index facts.obj-mask name))))
+    (not
+      (opt-global-mod-ref-mask-may-write? facts.obj-index facts.obj-mask name))))
 
 ;; The head of the chain, as an OPERAND: `gep @g, <literal>`.
 (define (opt-licm-global-header-value?
@@ -22247,27 +22248,31 @@
     [obj (& cells.obj-mod-ref)]
     (match ptr
       [(ir.CompilerIrValue.Global name)
-        (opt-global-obj-id-mask
+        (opt-global-mod-ref-id-bit
           obj.index
           (ir.compiler-ir-symbol-id (deref name)))]
       [(ir.CompilerIrValue.GlobalAddr name)
-        (opt-global-obj-id-mask
+        (opt-global-mod-ref-id-bit
           obj.index
           (ir.compiler-ir-symbol-id (deref name)))]
       [(ir.CompilerIrValue.Var var)
         (match (opt-licm-ptr-lookup ptrs (deref var))
           [(OptLicmPtrKind.GlobalSlot global)
-            (opt-global-obj-id-mask obj.index (ir.compiler-ir-symbol-id global))]
+            (opt-global-mod-ref-id-bit
+              obj.index
+              (ir.compiler-ir-symbol-id global))]
           [(OptLicmPtrKind.GlobalDataSlot global)
-            (opt-global-obj-id-mask obj.index (ir.compiler-ir-symbol-id global))]
+            (opt-global-mod-ref-id-bit
+              obj.index
+              (ir.compiler-ir-symbol-id global))]
           [(OptLicmPtrKind.DataBuffer _) 0]
           [(OptLicmPtrKind.DataElement _) 0]
           [(OptLicmPtrKind.HeaderSlot _) 0]
           [(OptLicmPtrKind.DataSlot _) 0]
           [(OptLicmPtrKind.LocalObject _) 0]
           [(OptLicmPtrKind.LocalSlot _) 0]
-          [(OptLicmPtrKind.Unknown) (opt-global-obj-any)])]
-      [_ (opt-global-obj-any)])))
+          [(OptLicmPtrKind.Unknown) (opt-global-mod-ref-any)])]
+      [_ (opt-global-mod-ref-any)])))
 
 (define (opt-licm-store-state-mark-global-write [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -22458,7 +22463,7 @@
             (opt-global-mod-ref-call-mask global-cells.mod-ref name))
           ;; IAG-2: and the storage rows, which is the half a `(&mut g)`
           ;; helper's in-place header write lands in.
-          (opt-global-obj-call-mask global-cells.obj-mod-ref name))]
+          (opt-global-mod-ref-call-mask global-cells.obj-mod-ref name))]
       [summary : OptLicmStoreSummary
         (opt-licm-store-summary-for-direct-call direct-call-clean name)]
       ;; SRET-SITE: asked only where the per-callee verdict fell to
@@ -22700,7 +22705,7 @@
       (opt-licm-store-state-add-cell-writes
         (opt-licm-store-state-mark-call state)
         (opt-global-mod-ref-any))
-      (opt-global-obj-any))
+      (opt-global-mod-ref-any))
     (opt-licm-store-summary-call-or-unknown)))
 
 (define (opt-licm-store-state-instr
@@ -22902,7 +22907,9 @@
           ;; writes g's own storage as well as changing what the cell holds.
           [obj (& global-cells.obj-mod-ref)]
           [obj-mask : i64
-            (opt-global-obj-id-mask obj.index (ir.compiler-ir-symbol-id name))]
+            (opt-global-mod-ref-id-bit
+              obj.index
+              (ir.compiler-ir-symbol-id name))]
           (opt-licm-store-state-add-summary-keeping-globals
             ;; P18: a named cell write names exactly ONE cell, which is the
             ;; whole reason the per-global set is finer than `global-write?`
@@ -22928,7 +22935,7 @@
               (opt-global-mod-ref-effect-mask
                 (ir.compiler-ir-instr-effect
                   (compiler-opt-global-shared-view instr))))
-            (opt-global-obj-effect-mask
+            (opt-global-mod-ref-effect-mask
               (ir.compiler-ir-instr-effect
                 (compiler-opt-global-shared-view instr))))
           (opt-licm-store-summary-from-effect
@@ -23094,7 +23101,7 @@
         (opt-licm-ptr-env-new)
         roots
         (opt-global-mod-ref-any)
-        (opt-global-obj-any))]
+        (opt-global-mod-ref-any))]
     [first : OptLicmStoreState
       (opt-licm-provenance-state-blocks type-segment-bases types blocks initial)]
     (opt-licm-provenance-state-blocks type-segment-bases types blocks first)))
@@ -23177,7 +23184,7 @@
             false
             false
             (opt-global-mod-ref-any)
-            (opt-global-obj-any))))]
+            (opt-global-mod-ref-any))))]
     (opt-licm-store-summary-merge state.summary state.rooted-summary)))
 
 (define (opt-licm-memory-safe?
@@ -25391,7 +25398,7 @@
     [obj (& cells.obj-mod-ref)]
     (if obj.built?
       0
-      (opt-global-obj-any))))
+      (opt-global-mod-ref-any))))
 
 ;; Does a per-global cell-write set forbid promoting `name`? A zero set forbids
 ;; nothing, which is what the loop-wide path passes. Both promotions ask it:
@@ -25753,7 +25760,7 @@
   [obj-writes : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : i64
-  (if (opt-global-obj-any? obj-writes)
+  (if (opt-global-mod-ref-any? obj-writes)
     0
     (opt-licm-global-header-ref-count
       cells
@@ -25966,7 +25973,7 @@
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [live-in : i64]
   [budget : i64]) : opt_i64_i64_map.Map
-  (if (opt-global-obj-any? obj-writes)
+  (if (opt-global-mod-ref-any? obj-writes)
     (opt_i64_i64_map.with-capacity 1)
     (let
       [body-scan : OptLicmHeaderAdmitScan
@@ -26062,7 +26069,7 @@
 ;;                                        `globals-clean-strict?` at the loop site).
 ;;   globals-clean:cell-write:<blame>     `global-write?` is set; <blame> names the
 ;;                                        call or store that set it.
-;;   iag2:no-table                        the program carries no OptGlobalObjModRef
+;;   iag2:no-table                        the program carries no storage table
 ;;                                        at all, so every loop is seeded "may
 ;;                                        write any storage" and
 ;;                                        opt-licm-global-header-count answers 0
@@ -26174,7 +26181,9 @@
   [name : i64]) : i64
   (let
     [obj (& cells.obj-mod-ref)]
-    (bit-or (opt-global-obj-bit obj.index name) (opt-global-obj-any))))
+    (bit-or
+      (opt-global-mod-ref-cell-bit obj.index name)
+      (opt-global-mod-ref-any))))
 
 (define (opt-licm-refuse-blame-indirect [mode : i64]) : OptLicmRefuseBlame
   (if (= mode (opt-licm-refuse-blame-mode-header-store))
@@ -26207,7 +26216,7 @@
       [else
         (if (=
           (bit-and
-            (opt-global-obj-call-mask cells.obj-mod-ref callee)
+            (opt-global-mod-ref-call-mask cells.obj-mod-ref callee)
             (opt-licm-refuse-obj-bit cells name))
           0)
           (opt-licm-refuse-blame-none)
@@ -26415,7 +26424,7 @@
     [globals : OptLicmGlobalFacts ctx.globals]
     (cond
       [(not (opt-licm-refuse-obj-table? ctx)) "iag2:no-table"]
-      [(opt-global-obj-any? globals.obj-mask)
+      [(opt-global-mod-ref-any? globals.obj-mask)
         (str_cat.str-cat
           "iag2:obj-any:"
           (opt-licm-refuse-blame-text
@@ -26437,7 +26446,10 @@
               ctx.cells
               ctx.ptrs
               ctx.body)))]
-      [(opt-global-obj-mask-may-write? globals.obj-index globals.obj-mask name)
+      [(opt-global-mod-ref-mask-may-write?
+          globals.obj-index
+          globals.obj-mask
+          name)
         (str_cat.str-cat
           "iag2:obj-write:"
           (opt-licm-refuse-blame-text
@@ -26465,7 +26477,7 @@
 (define (opt-licm-refuse-obj-table? [ctx : (& ctx OptLicmRefuseCtx)]) : bool
   (let
     [cells : OptGlobalCellSummary ctx.cells]
-    [obj : OptGlobalObjModRef cells.obj-mod-ref]
+    [obj : OptGlobalModRef cells.obj-mod-ref]
     obj.built?))
 
 ;; Does the Gep/Load arm's `Global` operand disjunct HOLD for `name`? The two
@@ -58726,7 +58738,7 @@
   ;; `(&mut g)` argument as well as by `set!`. See opt-global-obj-build. Not
   ;; built (and every query answering "any storage") below level 2 and in every
   ;; program outside its preconditions.
-  (obj-mod-ref OptGlobalObjModRef)
+  (obj-mod-ref OptGlobalModRef)
   ;; SRET-SITE: the per-callee call-memory rows (opt-call-memory-build) --
   ;; which checked-reference parameters a direct callee writes through, beside
   ;; its global/unknown/element flags. Carried here because the LICM store-state
@@ -58748,7 +58760,7 @@
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
-    (opt-global-obj-mod-ref-none)
+    (opt-global-mod-ref-none)
     (opt_i64_i64_map.with-capacity 1)))
 
 (defstruct OptProgramSummaries
@@ -94095,7 +94107,7 @@
 ;;                 `Store g` and a call whose OptGlobalModRef row carries g's
 ;;                 bit can write it.
 ;;   Storage g  -- `Load (gep @g, <literal>)`, a word of g's own storage. IAG-2's
-;;                 OptGlobalObjModRef row answers that for calls; a pointer
+;;                 storage-table row answers that for calls; a pointer
 ;;                 write inside the region answers "any storage".
 ;;   Unknown    -- everything else. Such a load may not cross ANY call or ANY
 ;;                 store.
@@ -94354,20 +94366,21 @@
   (let
     [obj (& cells.obj-mod-ref)]
     (match (compiler-opt-global-shared-view instr)
-      [(ir.CompilerIrInstr.Call _ name _ _) (opt-global-obj-call-mask obj name)]
+      [(ir.CompilerIrInstr.Call _ name _ _)
+        (opt-global-mod-ref-call-mask obj name)]
       [(ir.CompilerIrInstr.TailCall name _ _)
-        (opt-global-obj-call-mask obj name)]
-      [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (opt-global-obj-any)]
+        (opt-global-mod-ref-call-mask obj name)]
+      [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
       [(ir.CompilerIrInstr.Store name _ _)
         (if obj.built?
-          (opt-global-obj-bit obj.index name)
-          (opt-global-obj-any))]
+          (opt-global-mod-ref-cell-bit obj.index name)
+          (opt-global-mod-ref-any))]
       [_
         (match (ir.compiler-ir-instr-effect instr)
           [(ir.CompilerIrEffect.Pure) 0]
           [(ir.CompilerIrEffect.MemoryRead) 0]
           [(ir.CompilerIrEffect.ControlFlow) 0]
-          [_ (opt-global-obj-any)])])))
+          [_ (opt-global-mod-ref-any)])])))
 
 ;; Any call or any store: the barrier an unnameable load may not cross.
 (define (opt-guard-sink-instr-opaque? [instr : ir.CompilerIrInstr]) : bool
@@ -94810,7 +94823,7 @@
   [opaque : i64]) : bool
   (let
     [mod-ref : OptGlobalModRef cells.mod-ref]
-    [obj : OptGlobalObjModRef cells.obj-mod-ref]
+    [obj : OptGlobalModRef cells.obj-mod-ref]
     (match mem
       [(OptGuardSinkMem.None) true]
       [(OptGuardSinkMem.Cell name)
@@ -94824,7 +94837,7 @@
           obj.built?
           (not
             (opt-global-mod-ref-mask-may-write? mod-ref.index cell-mask name))
-          (not (opt-global-obj-mask-may-write? obj.index obj-mask name)))]
+          (not (opt-global-mod-ref-mask-may-write? obj.index obj-mask name)))]
       [(OptGuardSinkMem.Unknown) (= opaque 0)])))
 
 (defstruct OptGuardSinkState
@@ -116319,40 +116332,6 @@
             (opt-filter-reachable-functions index functions reachable-out))]))
     (OptPrunedProgram.Program globals functions)))
 
-(define (opt-direct-call-clean-effect? [effect : ir.CompilerIrEffect]) : bool
-  (match effect
-    [(ir.CompilerIrEffect.Pure) true]
-    [(ir.CompilerIrEffect.MemoryRead) true]
-    [(ir.CompilerIrEffect.ControlFlow) true]
-    [_ false]))
-
-(define (opt-direct-call-clean-target-effect? [name : i64]) : bool
-  (opt-direct-call-clean-effect? (ir.compiler-ir-direct-call-effect-id name)))
-
-;; The syntactic walk's verdict on one instruction: reads, pure computation,
-;; control flow and direct calls only. A call to one of the program's functions
-;; is decided by that callee's verdict (the closure below); any other callee
-;; must be a runtime helper whose effect writes nothing.
-(define (opt-direct-call-clean-instr?
-  [index : (& index OptProgramIndex)]
-  [instr : ir.CompilerIrInstr]) : bool
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Call _ name _ _)
-      (or
-        (opt-program-function? index name)
-        (opt-direct-call-clean-target-effect? name))]
-    [(ir.CompilerIrInstr.TailCall name _ _)
-      (or
-        (opt-program-function? index name)
-        (opt-direct-call-clean-target-effect? name))]
-    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) false]
-    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) false]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult _) false]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) false]
-    [(ir.CompilerIrInstr.SpmdCall _) false]
-    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) false]
-    [_ (opt-direct-call-clean-effect? (ir.compiler-ir-instr-effect instr))]))
-
 (define (opt-direct-call-self-recursive-instr?
   [name : i64]
   [instr : ir.CompilerIrInstr]) : bool
@@ -116367,45 +116346,6 @@
   [name : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (opt-blocks-any? blocks opt-direct-call-self-recursive-instr? name))
-
-;; The self-recursive functions no execution of which writes memory: the
-;; greatest set the walk above accepts once every call to a program function
-;; asks for that callee's own acceptance, i.e. the functions that reach no
-;; refused one. A program function whose own name is a runtime helper the walk
-;; admits by effect would stand for two verdicts at once; program functions
-;; carry their module's names, so none does, and a program that had one would
-;; get no facts at all rather than wrong ones.
-(define (opt-direct-call-clean-map
-  [index : (& index OptProgramIndex)]
-  [capacity : i64]) : opt_i64_i64_map.Map
-  (let
-    [count : i64 (opt-program-index-count index)]
-    [refused : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [ambiguous? : bool false]
-    [slot : i64 0]
-    (begin
-      (while (< slot count)
-        (begin
-          (match (opt-function-index-at-slot index.functions slot)
-            [(ir.CompilerIrFunction.Function name _ _ _ blocks _)
-              (begin
-                (when
-                  (opt-direct-call-clean-target-effect? name)
-                  (set! ambiguous? true))
-                (unless
-                  (and
-                    (opt-direct-call-self-recursive-blocks? name blocks)
-                    (opt-blocks-every?
-                      blocks
-                      opt-direct-call-clean-instr?
-                      index))
-                  (set! (array-ref refused slot) 1)))])
-          (set! slot (+ slot 1))))
-      (if ambiguous?
-        (opt_i64_i64_map.with-capacity capacity)
-        (begin
-          (opt-program-close! index (&mut refused))
-          (opt-program-rows-map index refused true capacity))))))
 
 ;; --- the program index -------------------------------------------------------
 ;;
@@ -116436,31 +116376,26 @@
 ;; What the summaries read of the program besides its call graph: the globals
 ;; it stores to or takes the address of (`disq`, opt-const-globals-disq-instr)
 ;; and every global reference, store and call it makes (`cells`,
-;; opt-global-cell-scan-instr). Those two are level-2 facts; the index is built
-;; only within the summary function limit, above which every summary reading
-;; it declines.
+;; opt-global-cell-scan-instr). Only the level-2 summaries read them; the index
+;; is built only within the summary function limit, above which every summary
+;; reading it declines.
 (defstruct OptProgramFacts
   (index OptProgramIndex)
   (disq opt_i64_i64_map.Map)
   (cells OptGlobalCellScan))
 
 (define (opt-program-facts-build
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [level : i64]) : OptProgramFacts
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptProgramFacts
   (let
     [count : i64 (opt-function-seq-count functions)]
     (OptProgramFacts
       (if (<= count (opt-summary-function-limit))
         (opt-program-index-build functions)
         (opt-program-index-empty))
-      (if (>= level 2)
-        (opt-const-globals-disqualified
-          (opt_i64_i64_map.with-capacity (opt-function-index-capacity count))
-          functions)
-        (opt_i64_i64_map.with-capacity 1))
-      (if (>= level 2)
-        (opt-global-cell-scan-functions (opt-global-cell-scan-new) functions)
-        (opt-global-cell-scan-new)))))
+      (opt-const-globals-disqualified
+        (opt_i64_i64_map.with-capacity (opt-function-index-capacity count))
+        functions)
+      (opt-global-cell-scan-functions (opt-global-cell-scan-new) functions))))
 
 (define (opt-program-index-count [index : (& index OptProgramIndex)]) : i64
   index.calls.count)
@@ -116574,6 +116509,24 @@
           (set! slot (+ slot 1))))
       out)))
 
+;; Per-function write rows closed over the direct call graph, each joined with
+;; `extra` (the writes every function may make), as the summary maps store
+;; them.
+(define (opt-program-closed-rows-map
+  [index : (& index OptProgramIndex)]
+  [rows : (&mut rows (__tl_dyn-array i64))]
+  [extra : i64]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [slot : i64 0]
+    (begin
+      (opt-program-close! index rows)
+      (while (< slot (array-length rows))
+        (begin
+          (set! (array-ref rows slot) (bit-or (array-ref rows slot) extra))
+          (set! slot (+ slot 1))))
+      (opt-program-rows-map index rows false capacity))))
+
 ;; --- direct-call memory summaries for load GVN ------------------------------
 ;;
 ;; Packed summary layout (kept nonnegative):
@@ -116583,12 +116536,10 @@
 ;;   bit 61      unknown memory effects
 ;;   bit 62      writes only into descriptor ELEMENT storage
 ;;
-;; The map is built in two phases. The PESSIMISTIC phase discovers leaves first
-;; and makes callers eligible in later rounds; an internal call whose target is
-;; still absent makes the caller unresolved, so it never proves anything about a
-;; recursive cycle. The OPTIMISTIC phase then resolves exactly what the first
-;; one gave up on, by ascending Kleene iteration from the lattice bottom --
-;; see opt-call-memory-optimistic-fixed.
+;; The map is the least fixed point over the call graph, built one component at
+;; a time, callees first, by ascending iteration from the lattice bottom -- see
+;; opt-call-memory-build-with-descriptor-globals-in. Every program function gets
+;; a row; a name without one is an extern or a runtime helper.
 ;; Parameter-write bits 0..53. The six bits above them are the element-write
 ;; class set (opt-call-memory-element-class-bit); a function with more
 ;; checked-reference parameters than this summarizes its writes through the
@@ -117050,86 +117001,69 @@
           (compiler-opt-global-array-element-shared-view values index))
         (ir.CompilerIrMaybeValue.No))]))
 
-(defenum OptCallMemoryCandidate
-  (Unresolved)
-  (Known i64))
-
 (define (opt-call-memory-map-callee-param-writes
-  [candidate : OptCallMemoryCandidate]
+  [summary : i64]
   [callee-summary : i64]
   [params : ir.CompilerIrParamSeq]
   [roots : (& roots OptLicmRootEnv)]
   [args : ir.CompilerIrCallArgs]
-  [index : i64]) : OptCallMemoryCandidate
-  (if (>= index (opt-call-memory-param-limit))
-    candidate
-    (match candidate
-      [(OptCallMemoryCandidate.Unresolved) candidate]
-      [(OptCallMemoryCandidate.Known summary)
-        (if (not (opt-call-memory-summary-param-write? callee-summary index))
+  [index : i64]) : i64
+  (cond
+    [(>= index (opt-call-memory-param-limit)) summary]
+    [(not (opt-call-memory-summary-param-write? callee-summary index))
+      (opt-call-memory-map-callee-param-writes
+        summary
+        callee-summary
+        params
+        roots
+        args
+        (+ index 1))]
+    [else
+      (match (opt-call-memory-arg-at args index)
+        [(ir.CompilerIrMaybeValue.No)
+          (opt-call-memory-summary-add-unknown summary)]
+        [(ir.CompilerIrMaybeValue.Some value)
           (opt-call-memory-map-callee-param-writes
-            candidate
+            (opt-call-memory-summary-add-root-write
+              summary
+              (compiler-opt-global-shared-view params)
+              (opt-licm-root-of-value roots value))
             callee-summary
             params
             roots
             args
-            (+ index 1))
-          (match (opt-call-memory-arg-at args index)
-            [(ir.CompilerIrMaybeValue.No)
-              (OptCallMemoryCandidate.Known
-                (opt-call-memory-summary-add-unknown summary))]
-            [(ir.CompilerIrMaybeValue.Some value)
-              (opt-call-memory-map-callee-param-writes
-                (OptCallMemoryCandidate.Known
-                  (opt-call-memory-summary-add-root-write
-                    summary
-                    (compiler-opt-global-shared-view params)
-                    (opt-licm-root-of-value roots value)))
-                callee-summary
-                params
-                roots
-                args
-                (+ index 1))]))])))
+            (+ index 1))])]))
 
+;; A callee without a row is not one of the program's functions (every one of
+;; those has a row by the time a caller reads it, see
+;; opt-call-memory-build-with-descriptor-globals-in): an extern, or a runtime
+;; helper its effect classifies.
 (define (opt-call-memory-apply-direct-call
-  [candidate : OptCallMemoryCandidate]
+  [summary : i64]
   [summaries : (& summaries opt_i64_i64_map.Map)]
-  [function-set : (& function-set opt_i64_i64_map.Map)]
   [params : ir.CompilerIrParamSeq]
   [roots : (& roots OptLicmRootEnv)]
   [name : i64]
-  [args : ir.CompilerIrCallArgs]) : OptCallMemoryCandidate
-  (match candidate
-    [(OptCallMemoryCandidate.Unresolved) candidate]
-    [(OptCallMemoryCandidate.Known summary)
-      (match (opt_i64_i64_map.get (& summaries) (ir.compiler-ir-symbol-id name))
-        [(opt_i64_i64_map.LookupFound callee-summary)
-          (opt-call-memory-map-callee-param-writes
-            (OptCallMemoryCandidate.Known
-              (bit-or
-                summary
-                (bit-and callee-summary (opt-call-memory-carried-mask))))
-            callee-summary
-            params
-            roots
-            args
-            0)]
-        [(opt_i64_i64_map.LookupMissing)
-          (if (opt_i64_i64_map.contains?
-            (& function-set)
-            (ir.compiler-ir-symbol-id name))
-            (OptCallMemoryCandidate.Unresolved)
-            (match (ir.compiler-ir-direct-call-effect-id name)
-              [(ir.CompilerIrEffect.MemoryRead) candidate]
-              ;; The runtime control-flow family is the nonreturning abort set;
-              ;; it writes no memory the caller can observe afterwards because
-              ;; there is no afterwards. The non-call arm below already gives
-              ;; ControlFlow this verdict, so a callee whose only "effect" is a
-              ;; bounds/divide abort does not summarize as unknown.
-              [(ir.CompilerIrEffect.ControlFlow) candidate]
-              [_
-                (OptCallMemoryCandidate.Known
-                  (opt-call-memory-summary-add-unknown summary))]))])]))
+  [args : ir.CompilerIrCallArgs]) : i64
+  (match (opt_i64_i64_map.get (& summaries) (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound callee-summary)
+      (opt-call-memory-map-callee-param-writes
+        (bit-or summary (bit-and callee-summary (opt-call-memory-carried-mask)))
+        callee-summary
+        params
+        roots
+        args
+        0)]
+    [(opt_i64_i64_map.LookupMissing)
+      (match (ir.compiler-ir-direct-call-effect-id name)
+        [(ir.CompilerIrEffect.MemoryRead) summary]
+        ;; The runtime control-flow family is the nonreturning abort set;
+        ;; it writes no memory the caller can observe afterwards because
+        ;; there is no afterwards. The non-call arm below already gives
+        ;; ControlFlow this verdict, so a callee whose only "effect" is a
+        ;; bounds/divide abort does not summarize as unknown.
+        [(ir.CompilerIrEffect.ControlFlow) summary]
+        [_ (opt-call-memory-summary-add-unknown summary)])]))
 
 ;; One memory write's class. The parameter root wins whenever the pointer
 ;; carries one, so nothing an existing bit already describes moves; the element
@@ -117154,94 +117088,74 @@
 (define (opt-call-memory-candidate-instr
   [type-segment-bases : i64]
   [summaries : (& summaries opt_i64_i64_map.Map)]
-  [function-set : (& function-set opt_i64_i64_map.Map)]
   [params : ir.CompilerIrParamSeq]
   [roots : (& roots OptLicmRootEnv)]
   [elements : (& elements opt_i64_i64_map.Map)]
-  [candidate : OptCallMemoryCandidate]
-  [instr : ir.CompilerIrInstr]) : OptCallMemoryCandidate
-  (match candidate
-    [(OptCallMemoryCandidate.Unresolved) candidate]
-    [(OptCallMemoryCandidate.Known summary)
-      (match (compiler-opt-global-shared-view instr)
-        ;; A StorePtr carries its stored TYPE, so an element write of it is
-        ;; recorded with that type's alias class. CopyBytes has none -- it is a
-        ;; byte copy -- so it records class 0, which sets the whole class set
-        ;; and proves nothing, exactly the pre-MF-4 verdict.
-        [(ir.CompilerIrInstr.StorePtr ptr _ ty)
-          (OptCallMemoryCandidate.Known
-            (opt-call-memory-summary-add-write
-              summary
-              params
-              roots
-              elements
-              (opt-load-type-alias-class type-segment-bases ty)
-              ptr))]
-        [(ir.CompilerIrInstr.StoreOwned ptr _ ty)
-          (OptCallMemoryCandidate.Known
-            (opt-call-memory-summary-add-write
-              summary
-              params
-              roots
-              elements
-              (opt-load-type-alias-class type-segment-bases ty)
-              ptr))]
-        [(ir.CompilerIrInstr.CopyBytes dst _ _)
-          (OptCallMemoryCandidate.Known
-            (opt-call-memory-summary-add-write
-              summary
-              params
-              roots
-              elements
-              0
-              dst))]
-        [(ir.CompilerIrInstr.Store _ _ _)
-          (OptCallMemoryCandidate.Known
-            (opt-call-memory-summary-add-global summary))]
-        [(ir.CompilerIrInstr.Call _ name args _)
-          (opt-call-memory-apply-direct-call
-            candidate
-            summaries
-            function-set
-            params
-            roots
-            name
-            args)]
-        [(ir.CompilerIrInstr.TailCall name args _)
-          (opt-call-memory-apply-direct-call
-            candidate
-            summaries
-            function-set
-            params
-            roots
-            name
-            args)]
-        [(ir.CompilerIrInstr.Alloc _ _) candidate]
-        [_
-          (match (ir.compiler-ir-instr-effect instr)
-            [(ir.CompilerIrEffect.Pure) candidate]
-            [(ir.CompilerIrEffect.MemoryRead) candidate]
-            [(ir.CompilerIrEffect.ControlFlow) candidate]
-            [_
-              (OptCallMemoryCandidate.Known
-                (opt-call-memory-summary-add-unknown summary))])])]))
+  [summary : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match (compiler-opt-global-shared-view instr)
+    ;; A StorePtr carries its stored TYPE, so an element write of it is
+    ;; recorded with that type's alias class. CopyBytes has none -- it is a
+    ;; byte copy -- so it records class 0, which sets the whole class set
+    ;; and proves nothing, exactly the pre-MF-4 verdict.
+    [(ir.CompilerIrInstr.StorePtr ptr _ ty)
+      (opt-call-memory-summary-add-write
+        summary
+        params
+        roots
+        elements
+        (opt-load-type-alias-class type-segment-bases ty)
+        ptr)]
+    [(ir.CompilerIrInstr.StoreOwned ptr _ ty)
+      (opt-call-memory-summary-add-write
+        summary
+        params
+        roots
+        elements
+        (opt-load-type-alias-class type-segment-bases ty)
+        ptr)]
+    [(ir.CompilerIrInstr.CopyBytes dst _ _)
+      (opt-call-memory-summary-add-write summary params roots elements 0 dst)]
+    [(ir.CompilerIrInstr.Store _ _ _)
+      (opt-call-memory-summary-add-global summary)]
+    [(ir.CompilerIrInstr.Call _ name args _)
+      (opt-call-memory-apply-direct-call
+        summary
+        summaries
+        params
+        roots
+        name
+        args)]
+    [(ir.CompilerIrInstr.TailCall name args _)
+      (opt-call-memory-apply-direct-call
+        summary
+        summaries
+        params
+        roots
+        name
+        args)]
+    [(ir.CompilerIrInstr.Alloc _ _) summary]
+    [_
+      (match (ir.compiler-ir-instr-effect instr)
+        [(ir.CompilerIrEffect.Pure) summary]
+        [(ir.CompilerIrEffect.MemoryRead) summary]
+        [(ir.CompilerIrEffect.ControlFlow) summary]
+        [_ (opt-call-memory-summary-add-unknown summary)])]))
 
 (define (opt-call-memory-candidate-blocks
   [type-segment-bases : i64]
-  [candidate : OptCallMemoryCandidate]
+  [summary : i64]
   [summaries : (& summaries opt_i64_i64_map.Map)]
-  [function-set : (& function-set opt_i64_i64_map.Map)]
   [params : ir.CompilerIrParamSeq]
   [roots : OptLicmRootEnv]
   [elements : opt_i64_i64_map.Map]
-  [blocks : ir.CompilerIrBlockList]) : OptCallMemoryCandidate
+  [blocks : ir.CompilerIrBlockList]) : i64
   (opt-blocks-fold
     blocks
-    candidate
+    summary
     opt-call-memory-candidate-instr
     type-segment-bases
     summaries
-    function-set
     (compiler-opt-global-shared-view params)
     roots
     elements))
@@ -117291,16 +117205,14 @@
   [type-segment-bases : i64]
   [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
   [summaries : (& summaries opt_i64_i64_map.Map)]
-  [function-set : (& function-set opt_i64_i64_map.Map)]
-  [func : ir.CompilerIrFunction]) : OptCallMemoryCandidate
+  [func : ir.CompilerIrFunction]) : i64
   (match func
     [(ir.CompilerIrFunction.Function _ params _ _ blocks _)
       (if (not (opt-call-memory-blocks-need-roots? summaries blocks))
         (opt-call-memory-candidate-blocks
           type-segment-bases
-          (OptCallMemoryCandidate.Known 0)
+          0
           summaries
-          function-set
           params
           (opt-licm-root-env-with-capacity 1 (opt_i64_i64_map.with-capacity 1))
           (opt_i64_i64_map.with-capacity 1)
@@ -117312,9 +117224,8 @@
               blocks)]
           (opt-call-memory-candidate-blocks
             type-segment-bases
-            (OptCallMemoryCandidate.Known 0)
+            0
             summaries
-            function-set
             (compiler-opt-global-shared-view params)
             (opt-call-memory-roots-with-sources
               type-segment-bases
@@ -117331,181 +117242,29 @@
               (opt_i64_i64_map.with-capacity 1))
             blocks)))]))
 
-(defenum OptCallMemoryBuildPass
-  (Pass opt_i64_i64_map.Map bool))
-
 ;; The working storage of one candidate -- its source map, root environment
 ;; and element-pointer map -- is garbage the moment its verdict is read, and
-;; the fixed point asks for a candidate per unresolved function per round (a
-;; round per call-graph depth, then the optimistic rounds). Left in the
-;; caller's arena those environments would be the bulk of the inline arena,
-;; since CSE-CALL builds this table at the inline stage's start. So the builder
-;; owns a scratch arena for the duration of one build (opt-call-memory-scratch,
-;; 0 outside a build), each candidate runs in it and the scratch is reset to
-;; where it stood once the verdict is out. The verdict is the summary's bit
-;; set, or -1 for Unresolved.
+;; the fixed point asks for a candidate per function, and again per sweep of
+;; a call-graph cycle. Left in the caller's arena those environments would be
+;; the bulk of the inline arena, since CSE-CALL builds this table at the inline
+;; stage's start. So the builder owns a scratch arena for the duration of one
+;; build (opt-call-memory-scratch, 0 outside a build), each candidate runs in it
+;; and the scratch is reset to where it stood once the verdict -- the summary's
+;; bit set -- is out.
 (define opt-call-memory-scratch : i64
   0)
-
-;; --- the callee table: which rows a candidate reads ------------------------
-;;
-;; A candidate's verdict reads the summaries map at one kind of key only: the
-;; callee of each direct Call / TailCall in its body (opt-call-memory-apply-
-;; direct-call and opt-call-memory-direct-needs-roots?). Two facts about a
-;; function therefore follow from its body and the map alone, before any
-;; environment is built:
-;;
-;;   - pessimistic phase: the verdict is Unresolved iff some callee that is in
-;;     the function set has no row yet (apply-direct-call's Unresolved arm,
-;;     sticky for the rest of the walk), and the source map, root environment
-;;     and element map built ahead of that walk are never consulted on that
-;;     path;
-;;   - optimistic phase: the transfer is a function of the body and the direct
-;;     callees' rows, so a residue row cannot move in a round unless one of its
-;;     callees' rows moved in the round before. Copying it forward is exact.
-;;
-;; Without the table each pessimistic round would rebuild every
-;; not-yet-committed function's environments only to reach the first
-;; unresolved call, and each optimistic round would rebuild every residue
-;; function whether or not its inputs had moved. The table is one walk over the
-;; program (callee ids that are
-;; in the function set, one range per function index), built by the builder
-;; entry into the enclosing arena for the build's duration; the scratch arena
-;; is reset per candidate and cannot hold it. A driver run without the table
-;; (the tests drive the optimistic phase directly) rebuilds every candidate as
-;; before.
-(define opt-call-memory-callee-starts : opt_dense_i64_vec.Vec
-  (opt_dense_i64_vec.new))
-(define opt-call-memory-callee-ids : opt_dense_i64_vec.Vec
-  (opt_dense_i64_vec.new))
-
-;; The optimistic round being computed (0 outside the phase) and, per residue
-;; row, the last round in which it moved.
-(define opt-call-memory-round : i64
-  0)
-(define opt-call-memory-moved : opt_i64_i64_map.Map
-  (opt_i64_i64_map.with-capacity 1))
-
-(define (opt-call-memory-callees-reset!) : unit
-  (begin
-    (set! opt-call-memory-callee-starts (opt_dense_i64_vec.new))
-    (set! opt-call-memory-callee-ids (opt_dense_i64_vec.new))
-    (set! opt-call-memory-round 0)
-    (set! opt-call-memory-moved (opt_i64_i64_map.with-capacity 1))))
-
-;; The program index's direct callees, by symbol id.
-(define (opt-call-memory-callee-table! [index : (& index OptProgramIndex)]) : unit
-  (let
-    [count : i64 (opt-program-index-count index)]
-    [slot : i64 0]
-    (begin
-      (opt-call-memory-callees-reset!)
-      (set!
-        opt-call-memory-callee-starts
-        (opt_dense_i64_vec.with-capacity (+ count 1)))
-      (while (< slot count)
-        (let
-          [callees : OptSlotList
-            (compiler-opt-global-array-element-shared-view
-              index.calls.edges
-              slot)]
-          (begin
-            (opt_dense_i64_vec.push-ref!
-              (&mut opt-call-memory-callee-starts)
-              (opt_dense_i64_vec.len (& opt-call-memory-callee-ids)))
-            (while (match callees
-              [(OptSlotList.Nil) false]
-              [(OptSlotList.Cons callee rest)
-                (begin
-                  (opt_dense_i64_vec.push-ref!
-                    (&mut opt-call-memory-callee-ids)
-                    (opt-program-function-id index callee))
-                  (set! callees (deref rest))
-                  true)])
-              unit)
-            (set! slot (+ slot 1)))))
-      (opt_dense_i64_vec.push-ref!
-        (&mut opt-call-memory-callee-starts)
-        (opt_dense_i64_vec.len (& opt-call-memory-callee-ids))))))
-
-;; Whether the table covers function `index`; a driver run without it takes
-;; the full verdict every round.
-(define (opt-call-memory-callee-table? [index : i64]) : bool
-  (< (+ index 1) (opt_dense_i64_vec.len (& opt-call-memory-callee-starts))))
-
-(define (opt-call-memory-callee-at [at : i64]) : i64
-  (array-ref (opt_dense_i64_vec.slots (& opt-call-memory-callee-ids)) at))
-
-(define (opt-call-memory-callee-start [index : i64]) : i64
-  (array-ref (opt_dense_i64_vec.slots (& opt-call-memory-callee-starts)) index))
-
-;; Every callee of function `index` that is in the function set has a row in
-;; `current`: the pessimistic verdict cannot be Unresolved.
-(define (opt-call-memory-callees-resolved?
-  [current : (& current opt_i64_i64_map.Map)]
-  [index : i64]) : bool
-  (if (not (opt-call-memory-callee-table? index))
-    true
-    (let
-      [at : i64 (opt-call-memory-callee-start index)]
-      [end : i64 (opt-call-memory-callee-start (+ index 1))]
-      [resolved : bool true]
-      (begin
-        (while (and resolved (< at end))
-          (begin
-            (unless
-              (opt_i64_i64_map.contains?
-                (& current)
-                (opt-call-memory-callee-at at))
-              (set! resolved false))
-            (set! at (+ at 1))))
-        resolved))))
-
-;; Some callee's row moved in the previous optimistic round, so the residue
-;; row of function `index` has to be recomputed. The first round computes
-;; every residue row from its seed. A callee already stamped with THIS round
-;; (it precedes the function in the list and moved) is taken as moved too;
-;; recomputing is always exact, only copying needs the proof.
-(define (opt-call-memory-callees-moved? [index : i64]) : bool
-  (if (or
-    (<= opt-call-memory-round 1)
-    (not (opt-call-memory-callee-table? index)))
-    true
-    (let
-      [at : i64 (opt-call-memory-callee-start index)]
-      [end : i64 (opt-call-memory-callee-start (+ index 1))]
-      [moved : bool false]
-      (begin
-        (while (and (not moved) (< at end))
-          (begin
-            (match (opt_i64_i64_map.get
-              (& opt-call-memory-moved)
-              (opt-call-memory-callee-at at))
-              [(opt_i64_i64_map.LookupFound round)
-                (when (>= round (- opt-call-memory-round 1)) (set! moved true))]
-              [(opt_i64_i64_map.LookupMissing) unit])
-            (set! at (+ at 1))))
-        moved))))
-
-(define (opt-call-memory-candidate-code [candidate : OptCallMemoryCandidate]) : i64
-  (match candidate
-    [(OptCallMemoryCandidate.Unresolved) (- 0 1)]
-    [(OptCallMemoryCandidate.Known summary) summary]))
 
 (define (opt-call-memory-candidate-verdict
   [type-segment-bases : i64]
   [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
   [summaries : (& summaries opt_i64_i64_map.Map)]
-  [function-set : (& function-set opt_i64_i64_map.Map)]
   [func : ir.CompilerIrFunction]) : i64
   (if (= opt-call-memory-scratch 0)
-    (opt-call-memory-candidate-code
-      (opt-call-memory-function-candidate
-        type-segment-bases
-        descriptor-globals
-        summaries
-        function-set
-        func))
+    (opt-call-memory-function-candidate
+      type-segment-bases
+      descriptor-globals
+      summaries
+      func)
     (let
       [enclosing : i64 (arena.tl_arena_current)]
       [_enter : unit
@@ -117513,87 +117272,16 @@
           (arena.tl_arena_set opt-call-memory-scratch))]
       [mark : i64 (arena.tl_region_mark)]
       [verdict : i64
-        (opt-call-memory-candidate-code
-          (opt-call-memory-function-candidate
-            type-segment-bases
-            descriptor-globals
-            summaries
-            function-set
-            func))]
+        (opt-call-memory-function-candidate
+          type-segment-bases
+          descriptor-globals
+          summaries
+          func)]
       (begin
         (unsafe
           (arena.tl_region_reset mark)
           (arena.tl_arena_set enclosing))
         verdict))))
-
-(define (opt-call-memory-build-pass-from
-  [type-segment-bases : i64]
-  [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [current : (& current opt_i64_i64_map.Map)]
-  [function-set : (& function-set opt_i64_i64_map.Map)]
-  [out : opt_i64_i64_map.Map]
-  [changed : bool]
-  [index : i64]) : OptCallMemoryBuildPass
-  (if (>= index functions.len)
-    (OptCallMemoryBuildPass.Pass out changed)
-    (let
-      [func : ir.CompilerIrFunction
-        (compiler-opt-global-array-element-shared-view functions.slots index)]
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function name _ _ _ _ _)
-          (let
-            [name-id : i64 (ir.compiler-ir-symbol-id name)]
-            [next : opt_i64_i64_map.Map out]
-            (match (opt_i64_i64_map.get (& current) name-id)
-              [(opt_i64_i64_map.LookupFound summary)
-                (begin
-                  (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
-                  (opt-call-memory-build-pass-from
-                    type-segment-bases
-                    descriptor-globals
-                    functions
-                    current
-                    function-set
-                    next
-                    changed
-                    (+ index 1)))]
-              [(opt_i64_i64_map.LookupMissing)
-                (let
-                  [summary
-                    : i64
-                    ;; A callee without a row is apply-direct-call's
-                    ;; Unresolved arm; the environments the verdict would build
-                    ;; first are never consulted on that path.
-                    (if (opt-call-memory-callees-resolved? current index)
-                      (opt-call-memory-candidate-verdict
-                        type-segment-bases
-                        descriptor-globals
-                        current
-                        function-set
-                        func)
-                      (- 0 1))]
-                  (if (< summary 0)
-                    (opt-call-memory-build-pass-from
-                      type-segment-bases
-                      descriptor-globals
-                      functions
-                      current
-                      function-set
-                      next
-                      changed
-                      (+ index 1))
-                    (begin
-                      (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
-                      (opt-call-memory-build-pass-from
-                        type-segment-bases
-                        descriptor-globals
-                        functions
-                        current
-                        function-set
-                        next
-                        true
-                        (+ index 1)))))]))]))))
 
 ;; Three runtime builtins have a memory footprint precise enough to summarize,
 ;; which lets a caller's cached load table survive them instead of being wiped:
@@ -117643,22 +117331,26 @@
       cbi.compiler-builtin-id-tl-mem-fill8
       (shl 1 0))))
 
-;; --- optimistic phase: least fixed point over the recursive residue ---------
+;; --- the fixed point: one call-graph component at a time ---------------------
 ;;
-;; The pass above is a WORKLIST over a DAG: it can only ever commit a function
-;; whose callees are already committed, so a call-graph CYCLE is unresolvable by
-;; construction and every function that reaches one stays absent from the map.
-;; That is the whole reason a self-recursive walker -- `qs-sort`, and most of a
-;; compiler written as recursive list walks -- reloads a descriptor word on
+;; A candidate's verdict reads the summaries map at one kind of key only: the
+;; callee of each direct Call / TailCall in its body (opt-call-memory-apply-
+;; direct-call and opt-call-memory-direct-needs-roots?). The program index
+;; numbers the call-graph components over exactly those edges, callees first,
+;; so when a component is reached every row it reads outside itself is final
+;; and the component is solved on its own: its members start at the lattice
+;; BOTTOM and are recomputed until a sweep moves none of them. A function
+;; outside every cycle is one sweep of one member. That is also what resolves a
+;; self-recursive walker -- `qs-sort`, and most of a compiler written as
+;; recursive list walks -- whose descriptor words would otherwise reload on
 ;; every trip of the loop its own tail call becomes.
 ;;
-;; The standard answer is to seed the cycle at the lattice BOTTOM and iterate up.
-;; What makes that sound here, spelled out against this code:
+;; What makes that sound, spelled out against this code:
 ;;
-;;   THE LATTICE. A summary is a bit set (parameter bits 0..59, global, unknown,
-;;   element). Order it by inclusion; join is `bit-or`; bottom is 0 ("writes
-;;   nothing"); the chain height is 63. Finite, so ascending iteration
-;;   terminates.
+;;   THE LATTICE. A summary is a bit set (parameter bits 0..53, element
+;;   classes, global, unknown, element). Order it by inclusion; join is
+;;   `bit-or`; bottom is 0 ("writes nothing"); the chain height is 63. Finite,
+;;   so ascending iteration terminates.
 ;;
 ;;   THE TRANSFER IS MONOTONE in the summaries map. Every path by which a callee
 ;;   summary reaches its caller's only ADDS bits:
@@ -117681,223 +117373,54 @@
 ;;   WHY THE LEAST FIXED POINT IS THE RIGHT ANSWER. A summary must over-
 ;;   approximate the writes of every terminating execution of the function. Any
 ;;   such execution performs finitely many nested calls, so its writes are
-;;   covered by F^k(bottom) for some finite k, hence by the lfp. Iterating from
-;;   bottom and committing only a map the transfer REPRODUCES (`changed` false)
-;;   is what makes the committed map a genuine fixed point rather than an
-;;   optimistic guess.
+;;   covered by F^k(bottom) for some finite k, hence by the lfp. Iterating a
+;;   component from bottom, callees first, until a sweep reproduces every row is
+;;   the lfp of the whole map, and a committed row is always a genuine fixed
+;;   point rather than an optimistic guess.
 ;;
-;; The budget is what keeps this honest. If the iteration has not stabilized
-;; within opt-call-memory-optimistic-rounds, the optimistic map is DISCARDED and
-;; the pessimistic one is committed unchanged -- so an over-budget program bails
-;; to exactly today's verdict (those functions stay absent, hence opaque) rather
-;; than shipping a non-fixed-point. The same fallback covers the defensive
-;; `Unresolved` arm below, which cannot fire: every function of the list is
-;; seeded, and `function-set` is built from that same list.
-(define (opt-call-memory-optimistic-rounds) : i64
-  4)
-
-;; Round zero: pessimistic rows copied through, residue rows at bottom.
-(define (opt-call-memory-seed-optimistic
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [resolved : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+;; No round budget is needed: every row only grows, so a component settles
+;; within 63 sweeps per member. A member is recomputed only when a member of
+;; its own component that it calls moved after its last verdict (`changed-at`
+;; against `computed-at`); nothing else it reads can move. Every program
+;; function a verdict can call therefore has a row when it is read, so a name
+;; without one is an extern or a runtime helper (opt-call-memory-apply-direct-
+;; call).
+;;
+;; A function whose name already has a row when its component is reached keeps
+;; it: that is a seeded runtime builtin (no program defines one), or a second
+;; function of one name.
+(define (opt-call-memory-member-stale?
+  [index : (& index OptProgramIndex)]
+  [changed-at : (& changed-at (__tl_dyn-array i64))]
+  [computed-at : (& computed-at (__tl_dyn-array i64))]
+  [slot : i64]) : bool
   (let
-    [index : i64 0]
-    [next : opt_i64_i64_map.Map out]
+    [seen : i64 (array-ref computed-at slot)]
+    [component : i64 (array-ref index.scc.scc-of slot)]
+    [callees : OptSlotList
+      (compiler-opt-global-array-element-shared-view index.calls.edges slot)]
+    [stale? : bool (< seen 0)]
     (begin
-      (while (< index functions.len)
-        (begin
-          (match (compiler-opt-global-array-element-shared-view
-            functions.slots
-            index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _ _)
-              (let
-                [name-id : i64 (ir.compiler-ir-symbol-id name)]
-                [seed : i64
-                  (match (opt_i64_i64_map.get (& resolved) name-id)
-                    [(opt_i64_i64_map.LookupFound summary) summary]
-                    [(opt_i64_i64_map.LookupMissing) 0])]
-                (opt_i64_i64_map.insert-ref! (&mut next) name-id seed))])
-          (set! index (+ index 1))))
-      next)))
-
-(define (opt-call-memory-unresolved-count
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [resolved : (& resolved opt_i64_i64_map.Map)]
-  [count : i64]) : i64
-  (let
-    [index : i64 0]
-    [total : i64 count]
-    (begin
-      (while (< index functions.len)
-        (begin
-          (match (compiler-opt-global-array-element-shared-view
-            functions.slots
-            index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _ _)
-              (match (opt_i64_i64_map.get
-                (& resolved)
-                (ir.compiler-ir-symbol-id name))
-                [(opt_i64_i64_map.LookupFound _) unit]
-                [(opt_i64_i64_map.LookupMissing) (set! total (+ total 1))])])
-          (set! index (+ index 1))))
-      total)))
-
-;; `out`, whether any residue row moved this round, and whether the round is
-;; usable at all (see the `Unresolved` arm).
-(defenum OptCallMemoryOptimisticPass
-  (Pass opt_i64_i64_map.Map bool bool))
-
-(define (opt-call-memory-optimistic-pass-from
-  [type-segment-bases : i64]
-  [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [resolved : (& resolved opt_i64_i64_map.Map)]
-  [current : (& current opt_i64_i64_map.Map)]
-  [function-set : (& function-set opt_i64_i64_map.Map)]
-  [out : opt_i64_i64_map.Map]
-  [changed : bool]
-  [usable? : bool]
-  [index : i64]) : OptCallMemoryOptimisticPass
-  (if (>= index functions.len)
-    (OptCallMemoryOptimisticPass.Pass out changed usable?)
-    (let
-      [func : ir.CompilerIrFunction
-        (compiler-opt-global-array-element-shared-view functions.slots index)]
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function name _ _ _ _ _)
-          (let
-            [name-id : i64 (ir.compiler-ir-symbol-id name)]
-            [next : opt_i64_i64_map.Map out]
-            (match (opt_i64_i64_map.get (& resolved) name-id)
-              ;; A pessimistically resolved row was computed from callees that
-              ;; were themselves already committed, so no residue row can reach
-              ;; it: it is a constant of this iteration.
-              [(opt_i64_i64_map.LookupFound summary)
-                (begin
-                  (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
-                  (opt-call-memory-optimistic-pass-from
-                    type-segment-bases
-                    descriptor-globals
-                    functions
-                    resolved
-                    current
-                    function-set
-                    next
-                    changed
-                    usable?
-                    (+ index 1)))]
-              [(opt_i64_i64_map.LookupMissing)
-                (let
-                  [previous : i64
-                    (match (opt_i64_i64_map.get (& current) name-id)
-                      [(opt_i64_i64_map.LookupFound value) value]
-                      [(opt_i64_i64_map.LookupMissing) 0])]
-                  [summary
-                    : i64
-                    ;; The transfer reads the direct callees' rows and nothing
-                    ;; else of the map: a row none of whose callees moved last
-                    ;; round reproduces itself.
-                    (if (opt-call-memory-callees-moved? index)
-                      (opt-call-memory-candidate-verdict
-                        type-segment-bases
-                        descriptor-globals
-                        current
-                        function-set
-                        func)
-                      previous)]
-                  ;; Unresolved is unreachable in practice; taking it abandons
-                  ;; the round.
-                  (if (< summary 0)
-                    (OptCallMemoryOptimisticPass.Pass next changed false)
-                    (begin
-                      (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
-                      (unless
-                        (= summary previous)
-                        (opt_i64_i64_map.insert-ref!
-                          (&mut opt-call-memory-moved)
-                          name-id
-                          opt-call-memory-round))
-                      (opt-call-memory-optimistic-pass-from
-                        type-segment-bases
-                        descriptor-globals
-                        functions
-                        resolved
-                        current
-                        function-set
-                        next
-                        (or changed (not (= summary previous)))
-                        usable?
-                        (+ index 1)))))]))]))))
-
-;; Commits only a map the transfer reproduces; an unusable round or an
-;; exhausted budget keeps `resolved`.
-(define (opt-call-memory-optimistic-fixed-with-descriptor-globals
-  [type-segment-bases : i64]
-  [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [resolved : opt_i64_i64_map.Map]
-  [function-set : (& function-set opt_i64_i64_map.Map)]
-  [current : opt_i64_i64_map.Map]
-  [capacity : i64]
-  [remaining : i64]) : opt_i64_i64_map.Map
-  (let
-    [rows : opt_i64_i64_map.Map current]
-    [usable? : bool true]
-    [settled? : bool
-      (opt-fixpoint-rounds
-        remaining
-        (begin
-          (set! opt-call-memory-round (+ opt-call-memory-round 1))
-          (match (opt-call-memory-optimistic-pass-from
-            type-segment-bases
-            descriptor-globals
-            functions
-            resolved
-            rows
-            function-set
-            (opt-call-memory-seed-builtins
-              (opt_i64_i64_map.with-capacity capacity))
-            false
-            true
-            0)
-            [(OptCallMemoryOptimisticPass.Pass next changed usable)
-              (begin
-                (set! rows next)
-                (set! usable? usable)
-                (and usable changed))])))]
-    (if (and settled? usable?)
-      rows
-      resolved)))
-
-;; The descriptor-global-free form: every `Gep <global>, 0` keeps its `unknown`
-;; verdict, which is the summary this builder produced before SUM-3.
-(define (opt-call-memory-optimistic-fixed
-  [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionSeq]
-  [resolved : opt_i64_i64_map.Map]
-  [function-set : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
-  [capacity : i64]
-  [remaining : i64]) : opt_i64_i64_map.Map
-  (let
-    [_reset : unit (opt-call-memory-callees-reset!)]
-    [descriptor-globals (opt_i64_i64_map.with-capacity 1)]
-    (opt-call-memory-optimistic-fixed-with-descriptor-globals
-      type-segment-bases
-      descriptor-globals
-      functions
-      resolved
-      function-set
-      current
-      capacity
-      remaining)))
+      (while (and
+        (not stale?)
+        (match callees
+          [(OptSlotList.Nil) false]
+          [(OptSlotList.Cons callee rest)
+            (begin
+              (when
+                (and
+                  (= (array-ref index.scc.scc-of callee) component)
+                  (> (array-ref changed-at callee) seen))
+                (set! stale? true))
+              (set! callees (deref rest))
+              true)]))
+        unit)
+      stale?)))
 
 (define (opt-call-memory-build-with-descriptor-globals
   [type-segment-bases : i64]
   [descriptor-globals : opt_i64_i64_map.Map]
   [index : (& index OptProgramIndex)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
   [capacity : i64]) : opt_i64_i64_map.Map
   (let
     [scratch : i64 (arena.tl_arena_make)]
@@ -117907,10 +117430,8 @@
         type-segment-bases
         descriptor-globals
         index
-        functions
         capacity)]
     (begin
-      (opt-call-memory-callees-reset!)
       (set! opt-call-memory-scratch 0)
       (unsafe
         (arena.tl_arena_destroy scratch))
@@ -117920,51 +117441,83 @@
   [type-segment-bases : i64]
   [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
   [index : (& index OptProgramIndex)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
   [capacity : i64]) : opt_i64_i64_map.Map
   (let
-    [function-set : opt_i64_i64_map.Map (opt-program-function-set index)]
-    [_callees : unit (opt-call-memory-callee-table! index)]
-    [resolved : opt_i64_i64_map.Map
+    [rows : opt_i64_i64_map.Map
       (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))]
-    ;; Each round builds a fresh `out` and copies rows in per function name, so
-    ;; the builtin seeds are re-applied to every round's map as well as to the
-    ;; initial one -- otherwise they would vanish after round one. Out of rounds,
-    ;; the last map stands.
-    [_settled? : bool
-      (opt-fixpoint-rounds
-        (+ (opt-function-seq-count functions) 1)
-        (match (opt-call-memory-build-pass-from
-          type-segment-bases
-          descriptor-globals
-          functions
-          resolved
-          function-set
-          (opt-call-memory-seed-builtins
-            (opt_i64_i64_map.with-capacity capacity))
-          false
-          0)
-          [(OptCallMemoryBuildPass.Pass next changed)
-            (begin
-              (set! resolved next)
-              changed)]))]
-    (if (= (opt-call-memory-unresolved-count functions resolved 0) 0)
-      resolved
-      (opt-call-memory-optimistic-fixed-with-descriptor-globals
-        type-segment-bases
-        descriptor-globals
-        functions
-        (compiler-opt-global-shared-view resolved)
-        function-set
-        (opt-call-memory-seed-optimistic
-          functions
-          resolved
-          (opt-call-memory-seed-builtins
-            (opt_i64_i64_map.with-capacity capacity)))
-        capacity
-        (opt-call-memory-optimistic-rounds)))))
+    [count : i64 (opt-program-index-count index)]
+    [kept : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [changed-at : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [computed-at : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [tick : i64 0]
+    [at : i64 0]
+    (begin
+      (while (< at count)
+        (let
+          [component : i64
+            (array-ref index.scc.scc-of (array-ref index.scc.members at))]
+          [end : i64 at]
+          [moved? : bool true]
+          (begin
+            ;; The component's members at bottom.
+            (while (and
+              (< end count)
+              (=
+                (array-ref index.scc.scc-of (array-ref index.scc.members end))
+                component))
+              (let
+                [slot : i64 (array-ref index.scc.members end)]
+                [id : i64 (opt-program-function-id index slot)]
+                (begin
+                  (if (opt_i64_i64_map.contains? (& rows) id)
+                    (set! (array-ref kept slot) true)
+                    (opt_i64_i64_map.insert-ref! (&mut rows) id 0))
+                  (set! (array-ref computed-at slot) -1)
+                  (set! end (+ end 1)))))
+            (while moved?
+              (let
+                [member : i64 at]
+                (begin
+                  (set! moved? false)
+                  (while (< member end)
+                    (let
+                      [slot : i64 (array-ref index.scc.members member)]
+                      (begin
+                        (when
+                          (and
+                            (not (array-ref kept slot))
+                            (opt-call-memory-member-stale?
+                              index
+                              changed-at
+                              computed-at
+                              slot))
+                          (let
+                            [id : i64 (opt-program-function-id index slot)]
+                            [_seen : unit
+                              (set! (array-ref computed-at slot) tick)]
+                            [row : i64
+                              (opt-call-memory-candidate-verdict
+                                type-segment-bases
+                                descriptor-globals
+                                rows
+                                (opt-function-index-at-slot
+                                  index.functions
+                                  slot))]
+                            (unless
+                              (=
+                                row
+                                (opt_i64_i64_map.get-value-or (& rows) id 0))
+                              (begin
+                                (set! tick (+ tick 1))
+                                (set! (array-ref changed-at slot) tick)
+                                (opt_i64_i64_map.insert-ref! (&mut rows) id row)
+                                (set! moved? true)))))
+                        (set! member (+ member 1))))))))
+            (set! at end))))
+      rows)))
 
-;; The descriptor-global-free form (see opt-call-memory-optimistic-fixed).
+;; The descriptor-global-free form: every `Gep <global>, 0` keeps its `unknown`
+;; verdict, which is the summary this builder produced before SUM-3.
 (define (opt-call-memory-build
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
@@ -117975,7 +117528,6 @@
       type-segment-bases
       (opt_i64_i64_map.with-capacity 1)
       index
-      functions
       capacity)))
 
 ;; Prove which globals are compile-time constants so their value can be
@@ -118797,18 +118349,15 @@
   ;; summary pass bounded, but high enough for those cases.
   1024)
 
-;; Every function whose call-memory summary is exactly 0 writes no memory at
-;; all: no parameter-rooted write (bits 0..59), no global storage write
-;; (bit 60), no unknown effect (bit 61). That is exactly the fact
-;; `direct-call-clean` stands for at a LICM call site, and the call-memory
-;; builder proves it with a callgraph fixpoint whose deliberately partial map
-;; leaves recursive cycles and over-limit programs unresolved -- so unioning it
-;; in can only ADD leaves that provably write nothing, never relax a callee the
-;; older syntactic walk had already rejected on effects.
+;; `direct-call-clean` is a projection of the call-memory rows: a LICM call
+;; site asks what a callee may write in the terms below, and a function's row
+;; answers it (opt-direct-call-clean-bits). A function whose call-memory summary
+;; is exactly 0 writes no memory at all: no parameter-rooted write, no global
+;; storage write, no unknown effect.
 ;;
 ;; Only functions of the program's own list are considered: a name absent from
-;; the map is unresolved and stays opaque, and indirect/C-ABI/SPMD call sites
-;; have no callee name to look up and keep their unconditional
+;; the map stays opaque, and indirect/C-ABI/SPMD call sites have no callee name
+;; to look up and keep their unconditional
 ;; `opt-licm-store-summary-call-or-unknown`.
 ;; The `direct-call-clean` map's value is a bit set, not a presence marker.
 ;;
@@ -118880,11 +118429,8 @@
     [(opt_i64_i64_map.LookupFound bits) (not (= (bit-and bits bit) 0))]
     [(opt_i64_i64_map.LookupMissing) false]))
 
-;; Bit 0 for the provably-write-nothing leaves, bit 1 for everything the
-;; call-memory fixpoint resolved without a global-storage write and without an
-;; unknown effect. Both are read off the same partial map: a name it leaves
-;; absent is unresolved (recursive cycles, over-budget programs) and earns no
-;; bit, so this can only ADD facts to the syntactic walk's verdict.
+;; Bit 0 for the functions that provably write nothing, bit 1 for every row
+;; without a global-storage write and without an unknown effect.
 ;;
 ;; A summary carrying no parameter-write bits earns the unconditional bit too:
 ;; its only possible writes are to descriptor element storage, disjoint from
@@ -118921,13 +118467,14 @@
               0
               (opt-direct-call-clean-unconditional-global-bit))))))))
 
-(define (opt-direct-call-clean-add-memory-clean
+;; Every program function's bits; a function whose row earns none is absent.
+(define (opt-direct-call-clean-map
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
-  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [capacity : i64]) : opt_i64_i64_map.Map
   (let
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     [index : i64 0]
-    [next : opt_i64_i64_map.Map out]
     (begin
       (while (< index functions.len)
         (begin
@@ -118937,33 +118484,22 @@
             [(ir.CompilerIrFunction.Function name _ _ _ _ _)
               (let
                 [name-id : i64 (ir.compiler-ir-symbol-id name)]
-                [_record : unit
+                [bits : i64
                   (match (opt_i64_i64_map.get (& call-memory) name-id)
                     [(opt_i64_i64_map.LookupFound summary)
-                      (let
-                        [bits : i64 (opt-direct-call-clean-bits summary)]
-                        [existing : i64
-                          (match (opt_i64_i64_map.get (& next) name-id)
-                            [(opt_i64_i64_map.LookupFound old) old]
-                            [(opt_i64_i64_map.LookupMissing) 0])]
-                        (if (= (bit-or existing bits) existing)
-                          unit
-                          (opt_i64_i64_map.insert-ref!
-                            (&mut next)
-                            name-id
-                            (bit-or existing bits))))]
-                    [(opt_i64_i64_map.LookupMissing) unit])]
-                unit)])
+                      (opt-direct-call-clean-bits summary)]
+                    [(opt_i64_i64_map.LookupMissing) 0])]
+                (if (= bits 0)
+                  unit
+                  (opt_i64_i64_map.insert-ref! (&mut out) name-id bits)))])
           (set! index (+ index 1))))
-      next)))
+      out)))
 
 (define (opt-program-call-summaries
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [index : (& index OptProgramIndex)]
-  [build-direct-call-clean : bool]
-  [build-call-memory : bool]) : OptProgramSummaries
+  [index : (& index OptProgramIndex)]) : OptProgramSummaries
   (let
     [capacity : i64
       (opt-function-index-capacity (opt-function-seq-count functions))]
@@ -118977,37 +118513,18 @@
           (opt-function-index-capacity
             (ir.compiler-ir-global-seq-count globals))))]
     [call-memory : opt_i64_i64_map.Map
-      (if build-call-memory
-        (opt-call-memory-build-with-descriptor-globals
-          type-segment-bases
-          descriptor-globals
-          index
-          functions
-          capacity)
-        (opt_i64_i64_map.with-capacity 1))]
-    ;; `call-memory` is built first so the clean map can union in its
-    ;; provably-write-nothing leaves. `build-direct-call-clean` is the level>=2
-    ;; gate, so opt0/opt1 keep an empty map and stay byte-identical.
-    [direct-call-clean : opt_i64_i64_map.Map
-      (if build-direct-call-clean
-        (opt-direct-call-clean-add-memory-clean
-          functions
-          call-memory
-          (opt-direct-call-clean-map index capacity))
-        (opt_i64_i64_map.with-capacity 1))]
-    ;; The return-alias table rides the same level>=2 gate as
-    ;; `direct-call-clean`: it feeds LICM provenance only, and leaving it empty
-    ;; below that level keeps opt0/opt1 byte-identical.
-    [return-alias : opt_i64_i64_map.Map
-      (if build-direct-call-clean
-        (opt-licm-return-alias-map functions capacity)
-        (opt_i64_i64_map.with-capacity 1))]
+      (opt-call-memory-build-with-descriptor-globals
+        type-segment-bases
+        descriptor-globals
+        index
+        capacity)]
     (OptProgramSummaries
       false
       (profile_state.compiler-profile-state-new)
-      direct-call-clean
+      (opt-direct-call-clean-map functions call-memory capacity)
       call-memory
-      return-alias
+      ;; The whole-program RETURN-ALIAS table feeds LICM provenance only.
+      (opt-licm-return-alias-map functions capacity)
       (opt_i64_i64_map.with-capacity 1)
       (opt-global-cell-summary-empty)
       (ir.compiler-ir-representation-index-empty)
@@ -119015,37 +118532,33 @@
       (opt_i64_i64_map.with-capacity 1))))
 
 ;; Build the per-program summaries: the function-count-gated call maps
-;; plus the const-divisor table. The const-divisor table is built only at opt
-;; level 2 (the only level whose pipeline runs the divisor rewrite), so opt0/opt1
-;; pay nothing for it. The global-cell summary follows the same
-;; gate: only the level-2 pipeline runs the global_cell pass. Every table is
-;; built on the same final function seq -- the post-inline, pruned program
-;; every function is then optimized from, which is the only seq whose call
-;; sites are the ones that survive.
+;; plus the const-divisor, constant-length and global-cell tables. Only the
+;; level-2 pipeline reads any of them (the level-1 pipeline reads the profile
+;; state alone), so opt0/opt1 pay nothing for them. Every table is built on the
+;; same final function seq -- the post-inline, pruned program every function is
+;; then optimized from, which is the only seq whose call sites are the ones
+;; that survive.
 (define (opt-build-program-summaries
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
   [externs : ir.CompilerIrExternSeq]
   [reachable-functions : (& reachable-functions ir.CompilerIrFunctionSeq)]
   [level : i64]) : OptProgramSummaries
-  (let
-    [count : i64 (opt-function-seq-count reachable-functions)]
-    [capacity : i64 (opt-function-index-capacity count)]
-    [facts : OptProgramFacts
-      (opt-program-facts-build reachable-functions level)]
-    [summaries : OptProgramSummaries
-      (if (<= count (opt-summary-function-limit))
-        (opt-program-call-summaries
-          type-segment-bases
-          (compiler-opt-global-shared-view globals)
-          reachable-functions
-          facts.index
-          (>= level 2)
-          (>= level 1))
-        (opt-program-summaries-empty))]
-    (begin
-      (when
-        (>= level 2)
+  (if (< level 2)
+    (opt-program-summaries-empty)
+    (let
+      [count : i64 (opt-function-seq-count reachable-functions)]
+      [capacity : i64 (opt-function-index-capacity count)]
+      [facts : OptProgramFacts (opt-program-facts-build reachable-functions)]
+      [summaries : OptProgramSummaries
+        (if (<= count (opt-summary-function-limit))
+          (opt-program-call-summaries
+            type-segment-bases
+            (compiler-opt-global-shared-view globals)
+            reachable-functions
+            facts.index)
+          (opt-program-summaries-empty))]
+      (begin
         (let
           [_divisors : unit
             (set!
@@ -119108,8 +118621,8 @@
                 roots
                 cell.len-eq
                 capacity))
-            (set! summaries.global-cell cell))))
-      summaries)))
+            (set! summaries.global-cell cell)))
+        summaries))))
 
 ;; Substitute a proven constant global with its literal value in
 ;; scalar operand positions. For an ordinary operand this lets the backend fold
@@ -120041,17 +119554,23 @@
 ;; only a map the transfer REPRODUCES (`changed` false), and DISCARDS the whole
 ;; table if the budget runs out -- an over-budget program falls back to the
 ;; loop-wide gate rather than shipping a non-fixed-point.
+;;
+;; IAG-2's storage table (opt-global-obj-build) is a second table of this type
+;; over the same lattice, so the queries below serve both.
 (defstruct OptGlobalModRef
-  ;; False = no table. Every query then answers "may write any cell", which is
-  ;; exactly the loop-wide verdict, so an absent table changes no decision.
+  ;; False = no table. Every query then answers "may write any cell" (or any
+  ;; storage), which is exactly the loop-wide verdict, so an absent table
+  ;; changes no decision.
   (built? bool)
-  ;; global symbol id -> bit index. Only globals that are a direct `Store`
-  ;; target ANYWHERE in the program get one; a global absent from this map is
-  ;; never stored, so no execution writes its cell at all and every query for
-  ;; it is false.
+  ;; global symbol id -> bit index. In the cell table only globals that are a
+  ;; direct `Store` target ANYWHERE in the program get one; a global absent from
+  ;; this map is never stored, so no execution writes its cell at all and every
+  ;; query for it is false. The storage table indexes every non-scalar global.
   (index opt_i64_i64_map.Map)
-  ;; function symbol id -> that function's packed cell-write set. Every
-  ;; function of the program has a row; an absent name is an extern.
+  ;; function symbol id -> that function's packed write set. Every function of
+  ;; the program has a row; an absent name is an extern: no IR body, and under
+  ;; the empty address-taken precondition no pointer it holds can name a cell,
+  ;; so it writes none.
   (writes opt_i64_i64_map.Map))
 
 ;; One bit per directly-stored global; bit 62 is the "any cell" marker, so a
@@ -120071,13 +119590,19 @@
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)))
 
-;; The bit that stands for g's cell, or 0 when the program never stores g.
+;; The bit that stands for global id `id`, or 0 when the index has no bit for it
+;; (in the cell table: the program never stores it).
+(define (opt-global-mod-ref-id-bit
+  [index : (& index opt_i64_i64_map.Map)]
+  [id : i64]) : i64
+  (match (opt_i64_i64_map.get (& index) id)
+    [(opt_i64_i64_map.LookupFound bit) (shl 1 bit)]
+    [(opt_i64_i64_map.LookupMissing) 0]))
+
 (define (opt-global-mod-ref-cell-bit
   [index : (& index opt_i64_i64_map.Map)]
   [name : i64]) : i64
-  (match (opt_i64_i64_map.get (& index) (ir.compiler-ir-symbol-id name))
-    [(opt_i64_i64_map.LookupFound bit) (shl 1 bit)]
-    [(opt_i64_i64_map.LookupMissing) 0]))
+  (opt-global-mod-ref-id-bit index (ir.compiler-ir-symbol-id name)))
 
 ;; The mask a `Store g` contributes. The index is built from the program's whole
 ;; `Store`-target set, so every store reaching this has a bit; a miss can only
@@ -120132,7 +119657,9 @@
 ;; for every instruction except `Store`, which is matched first, and the empty
 ;; address-taken precondition denies every pointer a cell; `ControlFlow` covers
 ;; branches, returns, bounds checks and `TailCall`, of which only the last can
-;; reach program code and is likewise matched first.
+;; reach program code and is likewise matched first. The storage table's walk
+;; matches its pointer writes first too, and its escape check has refused every
+;; remaining `MemoryWrite` whose pointer operand carries a cell address.
 (define (opt-global-mod-ref-effect-mask [effect : ir.CompilerIrEffect]) : i64
   (match effect
     [(ir.CompilerIrEffect.Pure) 0]
@@ -120185,8 +119712,7 @@
                   opt-global-mod-ref-instr-mask
                   index))])
           (set! slot (+ slot 1))))
-      (opt-program-close! program (&mut rows))
-      (opt-program-rows-map program rows false capacity))))
+      (opt-program-closed-rows-map program (&mut rows) 0 capacity))))
 
 ;; P18-2: the stored globals of one POOL -- the scalars, or the non-scalars.
 (define (opt-global-mod-ref-store-count-pool
@@ -120494,85 +120020,24 @@
 ;; argument position the parameter-owner walk did not resolve to that same
 ;; global escapes for the same reason.
 ;;
-;; THE LATTICE AND THE FIXPOINT are P18's, verbatim: one bit per global (bits
-;; 0..61) plus bit 62 for "any", join is `bit-or`, and a monotone round over
-;; the function list runs until it reproduces itself. Own-instruction masks and
-;; callee lists are computed ONCE, before the fixpoint, because parameter
-;; owners do not depend on the rows; only the callee union iterates.
-(defstruct OptGlobalObjModRef
-  ;; False = no table. Every query then answers "may write any storage", which
-  ;; is the pre-IAG-2 verdict, so an absent table changes no decision.
-  (built? bool)
-  ;; global symbol id -> bit index. Every global of the program gets one.
-  (index opt_i64_i64_map.Map)
-  ;; function symbol id -> that function's packed storage-write set. An absent
-  ;; name is an extern: no IR body, and under the empty address-taken
-  ;; precondition no pointer it holds can name a cell, so it writes none.
-  (writes opt_i64_i64_map.Map))
-
-(define (opt-global-obj-limit) : i64
-  62)
-
-(define (opt-global-obj-any) : i64
-  (shl 1 62))
-
-(define (opt-global-obj-any? [mask : i64]) : bool
-  (not (= (bit-and mask (opt-global-obj-any)) 0)))
-
-(define (opt-global-obj-mod-ref-none) : OptGlobalObjModRef
-  (OptGlobalObjModRef
-    false
-    (opt_i64_i64_map.with-capacity 1)
-    (opt_i64_i64_map.with-capacity 1)))
-
-;; The bit that stands for global id `id`, or 0 when the program has no such
-;; global.
-(define (opt-global-obj-id-bit
-  [index : (& index opt_i64_i64_map.Map)]
-  [id : i64]) : i64
-  (match (opt_i64_i64_map.get (& index) id)
-    [(opt_i64_i64_map.LookupFound bit) (shl 1 bit)]
-    [(opt_i64_i64_map.LookupMissing) 0]))
-
-(define (opt-global-obj-bit
-  [index : (& index opt_i64_i64_map.Map)]
-  [name : i64]) : i64
-  (opt-global-obj-id-bit index (ir.compiler-ir-symbol-id name)))
-
-;; The mask a write to `id`'s storage contributes. A global the index does not
-;; carry is a plain SCALAR cell (opt-global-obj-scalar-type?), whose storage is
-;; one word no pointer in the program can name: `CompilerIrValue.Global` READS
-;; such a cell rather than addressing it, and `GlobalAddr` is excluded by the
-;; empty address-taken precondition. The only thing that can write it is
-;; `Store g`, which is P18's cell row and not this one, and every consumer of
-;; this row asks that row too (opt-licm-global-storage-writable?,
-;; opt-load-cse-state-direct-call). Contributing nothing for such a global is
-;; therefore exact, and it is what keeps a program with many scalar globals
-;; inside the packed row.
-(define (opt-global-obj-id-mask
-  [index : (& index opt_i64_i64_map.Map)]
-  [id : i64]) : i64
-  (opt-global-obj-id-bit index id))
-
-(define (opt-global-obj-mask-may-write?
-  [index : (& index opt_i64_i64_map.Map)]
-  [mask : i64]
-  [name : i64]) : bool
-  (or
-    (opt-global-obj-any? mask)
-    (not (= (bit-and mask (opt-global-obj-bit index name)) 0))))
-
-;; The storage a DIRECT callee may write. No table, or a resolved row; an
-;; absent name is an extern and writes none.
-(define (opt-global-obj-call-mask
-  [obj : (& obj OptGlobalObjModRef)]
-  [name : i64]) : i64
-  (if (not obj.built?)
-    (opt-global-obj-any)
-    (match (opt_i64_i64_map.get (& obj.writes) (ir.compiler-ir-symbol-id name))
-      [(opt_i64_i64_map.LookupFound mask) mask]
-      [(opt_i64_i64_map.LookupMissing) 0])))
-
+;; THE LATTICE AND THE FIXPOINT are P18's, verbatim, and so is the table
+;; (OptGlobalModRef and its queries): one bit per global (bits 0..61) plus bit
+;; 62 for "any", join is `bit-or`, and a monotone round over the function list
+;; runs until it reproduces itself. Own-instruction masks and callee lists are
+;; computed ONCE, before the fixpoint, because parameter owners do not depend on
+;; the rows; only the callee union iterates. With no table every query answers
+;; "may write any storage", the pre-IAG-2 verdict.
+;;
+;; A global the index does not carry is a plain SCALAR cell
+;; (opt-global-obj-scalar-type?), whose storage is one word no pointer in the
+;; program can name: `CompilerIrValue.Global` READS such a cell rather than
+;; addressing it, and `GlobalAddr` is excluded by the empty address-taken
+;; precondition. The only thing that can write it is `Store g`, which is P18's
+;; cell row and not this one, and every consumer of this row asks that row too
+;; (opt-licm-global-storage-writable?, opt-load-cse-state-direct-call). A write
+;; to it contributing nothing (its opt-global-mod-ref-id-bit is 0) is therefore
+;; exact, and it is what keeps a program with many scalar globals inside the
+;; packed row.
 ;; --- owner codes -------------------------------------------------------------
 (define (opt-global-obj-owner-mixed) : i64
   (- 0 1))
@@ -120596,8 +120061,8 @@
   [owner : i64]) : i64
   (cond
     [(= owner 0) 0]
-    [(< owner 0) (opt-global-obj-any)]
-    [else (opt-global-obj-id-mask index (- owner 1))]))
+    [(< owner 0) (opt-global-mod-ref-any)]
+    [else (opt-global-mod-ref-id-bit index (- owner 1))]))
 
 (defstruct OptGlobalObjOwners
   (map opt_i64_i64_map.Map)
@@ -120924,7 +120389,7 @@
   [id : i64]) : unit
   (set!
     (array-ref escaped 0)
-    (bit-or (array-ref escaped 0) (opt-global-obj-id-mask index id))))
+    (bit-or (array-ref escaped 0) (opt-global-mod-ref-id-bit index id))))
 
 (define (opt-global-obj-refuse-vars
   [owners : (& owners opt_i64_i64_map.Map)]
@@ -121002,18 +120467,6 @@
           (opt-global-obj-escape-id! escaped index id)
           (opt-global-obj-escape-refs! rest escaped index)))]))
 
-(define (opt-global-obj-effect-mask [effect : ir.CompilerIrEffect]) : i64
-  (match effect
-    [(ir.CompilerIrEffect.Pure) 0]
-    [(ir.CompilerIrEffect.MemoryRead) 0]
-    [(ir.CompilerIrEffect.ControlFlow) 0]
-    ;; Every remaining `MemoryWrite` form writes THROUGH A POINTER, and the
-    ;; escape check above has refused every one whose pointer operand carries a
-    ;; cell address, so what is left cannot name one.
-    [(ir.CompilerIrEffect.MemoryWrite) 0]
-    [(ir.CompilerIrEffect.CpuProbe) (opt-global-obj-any)]
-    [(ir.CompilerIrEffect.Unknown) (opt-global-obj-any)]))
-
 ;; One instruction's OWN storage writes, callees excluded.
 (define (opt-global-obj-instr-own-mask
   [index : (& index opt_i64_i64_map.Map)]
@@ -121021,7 +120474,7 @@
   [instr : ir.CompilerIrInstr]) : i64
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Store name _ _)
-      (opt-global-obj-id-mask index (ir.compiler-ir-symbol-id name))]
+      (opt-global-mod-ref-id-bit index (ir.compiler-ir-symbol-id name))]
     [(ir.CompilerIrInstr.StorePtr ptr _ _)
       (opt-global-obj-owner-mask
         index
@@ -121036,8 +120489,8 @@
         (opt-global-obj-owner-of-value owners dst))]
     [(ir.CompilerIrInstr.Call _ _ _ _) 0]
     [(ir.CompilerIrInstr.TailCall _ _ _) 0]
-    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (opt-global-obj-any)]
-    [_ (opt-global-obj-effect-mask (ir.compiler-ir-instr-effect instr))]))
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
+    [_ (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr))]))
 
 (define (opt-global-obj-own-instr!
   [index : (& index opt_i64_i64_map.Map)]
@@ -121188,35 +120641,36 @@
                 fnset))])
         (set! position (+ position 1))))))
 
-;; --- pass A: every function's own storage writes ----------------------------
+;; --- pass A: every function's own storage writes, by program slot -----------
+;;
+;; Pass B is the call-graph closure (opt-program-closed-rows-map): a function's
+;; row is its own writes, everything its callees write, and every ESCAPED
+;; global's storage, which a pointer this analysis cannot see may reach.
 (define (opt-global-obj-own-writes!
   [type-segment-bases : i64]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [program : (& program OptProgramIndex)]
   [param-owners : (& param-owners opt_i64_i64_map.Map)]
   [escaped : (&mut escaped (__tl_dyn-array i64))]
   [index : (& index opt_i64_i64_map.Map)]
   [opaque : (& opaque opt_i64_i64_map.Map)]
-  [out : opt_i64_i64_map.Map]
-  [capacity : i64]) : opt_i64_i64_map.Map
+  [capacity : i64]) : (__tl_dyn-array i64)
   (let
-    [position : i64 0]
-    [next : opt_i64_i64_map.Map out]
+    [count : i64 (opt-program-index-count program)]
+    [rows : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [slot : i64 0]
     (begin
-      (while (< position functions.len)
+      (while (< slot count)
         (begin
-          (match (compiler-opt-global-array-element-shared-view
-            functions.slots
-            position)
+          (match (opt-function-index-at-slot program.functions slot)
             [(ir.CompilerIrFunction.Function name params _ _ blocks _)
               (let
-                [id : i64 (ir.compiler-ir-symbol-id name)]
                 [owners : OptGlobalObjOwners
                   (opt-global-obj-owners-for-function
                     type-segment-bases
                     param-owners
                     opaque
                     true
-                    id
+                    (ir.compiler-ir-symbol-id name)
                     params
                     blocks
                     capacity)]
@@ -121224,7 +120678,8 @@
                   (opt-global-obj-owners-converged?
                     (compiler-opt-global-shared-view owners)
                     blocks)]
-                [mask : i64
+                (set!
+                  (array-ref rows slot)
                   (if settled?
                     (opt-blocks-fold
                       blocks
@@ -121233,45 +120688,12 @@
                       index
                       (compiler-opt-global-shared-view owners)
                       escaped)
-                    (opt-global-obj-any))]
-                (opt_i64_i64_map.insert-ref! (&mut next) id mask))])
-          (set! position (+ position 1))))
-      next)))
-
-;; --- pass B: the call-graph closure -----------------------------------------
-;;
-;; A function's row: its own writes, everything its callees write, and every
-;; ESCAPED global's storage, which a pointer this analysis cannot see may reach.
-(define (opt-global-obj-writes
-  [program : (& program OptProgramIndex)]
-  [own : (& own opt_i64_i64_map.Map)]
-  [escaped : i64]
-  [capacity : i64]) : opt_i64_i64_map.Map
-  (let
-    [count : i64 (opt-program-index-count program)]
-    [rows : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [slot : i64 0]
-    (begin
-      (while (< slot count)
-        (begin
-          (set!
-            (array-ref rows slot)
-            (match (opt_i64_i64_map.get
-              own
-              (opt-program-function-id program slot))
-              [(opt_i64_i64_map.LookupFound mask) mask]
-              [(opt_i64_i64_map.LookupMissing) (opt-global-obj-any)]))
+                    (opt-global-mod-ref-any))))])
           (set! slot (+ slot 1))))
-      (opt-program-close! program (&mut rows))
-      (set! slot 0)
-      (while (< slot count)
-        (begin
-          (set! (array-ref rows slot) (bit-or (array-ref rows slot) escaped))
-          (set! slot (+ slot 1))))
-      (opt-program-rows-map program rows false capacity))))
+      rows)))
 
 ;; A global whose cell holds one plain scalar word. Nothing but `Store g` can
-;; write it (see opt-global-obj-id-mask), so it needs no bit. Every other type
+;; write it (see opt-global-mod-ref-id-bit), so it needs no bit. Every other type
 ;; -- an aggregate stored inline after IAG-1, and every pointer-shaped cell
 ;; whose `Global` value is a HANDLE a descriptor chain hangs off -- does.
 (define (opt-global-obj-scalar-type? [ty : ast.AstType]) : bool
@@ -121310,8 +120732,8 @@
 ;;
 ;; WHY SHARING IS SOUND, and why it is the right coarsening. A row is a set of
 ;; globals, ordered by inclusion, and every reader asks one of two questions:
-;; a WRITE contributes `opt-global-obj-id-mask` (the global's bit) into the
-;; row, and a QUERY asks `opt-global-obj-mask-may-write?` (does the row contain
+;; a WRITE contributes `opt-global-mod-ref-id-bit` (the global's bit) into the
+;; row, and a QUERY asks `opt-global-mod-ref-mask-may-write?` (does the row contain
 ;; the global's bit). Both go through the SAME index, so giving two globals one
 ;; bit merges them into a single element of the lattice: a write to either is
 ;; recorded as a write to both, and a query for either answers yes exactly when
@@ -121334,8 +120756,10 @@
 ;; shares bit limit-1 with the last of them, so the loss is confined to the
 ;; tail of the global list.
 (define (opt-global-obj-overflow-bit [globals : ir.CompilerIrGlobalSeq]) : i64
-  (if (> (opt-global-obj-nonscalar-count globals 0 0) (opt-global-obj-limit))
-    (- (opt-global-obj-limit) 1)
+  (if (>
+    (opt-global-obj-nonscalar-count globals 0 0)
+    (opt-global-mod-ref-limit))
+    (- (opt-global-mod-ref-limit) 1)
     (- 0 1)))
 
 (define (opt-global-obj-index-fill
@@ -121352,7 +120776,7 @@
           (opt-global-obj-index-fill globals overflow-bit out (+ at 1) next)
           (let
             [bit : i64
-              (if (< next (opt-global-obj-limit))
+              (if (< next (opt-global-mod-ref-limit))
                 next
                 overflow-bit)]
             (if (< bit 0)
@@ -121369,7 +120793,7 @@
                     overflow-bit
                     assigned
                     (+ at 1)
-                    (if (< next (opt-global-obj-limit))
+                    (if (< next (opt-global-mod-ref-limit))
                       (+ next 1)
                       next)))))))])))
 
@@ -121389,19 +120813,19 @@
   [program : (& program OptProgramIndex)]
   [roots : (& roots OptArgGlobalScan)]
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
-  [capacity : i64]) : OptGlobalObjModRef
+  [capacity : i64]) : OptGlobalModRef
   (if (or
     (> (opt_i64_i64_map.len (& addr-taken)) 0)
     (> (opt-function-seq-count functions) (opt-summary-function-limit))
     (= (ir.compiler-ir-global-seq-count globals) 0))
-    (opt-global-obj-mod-ref-none)
+    (opt-global-mod-ref-none)
     (match (opt-global-obj-index-fill
       (compiler-opt-global-shared-view globals)
       (opt-global-obj-overflow-bit globals)
       (opt_i64_i64_map.with-capacity capacity)
       0
       0)
-      [(OptGlobalModRefIndex.No) (opt-global-obj-mod-ref-none)]
+      [(OptGlobalModRefIndex.No) (opt-global-mod-ref-none)]
       [(OptGlobalModRefIndex.Some index _)
         (let
           [escaped : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -121418,19 +120842,22 @@
               roots.opaque
               fnset
               capacity)]
-          [own : opt_i64_i64_map.Map
+          [rows : (__tl_dyn-array i64)
             (opt-global-obj-own-writes!
               type-segment-bases
-              functions
+              program
               param-owners
               (&mut escaped)
               index
               roots.opaque
-              (opt_i64_i64_map.with-capacity capacity)
               capacity)]
           [writes : opt_i64_i64_map.Map
-            (opt-global-obj-writes program own (array-ref escaped 0) capacity)]
-          (OptGlobalObjModRef true index writes))])))
+            (opt-program-closed-rows-map
+              program
+              (&mut rows)
+              (array-ref escaped 0)
+              capacity)]
+          (OptGlobalModRef true index writes))])))
 
 ;; --- P-B: static length-equality families over global Vec cells --------------
 ;;
@@ -123962,7 +123389,7 @@
 ;; then the three cell-identity proofs, then IAG-2's storage consistency row.
 (define (opt-lga-refusal
   [mod-ref : (& mod-ref OptGlobalModRef)]
-  [obj : (& obj OptGlobalObjModRef)]
+  [obj : (& obj OptGlobalModRef)]
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
   [facts : (& facts OptLgaParamFacts)]
   [cell-row : i64]
@@ -123993,7 +123420,7 @@
           (not
             (and
               obj.built?
-              (opt-global-obj-mask-may-write? obj.index obj-row global-id))))
+              (opt-global-mod-ref-mask-may-write? obj.index obj-row global-id))))
         "refused-unmodelled-storage-write"]
       [else ""])))
 
@@ -124001,7 +123428,7 @@
   [type-segment-bases : i64]
   [scan : (& scan OptArgGlobalScan)]
   [mod-ref : (& mod-ref OptGlobalModRef)]
-  [obj : (& obj OptGlobalObjModRef)]
+  [obj : (& obj OptGlobalModRef)]
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
   [facts : (& facts OptLgaParamFacts)]
   [cell-row : i64]
@@ -124065,7 +123492,7 @@
   [type-segment-bases : i64]
   [scan : (& scan OptArgGlobalScan)]
   [mod-ref : (& mod-ref OptGlobalModRef)]
-  [obj : (& obj OptGlobalObjModRef)]
+  [obj : (& obj OptGlobalModRef)]
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
   [func : ir.CompilerIrFunction]
   [plan : OptLgaPlan]) : OptLgaPlan
@@ -124123,7 +123550,7 @@
   [type-segment-bases : i64]
   [scan : (& scan OptArgGlobalScan)]
   [mod-ref : (& mod-ref OptGlobalModRef)]
-  [obj : (& obj OptGlobalObjModRef)]
+  [obj : (& obj OptGlobalModRef)]
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [index : i64]
@@ -124491,7 +123918,7 @@
         ;; `disq` records a global on a `Store` target OR a `GlobalAddr`
         ;; operand, so subtracting the direct-store targets leaves precisely the
         ;; globals whose ADDRESS the program takes.
-        [facts : OptProgramFacts (opt-program-facts-build functions level)]
+        [facts : OptProgramFacts (opt-program-facts-build functions)]
         [addr-taken : opt_i64_i64_map.Map
           (opt-global-cell-addr-taken-fill
             (compiler-opt-global-shared-view globals)
@@ -124518,7 +123945,7 @@
                 externs
                 functions
                 capacity)]
-            [obj : OptGlobalObjModRef
+            [obj : OptGlobalModRef
               (opt-global-obj-build
                 type-segment-bases
                 globals
@@ -125033,7 +124460,7 @@
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionSeq]) : OptGlobalCellSummary
   (let
-    [facts : OptProgramFacts (opt-program-facts-build functions 2)]
+    [facts : OptProgramFacts (opt-program-facts-build functions)]
     (opt-global-cell-summary-build-with-call-memory
       type-segment-bases
       globals
@@ -125092,7 +124519,7 @@
             (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1)
-            (opt-global-obj-mod-ref-none)
+            (opt-global-mod-ref-none)
             (opt_i64_i64_map.with-capacity 1))]
         [nonneg : opt_i64_i64_map.Map
           (opt-nonneg-globals-build
@@ -125136,7 +124563,7 @@
           ;; provides, every global's hidden initializer), which this entry
           ;; point does not receive.
           (opt_i64_i64_map.with-capacity 1)
-          (opt-global-obj-mod-ref-none)
+          (opt-global-mod-ref-none)
           call-memory)))))
 
 ;; --- condition (a): stores a later read can OBSERVE ---------------------------
@@ -131685,7 +131112,7 @@
   (match (opt-load-entry-key
     (owned_view.compiler-owned-reference-shared-view entry))
     [(OptLoadKey.GlobalField entry-global _ _ _)
-      (not (opt-global-obj-mask-may-write? index row entry-global))]
+      (not (opt-global-mod-ref-mask-may-write? index row entry-global))]
     [(OptLoadKey.Field _ _ _ _) false]
     [(OptLoadKey.ScaledField _ _ _ _) false]
     [(OptLoadKey.Raw _ _ _) false]))
@@ -131797,6 +131224,38 @@
         (opt-load-table-filter-cell-writes cell-index row layered)]
       [else layered])))
 
+;; The row of `table` (the cell or the storage table) a direct call to `name`
+;; may write, in the packed OptGlobalModRef encoding.
+;;
+;; Every write a summarized callee performs is named by its summary: the `Store`
+;; writes are its mod-ref row, and the parameter-rooted and element writes
+;; cannot reach a named cell at all -- a cell is a symbol's own storage in the
+;; static data segment, never a caller object's payload and never the data
+;; buffer a descriptor points at, which is the argument
+;; opt-call-memory-element-bit already makes for the element class and
+;; opt-load-entry-survives-global-cell-store? makes for the layer. Only the
+;; UNKNOWN bit admits a write with no such proof, so it alone answers "any cell"
+;; on its own. A callee with no summary row is an extern or an unresolved cycle:
+;; the effect classification decides, exactly as it does for the load table.
+;;
+;; "Any cell" also arrives from the row itself -- an indirect call anywhere below
+;; this callee, or a program that carries no table -- and every question then
+;; falls back to its pre-MF-4 verdict.
+(define (opt-load-call-table-row
+  [call-memory : (& call-memory opt_i64_i64_map.Map)]
+  [table : (& table OptGlobalModRef)]
+  [name : i64]) : i64
+  (match (opt_i64_i64_map.get (& call-memory) (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound summary)
+      (if (opt-call-memory-summary-unknown? summary)
+        (opt-global-mod-ref-any)
+        (opt-global-mod-ref-call-mask table name))]
+    [(opt_i64_i64_map.LookupMissing)
+      (match (ir.compiler-ir-direct-call-effect-id name)
+        [(ir.CompilerIrEffect.MemoryRead) 0]
+        [(ir.CompilerIrEffect.ControlFlow) 0]
+        [_ (opt-global-mod-ref-any)])]))
+
 (define (opt-load-cse-state-direct-call
   [type-segment-bases : i64]
   [canon : (&mut canon (__tl_dyn-array i64))]
@@ -131821,36 +131280,8 @@
       (let
         [mod-ref (& cells.mod-ref)]
         ;; MF-4 (i): the CELLS this call may write, in the packed
-        ;; OptGlobalModRef encoding.
-        ;;
-        ;; Every write a summarized callee performs is named by its summary: the
-        ;; `Store` writes are its mod-ref row, and the parameter-rooted and
-        ;; element writes cannot reach a named cell at all -- a cell is a
-        ;; symbol's own storage in the static data segment, never a caller
-        ;; object's payload and never the data buffer a descriptor points at,
-        ;; which is the argument opt-call-memory-element-bit already makes for
-        ;; the element class and opt-load-entry-survives-global-cell-store?
-        ;; makes for the layer. Only the UNKNOWN bit admits a write with no such
-        ;; proof, so it alone answers "any cell" on its own. A callee with no
-        ;; summary row is an extern or an unresolved cycle: the effect
-        ;; classification decides, exactly as it does for the table below.
-        ;;
-        ;; "Any cell" also arrives from the row itself -- an indirect call
-        ;; anywhere below this callee, or a program that carries no table -- and
-        ;; every question below then falls back to its pre-MF-4 verdict.
-        [row : i64
-          (match (opt_i64_i64_map.get
-            (& call-memory)
-            (ir.compiler-ir-symbol-id name))
-            [(opt_i64_i64_map.LookupFound summary)
-              (if (opt-call-memory-summary-unknown? summary)
-                (opt-global-mod-ref-any)
-                (opt-global-mod-ref-call-mask mod-ref name))]
-            [(opt_i64_i64_map.LookupMissing)
-              (match (ir.compiler-ir-direct-call-effect-id name)
-                [(ir.CompilerIrEffect.MemoryRead) 0]
-                [(ir.CompilerIrEffect.ControlFlow) 0]
-                [_ (opt-global-mod-ref-any)])])]
+        ;; OptGlobalModRef encoding (opt-load-call-table-row).
+        [row : i64 (opt-load-call-table-row call-memory mod-ref name)]
         ;; Filtering reads the PRE-call facts and table, so a tl_alloc call
         ;; cannot use its own (not yet bound) fresh root to keep entries.
         [cells-known? : bool (not (opt-global-mod-ref-any? row))]
@@ -131861,20 +131292,8 @@
         ;; as an unknown-rooted store through a `Global g` argument and empty
         ;; it.
         [obj (& cells.obj-mod-ref)]
-        [obj-row : i64
-          (match (opt_i64_i64_map.get
-            (& call-memory)
-            (ir.compiler-ir-symbol-id name))
-            [(opt_i64_i64_map.LookupFound summary)
-              (if (opt-call-memory-summary-unknown? summary)
-                (opt-global-obj-any)
-                (opt-global-obj-call-mask obj name))]
-            [(opt_i64_i64_map.LookupMissing)
-              (match (ir.compiler-ir-direct-call-effect-id name)
-                [(ir.CompilerIrEffect.MemoryRead) 0]
-                [(ir.CompilerIrEffect.ControlFlow) 0]
-                [_ (opt-global-obj-any)])])]
-        [obj-known? : bool (not (opt-global-obj-any? obj-row))]
+        [obj-row : i64 (opt-load-call-table-row call-memory obj name)]
+        [obj-known? : bool (not (opt-global-mod-ref-any? obj-row))]
         ;; Does this call write through a parameter whose ARGUMENT is a global,
         ;; AND do both rows resolve? Those positions are the ones the storage
         ;; row names and the root-keyed filter cannot describe -- but only a
@@ -132520,7 +131939,6 @@
           type-segment-bases
           (opt_i64_i64_map.with-capacity 1)
           index
-          functions
           (opt-function-index-capacity (opt-function-seq-count functions))))
       (set! opt-pure-call-inline-memory-on true))))
 
@@ -135546,19 +134964,7 @@
   [name : i64]) : bool
   (let
     [mod-ref (& cells.mod-ref)]
-    [row : i64
-      (match (opt_i64_i64_map.get
-        (& call-memory)
-        (ir.compiler-ir-symbol-id name))
-        [(opt_i64_i64_map.LookupFound summary)
-          (if (opt-call-memory-summary-unknown? summary)
-            (opt-global-mod-ref-any)
-            (opt-global-mod-ref-call-mask mod-ref name))]
-        [(opt_i64_i64_map.LookupMissing)
-          (match (ir.compiler-ir-direct-call-effect-id name)
-            [(ir.CompilerIrEffect.MemoryRead) 0]
-            [(ir.CompilerIrEffect.ControlFlow) 0]
-            [_ (opt-global-mod-ref-any)])])]
+    [row : i64 (opt-load-call-table-row call-memory mod-ref name)]
     (opt-global-mod-ref-mask-may-write? mod-ref.index row global)))
 
 ;; A kill for the price test above: an instruction between two reads that ends
@@ -137205,7 +136611,7 @@
 ;;     IAG-2 row proves it writes nothing at all -- the whole-program
 ;;     `call-memory` summary must be exactly 0 (no parameter write, no cell
 ;;     write, no element write, no unknown) AND the IAG-2 storage-write mask
-;;     `opt-global-obj-call-mask` must be empty. Element-only callees are
+;;     `opt-global-mod-ref-call-mask` must be empty. Element-only callees are
 ;;     refused deliberately even though an element write lands in a data
 ;;     buffer: a descriptor can itself BE an element of another vector, so the
 ;;     buffer and the header are not disjoint in general. Everything else --
@@ -137249,7 +136655,7 @@
 ;; storage-write mask.
 (define (opt-guard-dedup-call-clean?
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
-  [obj : (& obj OptGlobalObjModRef)]
+  [obj : (& obj OptGlobalModRef)]
   [name : i64]) : bool
   (match (opt_i64_i64_map.get (& call-memory) (ir.compiler-ir-symbol-id name))
     [(opt_i64_i64_map.LookupFound summary)
@@ -137261,7 +136667,7 @@
         ;; verdict rather than refusing, and the pre-IAG-2 verdict for a
         ;; summary of exactly 0 is already "writes nothing at all". A BUILT
         ;; row must name no storage.
-        (or (not obj.built?) (= (opt-global-obj-call-mask obj name) 0)))]
+        (or (not obj.built?) (= (opt-global-mod-ref-call-mask obj name) 0)))]
     [(opt_i64_i64_map.LookupMissing)
       (match (ir.compiler-ir-direct-call-effect-id name)
         [(ir.CompilerIrEffect.MemoryRead) true]
@@ -137270,7 +136676,7 @@
 
 (define (opt-guard-dedup-instr-writes?
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
-  [obj : (& obj OptGlobalObjModRef)]
+  [obj : (& obj OptGlobalModRef)]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
@@ -137292,7 +136698,7 @@
 
 (define (opt-guard-dedup-seq-writes?
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
-  [obj : (& obj OptGlobalObjModRef)]
+  [obj : (& obj OptGlobalModRef)]
   [instrs : ir.CompilerIrInstrSeq]) : bool
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -137314,7 +136720,7 @@
 ;; common case -- a function with no write anywhere -- skips every region walk.
 (define (opt-guard-dedup-writes-fill!
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
-  [obj : (& obj OptGlobalObjModRef)]
+  [obj : (& obj OptGlobalModRef)]
   [index : (& index OptCfgIndex)]
   [block-count : i64]
   [writes : (&mut writes (__tl_dyn-array bool))]) : i64
@@ -139600,7 +139006,7 @@
 (define (opt-guard-dedup-mark-cse!
   [type-segment-bases : i64]
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
-  [obj : (& obj OptGlobalObjModRef)]
+  [obj : (& obj OptGlobalModRef)]
   [context : (& context OptCfgContext)]
   [hs : OptLoadHeaderSet]
   [sources : OptValueSources]

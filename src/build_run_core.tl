@@ -103,9 +103,6 @@
       (ResultSourceToolBackendMode.Err
         (str_cat.str-cat command ": unknown backend mode " value))]))
 
-(define (source-tool-opt-level-valid? [value : String]) : bool
-  (or (string.eq value "0") (string.eq value "1") (string.eq value "2")))
-
 (define (source-tool-args-append
   [args : process.ProcessStringList]
   [value : String]) : process.ProcessStringList

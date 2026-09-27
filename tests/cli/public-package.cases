@@ -1,0 +1,378 @@
+# Package build, TLCI images and inspect, the host/target split, clean and
+# experiment clean, and package diagnostics (gate stage2-public-tool-surface).
+do none
+target -
+opt -
+
+case package-build
+file typelisp.pkg
+(package
+  (name "public_tool_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+end-file
+file src/main.tl
+(import math)
+(import math.src.lib)
+(define (main) : i64 (lib.add-one (math.inc 40)))
+end-file
+file src/math.tl
+(define public-tool-value : i64 42)
+(defstruct PublicToolPoint
+  (x i64)
+  (y i64))
+(defenum PublicToolTag
+  (PublicToolTagA)
+  (PublicToolTagB i64))
+(defmacro (public-tool-macro [expr : Expr]) : Expr expr)
+(define (inc [x : i64]) : i64 (+ x 1))
+end-file
+file vendor/math/src/lib.tl
+(define dependency-exported-value : i64 5)
+(defstruct DependencyPoint
+  (x i64)
+  (y i64))
+(defmacro (dependency-macro [expr : Expr]) : Expr expr)
+(define (add-one [x : i64]) : i64 (+ x 1))
+end-file
+file vendor/math/typelisp.pkg
+(package
+  (name "math")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+test -f "{{dir}}/target/release/public_tool_pkg.s"
+stdout match Built[ ]
+step producer-identity
+run --producer-identity
+stdout capture producer ^([0-9a-f]{40})$
+test -s "{{dir}}/target/release/public_tool_pkg.tlci"
+test -s "{{dir}}/vendor/math/target/release/math.tlci"
+step package-inspect-tlci
+run inspect "{{dir}}/target/release/public_tool_pkg.tlci"
+stderr empty
+in stdout
+contains tlci image
+contains host-platform: x86_64-{{host}}
+contains image-classification: code-bearing
+contains package-name: public_tool_pkg
+contains producer-compiler-identity: {{producer}}
+contains source-set-binding-schema: 1
+not-contains source-set-digest: unavailable
+contains surface-package-identity: present schema-version=2 bytes=
+contains surface-frontend-ast: present schema-version=10 bytes=
+contains surface-frontend-facts: present schema-version=1 bytes=
+not-contains surface-package-identity: present schema-version=2 bytes=0
+not-contains surface-frontend-ast: present schema-version=10 bytes=0
+not-contains surface-frontend-facts: present schema-version=1 bytes=0
+contains surface-trust-producer-identity: {{producer}}
+contains surface-trust-policy: exact-producer-and-source-binding-required
+contains metadata-version: v1
+contains code: offset=
+not-contains code: offset=0 bytes=0
+step package-inspect-dependency-tlci
+run inspect "{{dir}}/vendor/math/target/release/math.tlci"
+stderr empty
+in stdout
+contains tlci image
+contains host-platform: x86_64-{{host}}
+contains image-classification: code-bearing
+contains package-name: math
+contains producer-compiler-identity: {{producer}}
+contains source-set-binding-schema: 1
+not-contains source-set-digest: unavailable
+contains surface-package-identity: present schema-version=2 bytes=
+contains surface-frontend-ast: present schema-version=10 bytes=
+contains surface-frontend-facts: present schema-version=1 bytes=
+not-contains surface-package-identity: present schema-version=2 bytes=0
+not-contains surface-frontend-ast: present schema-version=10 bytes=0
+not-contains surface-frontend-facts: present schema-version=1 bytes=0
+contains surface-trust-producer-identity: {{producer}}
+contains surface-trust-policy: exact-producer-and-source-binding-required
+contains code: offset=
+not-contains code: offset=0 bytes=0
+step package-inspect-bad-tlci
+sh printf 'bad' > "{{dir}}/bad.tlci"
+run inspect "{{dir}}/bad.tlci"
+exit nonzero
+stdout empty
+stderr contains inspect: {{native-dir}}/bad.tlci: tlci: truncated header
+in file {{dir}}/target/release/public_tool_pkg.s
+contains main:
+contains-any _tl_inc: || _tl_math_inc: || _tl_public_tool_pkg_src_math_inc ||     movl $41, %ecx ||     movl $41, %edi
+contains add_one
+contains _tl_math_src_lib_add_one
+contains-any _tl_stdlib_runtime_runtime_os_write || _tl_stdlib_runtime_stdlib_runtime_os_write || _tl_stdlib_runtime_stdlib_runtime_runtime_os_write
+not-contains _tl_public_tool_pkg_vendor_math
+step package-clean-dry-run
+run clean --dry-run --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+stdout contains Would remove:
+stdout contains public_tool_pkg.s
+stdout contains public_tool_pkg{{exe}}.runtime-inputs
+test -f "{{dir}}/target/release/public_tool_pkg.s"
+step package-clean
+run clean --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+stdout contains Removed:
+test ! -e "{{dir}}/target/release/public_tool_pkg.s"
+test ! -e "{{dir}}/target/release/public_tool_pkg{{exe}}.runtime-inputs"
+test ! -d "{{dir}}/target/release"
+step package-clean-idempotent
+run clean --manifest-path "{{dir}}/typelisp.pkg"
+stdout empty
+stderr empty
+sh mkdir -p "{{dir}}/target/exp/measure-parser" "{{dir}}/target/stage0" "{{dir}}/target/release"
+sh : > "{{dir}}/target/exp/measure-parser/result.txt" && : > "{{dir}}/target/stage0/keep.txt" && : > "{{dir}}/target/release/keep.txt"
+step experiment-clean-invalid-manifest
+run clean --experiments --manifest-path "{{dir}}/src/main.tl"
+exit nonzero
+stdout empty
+stderr contains invalid package manifest
+test -f "{{dir}}/target/exp/measure-parser/result.txt"
+step experiment-clean-dry-run
+run clean --experiments --dry-run --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+stdout contains Would remove:
+stdout contains target/exp
+test -f "{{dir}}/target/exp/measure-parser/result.txt"
+test -f "{{dir}}/target/stage0/keep.txt"
+test -f "{{dir}}/target/release/keep.txt"
+step experiment-clean
+cwd src
+run clean --experiments
+stderr empty
+stdout contains Removed:
+test ! -e "{{dir}}/target/exp"
+test -f "{{dir}}/target/stage0/keep.txt"
+test -f "{{dir}}/target/release/keep.txt"
+cwd -
+step experiment-clean-idempotent
+run clean --experiments --manifest-path "{{dir}}/typelisp.pkg"
+stdout empty
+stderr empty
+if-host linux
+sh mkdir -p "{{dir}}/target/exp" && ln -s "{{dir}}/target/stage0" "{{dir}}/target/exp/stage0-link"
+step experiment-clean-symlink-refusal
+run clean --experiments --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains refusing symbolic link or special filesystem node
+test -f "{{dir}}/target/stage0/keep.txt"
+end-if
+
+# The root builds its target artifacts and every package's host TLCI image;
+# a metadata-only dependency image carries no code.
+case package-host-target-split
+file typelisp.pkg
+(package
+  (name "split_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")
+    (util "vendor/util")))
+end-file
+file src/main.tl
+(import math.src.lib as math)
+(import util.src.lib as util)
+(import stdlib.comptime)
+(define (split-root [x : i64]) : i64
+  (+ (math.split-math x) (util.split-util x)))
+(defmacro (split-wrap [value : Expr]) : Expr
+  `(split-root ,value))
+(defmacro (split-all [items : Expr ...]) : bool
+  (comptime.expr-list-fold-if
+    items
+    (comptime.expr-bool true)
+    (comptime.expr-bool false)
+    true))
+(defmacro (split-unsupported [value : Expr]) : Expr
+  (match value [(comptime.Expr.If c t e) c] [_ value]))
+(define (main) : i64 (split-root 0))
+end-file
+file vendor/math/typelisp.pkg
+(package
+  (name "split_math")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file vendor/math/src/lib.tl
+(define (split-math [x : i64]) : i64 (+ x 1))
+end-file
+file vendor/util/typelisp.pkg
+(package
+  (name "split_util")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file vendor/util/src/lib.tl
+(define (split-util [x : i64]) : i64 (+ x 2))
+end-file
+run --producer-identity
+stdout capture producer ^([0-9a-f]{40})$
+step package-host-target-split
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+stderr empty
+test -s "{{dir}}/target/release/split_pkg{{exe}}"
+test -s "{{dir}}/vendor/math/target/release/{{lib-prefix}}split_math{{lib-suffix}}"
+test -s "{{dir}}/vendor/util/target/release/{{lib-prefix}}split_util{{lib-suffix}}"
+test -s "{{dir}}/target/release/split_pkg.tlci"
+test -s "{{dir}}/vendor/math/target/release/split_math.tlci"
+test -s "{{dir}}/vendor/util/target/release/split_util.tlci"
+in stdout
+contains Built {{native-dir}}/vendor/math/target/release/{{lib-prefix}}split_math{{lib-suffix}}
+contains Built {{native-dir}}/vendor/util/target/release/{{lib-prefix}}split_util{{lib-suffix}}
+contains Built {{native-dir}}/target/release/split_pkg{{exe}}
+contains Built {{native-dir}}/vendor/math/target/release/split_math.tlci
+contains Built {{native-dir}}/vendor/util/target/release/split_util.tlci
+contains Built {{native-dir}}/target/release/split_pkg.tlci
+step package-host-target-split-inspect
+run inspect "{{dir}}/target/release/split_pkg.tlci"
+stderr empty
+in stdout
+contains host-platform: x86_64-{{host}}
+contains image-classification: code-bearing
+contains package-name: split_pkg
+contains producer-compiler-identity: {{producer}}
+contains source-set-binding-schema: 1
+not-contains source-set-digest: unavailable
+contains surface-package-identity: present schema-version=2 bytes=
+contains surface-frontend-ast: present schema-version=10 bytes=
+contains surface-frontend-facts: present schema-version=1 bytes=
+not-contains surface-package-identity: present schema-version=2 bytes=0
+not-contains surface-frontend-ast: present schema-version=10 bytes=0
+not-contains surface-frontend-facts: present schema-version=1 bytes=0
+contains surface-trust-producer-identity: {{producer}}
+contains surface-trust-policy: exact-producer-and-source-binding-required
+contains code: offset=
+not-contains code: offset=0 bytes=0
+step package-host-target-split-native-verify
+run run "{{root}}/src/tests/compiler_tlci_native_producer_smoke.tl" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src" -- "{{dir}}/target/release/split_pkg.tlci" split_pkg/split-wrap split-root split_pkg/split-all split_pkg/split-unsupported
+stdout empty
+stderr empty
+step package-host-target-split-dep-inspect
+run inspect "{{dir}}/vendor/math/target/release/split_math.tlci"
+stderr empty
+in stdout
+contains host-platform: x86_64-{{host}}
+contains image-classification: metadata-only
+contains package-name: split_math
+contains source-set-binding-schema: 1
+not-contains source-set-digest: unavailable
+contains surface-package-identity: present schema-version=2 bytes=
+contains surface-frontend-ast: present schema-version=10 bytes=
+contains surface-frontend-facts: present schema-version=1 bytes=
+not-contains surface-package-identity: present schema-version=2 bytes=0
+not-contains surface-frontend-ast: present schema-version=10 bytes=0
+not-contains surface-frontend-facts: present schema-version=1 bytes=0
+contains surface-trust-producer-identity: {{producer}}
+contains surface-trust-policy: exact-producer-and-source-binding-required
+contains code: offset=0 bytes=0
+step package-host-target-split-dev
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --profile dev
+stderr empty
+test -s "{{dir}}/target/dev/split_pkg{{exe}}"
+test -s "{{dir}}/vendor/math/target/dev/{{lib-prefix}}split_math{{lib-suffix}}"
+test -s "{{dir}}/vendor/util/target/dev/{{lib-prefix}}split_util{{lib-suffix}}"
+test -s "{{dir}}/target/dev/split_pkg.tlci"
+test -s "{{dir}}/vendor/math/target/dev/split_math.tlci"
+test -s "{{dir}}/vendor/util/target/dev/split_util.tlci"
+
+case package-errors
+file typelisp.pkg
+(package
+  (name "bad_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (deps "not-yet"))
+end-file
+step package-parse-error
+run build --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains unknown manifest field `deps`
+file typelisp.pkg
+(package
+  (name "missing_alias")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file src/main.tl
+(import math.src.lib)
+(define (main) : i64 0)
+end-file
+step package-missing-alias
+run build --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains pkg:math/src/lib.tl
+stderr contains-any alias `math` || unknown package alias 'math'
+
+# Since the tail-call forwarder inlining, `(math.inc 41)` folds to 42, so the
+# folded constant proves the upward-discovered module was compiled in.
+case package-discover-upward
+file typelisp.pkg
+(package
+  (name "walk_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file src/main.tl
+(import math)
+(define (main) : i64 (math.inc 41))
+end-file
+file src/math.tl
+(define (inc [x : i64]) : i64 (+ x 1))
+end-file
+sh mkdir -p "{{dir}}/src/nested/deeper"
+cwd src/nested/deeper
+run build
+stderr empty
+test -f "{{dir}}/target/release/walk_pkg.s"
+stdout match Built[ ]
+in file {{dir}}/target/release/walk_pkg.s
+contains main:
+contains-any _tl_walk_pkg_src_math_inc || _tl_walk_pkg_src_math_math_inc ||     movl $42, %eax || 0x48,0xc7,0xc0,0x2a,0x00,0x00,0x00
+
+case package-missing-dep-file
+file typelisp.pkg
+(package
+  (name "missing_dep_file")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+end-file
+file vendor/math/typelisp.pkg
+(package
+  (name "math")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file vendor/math/src/lib.tl
+(define (add-one [x : i64]) : i64 (+ x 1))
+end-file
+file src/main.tl
+(import math.src.missing)
+(define (main) : i64 0)
+end-file
+run build --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stderr contains compiler-load: cannot read import
+stderr match vendor[/\\]math[/\\]src[/\\]missing\.tl

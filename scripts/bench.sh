@@ -22,6 +22,8 @@ export LC_ALL
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
+. "$ROOT/scripts/lib-gate.sh"
+. "$ROOT/scripts/lib-benchmark.sh"
 
 RUNS=${BENCH_RUNS:-5}
 CPU=${BENCH_CPU:-}
@@ -149,22 +151,7 @@ esac
 
 COMPILER=
 resolve_benchmark_compiler() {
-    [ -z "$COMPILER" ] || return 0
-    if [ -n "${TYPELISP_BIN:-}" ]; then
-        COMPILER=$TYPELISP_BIN
-    else
-        . "$ROOT/scripts/lib-stage0.sh"
-        COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-    fi
-    case "$COMPILER" in
-        /*) ;;
-        [A-Za-z]:/*) ;;
-        *) COMPILER="$ROOT/$COMPILER" ;;
-    esac
-    [ -x "$COMPILER" ] || {
-        echo "typelisp compiler is not executable: $COMPILER" >&2
-        exit 1
-    }
+    [ -n "$COMPILER" ] || bench_compiler
 }
 
 build_wall_clock_runner() {
@@ -662,40 +649,6 @@ run_status() {
     printf '%s\n' "$_status"
 }
 
-benchmark_args_for_dir() {
-    _dir=$1
-    _metadata="$_dir/optimization.tsv"
-    BENCHMARK_ARGS=
-    [ -f "$_metadata" ] || return 0
-
-    _line=
-    while IFS= read -r _candidate || [ -n "$_candidate" ]; do
-        case "$_candidate" in
-            *"$CR") _candidate=${_candidate%"$CR"} ;;
-        esac
-        case "$_candidate" in
-            "" | \#*) continue ;;
-        esac
-        if [ -n "$_line" ]; then
-            echo "multiple metadata rows in $_metadata" >&2
-            exit 1
-        fi
-        _line=$_candidate
-    done <"$_metadata"
-    [ -n "$_line" ] || {
-        echo "missing metadata row in $_metadata" >&2
-        exit 1
-    }
-    _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
-    [ "$_fields" -eq 2 ] || {
-        echo "metadata line must have 2 fields: $_metadata: $_line" >&2
-        exit 1
-    }
-    IFS='|' read -r _category BENCHMARK_ARGS <<EOF
-$_line
-EOF
-}
-
 DISCOVERED="$WORKDIR/discovered.txt"
 SELECTED="$WORKDIR/selected.txt"
 : >"$DISCOVERED"
@@ -773,8 +726,8 @@ if [ "$CORRECTNESS" -eq 1 ]; then
     echo
     while IFS= read -r name; do
         dir="benchmarks/$name"
-        benchmark_args_for_dir "$dir"
-        bench_args=$BENCHMARK_ARGS
+        bench_metadata "$dir/optimization.tsv"
+        bench_args=$BENCH_ARGS
         tl_bin="$WORKDIR/$name.typelisp$EXE"
         c_bin="$WORKDIR/$name.clang_auto$EXE"
         run_build "$WORKDIR/$name.typelisp" \
@@ -1015,8 +968,8 @@ echo
 
 while IFS= read -r name; do
     dir="benchmarks/$name"
-    benchmark_args_for_dir "$dir"
-    bench_args=$BENCHMARK_ARGS
+    bench_metadata "$dir/optimization.tsv"
+    bench_args=$BENCH_ARGS
     tl_bin="$WORKDIR/$name.typelisp$EXE"
     tl_asm="$WORKDIR/$name.typelisp.s"
     auto_bin="$WORKDIR/$name.clang_auto$EXE"

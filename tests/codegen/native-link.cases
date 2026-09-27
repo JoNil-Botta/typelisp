@@ -1,0 +1,471 @@
+# Linux native checks for the selfhost driver (gate
+# stage2-native-link-generated-programs): scripts/verify-native-link-linux.sh
+# builds that driver from src/main.tl with the compiler under test, links it
+# with as/ld, and runs these cases with it as the compiler ({{compiler}}); the
+# compiler under test itself is $NATIVE_LINK_COMPILER. The emitted assembly
+# must assemble, link and run.
+hosts linux
+do none
+target -
+opt -
+
+# An `as` that fails loudly: a direct-object build must not reach it.
+file no-assembler-bin/as
+#!/usr/bin/env sh
+echo "unexpected assembler fallback" >&2
+exit 97
+end-file
+
+file semantic-fallback.tl
+(import stdlib.io)
+(define (main) : i64
+  (if (= (io.arg-count) 1) 42 1))
+end-file
+
+# ---------------------------------------------------------------- driver fixtures
+
+case stack-args
+file input.tl
+(extern (f [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f0 : i64] [g : i64]) : i64)
+(define (main) : i64 (f 1 2 3 4 5 6 7))
+end-file
+run compile "{{dir}}/input.tl" -o "{{dir}}/output.s"
+stdout is Wrote {{dir}}/output.s
+stderr empty
+in file {{dir}}/output.s
+not-contains backend: too many call args
+# The 7th integer argument overflows the six SysV argument registers: it is
+# stored at the bottom of the outgoing stack-argument area before the call.
+contains movq $7, 0(%rsp)
+contains call f
+# main reserves a frame holding that argument (subq $N, %rsp) and releases it
+# with a matching addq $N, %rsp (a keep-rbp `leave` would not match).
+narrow symbol:main
+metric frame-size >= 8
+metric frame-release = ok
+
+case extern-fnptr
+file ffi_fnptr.s
+    .text
+    .globl ffi_add7_impl
+ffi_add7_impl:
+    movq %rdi, %rax
+    addq $7, %rax
+    ret
+
+    .data
+    .globl ffi_base_value
+ffi_base_value:
+    .quad 30
+
+    .globl ffi_add7_ptr
+ffi_add7_ptr:
+    .quad ffi_add7_impl
+end-file
+file input.tl
+(extern base (:symbol "ffi_base_value") : i64)
+(extern add7 (:symbol "ffi_add7_ptr") : (CFunc non-null (-> i64 i64)))
+(define (main) : i64 (+ base (add7 5)))
+end-file
+exec "$NATIVE_LINK_COMPILER" compile "{{dir}}/input.tl" --stdlib-root "{{root}}/stdlib" -o "{{dir}}/input.s"
+stdout is Wrote {{dir}}/input.s
+stderr empty
+in file {{dir}}/input.s
+contains .extern ffi_base_value
+contains ffi_base_value(%rip)
+contains .extern ffi_add7_ptr
+contains ffi_add7_ptr(%rip)
+contains     call *%
+not-contains     call ffi_add7_ptr
+not-contains _tl_add7
+sh as "{{dir}}/input.s" -o "{{dir}}/input.o"
+sh as "{{dir}}/ffi_fnptr.s" -o "{{dir}}/ffi_fnptr.o"
+sh ld -e _tl_start "{{dir}}/input.o" "{{dir}}/ffi_fnptr.o" -o "{{dir}}/input"
+exec "{{dir}}/input"
+exit 42
+stdout empty
+stderr empty
+
+case import
+file shared.tl
+(define shared : i64 2)
+end-file
+file helper.tl
+(import shared)
+;; Self-recursive, so no inliner admits it: the rows below prove the
+;; cross-file call materializes, which requires helper to stay an out-of-line
+;; function at every opt level.
+(define (helper-opaque [value : i64] [rounds : i64]) : i64
+  (if (> rounds 1)
+    (+ value (helper-opaque value (- rounds 1)))
+    value))
+(define (helper) : i64 (helper-opaque (+ 38 shared.shared) 1))
+end-file
+file input.tl
+(import helper)
+(import shared)
+(define (main) : i64 (+ (helper.helper) shared.shared))
+end-file
+run compile "{{dir}}/input.tl" -o "{{dir}}/generated.s"
+stdout is Wrote {{dir}}/generated.s
+stderr empty
+run compile "{{dir}}/input.tl" -o "{{dir}}/generated-again.s"
+stdout is Wrote {{dir}}/generated-again.s
+stderr empty
+same "{{dir}}/generated-again.s" "{{dir}}/generated.s"
+in file {{dir}}/generated.s
+contains _tl_shared_shared_shared:
+contains _tl_helper_helper_helper:
+contains call _tl_helper_helper_helper
+contains _tl_shared_shared_shared(%rip)
+contains _tl_start:
+sh cc_link_static "{{dir}}/generated.s" "{{dir}}/program"
+exec "{{dir}}/program"
+exit 42
+stdout empty
+stderr empty
+
+case pkg-import
+file app/typelisp.pkg
+(package
+  (name "selfhost_loader_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+end-file
+file app/vendor/math/src/lib.tl
+(define (add-one-opaque [x : i64] [rounds : i64]) : i64
+  (if (> rounds 1)
+    (add-one-opaque (+ x 1) (- rounds 1))
+    (+ x 1)))
+(define (add-one [x : i64]) : i64 (add-one-opaque x 1))
+end-file
+file app/vendor/math/src/dup.tl
+(define (dup) : i64 1)
+end-file
+file app/src/main.tl
+(import math.src.lib)
+(define (main) : i64 (lib.add-one 41))
+end-file
+file app/bad/missing-alias.tl
+(import nope.src.lib)
+(define (main) : i64 0)
+end-file
+file app/bad/missing-dep.tl
+(import math.src.missing)
+(define (main) : i64 0)
+end-file
+file app/bad/duplicate.tl
+(import math.src.dup)
+(define (dup) : i64 2)
+(define (dup) : i64 3)
+(define (main) : i64 (dup))
+end-file
+run compile "{{dir}}/app/src/main.tl" -o "{{dir}}/pkg.s"
+stdout is Wrote {{dir}}/pkg.s
+stderr empty
+run compile "{{dir}}/app/src/main.tl" -o "{{dir}}/pkg-again.s"
+stdout is Wrote {{dir}}/pkg-again.s
+stderr empty
+same "{{dir}}/pkg-again.s" "{{dir}}/pkg.s"
+in file {{dir}}/pkg.s
+contains math_src_lib_add_one:
+match     (call|jmp) _tl_.*math_src_lib_add_one
+sh cc_link_static "{{dir}}/pkg.s" "{{dir}}/program"
+exec "{{dir}}/program"
+exit 42
+stdout empty
+stderr empty
+# Import failures report the path they tried and emit no assembly.
+step missing-alias
+run compile "{{dir}}/app/bad/missing-alias.tl" -o "{{dir}}/missing-alias.s"
+exit nonzero
+stdout empty
+stderr contains compiler-load: cannot read import
+stderr contains bad/nope/src/lib.tl
+test ! -e "{{dir}}/missing-alias.s"
+step missing-dep
+run compile "{{dir}}/app/bad/missing-dep.tl" -o "{{dir}}/missing-dep.s"
+exit nonzero
+stdout empty
+stderr contains compiler-load: cannot read import
+stderr contains vendor/math/src/missing.tl
+test ! -e "{{dir}}/missing-dep.s"
+step duplicate
+run compile "{{dir}}/app/bad/duplicate.tl" -o "{{dir}}/duplicate.s"
+exit nonzero
+stdout empty
+stderr contains symbols: duplicate value declaration dup
+test ! -e "{{dir}}/duplicate.s"
+
+case string-runtime
+file input.tl
+(define (main) : i64
+  (+ (__tl_string_length "0123456789") (cast (__tl_string_ref " x" 0) : i64)))
+end-file
+run compile "{{dir}}/input.tl" -o "{{dir}}/output.s"
+stdout is Wrote {{dir}}/output.s
+stderr empty
+in file {{dir}}/output.s
+contains tl_oob_abort:
+contains str_bounds_ok
+# The bounds check branches to str_bounds_ok (jb for a general index; the
+# constant index 0 folds the check to len > 0, a ja) or falls through to
+# tl_oob_abort.
+contains-any jb .Lf || ja .Lf
+not-contains call tl_substring
+not-contains call tl_string_concat
+sh cc_link_static "{{dir}}/output.s" "{{dir}}/program"
+exec "{{dir}}/program"
+exit 42
+stdout empty
+stderr empty
+
+case stdlib-string-runtime
+sh mkdir -p "{{dir}}/stdlib" && cp stdlib/core_macros.tl stdlib/string.tl "{{dir}}/stdlib/"
+file input.tl
+(import stdlib.string)
+
+(define (main) : i64
+  (let
+    [joined : String (string.append "foo" "bar")]
+    [extended : String (string.concat joined "!")]
+    [borrowed : String (string.append (& extended) (& joined))]
+    [digits : String (string.int->string -42)]
+    (if (and
+      (string.eq borrowed "foobar!foobar")
+      (string.eq digits "-42"))
+      42
+      1)))
+end-file
+run compile "{{dir}}/input.tl" -o "{{dir}}/output.s"
+stdout is Wrote {{dir}}/output.s
+stderr empty
+in file {{dir}}/output.s
+not-contains call tl_string_concat
+not-contains tl_string_concat:
+not-contains call tl_int_to_string
+not-contains tl_int_to_string:
+sh cc_link_static "{{dir}}/output.s" "{{dir}}/program"
+exec "{{dir}}/program"
+exit 42
+stdout empty
+stderr empty
+
+case stdlib-json
+sh mkdir -p "{{dir}}/stdlib" && cp stdlib/core_macros.tl stdlib/json.tl stdlib/io.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf.tl "{{dir}}/stdlib/"
+file input.tl
+(import stdlib.json)
+(import stdlib.string)
+
+(define (main) : i64
+  (let
+    [text : String "{\"ok\":true,\"values\":[1,2,null]}"]
+    (match (json.parse (& text))
+      [(json.OkJson value)
+        (if (string.eq
+          (json.stringify value)
+          "{\"ok\":true,\"values\":[1,2,null]}")
+          42
+          2)]
+      [(json.ErrJson _) 1])))
+end-file
+run compile "{{dir}}/input.tl" -o "{{dir}}/output.s"
+stdout is Wrote {{dir}}/output.s
+stderr empty
+in file {{dir}}/output.s
+contains _tl_stdlib_json_stdlib_json_parse
+contains _tl_stdlib_json_stdlib_json_stringify
+contains _tl_stdlib_json_stdlib_json_parse_object
+sh cc_link_static "{{dir}}/output.s" "{{dir}}/program"
+exec "{{dir}}/program"
+exit 42
+stdout empty
+stderr empty
+
+case array
+file array.tl
+(define (main) : i64
+  (let [a : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref a 0) 40)
+      (set! (array-ref a 1) 2)
+      (+ (array-ref a 0) (array-ref a 1)))))
+end-file
+run compile "{{dir}}/array.tl" -o "{{dir}}/array.s"
+stdout is Wrote {{dir}}/array.s
+stderr empty
+in file {{dir}}/array.s
+contains call tl_alloc
+contains tl_oob_abort:
+contains make_array_len_ok
+contains bounds_ok
+sh cc_link_static "{{dir}}/array.s" "{{dir}}/program"
+exec "{{dir}}/program"
+exit 42
+stdout empty
+stderr empty
+
+case string-oob
+file string-oob.tl
+(define (main) : i64 (cast (__tl_string_ref "x" 1) : i64))
+end-file
+run compile "{{dir}}/string-oob.tl" -o "{{dir}}/string-oob.s"
+stdout is Wrote {{dir}}/string-oob.s
+stderr empty
+sh cc_link_static "{{dir}}/string-oob.s" "{{dir}}/program"
+exec "{{dir}}/program"
+exit 134
+stdout empty
+stderr is tl: {{dir}}/string-oob.tl:1:28: array index out of bounds: index=1 length=1
+
+case immutable-ref
+each ref_return ref_param_identity ref_tuple_return ref_fixed_array_return
+run compile "{{root}}/tests/integration/{{each}}.tl" -o "{{dir}}/output.s"
+stdout is Wrote {{dir}}/output.s
+stderr empty
+sh cc_link_static "{{dir}}/output.s" "{{dir}}/program"
+exec "{{dir}}/program"
+exit 42
+stdout empty
+stderr empty
+
+case recursive-box-list
+file input.tl
+(defenum IntList
+  (Nil)
+  (Cons i64 (Box IntList)))
+
+(define (sum [xs : IntList]) : i64
+  (match xs
+    [(Nil) 0]
+    [(Cons head tail)
+      (+ head (sum (deref tail)))]))
+
+(define (main) : i64
+  (sum (Cons 10 (box (Cons 30 (box (Cons 2 (box (Nil)))))))))
+end-file
+run compile "{{dir}}/input.tl" -o "{{dir}}/output.s"
+stdout is Wrote {{dir}}/output.s
+stderr empty
+# The recursive Box edge heap-allocates the 24-byte Cons cell inline
+# (tag + i64 + box), through the size-24 allocator fast path.
+in file {{dir}}/output.s
+contains-any call tl_alloc || call .L_tl_alloc8 || call .L_tl_alloc24
+sh cc_link_static "{{dir}}/output.s" "{{dir}}/program"
+exec "{{dir}}/program"
+exit 42
+stdout empty
+stderr empty
+
+# ---------------------------------------------------------------- direct ELF objects
+# Builds with TYPELISP_LINUX_DIRECT_OBJECT=1 and the failing `as` first on PATH:
+# supported programs link without an assembler; unsupported source semantics
+# and ordinary-call ABIs reach the assembler, and link without the shim.
+
+case direct-object
+file main.tl
+(define (main) : i64 42)
+end-file
+sh chmod +x "{{work}}/no-assembler-bin/as"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/main.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main"
+stderr empty
+stdout contains Built {{dir}}/main
+test -x "{{dir}}/main"
+exec "{{dir}}/main"
+exit 42
+step string-records
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/integration/string_record_extent.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/string-record-extent"
+stderr empty
+stdout contains Built {{dir}}/string-record-extent
+test -x "{{dir}}/string-record-extent"
+exec "{{dir}}/string-record-extent"
+exit 42
+
+case direct-object-fallback
+file ordinary-call-abi.tl
+(define (seventh
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]
+  [g : i64]) : i64
+  g)
+
+(define (main) : i64
+  (seventh 1 2 3 4 5 6 42))
+end-file
+sh chmod +x "{{work}}/no-assembler-bin/as"
+step semantic-probe
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{work}}/semantic-fallback.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/semantic-fallback"
+exit nonzero
+stderr contains unexpected assembler fallback
+step semantic
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{work}}/semantic-fallback.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/semantic-fallback"
+stderr empty
+exec "{{dir}}/semantic-fallback"
+exit 42
+step abi-probe
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/ordinary-call-abi.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/ordinary-call-abi"
+exit nonzero
+stderr contains unexpected assembler fallback
+step abi
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/ordinary-call-abi.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/ordinary-call-abi"
+stderr empty
+exec "{{dir}}/ordinary-call-abi"
+exit 42
+
+case direct-object-package
+file package/typelisp.pkg
+(package
+  (name "direct_object_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+end-file
+file package/src/main.tl
+(import math.src.lib as math)
+(define (main) : i64 (math.add 40 2))
+end-file
+file package/vendor/math/typelisp.pkg
+(package
+  (name "direct_object_math")
+  (version "0.1.0")
+  (kind "staticlib")
+  (entry "src/lib.tl"))
+end-file
+file package/vendor/math/src/lib.tl
+(define (add [left : i64] [right : i64]) : i64 (+ left right))
+end-file
+file fallback/typelisp.pkg
+(package
+  (name "semantic_fallback_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+sh mkdir -p "{{dir}}/fallback/src" && cp "{{work}}/semantic-fallback.tl" "{{dir}}/fallback/src/main.tl"
+sh chmod +x "{{work}}/no-assembler-bin/as"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/package/typelisp.pkg" --target linux-x86_64 --opt-level 0 --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Built {{dir}}/package/vendor/math/target/release/libdirect_object_math.a
+stdout contains Built {{dir}}/package/target/release/direct_object_pkg
+test -s "{{dir}}/package/vendor/math/target/release/libdirect_object_math.a"
+test -x "{{dir}}/package/target/release/direct_object_pkg"
+exec "{{dir}}/package/target/release/direct_object_pkg"
+exit 42
+step semantic-probe
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/fallback/typelisp.pkg" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stderr contains unexpected assembler fallback
+step semantic
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/fallback/typelisp.pkg" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+stderr empty
+exec "{{dir}}/fallback/target/release/semantic_fallback_pkg"
+exit 42

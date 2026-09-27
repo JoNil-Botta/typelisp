@@ -455,7 +455,7 @@ esac
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
-. "$ROOT/scripts/lib-benchmark-ci-cases.sh"
+. "$ROOT/scripts/lib-benchmark.sh"
 
 HOST_OS=linux
 case "$(uname -s)" in

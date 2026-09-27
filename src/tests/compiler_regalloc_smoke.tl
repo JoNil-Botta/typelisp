@@ -88,7 +88,7 @@
     [direct-calls : live.CompilerLiveI64Set
       (reg_tests.compiler-reg-direct-call-points (clone func))]
     (match (reg_tests.compiler-reg-plan-function func)
-      [(reg.CompilerRegPlan.Plan _ ineligible _ _ _ _)
+      [(reg.CompilerRegPlan.Plan _ ineligible _ _ _)
         (and
           (live.compiler-live-set-eq?
             call-args

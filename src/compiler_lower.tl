@@ -70861,14 +70861,6 @@
     program
     mode))
 
-(define (lower-compiler-program-with-path
-  [path : String]
-  [program : ast.AstProgram]) : ResultCompilerLower
-  (lower-compiler-program-with-path-mode
-    path
-    program
-    (CompilerLowerMode.Scalar)))
-
 ;; Check source declarations once, collect clone-helper roots as a side effect
 ;; of that real semantic walk, then append the generated helpers and extend the
 ;; checked context with only the appended function signatures. Generated clone
@@ -71957,9 +71949,6 @@
     cache-scope
     pools
     (ci.intern-source-name-session-capture-active-handle)))
-
-(define (lower-compiler-program [program : ast.AstProgram]) : ResultCompilerLower
-  (lower-compiler-program-with-path "<source>" program))
 
 (define (lower-compiler-source [src : String]) : ResultCompilerLower
   (lower-compiler-source-with-path "<source>" src))

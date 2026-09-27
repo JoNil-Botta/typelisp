@@ -10750,7 +10750,7 @@
 (define (compiler-lower-string-length-ok?) : bool
   (match (parser.parse-ast-source (compiler-lower-string-length-source))
     [(parser.ResultAstProgram.Ok program)
-      (match (lower-test-functions (lower.lower-compiler-program program))
+      (match (lower-test-functions (lower-compiler-program program))
         [(LowerTestFunctions.Some functions)
           (and
             (>
@@ -10821,7 +10821,7 @@
 (define (compiler-lower-string-runtime-ok?) : bool
   (match (parser.parse-ast-source (compiler-lower-string-runtime-source))
     [(parser.ResultAstProgram.Ok program)
-      (match (lower.lower-compiler-program program)
+      (match (lower-compiler-program program)
         [(lower.ResultCompilerLower.Ok _ _) true]
         [(lower.ResultCompilerLower.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
@@ -10829,7 +10829,7 @@
 (define (compiler-lower-stdio-ok?) : bool
   (match (parser.parse-ast-source (compiler-lower-stdio-source))
     [(parser.ResultAstProgram.Ok program)
-      (match (lower.lower-compiler-program program)
+      (match (lower-compiler-program program)
         [(lower.ResultCompilerLower.Ok _ _) true]
         [(lower.ResultCompilerLower.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
@@ -15882,3 +15882,14 @@
       (svec.new)
       (lower.lower-source-language-cfgs)
       (tc_core.tc-prefix-default-cache-scope))))
+
+(define (lower-compiler-program-with-path
+  [path : String]
+  [program : ast.AstProgram]) : lower.ResultCompilerLower
+  (lower.lower-compiler-program-with-path-mode
+    path
+    program
+    (lower.CompilerLowerMode.Scalar)))
+
+(define (lower-compiler-program [program : ast.AstProgram]) : lower.ResultCompilerLower
+  (lower-compiler-program-with-path "<source>" program))

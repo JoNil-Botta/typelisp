@@ -68,10 +68,7 @@
   [wanted : i64]) : bool
   (let
     [result : lower.ResultCompilerLower
-      (lower.lower-compiler-source-with-mode-and-package
-        source
-        mode
-        "spmd_fixture")]
+      (lower-compiler-source-with-mode-and-package source mode "spmd_fixture")]
     (match result
       [(lower.ResultCompilerLower.Ok program _)
         (match program
@@ -136,7 +133,7 @@
   [source : String]) : bool
   (let
     [result : lower.ResultCompilerLower
-      (lower.lower-compiler-source-with-mode-and-package
+      (lower-compiler-source-with-mode-and-package
         source
         (lower.CompilerLowerMode.Avx512)
         "spmd_fixture")]
@@ -169,10 +166,7 @@
   [wanted : String]) : bool
   (let
     [result : lower.ResultCompilerLower
-      (lower.lower-compiler-source-with-mode-and-package
-        source
-        mode
-        "spmd_fixture")]
+      (lower-compiler-source-with-mode-and-package source mode "spmd_fixture")]
     (match result
       [(lower.ResultCompilerLower.Ok _ _) false]
       [(lower.ResultCompilerLower.Err diag)
@@ -342,7 +336,7 @@
 (define (compiler-lower-spmd-test-identity-components
   [state : lower.CompilerLowerState]
   [record : i64]) : i64
-  (lower.lower-spmd-package-structural-identity-components
+  (lower-spmd-package-structural-identity-components
     (lower.compiler-lower-state-interns state)
     record))
 
@@ -587,20 +581,24 @@
               test
               (and
                 (=
-                  (lower.compiler-lower-profile-spmd-identity-serializations-value
-                    state-a)
+                  (lower.compiler-lower-profile-value
+                    state-a
+                    lower.compiler-lower-profile-spmd-identity-serializations-metric)
                   4)
                 (=
-                  (lower.compiler-lower-profile-spmd-stable-hash-computations-value
-                    state-a)
+                  (lower.compiler-lower-profile-value
+                    state-a
+                    lower.compiler-lower-profile-spmd-stable-hash-computations-metric)
                   4)
                 (=
-                  (lower.compiler-lower-profile-spmd-render-cache-misses-value
-                    state-a)
+                  (lower.compiler-lower-profile-value
+                    state-a
+                    lower.compiler-lower-profile-spmd-render-cache-misses-metric)
                   4)
                 (>=
-                  (lower.compiler-lower-profile-spmd-render-cache-hits-value
-                    state-a)
+                  (lower.compiler-lower-profile-value
+                    state-a
+                    lower.compiler-lower-profile-spmd-render-cache-hits-metric)
                   5))
               true)
             (not
@@ -702,7 +700,7 @@
 (define (compiler-lower-spmd-package-private-abi-ok?
   [mode : lower.CompilerLowerMode]
   [expected : String]) : bool
-  (match (lower.lower-compiler-source-with-mode-and-package
+  (match (lower-compiler-source-with-mode-and-package
     (compiler-lower-spmd-package-callable-source)
     mode
     "spmd_fixture")
@@ -753,3 +751,21 @@
         " 2 source 1 uniform i64 : i64] index none result varying i64 | "
         "scalar lanes 1 [0 active-mask : bool, 1 source 0 uniform i64 : i64,"
         " 2 source 1 varying i64 : i64] index none result varying i64"))))
+
+(define (lower-spmd-package-structural-identity-components
+  [intern-state : ci.InternCompatState]
+  [record : i64]) : i64
+  (ci.intern-compat-state-composite-right-id-unchecked
+    intern-state
+    (ci.intern-compat-state-composite-right-id-unchecked intern-state record)))
+
+(define (lower-compiler-source-with-mode-and-package
+  [src : String]
+  [mode : lower.CompilerLowerMode]
+  [package-name : String]) : lower.ResultCompilerLower
+  (lower.lower-compiler-source-with-path-mode-package-and-state
+    (lower.compiler-lower-state-new)
+    "<source>"
+    src
+    mode
+    package-name))

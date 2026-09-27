@@ -881,12 +881,6 @@
 (define (compiler-lower-state-interns [state : CompilerLowerState]) : ci.InternCompatState
   (compiler-lower-state-read state ci.InternCompatState intern-owner))
 
-(define (compiler-lower-state-advisory-sink [state : CompilerLowerState]) : cdiag.CompilerAdvisorySink
-  (compiler-lower-state-read
-    state
-    cdiag.CompilerAdvisorySink
-    advisory-sink-owner))
-
 (define (compiler-lower-state-use-advisory-sink!
   [state : CompilerLowerState]
   [sink : cdiag.CompilerAdvisorySink]) : unit
@@ -895,14 +889,6 @@
     cdiag.CompilerAdvisorySink
     advisory-sink-owner
     sink))
-
-(define (compiler-lower-state-add-advisory!
-  [state : CompilerLowerState]
-  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
-  (cdiag.compiler-advisory-sink-push!
-    (compiler-lower-state-advisory-sink state)
-    cdiag.CompilerAdvisoryPhase.Lowering
-    diagnostic))
 
 (define (compiler-lower-state-intern-str
   [state : CompilerLowerState]
@@ -1366,9 +1352,6 @@
   (ids lower_i64_i64_map.Map)
   (bodies (__tl_dyn-array LowerMaybeFunctionBody))
   (next i64))
-
-(defenum LowerPrunedProgram
-  (Program ast.AstProgram ast.AstDeclPathList))
 
 (defstruct LowerDeclKeepPlan
   (keep (__tl_dyn-array i64))
@@ -1993,27 +1976,6 @@
     [(CompilerLowerCheckedPoolsContext.NoContext)
       (io.panic "lower: checked-pool handoff has no active context")]))
 
-(define (compiler-lower-checked-pools-state-inert?
-  [lower-state : CompilerLowerState]) : bool
-  (let
-    [handoff : CompilerLowerCheckedPoolsState
-      (compiler-lower-state-checked-pools lower-state)]
-    (and
-      (not handoff.active)
-      (not handoff.committed)
-      (match handoff.context
-        [(CompilerLowerCheckedPoolsContext.NoContext) true]
-        [(CompilerLowerCheckedPoolsContext.Context _) false])
-      (= handoff.source-release-arena 0)
-      (= handoff.source-release-expr-storage-arena 0)
-      (= handoff.source-release-type-storage-arena 0)
-      (= handoff.frontend-release-arena 0)
-      (not handoff.frontend-released)
-      (not handoff.rolled-over)
-      (not handoff.deferred)
-      (= handoff.deferred-expr-capacity 0)
-      (= handoff.deferred-type-capacity 0))))
-
 (define (lower-checked-dest-pools-materialize-deferred!
   [lower-state : CompilerLowerState]) : unit
   (let
@@ -2326,215 +2288,6 @@
               (set! handoff.frontend-released true)))
           (compiler-lower-state-checked-pools-set! lower-state handoff)))
       unit)))
-
-;; Exercise the complete transition record without owning/destroying the active
-;; test pool. A receives every handoff field, B must remain byte-for-byte stable,
-;; and clear must remove the context and deferred-capacity payload rather than
-;; leaving an inactive pointer into another job's pool generation.
-(define (compiler-lower-checked-pools-state-isolation-ok?) : bool
-  (let
-    [state-a : CompilerLowerState (compiler-lower-state-new)]
-    [state-b : CompilerLowerState (compiler-lower-state-new)]
-    [initial-a : CompilerLowerStateObservation
-      (compiler-lower-state-observe state-a)]
-    [initial-b : CompilerLowerStateObservation
-      (compiler-lower-state-observe state-b)]
-    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    (begin
-      (compiler-lower-checked-dest-pools-use! state-a pools 101 102 103 104)
-      (let
-        [armed : CompilerLowerCheckedPoolsState
-          (compiler-lower-state-checked-pools state-a)]
-        [_defer-second-destination : unit
-          (begin
-            (set! armed.frontend-released true)
-            (set! armed.rolled-over true)
-            (set! armed.deferred true)
-            (set! armed.deferred-expr-capacity 105)
-            (set! armed.deferred-type-capacity 106)
-            (compiler-lower-state-checked-pools-set! state-a armed))]
-        [armed-a : CompilerLowerStateObservation
-          (compiler-lower-state-observe state-a)]
-        [untouched-b : CompilerLowerStateObservation
-          (compiler-lower-state-observe state-b)]
-        [armed-ok? : bool
-          (and
-            armed.active
-            (not armed.committed)
-            (match armed.context
-              [(CompilerLowerCheckedPoolsContext.Context observed)
-                (=
-                  (ast.ast-node-pool-context-base-arena observed)
-                  (ast.ast-node-pool-context-base-arena pools))]
-              [(CompilerLowerCheckedPoolsContext.NoContext) false])
-            (= armed.source-release-arena 101)
-            (= armed.source-release-expr-storage-arena 102)
-            (= armed.source-release-type-storage-arena 103)
-            (= armed.frontend-release-arena 104)
-            armed.frontend-released
-            armed.rolled-over
-            armed.deferred
-            (= armed.deferred-expr-capacity 105)
-            (= armed.deferred-type-capacity 106))]
-        (begin
-          (compiler-lower-checked-dest-pools-clear! state-a)
-          (and
-            armed-ok?
-            (not (compiler-lower-state-observation-eq? initial-a armed-a))
-            (compiler-lower-state-observation-eq? initial-b untouched-b)
-            (compiler-lower-state-observation-eq?
-              initial-a
-              (compiler-lower-state-observe state-a))
-            (compiler-lower-checked-pools-state-inert? state-a)
-            (compiler-lower-checked-pools-state-inert? state-b)))))))
-
-(define (compiler-lower-checked-pools-test-arm-committed!
-  [state : CompilerLowerState]
-  [pools : ast.AstNodePoolContext]) : unit
-  (begin
-    (compiler-lower-checked-dest-pools-use! state pools 0 0 0 0)
-    (let
-      [handoff : CompilerLowerCheckedPoolsState
-        (compiler-lower-state-checked-pools state)]
-      (begin
-        (set! handoff.committed true)
-        (compiler-lower-state-checked-pools-set! state handoff)))))
-
-(define (compiler-lower-checked-pools-test-context-destroy!
-  [pools : ast.AstNodePoolContext]
-  [return-arena : i64]) : unit
-  (let
-    [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set return-arena))
-      (ast.ast-node-pool-context-destroy-storage! pools)
-      (unsafe
-        (arena.tl_arena_set return-arena)
-        (arena.tl_arena_destroy base-arena)
-        (arena.tl_arena_set return-arena)))))
-
-;; Abort both sides of deferred materialization with real owned arenas. The
-;; driver-owned first destination is deliberately released by the test after
-;; abort, while abort itself owns the macro frontend and (when present) second
-;; destination. Completing both routes without stale state or double-destroy
-;; validates that ownership split, including the no-materialization failure edge.
-(define (compiler-lower-checked-pools-abort-lifecycle-ok?) : bool
-  (let
-    [return-arena : i64 (arena.tl_arena_current)]
-    [active-pools-before : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-capture-active)]
-    [deferred-state : CompilerLowerState (compiler-lower-state-new)]
-    [deferred-base : i64 (arena.tl_arena_make)]
-    [deferred-source : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities-in-arena 8 2 deferred-base)]
-    [materialized-state : CompilerLowerState (compiler-lower-state-new)]
-    [materialized-base : i64 (arena.tl_arena_make)]
-    [materialized-source : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities-in-arena
-        8
-        2
-        materialized-base)]
-    [retained-state : CompilerLowerState (compiler-lower-state-new)]
-    [retained-base : i64 (arena.tl_arena_make)]
-    [retained-source : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities-in-arena 8 2 retained-base)]
-    [ok : bool true]
-    (begin
-      (compiler-lower-checked-pools-test-arm-committed!
-        deferred-state
-        deferred-source)
-      (lower-checked-dest-pools-rollover-for-macro! deferred-state)
-      (let
-        [deferred : CompilerLowerCheckedPoolsState
-          (compiler-lower-state-checked-pools deferred-state)]
-        (unless
-          (and
-            deferred.active
-            (not deferred.committed)
-            deferred.rolled-over
-            deferred.deferred
-            (> deferred.frontend-release-arena 0)
-            (=
-              deferred.deferred-expr-capacity
-              (ast.ast-node-pool-context-expr-capacity deferred-source))
-            (=
-              deferred.deferred-type-capacity
-              (ast.ast-node-pool-context-type-capacity deferred-source)))
-          (set! ok false)))
-      (compiler-lower-checked-dest-pools-abort-uncommitted! deferred-state)
-      (unless
-        (and
-          (compiler-lower-checked-pools-state-inert? deferred-state)
-          (= (arena.tl_arena_current) deferred-base))
-        (set! ok false))
-      (compiler-lower-checked-pools-test-context-destroy!
-        deferred-source
-        return-arena)
-      (compiler-lower-checked-pools-test-arm-committed!
-        materialized-state
-        materialized-source)
-      (lower-checked-dest-pools-rollover-for-macro! materialized-state)
-      (let
-        [second-destination : ast.AstNodePoolContext
-          (compiler-lower-checked-dest-pools-current materialized-state)]
-        [materialized : CompilerLowerCheckedPoolsState
-          (compiler-lower-state-checked-pools materialized-state)]
-        (unless
-          (and
-            materialized.active
-            (not materialized.committed)
-            materialized.rolled-over
-            (not materialized.deferred)
-            (> materialized.frontend-release-arena 0)
-            (not
-              (=
-                (ast.ast-node-pool-context-base-arena second-destination)
-                materialized-base)))
-          (set! ok false)))
-      (compiler-lower-checked-dest-pools-abort-uncommitted! materialized-state)
-      (unless
-        (and
-          (compiler-lower-checked-pools-state-inert? materialized-state)
-          (= (arena.tl_arena_current) materialized-base))
-        (set! ok false))
-      (compiler-lower-checked-pools-test-context-destroy!
-        materialized-source
-        return-arena)
-      (compiler-lower-checked-pools-test-arm-committed!
-        retained-state
-        retained-source)
-      (lower-checked-dest-pools-rollover-for-macro! retained-state)
-      (lower-checked-dest-pools-retain-macro-source!
-        retained-state
-        retained-source)
-      (let
-        [retained : CompilerLowerCheckedPoolsState
-          (compiler-lower-state-checked-pools retained-state)]
-        (unless
-          (and
-            (not retained.active)
-            retained.committed
-            retained.frontend-released
-            (not retained.rolled-over)
-            (not retained.deferred)
-            (= retained.frontend-release-arena 0)
-            (= retained.deferred-expr-capacity 0)
-            (= retained.deferred-type-capacity 0)
-            (=
-              (ast.ast-node-pool-context-base-arena
-                (compiler-lower-checked-pools-context retained))
-              retained-base))
-          (set! ok false)))
-      (compiler-lower-checked-dest-pools-clear! retained-state)
-      (unless
-        (compiler-lower-checked-pools-state-inert? retained-state)
-        (set! ok false))
-      (ast.ast-node-pool-context-install! active-pools-before)
-      (compiler-lower-checked-pools-test-context-destroy!
-        retained-source
-        return-arena)
-      ok)))
 
 (defenum LowerFieldInfo
   (Info i64 ast.AstType))
@@ -3163,42 +2916,6 @@
           state
           compiler-lower-profile-spmd-render-cache-misses-metric)))))
 
-(define (compiler-lower-profile-spmd-identity-serializations-value
-  [_state : CompilerLowerState]) : i64
-  (cfg
-    (any compile-profile test)
-    (compiler-lower-profile-value
-      _state
-      compiler-lower-profile-spmd-identity-serializations-metric)
-    0))
-
-(define (compiler-lower-profile-spmd-stable-hash-computations-value
-  [_state : CompilerLowerState]) : i64
-  (cfg
-    (any compile-profile test)
-    (compiler-lower-profile-value
-      _state
-      compiler-lower-profile-spmd-stable-hash-computations-metric)
-    0))
-
-(define (compiler-lower-profile-spmd-render-cache-hits-value
-  [_state : CompilerLowerState]) : i64
-  (cfg
-    (any compile-profile test)
-    (compiler-lower-profile-value
-      _state
-      compiler-lower-profile-spmd-render-cache-hits-metric)
-    0))
-
-(define (compiler-lower-profile-spmd-render-cache-misses-value
-  [_state : CompilerLowerState]) : i64
-  (cfg
-    (any compile-profile test)
-    (compiler-lower-profile-value
-      _state
-      compiler-lower-profile-spmd-render-cache-misses-metric)
-    0))
-
 (define (compiler-lower-profile-string-concat-reset
   [_state : CompilerLowerState]) : unit
   (cfg
@@ -3245,74 +2962,6 @@
     unit))
 
 (cfg
-  test
-  (define (compiler-lower-profile-job-isolation-tests-ok?) : bool
-    (let
-      [left-profile : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      [right-profile : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      [left : CompilerLowerState
-        (compiler-lower-state-new-with-intern-state-and-profile-state
-          (ci.intern-compat-state-new)
-          left-profile)]
-      [right : CompilerLowerState
-        (compiler-lower-state-new-with-intern-state-and-profile-state
-          (ci.intern-compat-state-new)
-          right-profile)]
-      (begin
-        (compiler-lower-profile-reset! left)
-        (compiler-lower-profile-reset! right)
-        (compiler-lower-profile-set!
-          left
-          compiler-lower-profile-start-ms-metric
-          11)
-        (compiler-lower-profile-set!
-          right
-          compiler-lower-profile-start-ms-metric
-          29)
-        (compiler-lower-profile-string-concat-note-tree! left 7)
-        (compiler-lower-profile-string-concat-note-runtime-call! right)
-        (compiler-lower-profile-string-concat-note-runtime-call! left)
-        (compiler-lower-profile-reset! right)
-        (and
-          (=
-            (compiler-lower-profile-value
-              left
-              compiler-lower-profile-start-ms-metric)
-            11)
-          (=
-            (compiler-lower-profile-value
-              left
-              compiler-lower-profile-string-concat-trees-metric)
-            1)
-          (=
-            (compiler-lower-profile-value
-              left
-              compiler-lower-profile-string-concat-leaves-metric)
-            7)
-          (=
-            (compiler-lower-profile-value
-              left
-              compiler-lower-profile-string-concat-runtime-calls-metric)
-            1)
-          (=
-            (compiler-lower-profile-value
-              right
-              compiler-lower-profile-start-ms-metric)
-            0)
-          (=
-            (compiler-lower-profile-value
-              right
-              compiler-lower-profile-string-concat-trees-metric)
-            0)
-          (=
-            (compiler-lower-profile-value
-              right
-              compiler-lower-profile-string-concat-runtime-calls-metric)
-            0))))))
-
-(cfg
   compile-profile
   (define (compiler-lower-profile-string-concat-finish
     [state : CompilerLowerState]) : unit
@@ -3345,223 +2994,6 @@
         (compiler-lower-state-profile state)
         compiler-lower-profile-name-cache-id-growth-views-metric
         compiler-lower-profile-alias-overlay-growth-slots-metric))))
-
-(cfg
-  test
-  (define (compiler-lower-name-profile-job-isolation-tests-ok?) : bool
-    (let
-      [left-profile : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      [right-profile : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      [left : CompilerLowerState
-        (compiler-lower-state-new-with-intern-state-and-profile-state
-          (ci.intern-compat-state-new)
-          left-profile)]
-      [right : CompilerLowerState
-        (compiler-lower-state-new-with-intern-state-and-profile-state
-          (ci.intern-compat-state-new)
-          right-profile)]
-      [left-names : LowerNameEnv LowerNameEnv.Nil]
-      [bind-id : i64 0]
-      (begin
-        (compiler-lower-profile-name-reset left)
-        (compiler-lower-profile-name-reset right)
-        ;; Equal IDs deliberately flow through two owners. A reset is allowed to
-        ;; affect only the exact profile state passed to it.
-        (while (< bind-id 17)
-          (begin
-            (set!
-              left-names
-              (lower-name-env-bind-ids-profile
-                left
-                bind-id
-                bind-id
-                bind-id
-                left-names))
-            (set! bind-id (+ bind-id 1))))
-        (let
-          [_left-env-hit : i64
-            (lower-name-env-lookup-symbol-id-profile
-              left
-              (lower-global-shared-view left-names)
-              0
-              -1)]
-          [_copy : LowerNameEnv
-            (lower-name-env-materialize-two-profile
-              left
-              (lower-global-shared-view left-names)
-              LowerNameEnv.Nil)]
-          [left-cache : LowerNameCache
-            (lower-name-cache-from-env left left-names)]
-          [_left-name-hit : i64
-            (lower-name-cache-lookup-symbol-id (& left-cache) 0 -1)]
-          [_left-module-miss : LowerMaybeModuleNameCache
-            (lower-active-module-name-cache-lookup left 7)]
-          [_left-module-insert : unit
-            (lower-active-module-name-cache-insert!
-              left
-              7
-              (lower-global-shared-view left-cache))]
-          [_left-module-hit : LowerMaybeModuleNameCache
-            (lower-active-module-name-cache-lookup left 7)]
-          [left-view : LowerModuleLocalView
-            (LowerModuleLocalView
-              (tc_core.tc-empty-env)
-              left-cache
-              (LowerTypeCache.No))]
-          [_left-view-miss : LowerMaybeModuleLocalView
-            (lower-active-module-local-view-lookup left 7)]
-          [_left-view-insert : unit
-            (lower-active-module-local-view-insert! left 7 left-view)]
-          [_left-view-hit : LowerMaybeModuleLocalView
-            (lower-active-module-local-view-lookup left 7)]
-          [right-names : LowerNameEnv
-            (lower-name-env-bind-ids-profile right 0 0 0 LowerNameEnv.Nil)]
-          [_right-env-hit : i64
-            (lower-name-env-lookup-symbol-id-profile
-              right
-              (lower-global-shared-view right-names)
-              0
-              -1)]
-          [right-cache : LowerNameCache
-            (lower-name-cache-from-env right right-names)]
-          [_right-name-miss : i64
-            (lower-name-cache-lookup-symbol-id (& right-cache) 1 -1)]
-          [_right-module-insert : unit
-            (lower-active-module-name-cache-insert!
-              right
-              7
-              (lower-global-shared-view right-cache))]
-          [right-view : LowerModuleLocalView
-            (LowerModuleLocalView
-              (tc_core.tc-empty-env)
-              right-cache
-              (LowerTypeCache.No))]
-          [_right-view-insert : unit
-            (lower-active-module-local-view-insert! right 7 right-view)]
-          [right-recorded : bool
-            (and
-              (=
-                (compiler-lower-profile-value
-                  right
-                  compiler-lower-profile-name-env-binds-metric)
-                1)
-              (=
-                (compiler-lower-profile-value
-                  right
-                  compiler-lower-profile-module-name-cache-entries-metric)
-                1)
-              (=
-                (compiler-lower-profile-value
-                  right
-                  compiler-lower-profile-module-local-view-entries-metric)
-                1))]
-          (begin
-            (compiler-lower-profile-name-reset right)
-            (let
-              [metric : i64 compiler-lower-profile-name-env-binds-metric]
-              [right-reset : bool true]
-              (begin
-                (while (< metric compiler-lower-profile-metric-end)
-                  (begin
-                    (when
-                      (not (= (compiler-lower-profile-value right metric) 0))
-                      (set! right-reset false))
-                    (set! metric (+ metric 1))))
-                (and
-                  right-recorded
-                  right-reset
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-env-binds-metric)
-                    17)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-env-lookups-metric)
-                    1)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-env-lookup-steps-metric)
-                    17)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-env-stores-metric)
-                    2)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-env-store-grows-metric)
-                    2)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-env-materializations-metric)
-                    1)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-env-materialized-entries-metric)
-                    17)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-cache-builds-metric)
-                    1)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-cache-entries-metric)
-                    17)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-cache-lookups-metric)
-                    1)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-cache-local-hits-metric)
-                    1)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-name-cache-local-misses-metric)
-                    0)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-module-name-cache-lookups-metric)
-                    2)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-module-name-cache-hits-metric)
-                    1)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-module-name-cache-entries-metric)
-                    1)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-module-local-view-lookups-metric)
-                    2)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-module-local-view-hits-metric)
-                    1)
-                  (=
-                    (compiler-lower-profile-value
-                      left
-                      compiler-lower-profile-module-local-view-entries-metric)
-                    1))))))))))
 
 (cfg
   compile-profile
@@ -4637,17 +4069,6 @@
 (defenum LowerNameCacheMaybeId
   (No)
   (Some i64))
-
-(define (lower-name-env-bind-logical-id
-  [source-id : i64]
-  [logical-name : String]
-  [logical-id : i64]
-  [rest : LowerNameEnv]) : LowerNameEnv
-  (lower-name-env-bind-ids
-    source-id
-    logical-id
-    (lower-derived-symbol-id logical-name)
-    rest))
 
 (define (lower-name-env-bind-logical-symbol-id
   [source-id : i64]
@@ -7767,18 +7188,6 @@
       base
       true)))
 
-(define (lower-name-env-from-decls
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [entry-path : String]
-  [names : LowerNameEnv]) : LowerNameEnv
-  (lower-name-env-from-decls-with-state
-    (compiler-lower-state-new)
-    decls
-    paths
-    entry-path
-    names))
-
 (define (lower-name-env-from-decls-in-module
   [lower-state : CompilerLowerState]
   [decls : ast.AstDeclList]
@@ -9527,111 +8936,6 @@
       module-id
       view)))
 
-(define (lower-active-module-name-cache-count
-  [lower-state : CompilerLowerState]) : i64
-  (let
-    [store : LowerModuleNameCacheStore
-      (compiler-lower-state-read
-        lower-state
-        LowerModuleNameCacheStore
-        active-module-name-caches)]
-    store.len))
-
-(define (lower-active-module-local-view-count
-  [lower-state : CompilerLowerState]) : i64
-  (let
-    [store : LowerModuleLocalViewStore
-      (compiler-lower-state-read
-        lower-state
-        LowerModuleLocalViewStore
-        active-module-local-views)]
-    store.len))
-
-;; Structural regression for the phase-local module caches. The high sparse ID
-;; proves storage is dense rather than sized by the global interner range;
-;; repeated inserts must retain one slot, reset must retire both value families,
-;; and a second job-owned state must never observe the first state's entries.
-(define (compiler-lower-module-phase-cache-storage-ok?) : bool
-  (let
-    [state : CompilerLowerState (compiler-lower-state-new)]
-    [independent : CompilerLowerState (compiler-lower-state-new)]
-    [base-cache : LowerNameCache (lower-empty-global-name-cache state.address)]
-    [empty-env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
-    [index : i64 0]
-    [sparse-id : i64 9000001]
-    (begin
-      (while (< index 12)
-        (begin
-          (let
-            [module-id : i64 (+ 1000 index)]
-            [cache : LowerNameCache
-              (lower-name-cache-with-module-id
-                (lower-global-shared-view base-cache)
-                module-id)]
-            [view : LowerModuleLocalView
-              (LowerModuleLocalView
-                empty-env
-                (lower-global-shared-view cache)
-                (LowerTypeCache.No))]
-            (begin
-              (lower-active-module-name-cache-insert! state module-id cache)
-              (lower-active-module-local-view-insert! state module-id view)))
-          (set! index (+ index 1))))
-      (let
-        [sparse-cache : LowerNameCache
-          (lower-name-cache-with-module-id base-cache sparse-id)]
-        [sparse-view : LowerModuleLocalView
-          (LowerModuleLocalView
-            empty-env
-            (lower-global-shared-view sparse-cache)
-            (LowerTypeCache.No))]
-        (begin
-          (lower-active-module-name-cache-insert!
-            state
-            sparse-id
-            (lower-global-shared-view sparse-cache))
-          (lower-active-module-local-view-insert!
-            state
-            sparse-id
-            (lower-global-shared-view sparse-view))
-          ;; A duplicate publication updates the existing dense slot instead
-          ;; of growing either store.
-          (lower-active-module-name-cache-insert! state sparse-id sparse-cache)
-          (lower-active-module-local-view-insert! state sparse-id sparse-view)))
-      (let
-        [before-reset : bool
-          (and
-            (= (lower-active-module-name-cache-count state) 13)
-            (= (lower-active-module-local-view-count state) 13)
-            (= (lower-active-module-name-cache-count independent) 0)
-            (= (lower-active-module-local-view-count independent) 0)
-            (match (lower-active-module-name-cache-lookup state sparse-id)
-              [(LowerMaybeModuleNameCache.Some cache)
-                (= cache.module-id sparse-id)]
-              [(LowerMaybeModuleNameCache.No) false])
-            (match (lower-active-module-local-view-lookup state sparse-id)
-              [(LowerMaybeModuleLocalView.Some view)
-                (= view.name-cache.module-id sparse-id)]
-              [(LowerMaybeModuleLocalView.No) false])
-            (match (lower-active-module-name-cache-lookup state 7777777)
-              [(LowerMaybeModuleNameCache.No) true]
-              [_ false])
-            (match (lower-active-module-local-view-lookup state 7777777)
-              [(LowerMaybeModuleLocalView.No) true]
-              [_ false]))]
-        (begin
-          (lower-module-phase-caches-reset! state)
-          (and
-            before-reset
-            (= (lower-active-module-name-cache-count state) 0)
-            (= (lower-active-module-local-view-count state) 0)
-            (match (lower-active-module-name-cache-lookup state sparse-id)
-              [(LowerMaybeModuleNameCache.No) true]
-              [_ false])
-            (match (lower-active-module-local-view-lookup state sparse-id)
-              [(LowerMaybeModuleLocalView.No) true]
-              [_ false])))))))
-
 (define (lower-module-local-view-cached
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
@@ -10001,32 +9305,10 @@
       (compiler-lower-function-state-data state)]
     data.variant-generation))
 
-(define (compiler-lower-state-function-memo-retained-bytes
-  [state : CompilerLowerState]) : i64
-  (let
-    [storage : CompilerLowerFunctionMemoStorage
-      (compiler-lower-function-memo-storage state)]
-    (+
-      (*
-        8
-        (+
-          (array-length storage.rtf-generations)
-          (array-length storage.rtf-ids)))
-      (+
-        (* (ast.ast-type-node-bytes) (array-length storage.rtf-types))
-        (+
-          (*
-            8
-            (+
-              (array-length storage.variant-stamps)
-              (array-length storage.variant-keys)))
-          (+
-            (*
-              (ast.ast-type-node-bytes)
-              (array-length storage.variant-scrutinee-types))
-            (*
-              (comptime (size-of (type LowerVariantArmResolution)))
-              (array-length storage.variant-outcomes))))))))
+;; For the memo-size test in compiler_lower_tests: comptime size-of rejects a
+;; type named through a module alias.
+(define (lower-variant-arm-resolution-size) : i64
+  (comptime (size-of (type LowerVariantArmResolution))))
 
 (define (compiler-lower-state-reset! [lower-state : CompilerLowerState]) : unit
   (begin
@@ -10061,132 +9343,6 @@
     (lower-module-decl-index-reset! lower-state)
     (lower-comptime-error-ids-reset! lower-state)
     (compiler-lower-checked-dest-pools-clear! lower-state)))
-
-(define (compiler-lower-state-reset? [lower-state : CompilerLowerState]) : bool
-  (let
-    [global-names : LowerNameCache
-      (compiler-lower-state-read
-        lower-state
-        LowerNameCache
-        active-global-name-cache)]
-    [alias-memo : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        alias-symbol-memo)]
-    [rvo : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        rvo-early-return-functions)]
-    [runtime-paths : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        reach-active-runtime-paths)]
-    [used-types : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        reach-active-body-used-types)]
-    [module-name-caches : LowerModuleNameCacheStore
-      (compiler-lower-state-read
-        lower-state
-        LowerModuleNameCacheStore
-        active-module-name-caches)]
-    [module-local-views : LowerModuleLocalViewStore
-      (compiler-lower-state-read
-        lower-state
-        LowerModuleLocalViewStore
-        active-module-local-views)]
-    [alias-ids : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        alias-overlay-ids)]
-    [index-modules : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        module-decl-index-modules)]
-    [index-starts : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-starts)]
-    [index-ends : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-ends)]
-    [index-positions : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-positions)]
-    [active-symbols-state : csym.CompilerSymbols
-      (compiler-lower-state-read
-        lower-state
-        csym.CompilerSymbols
-        active-symbols)]
-    [package : CompilerLowerSpmdPackageState
-      (compiler-lower-state-spmd-package lower-state)]
-    (and
-      (= (lower_i64_i64_map.len (& global-names.ids)) 0)
-      (= (array-length global-names.logical-ids) 0)
-      (match (compiler-lower-state-read
-        lower-state
-        LowerTypeCache
-        decls-global-type-cache)
-        [(LowerTypeCache.No) true]
-        [_ false])
-      (= (lower_i64_i64_map.len (& rvo)) 0)
-      (= (lower_i64_i64_map.len (& runtime-paths)) 0)
-      (= (lower_i64_i64_map.len (& used-types)) 0)
-      (= (compiler-lower-state-read lower-state i64 current-source-path-id) 0)
-      (not (compiler-lower-state-read lower-state bool current-decl-generated))
-      (= (csym.compiler-symbols-decl-count (& active-symbols-state)) 0)
-      (not (compiler-lower-state-read lower-state bool active-symbols-ready))
-      (= module-name-caches.len 0)
-      (= (lower_i64_i64_map.len (& module-name-caches.modules)) 0)
-      (= module-local-views.len 0)
-      (= (lower_i64_i64_map.len (& module-local-views.modules)) 0)
-      (= (compiler-lower-state-read lower-state i64 active-loop-function) -1)
-      (=
-        (compiler-lower-state-read lower-state i64 active-loop-entry-var-limit)
-        -1)
-      (= (lower_i64_i64_map.len (& alias-ids)) 0)
-      (compiler-lower-state-read lower-state bool alias-overlay-valid)
-      (= (array-length alias-memo) 0)
-      (= (compiler-lower-state-read lower-state i64 canonical-path-count) 0)
-      (string.eq (lower-canonical-path-recent-current lower-state) "")
-      (string.eq (lower-canonical-path-prior-current lower-state) "")
-      (not
-        (compiler-lower-state-read lower-state bool entry-main-module-active))
-      (string.eq (lower-entry-main-module-current lower-state) "")
-      (=
-        (compiler-lower-state-read lower-state i64 entry-main-module-id)
-        cbi.compiler-builtin-id-fix-empty)
-      (not (compiler-lower-state-read lower-state bool module-decl-index-ready))
-      (=
-        (compiler-lower-state-read lower-state i64 module-decl-index-decl-count)
-        -1)
-      (=
-        (compiler-lower-state-read
-          lower-state
-          i64
-          module-decl-index-decl-offset)
-        -1)
-      (= (lower_i64_i64_map.len (& index-modules)) 0)
-      (= (array-length index-starts) 0)
-      (= (array-length index-ends) 0)
-      (= (array-length index-positions) 0)
-      (= (compiler-lower-state-read lower-state i64 module-decl-index-arena) 0)
-      (string.eq package.name "")
-      (= (lower_i64_i64_map.len (& package.symbol-identities)) 0)
-      (= (lower_i64_i64_map.len (& package.identity-stable-hashes)) 0)
-      (lower-comptime-error-ids-reset? lower-state)
-      (compiler-lower-checked-pools-state-inert? lower-state))))
 
 (define (lower-reset-file-state!) : unit
   unit)
@@ -15803,36 +14959,6 @@
           (set! index (+ index 1))))
       (set! (array-ref cache lower-comptime-cache-generation-index) -1)
       (set! (array-ref cache lower-comptime-cache-table-id-index) -1))))
-
-(define (lower-comptime-error-ids-reset? [lower-state : CompilerLowerState]) : bool
-  (let
-    [cache : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        comptime-error-cache)]
-    (and
-      (= (array-ref cache lower-comptime-cache-generation-index) -1)
-      (= (array-ref cache lower-comptime-cache-table-id-index) -1)
-      (= (array-ref cache lower-comptime-cache-id-index) 0)
-      (= (array-ref cache lower-comptime-cache-comptime-dot-id-index) 0)
-      (= (array-ref cache lower-comptime-cache-comptime-slash-id-index) 0)
-      (= (array-ref cache lower-comptime-cache-comptime-error-dot-id-index) 0)
-      (= (array-ref cache lower-comptime-cache-comptime-error-slash-id-index) 0)
-      (= (array-ref cache lower-comptime-cache-stdlib-dot-dot-id-index) 0)
-      (= (array-ref cache lower-comptime-cache-stdlib-dot-slash-id-index) 0)
-      (= (array-ref cache lower-comptime-cache-stdlib-slash-dot-id-index) 0)
-      (= (array-ref cache lower-comptime-cache-stdlib-slash-slash-id-index) 0)
-      (= (array-ref cache lower-comptime-cache-stdlib-error-dot-dot-id-index) 0)
-      (=
-        (array-ref cache lower-comptime-cache-stdlib-error-dot-slash-id-index)
-        0)
-      (=
-        (array-ref cache lower-comptime-cache-stdlib-error-slash-dot-id-index)
-        0)
-      (=
-        (array-ref cache lower-comptime-cache-stdlib-error-slash-slash-id-index)
-        0))))
 
 (define (lower-comptime-error-ids-ensure!
   [lower-state : CompilerLowerState]
@@ -62308,13 +61434,6 @@
     intern-state
     (ci.intern-compat-state-composite-right-id-unchecked intern-state record)))
 
-(define (lower-spmd-package-structural-identity-components
-  [intern-state : ci.InternCompatState]
-  [record : i64]) : i64
-  (ci.intern-compat-state-composite-right-id-unchecked
-    intern-state
-    (ci.intern-compat-state-composite-right-id-unchecked intern-state record)))
-
 (define (lower-spmd-package-symbol-register
   [lower-state : CompilerLowerState]
   [symbol : i64]
@@ -74469,23 +73588,6 @@
     pools
     (ci.intern-source-name-session-capture-active-handle)))
 
-(define (lower-compiler-program-with-decl-paths-mode
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [mode : CompilerLowerMode]) : ResultCompilerLower
-  (let
-    [state : CompilerLowerState (compiler-lower-state-new)]
-    (lower-compiler-program-with-decl-paths-mode-cache-and-state
-      state
-      entry-path
-      program
-      paths
-      mode
-      (svec.new)
-      (lower-source-language-cfgs)
-      (tc_core.tc-prefix-default-cache-scope))))
-
 (define (lower-compiler-program [program : ast.AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path "<source>" program))
 
@@ -74496,17 +73598,6 @@
   [src : String]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (lower-compiler-source-with-path-mode "<source>" src mode))
-
-(define (lower-compiler-source-with-mode-and-package
-  [src : String]
-  [mode : CompilerLowerMode]
-  [package-name : String]) : ResultCompilerLower
-  (lower-compiler-source-with-path-mode-package-and-state
-    (compiler-lower-state-new)
-    "<source>"
-    src
-    mode
-    package-name))
 
 (define (lower-source-decls-define-module?
   [decls : ast.AstDeclList]
@@ -74771,15 +73862,6 @@
     path
     src
     mode))
-
-(define (lower-compiler-source-with-state
-  [lower-state : CompilerLowerState]
-  [src : String]) : ResultCompilerLower
-  (lower-compiler-source-with-path-mode-and-state
-    lower-state
-    "<source>"
-    src
-    (CompilerLowerMode.Scalar)))
 
 (define (lower-compiler-source-with-path [path : String] [src : String]) : ResultCompilerLower
   (lower-compiler-source-with-path-mode path src (CompilerLowerMode.Scalar)))

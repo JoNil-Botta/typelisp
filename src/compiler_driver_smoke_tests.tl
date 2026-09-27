@@ -8,6 +8,7 @@
 (import compiler_driver_core)
 (import compiler_ast_types)
 (import compiler_lower)
+(import compiler_lower_tests)
 (import compiler_symbols)
 (import compiler_optimize)
 (import compiler_cfg_core)
@@ -192,7 +193,7 @@
               stale-main-symbol-id
               compiler_lower.LowerNameEnv.Nil))]
         [derived-env : compiler_lower.LowerNameEnv
-          (compiler_lower.lower-name-env-bind-logical-id
+          (compiler_lower_tests.lower-name-env-bind-logical-id
             source-id
             "same-name"
             opaque-logical-id
@@ -1555,7 +1556,7 @@
               (owned_view.compiler-owned-shared-view state-b))
             (let
               [b-reset-before-reuse : bool
-                (compiler_lower.compiler-lower-state-reset? lower-b)]
+                (compiler_lower_tests.compiler-lower-state-reset? lower-b)]
               (match (compiler_lower.lower-compiler-source-with-path-mode-package-and-state
                 lower-b
                 "<state-b-reuse>"
@@ -1636,7 +1637,7 @@
                             (compiler-driver-reader-context-smoke-fail
                               "state B final reset mutated state A")]
                           [(not
-                              (compiler_lower.compiler-lower-state-reset?
+                              (compiler_lower_tests.compiler-lower-state-reset?
                                 lower-b))
                             (compiler-driver-reader-context-smoke-fail
                               "state B final reset did not restore logical fresh state")]
@@ -1839,7 +1840,7 @@
           (compiler_driver_core.compiler-driver-state-typecheck
             (owned_view.compiler-owned-shared-view state-a))
           (& semantic))
-        (compiler_lower.compiler-lower-state-add-advisory!
+        (compiler_lower_tests.compiler-lower-state-add-advisory!
           (compiler_driver_core.compiler-driver-state-owned-lower-state
             (owned_view.compiler-owned-shared-view state-a))
           (& lowering))

@@ -24,7 +24,7 @@
       (set! (array-ref left (- n 1)) 1)
       (test.assert-true
         (=
-          (opt.opt-ml-cycle? left right seen queue 1 n)
+          (opt.opt-ml-cycle? left right (&mut seen) (&mut queue) 1 n)
           (and (<= n 128) (or (not cut) (= n 1))))
         "cycle search preserves its bound even with duplicate dependency edges"))))
 
@@ -181,7 +181,7 @@
             (opt.opt-verify-function (view.compiler-owned-shared-view out)))
           "rewriting retains a valid SSA control-flow graph"))
       (test.assert-i64-eq
-        (opt.opt-function-frame (view.compiler-owned-shared-view out))
+        (opt.opt-function-frame out)
         (if rewritten
           8
           7)

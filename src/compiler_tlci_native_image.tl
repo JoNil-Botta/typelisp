@@ -13,7 +13,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_object as cobj)
-(import compiler_object_elf)
+(import compiler_object_layout as layout)
 (import tlci_core)
 (import stdlib.byte_buf_core)
 (import stdlib.hashmap)
@@ -38,7 +38,7 @@
   256)
 
 (define (compiler-tlci-native-align [offset : i64] [align : i64]) : i64
-  (compiler_object_elf.compiler-object-elf-align-offset offset align))
+  (layout.compiler-object-layout-align-offset offset align))
 
 (define (compiler-tlci-native-section-instrs
   [image : cobj.CompilerObjectImage]
@@ -121,9 +121,7 @@
             [_ unit])
           (set!
             offset
-            (compiler_object_elf.compiler-object-elf-data-record-end-offset
-              record
-              offset))
+            (cobj.compiler-object-data-record-end-offset record offset))
           (set! index (+ index 1)))))))
 
 (define (compiler-tlci-native-build-symbol-index
@@ -162,9 +160,7 @@
               [_ unit])
             (set!
               offset
-              (+
-                offset
-                (compiler_object_elf.compiler-object-elf-instr-size instr)))
+              (+ offset (layout.compiler-object-layout-instr-size instr)))
             (set! instr-index (+ instr-index 1)))))
       (compiler-tlci-native-index-data-labels!
         (&mut offsets)
@@ -614,9 +610,7 @@
               [_ unit])
             (set!
               offset
-              (+
-                offset
-                (compiler_object_elf.compiler-object-elf-instr-size instr)))
+              (+ offset (layout.compiler-object-layout-instr-size instr)))
             (set! index (+ index 1)))))
       ok)))
 
@@ -685,9 +679,7 @@
               [_ unit])
             (set!
               offset
-              (compiler_object_elf.compiler-object-elf-data-record-end-offset
-                record
-                offset))
+              (cobj.compiler-object-data-record-end-offset record offset))
             (set! index (+ index 1)))))
       ok)))
 
@@ -702,7 +694,7 @@
         (owned_view.compiler-owned-shared-view image)
         (cobj.CompilerObjectSectionKind.Text))]
     [text-size : i64
-      (compiler_object_elf.compiler-object-elf-instrs-size
+      (layout.compiler-object-layout-instrs-size
         (owned_view.compiler-owned-shared-view text-instrs))]
     [rodata-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
@@ -710,7 +702,7 @@
         (cobj.CompilerObjectSectionKind.Rodata))]
     [rodata-base : i64 (compiler-tlci-native-align text-size 16)]
     [rodata-size : i64
-      (compiler_object_elf.compiler-object-elf-data-records-size-from
+      (layout.compiler-object-layout-data-records-size-from
         (owned_view.compiler-owned-shared-view rodata-records)
         rodata-base)]
     [data-records : cobj.CompilerObjectDataRecordList
@@ -719,7 +711,7 @@
         (cobj.CompilerObjectSectionKind.Data))]
     [data-base : i64 (compiler-tlci-native-align rodata-size 16)]
     [data-size : i64
-      (compiler_object_elf.compiler-object-elf-data-records-size-from
+      (layout.compiler-object-layout-data-records-size-from
         (owned_view.compiler-owned-shared-view data-records)
         data-base)]
     [got-base : i64 (compiler-tlci-native-align data-size 8)]
@@ -731,7 +723,7 @@
     [bss-base : i64 (compiler-tlci-native-align (+ got-base got-size) 16)]
     [bss-size : i64
       (-
-        (compiler_object_elf.compiler-object-elf-data-records-size-from
+        (layout.compiler-object-layout-data-records-size-from
           bss-records
           bss-base)
         bss-base)]
@@ -758,26 +750,22 @@
     [builder : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity bss-base)]
     (begin
-      (compiler_object_elf.compiler-object-elf-render-instrs!
-        (&mut builder)
-        text-instrs)
-      (compiler_object_elf.compiler-object-elf-render-padding-to!
+      (layout.compiler-object-layout-render-instrs! (&mut builder) text-instrs)
+      (layout.compiler-object-layout-render-padding-to!
         (&mut builder)
         rodata-base)
-      (compiler_object_elf.compiler-object-elf-render-data-records!
+      (layout.compiler-object-layout-render-data-records!
         (&mut builder)
         rodata-records
         rodata-base)
-      (compiler_object_elf.compiler-object-elf-render-padding-to!
+      (layout.compiler-object-layout-render-padding-to!
         (&mut builder)
         data-base)
-      (compiler_object_elf.compiler-object-elf-render-data-records!
+      (layout.compiler-object-layout-render-data-records!
         (&mut builder)
         data-records
         data-base)
-      (compiler_object_elf.compiler-object-elf-render-padding-to!
-        (&mut builder)
-        bss-base)
+      (layout.compiler-object-layout-render-padding-to! (&mut builder) bss-base)
       (let
         [bytes : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-to-array (& builder))]
@@ -894,7 +882,7 @@
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
-  (compiler_object_elf.compiler-object-elf-instr-label-offset-from
+  (layout.compiler-object-layout-instr-label-offset-from
     (compiler-tlci-native-section-instrs
       image
       (cobj.CompilerObjectSectionKind.Text))

@@ -4,6 +4,7 @@
 (import compiler_object_asm as object_asm)
 (import compiler_object_coff as coff)
 (import compiler_object_elf as elf)
+(import compiler_object_layout as layout)
 (import compiler_backend_object_target as object_target)
 (import compiler_backend_object_target_linux as object_linux)
 (import compiler_backend_object_target_windows as object_windows)
@@ -583,8 +584,8 @@
   [exclude-n : i64]
   [fallback : String]) : String
   (backend.compiler-backend-scavenge-pick-with-mask
-    backend-state
     (backend.compiler-backend-state-function-state backend-state)
+    true
     (compiler-backend-scavenge-occupied-mask-for-instr
       starts
       ends
@@ -2427,13 +2428,13 @@
           1)
         5)
       (=
-        (coff.compiler-object-coff-data-label-offset-from
+        (layout.compiler-object-layout-data-label-offset-from
           (owned_view.compiler-owned-shared-view records)
           ".L_after_empty"
           0)
         1)
       (=
-        (elf.compiler-object-elf-data-label-offset-from
+        (layout.compiler-object-layout-data-label-offset-from
           (owned_view.compiler-owned-shared-view records)
           ".L_after_empty"
           0)
@@ -2445,13 +2446,13 @@
           0)
         1)
       (=
-        (coff.compiler-object-coff-data-label-offset-from
+        (layout.compiler-object-layout-data-label-offset-from
           (owned_view.compiler-owned-shared-view records)
           ".L_after_string"
           0)
         8)
       (=
-        (elf.compiler-object-elf-data-label-offset-from
+        (layout.compiler-object-layout-data-label-offset-from
           (owned_view.compiler-owned-shared-view records)
           ".L_after_string"
           0)
@@ -2463,13 +2464,13 @@
           0)
         8)
       (=
-        (coff.compiler-object-coff-data-label-offset-from
+        (layout.compiler-object-layout-data-label-offset-from
           (owned_view.compiler-owned-shared-view records)
           ".L_after_fixup"
           0)
         16)
       (=
-        (elf.compiler-object-elf-data-label-offset-from
+        (layout.compiler-object-layout-data-label-offset-from
           (owned_view.compiler-owned-shared-view records)
           ".L_after_fixup"
           0)
@@ -2512,13 +2513,13 @@
               (coff.compiler-object-coff-section-header-offset
                 (cobj.CompilerObjectSectionKind.Text))]
             [text-size : i64
-              (coff.compiler-object-coff-u32-at obj (+ text-header 16))]
+              (layout.compiler-object-layout-u32-at obj (+ text-header 16))]
             [reloc-count : i64
-              (coff.compiler-object-coff-u16-at obj (+ text-header 32))]
+              (layout.compiler-object-layout-u16-at obj (+ text-header 32))]
             (and
               (> text-size 0)
               (> reloc-count 0)
-              (coff.compiler-object-coff-contains? obj "foreign_exact")))]
+              (layout.compiler-object-layout-contains? obj "foreign_exact")))]
         [(coff.ResultCompilerObjectCoff.Err _) false])]
     [(backend.ResultCompilerBackendObject.Err _) false]))
 
@@ -2544,7 +2545,7 @@
               (> text-size 0)
               (> rela-text-size 0)
               (= (% rela-text-size elf.compiler-object-elf-relocation-size) 0)
-              (elf.compiler-object-elf-contains? obj "foreign_exact")))]
+              (layout.compiler-object-layout-contains? obj "foreign_exact")))]
         [(elf.ResultCompilerObjectElf.Err _) false])]
     [(backend.ResultCompilerBackendObject.Err _) false]))
 
@@ -2562,12 +2563,12 @@
     [rsrc-data-label : String
       (string.copy (& object_windows.compiler-backend-object-rsrc-data-label))]
     [manifest-offset : i64
-      (coff.compiler-object-coff-section-label-offset
+      (layout.compiler-object-layout-section-label-offset
         image
         (cobj.CompilerObjectSectionKind.Rsrc)
         (owned_view.compiler-owned-shared-view manifest-label))]
     [data-offset : i64
-      (coff.compiler-object-coff-section-label-offset
+      (layout.compiler-object-layout-section-label-offset
         image
         (cobj.CompilerObjectSectionKind.Rsrc)
         rsrc-data-label)]
@@ -2578,15 +2579,15 @@
             (coff.compiler-object-coff-section-header-offset
               (cobj.CompilerObjectSectionKind.Rsrc))]
           [rsrc-size : i64
-            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 16))]
+            (layout.compiler-object-layout-u32-at obj (+ rsrc-header 16))]
           [rsrc-ptr : i64
-            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 20))]
+            (layout.compiler-object-layout-u32-at obj (+ rsrc-header 20))]
           [rsrc-reloc-ptr : i64
-            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 24))]
+            (layout.compiler-object-layout-u32-at obj (+ rsrc-header 24))]
           [rsrc-reloc-count : i64
-            (coff.compiler-object-coff-u16-at obj (+ rsrc-header 32))]
+            (layout.compiler-object-layout-u16-at obj (+ rsrc-header 32))]
           [rsrc-flags : i64
-            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 36))]
+            (layout.compiler-object-layout-u32-at obj (+ rsrc-header 36))]
           (and
             (backend.backend-and8
               (= rsrc-size (+ 88 manifest-size))
@@ -2622,47 +2623,51 @@
                 (coff.compiler-object-coff-symbol-index image manifest-label)
                 coff.compiler-object-coff-reloc-amd64-addr32nb)
               (=
-                (coff.compiler-object-coff-u32-at obj (+ rsrc-ptr data-offset))
+                (layout.compiler-object-layout-u32-at
+                  obj
+                  (+ rsrc-ptr data-offset))
                 0)
               (=
-                (coff.compiler-object-coff-u32-at
+                (layout.compiler-object-layout-u32-at
                   obj
                   (+ rsrc-ptr (+ data-offset 4)))
                 manifest-size)
               (=
-                (coff.compiler-object-coff-u32-at
+                (layout.compiler-object-layout-u32-at
                   obj
                   (+ rsrc-ptr (+ data-offset 8)))
                 0)
               (=
-                (coff.compiler-object-coff-u32-at
+                (layout.compiler-object-layout-u32-at
                   obj
                   (+ rsrc-ptr (+ data-offset 12)))
                 0))
             (backend.backend-and8
               (=
-                (coff.compiler-object-coff-u8-at
+                (layout.compiler-object-layout-u8-at
                   obj
                   (+ rsrc-ptr manifest-offset))
                 0x3c)
               (=
-                (coff.compiler-object-coff-u8-at
+                (layout.compiler-object-layout-u8-at
                   obj
                   (+ rsrc-ptr (+ manifest-offset 1)))
                 0x3f)
               (=
-                (coff.compiler-object-coff-u8-at
+                (layout.compiler-object-layout-u8-at
                   obj
                   (+ rsrc-ptr (+ manifest-offset 2)))
                 0x78)
               (=
-                (coff.compiler-object-coff-u8-at
+                (layout.compiler-object-layout-u8-at
                   obj
                   (+ rsrc-ptr (+ manifest-offset 3)))
                 0x6d)
-              (coff.compiler-object-coff-contains? obj "activeCodePage")
-              (coff.compiler-object-coff-contains? obj "UTF-8</activeCodePage>")
-              (coff.compiler-object-coff-contains? obj ".rsrc")
+              (layout.compiler-object-layout-contains? obj "activeCodePage")
+              (layout.compiler-object-layout-contains?
+                obj
+                "UTF-8</activeCodePage>")
+              (layout.compiler-object-layout-contains? obj ".rsrc")
               true)))]
       [(coff.ResultCompilerObjectCoff.Err _) false])))
 
@@ -2745,19 +2750,19 @@
               true)
             (backend.backend-and8
               (>=
-                (coff.compiler-object-coff-section-label-offset
+                (layout.compiler-object-layout-section-label-offset
                   image
                   (cobj.CompilerObjectSectionKind.Text)
                   "tl_setup_argv")
                 0)
               (>=
-                (coff.compiler-object-coff-section-label-offset
+                (layout.compiler-object-layout-section-label-offset
                   image
                   (cobj.CompilerObjectSectionKind.Text)
                   ".L_tl_boot_alloc")
                 0)
               (>=
-                (coff.compiler-object-coff-section-label-offset
+                (layout.compiler-object-layout-section-label-offset
                   image
                   (cobj.CompilerObjectSectionKind.Text)
                   "tl_alloc")
@@ -2780,7 +2785,7 @@
                 (cobj.CompilerObjectSectionKind.Pdata)
                 ".L_tl_main_fiber_pdata_begin")
               (>=
-                (coff.compiler-object-coff-section-label-offset
+                (layout.compiler-object-layout-section-label-offset
                   image
                   (cobj.CompilerObjectSectionKind.Text)
                   ".L_tl_main_fiber")
@@ -2952,9 +2957,9 @@
                   (coff.compiler-object-coff-section-header-offset
                     (cobj.CompilerObjectSectionKind.Text))]
                 [text-ptr : i64
-                  (coff.compiler-object-coff-u32-at obj (+ text-header 20))]
+                  (layout.compiler-object-layout-u32-at obj (+ text-header 20))]
                 [entry-offset : i64
-                  (coff.compiler-object-coff-section-label-offset
+                  (layout.compiler-object-layout-section-label-offset
                     image
                     (cobj.CompilerObjectSectionKind.Text)
                     "_tl_start")]
@@ -2963,28 +2968,42 @@
                   (coff.compiler-object-coff-section-header-offset
                     (cobj.CompilerObjectSectionKind.Xdata))]
                 [pdata-size : i64
-                  (coff.compiler-object-coff-u32-at obj (+ pdata-header 16))]
+                  (layout.compiler-object-layout-u32-at obj (+ pdata-header 16))]
                 [pdata-relocs : i64
-                  (coff.compiler-object-coff-u16-at obj (+ pdata-header 32))]
+                  (layout.compiler-object-layout-u16-at obj (+ pdata-header 32))]
                 [xdata-size : i64
-                  (coff.compiler-object-coff-u32-at obj (+ xdata-header 16))]
+                  (layout.compiler-object-layout-u32-at obj (+ xdata-header 16))]
                 [xdata-ptr : i64
-                  (coff.compiler-object-coff-u32-at obj (+ xdata-header 20))]
+                  (layout.compiler-object-layout-u32-at obj (+ xdata-header 20))]
                 (and
                   (= pdata-size 36)
                   (= pdata-relocs 9)
                   (= xdata-size 8)
-                  (= (coff.compiler-object-coff-u8-at obj xdata-ptr) 0x01)
-                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 1)) 0x04)
-                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 2)) 0x01)
-                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 4)) 0x04)
-                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 5)) 0x42)
-                  (= (coff.compiler-object-coff-u8-at obj gs-clear-offset) 0x65)
+                  (= (layout.compiler-object-layout-u8-at obj xdata-ptr) 0x01)
                   (=
-                    (coff.compiler-object-coff-u8-at obj (+ gs-clear-offset 1))
+                    (layout.compiler-object-layout-u8-at obj (+ xdata-ptr 1))
+                    0x04)
+                  (=
+                    (layout.compiler-object-layout-u8-at obj (+ xdata-ptr 2))
+                    0x01)
+                  (=
+                    (layout.compiler-object-layout-u8-at obj (+ xdata-ptr 4))
+                    0x04)
+                  (=
+                    (layout.compiler-object-layout-u8-at obj (+ xdata-ptr 5))
+                    0x42)
+                  (=
+                    (layout.compiler-object-layout-u8-at obj gs-clear-offset)
+                    0x65)
+                  (=
+                    (layout.compiler-object-layout-u8-at
+                      obj
+                      (+ gs-clear-offset 1))
                     0x48)
                   (=
-                    (coff.compiler-object-coff-u8-at obj (+ gs-clear-offset 2))
+                    (layout.compiler-object-layout-u8-at
+                      obj
+                      (+ gs-clear-offset 2))
                     0xc7)))]
             [(coff.ResultCompilerObjectCoff.Err _) false])
           false))]
@@ -3002,9 +3021,9 @@
               (coff.compiler-object-coff-section-header-offset
                 (cobj.CompilerObjectSectionKind.Text))]
             [text-ptr : i64
-              (coff.compiler-object-coff-u32-at obj (+ text-header 20))]
+              (layout.compiler-object-layout-u32-at obj (+ text-header 20))]
             [main-offset : i64
-              (coff.compiler-object-coff-section-label-offset
+              (layout.compiler-object-layout-section-label-offset
                 image
                 (cobj.CompilerObjectSectionKind.Text)
                 "main")]
@@ -3012,14 +3031,28 @@
             (if (< main-offset 0)
               false
               (backend.backend-and8
-                (= (coff.compiler-object-coff-u8-at obj main-ptr) 0x55)
-                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 1)) 0x48)
-                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 2)) 0x89)
-                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 3)) 0xe5)
-                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 19)) 0x31)
-                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 20)) 0xc0)
-                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 21)) 0xc9)
-                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 22)) 0xc3))))]
+                (= (layout.compiler-object-layout-u8-at obj main-ptr) 0x55)
+                (=
+                  (layout.compiler-object-layout-u8-at obj (+ main-ptr 1))
+                  0x48)
+                (=
+                  (layout.compiler-object-layout-u8-at obj (+ main-ptr 2))
+                  0x89)
+                (=
+                  (layout.compiler-object-layout-u8-at obj (+ main-ptr 3))
+                  0xe5)
+                (=
+                  (layout.compiler-object-layout-u8-at obj (+ main-ptr 19))
+                  0x31)
+                (=
+                  (layout.compiler-object-layout-u8-at obj (+ main-ptr 20))
+                  0xc0)
+                (=
+                  (layout.compiler-object-layout-u8-at obj (+ main-ptr 21))
+                  0xc9)
+                (=
+                  (layout.compiler-object-layout-u8-at obj (+ main-ptr 22))
+                  0xc3))))]
         [(coff.ResultCompilerObjectCoff.Err _) false])]
     [(backend.ResultCompilerBackendObject.Err _) false]))
 
@@ -16965,7 +16998,8 @@ g:
         [(backend.CompilerBackendMaybeStackOperand.No) true]))))
 
 (define (compiler-backend-avx2-stack-splat-i64-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-splat
+  (match (backend.compiler-backend-emit-vector-splat
+    (backend.CompilerBackendMode.Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-dst-only-assignments)
     0
@@ -16981,7 +17015,8 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-stack-splat-f64-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-splat
+  (match (backend.compiler-backend-emit-vector-splat
+    (backend.CompilerBackendMode.Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-spill-assignments -40)
     0
@@ -16997,7 +17032,8 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-stack-splat-i64-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-splat
+  (match (backend.compiler-backend-emit-vector-splat
+    (backend.CompilerBackendMode.Avx512)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-dst-only-assignments)
     0
@@ -17013,7 +17049,8 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-stack-splat-f64-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-splat
+  (match (backend.compiler-backend-emit-vector-splat
+    (backend.CompilerBackendMode.Avx512)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-spill-assignments -40)
     0
@@ -17030,7 +17067,8 @@ g:
 
 (define (compiler-backend-register-splat-fallback-ok?) : bool
   (and
-    (match (backend.compiler-backend-emit-avx2-splat
+    (match (backend.compiler-backend-emit-vector-splat
+      (backend.CompilerBackendMode.Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-register-assignments)
       0
@@ -17047,7 +17085,8 @@ g:
             "    movq %r12, %r8\n    vmovq %r8, %xmm2\n    vpbroadcastq %xmm2, %ymm6\n")
           (asm-lacks? asm "%rax" "%xmm0"))]
       [(backend.ResultCompilerBackend.Err _) false])
-    (match (backend.compiler-backend-emit-avx2-splat
+    (match (backend.compiler-backend-emit-vector-splat
+      (backend.CompilerBackendMode.Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-float-register-assignments)
       0
@@ -17064,7 +17103,8 @@ g:
             "    movsd %xmm3, %xmm2\n    vbroadcastsd %xmm2, %ymm6\n")
           (asm-lacks? asm "%xmm0"))]
       [(backend.ResultCompilerBackend.Err _) false])
-    (match (backend.compiler-backend-emit-avx512-splat
+    (match (backend.compiler-backend-emit-vector-splat
+      (backend.CompilerBackendMode.Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-register-assignments)
       0
@@ -17079,7 +17119,8 @@ g:
           (string.eq asm "    movq %r12, %r8\n    vpbroadcastq %r8, %zmm6\n")
           (asm-lacks? asm "%rax"))]
       [(backend.ResultCompilerBackend.Err _) false])
-    (match (backend.compiler-backend-emit-avx512-splat
+    (match (backend.compiler-backend-emit-vector-splat
+      (backend.CompilerBackendMode.Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-float-register-assignments)
       0
@@ -17242,7 +17283,8 @@ g:
         (lacks "vpmaskmov")))))
 
 (define (compiler-backend-avx2-vector-load-spill-dst-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-load
+  (match (backend.compiler-backend-emit-vector-load
+    (backend.CompilerBackendMode.Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
@@ -17259,7 +17301,8 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-vector-binop-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-binop
+  (match (backend.compiler-backend-emit-vector-binop
+    (backend.CompilerBackendMode.Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
@@ -17717,7 +17760,8 @@ g:
       "(%rdi,%r9,8)")))
 
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-load
+  (match (backend.compiler-backend-emit-vector-load
+    (backend.CompilerBackendMode.Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     3
@@ -17732,7 +17776,8 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-vector-store-address-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-store
+  (match (backend.compiler-backend-emit-vector-store
+    (backend.CompilerBackendMode.Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     (ir.CompilerIrValue.Var 0)
@@ -19687,7 +19732,8 @@ g:
   [elem-ty : ast.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-binop
+  (match (backend.compiler-backend-emit-vector-binop
+    (backend.CompilerBackendMode.Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -19706,7 +19752,8 @@ g:
   [elem-ty : ast.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-avx512-vector-binop
+  (match (backend.compiler-backend-emit-vector-binop
+    (backend.CompilerBackendMode.Avx512)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -19725,7 +19772,8 @@ g:
   [elem-ty : ast.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-binop
+  (match (backend.compiler-backend-emit-vector-binop
+    (backend.CompilerBackendMode.Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -19745,7 +19793,8 @@ g:
   [elem-ty : ast.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-avx512-vector-binop
+  (match (backend.compiler-backend-emit-vector-binop
+    (backend.CompilerBackendMode.Avx512)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -19769,7 +19818,8 @@ g:
   [shift : String]
   [stack-bytes : i64]) : bool
   (match (if avx512
-    (backend.compiler-backend-emit-avx512-vector-binop
+    (backend.compiler-backend-emit-vector-binop
+      (backend.CompilerBackendMode.Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-vector-binop-test-assignments)
       2
@@ -19781,7 +19831,8 @@ g:
       (cdiag.compiler-diagnostic-at-start "" "")
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
-    (backend.compiler-backend-emit-avx2-vector-binop
+    (backend.compiler-backend-emit-vector-binop
+      (backend.CompilerBackendMode.Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-vector-binop-test-assignments)
       2
@@ -19844,7 +19895,8 @@ g:
 
 (define (compiler-backend-byte-vector-shift-spill-ok? [avx512 : bool]) : bool
   (match (if avx512
-    (backend.compiler-backend-emit-avx512-vector-binop
+    (backend.compiler-backend-emit-vector-binop
+      (backend.CompilerBackendMode.Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
       2
@@ -19856,7 +19908,8 @@ g:
       (cdiag.compiler-diagnostic-at-start "" "")
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
-    (backend.compiler-backend-emit-avx2-vector-binop
+    (backend.compiler-backend-emit-vector-binop
+      (backend.CompilerBackendMode.Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
       2
@@ -19887,7 +19940,8 @@ g:
   [elem-ty : ast.AstType]
   [widen : String]
   [shift : String]) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-binop
+  (match (backend.compiler-backend-emit-vector-binop
+    (backend.CompilerBackendMode.Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
@@ -19919,7 +19973,8 @@ g:
 
 (define (compiler-backend-word-vector-shift-spill-ok? [avx512 : bool]) : bool
   (match (if avx512
-    (backend.compiler-backend-emit-avx512-vector-binop
+    (backend.compiler-backend-emit-vector-binop
+      (backend.CompilerBackendMode.Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
       2
@@ -19931,7 +19986,8 @@ g:
       (cdiag.compiler-diagnostic-at-start "" "")
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
-    (backend.compiler-backend-emit-avx2-vector-binop
+    (backend.compiler-backend-emit-vector-binop
+      (backend.CompilerBackendMode.Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
       2
@@ -21457,8 +21513,7 @@ g:
             (backend.compiler-backend-plan-provides-id?
               plan
               cbi.compiler-builtin-id-tl-alloc-aligned)
-            (runtime_common.compiler-backend-runtime-features-alloc?
-              (& features))))]
+            features.alloc))]
       [(backend.ResultBackendRuntimePlan.Err _) false])))
 
 (define (compiler-backend-region-extern-runtime-plan-ok?) : bool
@@ -21507,8 +21562,7 @@ g:
           (and
             (backend.compiler-backend-runtime-tail-startup-profile?
               (backend.compiler-backend-runtime-plan-tail plan))
-            (runtime_common.compiler-backend-runtime-features-startup-profile?
-              (& features))
+            features.startup-profile
             (match (backend.compiler-backend-runtime-plan-for
               (ir.compiler-ir-function-seq-empty)
               (ir.compiler-ir-extern-seq-empty))
@@ -21566,8 +21620,7 @@ g:
           (and
             (backend.compiler-backend-runtime-tail-arena-debug?
               (backend.compiler-backend-runtime-plan-tail plan))
-            (runtime_common.compiler-backend-runtime-features-arena-debug?
-              (& features))
+            features.arena-debug
             (backend.compiler-backend-plan-provides-id? plan debug-id)
             (backend.compiler-backend-plan-provides-id?
               plan
@@ -34403,8 +34456,8 @@ g:
         (compiler-backend-scavenge-segment-pick-busy-mask))]
     [hull-pick : String
       (backend.compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        true
         busy
         busy
         (owned_view.compiler-owned-shared-view exclude)
@@ -34425,8 +34478,8 @@ g:
         false)]
     [narrow-pick : String
       (backend.compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        true
         busy
         narrow
         (owned_view.compiler-owned-shared-view exclude)
@@ -34438,8 +34491,8 @@ g:
         backend.compiler-backend-scratch-bool-emergency-pending)]
     [segment-pick : String
       (backend.compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        true
         narrow
         narrow
         exclude
@@ -34526,8 +34579,8 @@ g:
             (not
               (string.eq
                 (backend.compiler-backend-scavenge-pick-with-mask
-                  backend-state
                   (backend.compiler-backend-state-function-state backend-state)
+                  true
                   mask
                   mask
                   (backend.compiler-backend-one-exclude "%rax")

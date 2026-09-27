@@ -54645,12 +54645,39 @@
       (ResultTcEnv.Err
         "typecheck: scalar match only supports literal, binding, or wildcard patterns")]))
 
-(define (tc-bind-sub-pattern-list
+;; How a pattern list binds each element against its type: as a variant
+;; payload, a tuple or array element, a struct field, or the borrowed forms
+;; of the first two with the borrow's lifetime.
+(defenum TcPatternListMode
+  (Sub)
+  (Element)
+  (StructField)
+  (BorrowedSub i64)
+  (BorrowedElement i64))
+
+(define (tc-bind-pattern-list-element
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
+  [pattern : ast.AstPattern]
+  [ty : ast.AstType]) : ResultTcEnv
+  (match mode
+    [(TcPatternListMode.Sub) (tc-bind-sub-pattern ctx env pattern ty)]
+    [(TcPatternListMode.Element) (tc-bind-tuple-sub-pattern ctx env pattern ty)]
+    [(TcPatternListMode.StructField)
+      (tc-bind-struct-field-pattern ctx env pattern ty)]
+    [(TcPatternListMode.BorrowedSub lifetime)
+      (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty)]
+    [(TcPatternListMode.BorrowedElement lifetime)
+      (tc-bind-borrowed-tuple-sub-pattern ctx env lifetime pattern ty)]))
+
+(define (tc-bind-pattern-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [patterns : ast.AstPatternList]
   [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-sub-pattern-list-at ctx env (& patterns) (& types) 0))
+  (tc-bind-pattern-list-at ctx env mode (& patterns) (& types) 0))
 
 (define (tc-pattern-arity-message [expected : i64] [found : i64]) : String
   (str_cat.str-cat
@@ -54659,9 +54686,10 @@
     ", found "
     (string.int->string found)))
 
-(define (tc-bind-sub-pattern-list-at
+(define (tc-bind-pattern-list-at
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [patterns : (& patterns ast.AstPatternList)]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : ResultTcEnv
@@ -54684,8 +54712,9 @@
           (ast.ty-node-get
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
         (let
-          [next-env : TcTypeEnv (try (tc-bind-sub-pattern ctx env pattern ty))]
-          (tc-bind-sub-pattern-list-at ctx next-env patterns types (+ index 1)))))))
+          [next-env : TcTypeEnv
+            (try (tc-bind-pattern-list-element ctx env mode pattern ty))]
+          (tc-bind-pattern-list-at ctx next-env mode patterns types (+ index 1)))))))
 
 (define (tc-tuple-pattern-element-types
   [ctx : TcContext]
@@ -54717,9 +54746,10 @@
       (ResultTcArrayPatternInfo.Err
         "typecheck: array pattern requires fixed Array scrutinee")]))
 
-(define (tc-bind-array-sub-pattern-list-at
+(define (tc-bind-array-pattern-list-at
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [patterns : (& patterns ast.AstPatternList)]
   [elem-ty : ast.AstType]
   [count : i64]
@@ -54732,15 +54762,17 @@
     (if (>= index count)
       (ResultTcEnv.Err
         (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns)))
-      (match (tc-bind-tuple-sub-pattern
+      (match (tc-bind-pattern-list-element
         ctx
         env
+        mode
         (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
         (tc-global-shared-view elem-ty))
         [(ResultTcEnv.Ok next-env)
-          (tc-bind-array-sub-pattern-list-at
+          (tc-bind-array-pattern-list-at
             ctx
             next-env
+            mode
             patterns
             elem-ty
             count
@@ -54750,63 +54782,24 @@
 (define (tc-bind-array-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [array-ty : ast.AstType]
   [patterns : ast.AstPatternList]) : ResultTcEnv
   (match (tc-array-pattern-info ctx array-ty)
     [(ResultTcArrayPatternInfo.Ok elem-ty count)
-      (tc-bind-array-sub-pattern-list-at ctx env (& patterns) elem-ty count 0)]
+      (tc-bind-array-pattern-list-at ctx env mode (& patterns) elem-ty count 0)]
     [(ResultTcArrayPatternInfo.Err message) (ResultTcEnv.Err message)]))
-
-(define (tc-bind-tuple-sub-pattern-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [patterns : ast.AstPatternList]
-  [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-tuple-sub-pattern-list-at ctx env (& patterns) (& types) 0))
-
-(define (tc-bind-tuple-sub-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [patterns : (& patterns ast.AstPatternList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns))))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns)))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        (let
-          [next-env : TcTypeEnv
-            (try (tc-bind-tuple-sub-pattern ctx env pattern ty))]
-          (tc-bind-tuple-sub-pattern-list-at
-            ctx
-            next-env
-            patterns
-            types
-            (+ index 1)))))))
 
 (define (tc-bind-tuple-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [tuple-ty : ast.AstType]
   [patterns : ast.AstPatternList]) : ResultTcEnv
   (let
     [elem-types : ast.AstTypeList
       (try (tc-tuple-pattern-element-types ctx tuple-ty))]
-    (tc-bind-tuple-sub-pattern-list ctx env patterns elem-types)))
+    (tc-bind-pattern-list ctx env mode patterns elem-types)))
 
 (define (tc-bind-tuple-sub-pattern
   [ctx : TcContext]
@@ -54821,12 +54814,14 @@
       (tc-bind-tuple-pattern
         ctx
         env
+        TcPatternListMode.Element
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
     [(ast.AstPattern.Array patterns-box)
       (tc-bind-array-pattern
         ctx
         env
+        TcPatternListMode.Element
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
     [(ast.AstPattern.Variant name _)
@@ -54917,9 +54912,10 @@
                   (csym.compiler-registry-handle-owner-index handle)
                   enum-lifetimes
                   fields))]
-            (tc-bind-sub-pattern-list
+            (tc-bind-pattern-list
               ctx
               env
+              TcPatternListMode.Sub
               args
               (tc-tag-type-list-regions payload-regions payload-fields)))
           (ResultTcEnv.Err
@@ -55124,47 +55120,6 @@
         (ResultTcTypeList.Ok
           (tc-project-type-list-from-region-container scrut-ty field-types))])))
 
-(define (tc-bind-struct-field-pattern-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [patterns : ast.AstPatternList]
-  [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-struct-field-pattern-list-at ctx env (& patterns) (& types) 0))
-
-(define (tc-bind-struct-field-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [patterns : (& patterns ast.AstPatternList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns))))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns)))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        (let
-          [next-env : TcTypeEnv
-            (try (tc-bind-struct-field-pattern ctx env pattern ty))]
-          (tc-bind-struct-field-pattern-list-at
-            ctx
-            next-env
-            patterns
-            types
-            (+ index 1)))))))
-
 (define (tc-bind-struct-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -55193,7 +55148,12 @@
                       struct-name-id
                       scrut-ty
                       fields))]
-                (tc-bind-struct-field-pattern-list ctx env args field-types))]))
+                (tc-bind-pattern-list
+                  ctx
+                  env
+                  TcPatternListMode.StructField
+                  args
+                  field-types))]))
         (ResultTcEnv.Err
           (tc-struct-pattern-head-message pattern-name struct-name)))]
     [(ResultTcString.Err message) (ResultTcEnv.Err message)]))
@@ -55213,12 +55173,14 @@
         (tc-bind-tuple-pattern
           ctx
           env
+          TcPatternListMode.Element
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Array patterns-box)
         (tc-bind-array-pattern
           ctx
           env
+          TcPatternListMode.Element
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Variant name args-box)
@@ -55285,12 +55247,14 @@
         (tc-bind-tuple-pattern
           ctx
           env
+          TcPatternListMode.Element
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Array patterns-box)
         (tc-bind-array-pattern
           ctx
           env
+          TcPatternListMode.Element
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Variant name args-box)
@@ -55353,124 +55317,6 @@
 (define (tc-borrowed-field-ref-type [lifetime : i64] [field-ty : ast.AstType]) : ast.AstType
   (ast.ast-ty-ref lifetime (tc-borrow-referent-type field-ty)))
 
-(define (tc-bind-borrowed-array-sub-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : (& patterns ast.AstPatternList)]
-  [elem-ty : ast.AstType]
-  [count : i64]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index count)
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns))))
-    (if (>= index count)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns)))
-      (match (tc-bind-borrowed-tuple-sub-pattern
-        ctx
-        env
-        lifetime
-        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
-        (tc-global-shared-view elem-ty))
-        [(ResultTcEnv.Ok next-env)
-          (tc-bind-borrowed-array-sub-pattern-list-at
-            ctx
-            next-env
-            lifetime
-            patterns
-            elem-ty
-            count
-            (+ index 1))]
-        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))))
-
-(define (tc-bind-borrowed-array-pattern
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [array-ty : ast.AstType]
-  [patterns : ast.AstPatternList]) : ResultTcEnv
-  (match (tc-array-pattern-info ctx array-ty)
-    [(ResultTcArrayPatternInfo.Ok elem-ty count)
-      (tc-bind-borrowed-array-sub-pattern-list-at
-        ctx
-        env
-        lifetime
-        (& patterns)
-        elem-ty
-        count
-        0)]
-    [(ResultTcArrayPatternInfo.Err message) (ResultTcEnv.Err message)]))
-
-(define (tc-bind-borrowed-tuple-sub-pattern-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : ast.AstPatternList]
-  [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-borrowed-tuple-sub-pattern-list-at
-    ctx
-    env
-    lifetime
-    (& patterns)
-    (& types)
-    0))
-
-(define (tc-bind-borrowed-tuple-sub-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : (& patterns ast.AstPatternList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns))))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns)))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        (let
-          [next-env : TcTypeEnv
-            (try
-              (tc-bind-borrowed-tuple-sub-pattern ctx env lifetime pattern ty))]
-          (tc-bind-borrowed-tuple-sub-pattern-list-at
-            ctx
-            next-env
-            lifetime
-            patterns
-            types
-            (+ index 1)))))))
-
-(define (tc-bind-borrowed-tuple-pattern
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [tuple-ty : ast.AstType]
-  [patterns : ast.AstPatternList]) : ResultTcEnv
-  (let
-    [elem-types : ast.AstTypeList
-      (try (tc-tuple-pattern-element-types ctx tuple-ty))]
-    (tc-bind-borrowed-tuple-sub-pattern-list
-      ctx
-      env
-      lifetime
-      patterns
-      elem-types)))
-
 (define (tc-bind-borrowed-struct-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -55500,10 +55346,10 @@
                       struct-name-id
                       scrut-ty
                       fields))]
-                (tc-bind-borrowed-tuple-sub-pattern-list
+                (tc-bind-pattern-list
                   ctx
                   env
-                  lifetime
+                  (TcPatternListMode.BorrowedElement lifetime)
                   args
                   field-types))]))
         (ResultTcEnv.Err
@@ -55525,17 +55371,17 @@
         (tc-bind-id env name (tc-borrowed-field-ref-type lifetime elem-ty)))]
     [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
     [(ast.AstPattern.Tuple patterns-box)
-      (tc-bind-borrowed-tuple-pattern
+      (tc-bind-tuple-pattern
         ctx
         env
-        lifetime
+        (TcPatternListMode.BorrowedElement lifetime)
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
     [(ast.AstPattern.Array patterns-box)
-      (tc-bind-borrowed-array-pattern
+      (tc-bind-array-pattern
         ctx
         env
-        lifetime
+        (TcPatternListMode.BorrowedElement lifetime)
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
     [(ast.AstPattern.Variant name args-box)
@@ -55569,56 +55415,6 @@
     [_
       (ResultTcEnv.Err
         "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern")]))
-
-(define (tc-bind-borrowed-sub-pattern-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : ast.AstPatternList]
-  [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-borrowed-sub-pattern-list-at
-    ctx
-    env
-    lifetime
-    (& patterns)
-    (& types)
-    0))
-
-(define (tc-bind-borrowed-sub-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : (& patterns ast.AstPatternList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns))))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns)))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        (let
-          [next-env : TcTypeEnv
-            (try (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty))]
-          (tc-bind-borrowed-sub-pattern-list-at
-            ctx
-            next-env
-            lifetime
-            patterns
-            types
-            (+ index 1)))))))
 
 (define (tc-bind-borrowed-variant-pattern
   [ctx : TcContext]
@@ -55664,10 +55460,10 @@
                   (csym.compiler-registry-handle-owner-index handle)
                   enum-lifetimes
                   fields))]
-            (tc-bind-borrowed-sub-pattern-list
+            (tc-bind-pattern-list
               ctx
               env
-              lifetime
+              (TcPatternListMode.BorrowedSub lifetime)
               args
               payload-fields))
           (ResultTcEnv.Err
@@ -55699,17 +55495,17 @@
       [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
       [(ast.AstPattern.Literal lit) (tc-bind-literal-pattern env lit ty)]
       [(ast.AstPattern.Tuple patterns-box)
-        (tc-bind-borrowed-tuple-pattern
+        (tc-bind-tuple-pattern
           ctx
           env
-          lifetime
+          (TcPatternListMode.BorrowedElement lifetime)
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Array patterns-box)
-        (tc-bind-borrowed-array-pattern
+        (tc-bind-array-pattern
           ctx
           env
-          lifetime
+          (TcPatternListMode.BorrowedElement lifetime)
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Variant name args-box)
@@ -55864,10 +55660,10 @@
               [(ast.AstPattern.Binding name)
                 (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
               [(ast.AstPattern.Tuple patterns-box)
-                (tc-bind-borrowed-tuple-pattern
+                (tc-bind-tuple-pattern
                   ctx
                   env
-                  lifetime
+                  (TcPatternListMode.BorrowedElement lifetime)
                   referent-ty
                   (ast.ast-pattern-list-box-shared-view patterns-box))]
               [_
@@ -55879,10 +55675,10 @@
               [(ast.AstPattern.Binding name)
                 (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
               [(ast.AstPattern.Array patterns-box)
-                (tc-bind-borrowed-array-pattern
+                (tc-bind-array-pattern
                   ctx
                   env
-                  lifetime
+                  (TcPatternListMode.BorrowedElement lifetime)
                   referent-ty
                   (ast.ast-pattern-list-box-shared-view patterns-box))]
               [_
@@ -56000,6 +55796,7 @@
           (tc-bind-tuple-pattern
             ctx
             env
+            TcPatternListMode.Element
             scrut-ty
             (ast.ast-pattern-list-box-shared-view patterns-box))]
         [_
@@ -56014,6 +55811,7 @@
           (tc-bind-array-pattern
             ctx
             env
+            TcPatternListMode.Element
             scrut-ty
             (ast.ast-pattern-list-box-shared-view patterns-box))]
         [_
@@ -57147,7 +56945,7 @@
   (let
     [payloads : ast.AstTypeList
       (try (tc-expr-variant-payload-types ctx variant-id))]
-    (tc-bind-sub-pattern-list ctx env args payloads)))
+    (tc-bind-pattern-list ctx env TcPatternListMode.Sub args payloads)))
 
 (define (tc-bind-expr-match-pattern
   [ctx : TcContext]
@@ -57177,9 +56975,10 @@
       (ResultTcEnv.Ok (tc-bind-id env name (tc-macro-expr-clause-type)))]
     [(ast.AstPattern.Variant variant-name args-box)
       (if (tc-expr-clause-pattern-name? variant-name)
-        (tc-bind-sub-pattern-list
+        (tc-bind-pattern-list
           ctx
           env
+          TcPatternListMode.Sub
           (ast.ast-pattern-list-box-shared-view args-box)
           (tc-type-list2 (ast.AstType.Expr) (ast.AstType.Expr)))
         (ResultTcEnv.Err
@@ -68732,27 +68531,10 @@
     (tc-moved-len locals)
     body))
 
-(define (tc-move-check-exprs-with-types-no-auto
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [loop-carried : TcMovedSet]
-  [moved : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [types : ast.AstTypeList]) : TcMoveResult
-  (tc-move-check-exprs-with-types-no-auto-at
-    ctx
-    expr-bases
-    env
-    locals
-    loop-carried
-    moved
-    (& exprs)
-    (& types)
-    0))
-
-(define (tc-move-check-exprs-with-types-no-auto-at
+;; Call arguments consumed in order. With `auto-borrow?` (the callee has an
+;; immutable-reference formal) each argument is checked as the effective
+;; expression the call passes, auto-borrow included.
+(define (tc-move-check-exprs-with-types-at
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
@@ -68761,87 +68543,8 @@
   [moved : TcMovedSet]
   [exprs : (& exprs ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
-  [index : i64]) : TcMoveResult
-  (if (>= index exprs.len)
-    (if (>= index (ast.ast-type-list-len types))
-      (TcMoveResult.Ok moved)
-      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check")))
-    (if (>= index (ast.ast-type-list-len types))
-      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check"))
-      (let
-        [head : i64 (ast.ast-expr-list-get exprs index 0)]
-        [head-expr : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases head)]
-        [raw-ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        [value-ty : ast.AstType
-          (match (tc-body-type-fact-expr-id "move.call_arg_value" ctx env head)
-            [(ResultTcType.Ok ty) ty]
-            [(ResultTcType.Err _) raw-ty])]
-        (match (tc-move-check-expr-id
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view locals)
-          (tc-global-shared-view loop-carried)
-          moved
-          head)
-          [(TcMoveResult.Ok moved1)
-            (match (tc-move-after-consuming-value
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view locals)
-              (tc-global-shared-view loop-carried)
-              moved1
-              head-expr
-              raw-ty
-              value-ty)
-              [(TcMoveResult.Ok moved2)
-                (tc-move-check-exprs-with-types-no-auto-at
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  loop-carried
-                  moved2
-                  exprs
-                  types
-                  (+ index 1))]
-              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)])))))
-
-(define (tc-move-check-exprs-with-types-auto
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [loop-carried : TcMovedSet]
-  [moved : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [types : ast.AstTypeList]) : TcMoveResult
-  (tc-move-check-exprs-with-types-auto-at
-    ctx
-    expr-bases
-    env
-    locals
-    loop-carried
-    moved
-    (& exprs)
-    (& types)
-    0))
-
-(define (tc-move-check-exprs-with-types-auto-at
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [loop-carried : TcMovedSet]
-  [moved : TcMovedSet]
-  [exprs : (& exprs ast.AstExprList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : TcMoveResult
+  [index : i64]
+  [auto-borrow? : bool]) : TcMoveResult
   (if (>= index exprs.len)
     (if (>= index (ast.ast-type-list-len types))
       (TcMoveResult.Ok moved)
@@ -68857,25 +68560,29 @@
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
         [value-ty : ast.AstType
           (match (tc-body-type-fact-expr-id
-            "move.call_arg_value_auto"
+            (if auto-borrow?
+              "move.call_arg_value_auto"
+              "move.call_arg_value")
             ctx
             env
             head)
             [(ResultTcType.Ok actual) actual]
             [(ResultTcType.Err _) raw-ty])]
-        (match (cfg
-          compile-profile
-          (compiler-tc-reinfer-profile-effective-arg-expr
-            "move.call_arg"
-            ctx
-            env
-            head-expr
-            (tc-global-shared-view raw-ty))
-          (tc-call-effective-arg-expr
-            ctx
-            env
-            head-expr
-            (tc-global-shared-view raw-ty)))
+        (match (if auto-borrow?
+          (cfg
+            compile-profile
+            (compiler-tc-reinfer-profile-effective-arg-expr
+              "move.call_arg"
+              ctx
+              env
+              head-expr
+              (tc-global-shared-view raw-ty))
+            (tc-call-effective-arg-expr
+              ctx
+              env
+              head-expr
+              (tc-global-shared-view raw-ty)))
+          (ResultTcExpr.Ok head-expr))
           [(ResultTcExpr.Ok effective-head)
             (match (tc-move-check-expr
               ctx
@@ -68897,7 +68604,7 @@
                   raw-ty
                   value-ty)
                   [(TcMoveResult.Ok moved2)
-                    (tc-move-check-exprs-with-types-auto-at
+                    (tc-move-check-exprs-with-types-at
                       ctx
                       expr-bases
                       env
@@ -68906,7 +68613,8 @@
                       moved2
                       exprs
                       types
-                      (+ index 1))]
+                      (+ index 1)
+                      auto-borrow?)]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(ResultTcExpr.Err message) (TcMoveResult.Err message)])))))
@@ -68920,25 +68628,20 @@
   [moved : TcMovedSet]
   [exprs : ast.AstExprList]
   [types : ast.AstTypeList]) : TcMoveResult
-  (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
-    (tc-move-check-exprs-with-types-auto
+  (let
+    [auto-borrow? : bool
+      (tc-call-type-list-has-immutable-ref-formal? ctx types)]
+    (tc-move-check-exprs-with-types-at
       ctx
       expr-bases
       env
       locals
       loop-carried
       moved
-      exprs
-      types)
-    (tc-move-check-exprs-with-types-no-auto
-      ctx
-      expr-bases
-      env
-      locals
-      loop-carried
-      moved
-      exprs
-      types)))
+      (& exprs)
+      (& types)
+      0
+      auto-borrow?)))
 
 ;; Tuple and nominal-constructor expressions store each element by value.
 ;; Unlike an ordinary non-consuming function argument, a reference-bearing
@@ -74614,91 +74317,45 @@
     source-locals
     (tc-moved-empty)))
 
-(define (tc-lambda-capture-has-mut-reference-scan?
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [bound : TcStringList]
-  [body : ast.AstExpr]
-  [seen : TcStringList]) : bool
-  (match (tc-type-env-marker-step env)
-    [(TcTypeEnvMarkerStep.Done) false]
-    [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-lambda-capture-has-mut-reference-scan?
-        expr-bases
-        rest-env
-        bound
-        body
-        seen)]
-    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
-      (let
-        [name : String (tc-env-key-name-text key)]
-        (cond
-          [(= key (tc-default-boundary-id)) false]
-          [(or
-              (= key (tc-region-marker-id))
-              (tc-cleanup-owner-marker-entry? key ty)
-              (tc-ordinary-arena-owner-marker-entry?
-                key
-                (tc-global-shared-view ty))
-              (tc-atomic-arena-owner-marker-entry?
-                key
-                (tc-global-shared-view ty))
-              (tc-string-list-contains
-                (tc-global-shared-view seen)
-                (tc-global-shared-view name)))
-            (tc-lambda-capture-has-mut-reference-scan?
-              expr-bases
-              rest-env
-              bound
-              body
-              seen)]
-          [(and
-              (tc-expr-uses-free-name?
-                expr-bases
-                (tc-global-shared-view body)
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-type-contains-mut-reference? ty))
-            true]
-          [else
-            (tc-lambda-capture-has-mut-reference-scan?
-              expr-bases
-              rest-env
-              bound
-              body
-              (tc-string-list-add seen name))]))]))
+;; What a captured-binding scan asks of each binding a lambda body names: does
+;; its type hold a mutable reference, is it move-only (as a local fact or by
+;; type), or is it move-only and already moved.
+(defenum TcCaptureQuery
+  (MutReference)
+  (MoveOnly TcMovedSet)
+  (Consumed TcMovedSet TcMovedSet))
 
-(define (tc-lambda-capture-has-mut-reference?
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [params : ast.AstParamList]
-  [body : ast.AstExpr]) : bool
-  (tc-lambda-capture-has-mut-reference-scan?
-    expr-bases
-    (tc-type-env-marker-start env)
-    (tc-param-bound-names params)
-    body
-    TcStringList.Nil))
+(define (tc-capture-query-matches?
+  [ctx : TcContext]
+  [query : TcCaptureQuery]
+  [key : i64]
+  [ty : ast.AstType]) : bool
+  (match query
+    [(TcCaptureQuery.MutReference) (tc-type-contains-mut-reference? ty)]
+    [(TcCaptureQuery.MoveOnly locals)
+      (tc-move-local-or-type-move-only? ctx locals key ty)]
+    [(TcCaptureQuery.Consumed locals moved)
+      (and
+        (tc-move-local-or-type-move-only? ctx locals key ty)
+        (match (tc-moved-root-conflict moved key)
+          [(TcMoveConflict.Some _ _) true]
+          [TcMoveConflict.No false]))]))
 
-(define (tc-lambda-capture-has-move-only-scan?
+;; Whether some binding the lambda captures answers `query`. Bindings are
+;; visited innermost first up to the default boundary; a shadowed binding is
+;; skipped.
+(define (tc-lambda-capture-scan?
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : ast.AstExpr]
-  [locals : TcMovedSet]
+  [query : TcCaptureQuery]
   [seen : TcStringList]) : bool
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Done) false]
     [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-lambda-capture-has-move-only-scan?
-        ctx
-        expr-bases
-        rest-env
-        bound
-        body
-        locals
-        seen)]
+      (tc-lambda-capture-scan? ctx expr-bases rest-env bound body query seen)]
     [(TcTypeEnvMarkerStep.Bind key ty rest-env)
       (let
         [name : String (tc-env-key-name-text key)]
@@ -74716,13 +74373,13 @@
               (tc-string-list-contains
                 (tc-global-shared-view seen)
                 (tc-global-shared-view name)))
-            (tc-lambda-capture-has-move-only-scan?
+            (tc-lambda-capture-scan?
               ctx
               expr-bases
               rest-env
               bound
               body
-              locals
+              query
               seen)]
           [(and
               (tc-expr-uses-free-name?
@@ -74730,21 +74387,36 @@
                 (tc-global-shared-view body)
                 (tc-global-shared-view name)
                 (tc-global-shared-view bound))
-              (tc-move-local-or-type-move-only?
+              (tc-capture-query-matches?
                 ctx
-                (tc-global-shared-view locals)
+                (tc-global-shared-view query)
                 key
                 ty))
             true]
           [else
-            (tc-lambda-capture-has-move-only-scan?
+            (tc-lambda-capture-scan?
               ctx
               expr-bases
               rest-env
               bound
               body
-              locals
+              query
               (tc-string-list-add seen name))]))]))
+
+(define (tc-lambda-capture-has-mut-reference?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [params : ast.AstParamList]
+  [body : ast.AstExpr]) : bool
+  (tc-lambda-capture-scan?
+    ctx
+    expr-bases
+    (tc-type-env-marker-start env)
+    (tc-param-bound-names params)
+    body
+    TcCaptureQuery.MutReference
+    TcStringList.Nil))
 
 (define (tc-lambda-capture-has-move-only-with-locals?
   [ctx : TcContext]
@@ -74753,13 +74425,13 @@
   [locals : TcMovedSet]
   [params : ast.AstParamList]
   [body : ast.AstExpr]) : bool
-  (tc-lambda-capture-has-move-only-scan?
+  (tc-lambda-capture-scan?
     ctx
     expr-bases
     (tc-type-env-marker-start env)
     (tc-param-bound-names params)
     body
-    locals
+    (TcCaptureQuery.MoveOnly locals)
     TcStringList.Nil))
 
 (define (tc-lambda-capture-has-move-only?
@@ -74809,79 +74481,6 @@
     (tc-move-value-concrete-closure-move-only? ctx expr-bases env locals expr)
     (tc-type-move-only? ctx fallback-ty)))
 
-(define (tc-lambda-capture-consumed-scan?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [bound : TcStringList]
-  [body : ast.AstExpr]
-  [locals : TcMovedSet]
-  [moved : TcMovedSet]
-  [seen : TcStringList]) : bool
-  (match (tc-type-env-marker-step env)
-    [(TcTypeEnvMarkerStep.Done) false]
-    [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-lambda-capture-consumed-scan?
-        ctx
-        expr-bases
-        rest-env
-        bound
-        body
-        locals
-        moved
-        seen)]
-    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
-      (let
-        [name : String (tc-env-key-name-text key)]
-        (cond
-          [(= key (tc-default-boundary-id)) false]
-          [(or
-              (= key (tc-region-marker-id))
-              (tc-cleanup-owner-marker-entry? key ty)
-              (tc-ordinary-arena-owner-marker-entry?
-                key
-                (tc-global-shared-view ty))
-              (tc-atomic-arena-owner-marker-entry?
-                key
-                (tc-global-shared-view ty))
-              (tc-string-list-contains
-                (tc-global-shared-view seen)
-                (tc-global-shared-view name)))
-            (tc-lambda-capture-consumed-scan?
-              ctx
-              expr-bases
-              rest-env
-              bound
-              body
-              locals
-              moved
-              seen)]
-          [(and
-              (tc-expr-uses-free-name?
-                expr-bases
-                (tc-global-shared-view body)
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-move-local-or-type-move-only?
-                ctx
-                (tc-global-shared-view locals)
-                key
-                ty)
-              (match (tc-moved-root-conflict (tc-global-shared-view moved) key)
-                [(TcMoveConflict.Some _ _) true]
-                [TcMoveConflict.No false]))
-            true]
-          [else
-            (tc-lambda-capture-consumed-scan?
-              ctx
-              expr-bases
-              rest-env
-              bound
-              body
-              locals
-              moved
-              (tc-string-list-add seen name))]))]))
-
 (define (tc-lambda-call-capability-fallback-with-locals
   [ctx : TcContext]
   [expr-bases : i64]
@@ -74897,7 +74496,7 @@
     (tc-global-shared-view params)
     (tc-global-shared-view body))
     (tc-closure-call-capability-once)
-    (if (tc-lambda-capture-has-mut-reference? expr-bases env params body)
+    (if (tc-lambda-capture-has-mut-reference? ctx expr-bases env params body)
       (tc-closure-call-capability-mut)
       (tc-closure-call-capability-shared))))
 
@@ -74941,17 +74540,17 @@
               (tc-global-shared-view body)
               body-ty)
               [(TcMoveResult.Ok final-moved)
-                (if (tc-lambda-capture-consumed-scan?
+                (if (tc-lambda-capture-scan?
                   ctx
                   expr-bases
                   (tc-type-env-marker-start env)
                   (tc-param-bound-names (tc-global-shared-view params))
                   (tc-global-shared-view body)
-                  lambda-locals
-                  final-moved
+                  (TcCaptureQuery.Consumed lambda-locals final-moved)
                   TcStringList.Nil)
                   (tc-closure-call-capability-once)
                   (if (tc-lambda-capture-has-mut-reference?
+                    ctx
                     expr-bases
                     env
                     params

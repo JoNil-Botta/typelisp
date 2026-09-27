@@ -9,49 +9,6 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
-(cfg compile-profile (import stdlib.profile))
-
-(cfg
-  compile-profile
-  (test
-    reader-builder-growth-after-large-file-has-bounded-allocation
-    (begin
-      (reader.sexpr-node-pool-release!)
-      (let
-        [index : i64 0]
-        (while (< index 262144)
-          (begin
-            (reader.sexpr-node-push (reader.Sexpr.Int index ""))
-            (set! index (+ index 1)))))
-      (reader.sexpr-node-pool-reset!)
-      (let
-        [before : i64 (profile.alloc-total)]
-        [builder : reader.SexprBuilder (reader.sexpr-builder-new)]
-        [index : i64 0]
-        (begin
-          (while (< index 65536)
-            (begin
-              (set!
-                builder
-                (reader.sexpr-builder-push builder (reader.Sexpr.Int index "")))
-              (set! index (+ index 1))))
-          (let
-            [allocated : i64 (- (profile.alloc-total) before)]
-            [valid : bool
-              (match (reader.sexpr-list-from-builder builder)
-                [(reader.Sexpr.List start length)
-                  (and
-                    (= length 65536)
-                    (match (reader.sexpr-node-get (+ start 65535))
-                      [(reader.Sexpr.Int value _) (= value 65535)]
-                      [_ false]))]
-                [_ false])]
-            (begin
-              (reader.sexpr-node-pool-release!)
-              (unless
-                (and valid (> allocated 0) (<= allocated (* 4 1024 1024)))
-                (io.panic
-                  "scan storage: builder growth after a large file exceeded 4 MiB or changed records")))))))))
 
 (define (scan-doubled-source [text : String] [times : i64]) : String
   (let
@@ -151,32 +108,32 @@
             (= (lex.spanned-token-buffer-arena-handle-value) 0)
             (= (arena.tl_arena_current) caller)))))))
 
-(define (scan-reader-int? [node : reader.Sexpr] [expected : i64]) : bool
+(define (scan-reader-int? [node : reader.SpannedSexpr] [expected : i64]) : bool
   (match node
-    [(reader.Sexpr.Int value _) (= value expected)]
+    [(reader.SpannedSexpr.Int value _ _) (= value expected)]
     [_ false]))
 
-(define (scan-reader-group? [node : reader.Sexpr] [position : i64]) : bool
+(define (scan-reader-group? [node : reader.SpannedSexpr] [position : i64]) : bool
   (match node
-    [(reader.Sexpr.Int value _) (and (= position 0) (= value 1))]
-    [(reader.Sexpr.List start length)
+    [(reader.SpannedSexpr.Int value _ _) (and (= position 0) (= value 1))]
+    [(reader.SpannedSexpr.List start length _)
       (and
         (= position 1)
         (= length 2)
-        (scan-reader-int? (reader.sexpr-node-get start) 2)
-        (scan-reader-int? (reader.sexpr-node-get (+ start 1)) 3))]
-    [(reader.Sexpr.Str text)
+        (scan-reader-int? (reader.sp-node-get start) 2)
+        (scan-reader-int? (reader.sp-node-get (+ start 1)) 3))]
+    [(reader.SpannedSexpr.Str text _)
       (and
         (= position 2)
         (string.eq (ci.intern-str (ci.intern-id-value text)) "bytes"))]
     [_ false]))
 
 (define (scan-reader-wide-ok? [source : String]) : bool
-  (match (reader.result (lex.lex source))
+  (match (reader.data-result source)
     [(reader.ResultSexpr.Err _) false]
     [(reader.ResultSexpr.Ok form)
       (match form
-        [(reader.Sexpr.List start length)
+        [(reader.SpannedSexpr.List start length _)
           (let
             [index : i64 1]
             [ok : bool true]
@@ -185,64 +142,48 @@
                 (begin
                   (unless
                     (scan-reader-group?
-                      (reader.sexpr-node-get (+ start index))
+                      (reader.sp-node-get (+ start index))
                       (% (- index 1) 3))
                     (set! ok false))
                   (set! index (+ index 1))))
               (and
                 ok
                 (= length 1538)
-                (scan-reader-int? (reader.sexpr-node-get start) 0)
-                (scan-reader-int?
-                  (reader.sexpr-node-get (+ start (- length 1)))
-                  4))))]
+                (scan-reader-int? (reader.sp-node-get start) 0)
+                (scan-reader-int? (reader.sp-node-get (+ start (- length 1))) 4))))]
         [_ false])]))
 
 (cfg
   test
   (define (scan-reader-growth-ok?) : bool
     (begin
-      (reader.sexpr-node-pool-release!)
+      (reader.sp-node-pool-reset!)
       (let
         [body : String (scan-doubled-source "1 (2 3) \"bytes\" " 9)]
         [source : String (str_cat.str-cat "(0 " body " 4)")]
         [caller : i64 (arena.tl_arena_current)]
         [wide-ok : bool (scan-reader-wide-ok? (string.copy source))]
-        [budget-ok : bool
-          (<=
-            (+
-              (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-                (reader.sexpr-node-pool-base-arena-handle-value))
-              (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-                (reader.sexpr-builder-base-arena-handle-value)))
-            (* 176 1024))]
+        [_reset-wide : unit (reader.sp-node-pool-reset!)]
         [error-ok : bool
-          (match (reader.result (lex.lex (str_cat.str-cat "(" source)))
+          (match (reader.data-result (str_cat.str-cat "(" source))
             [(reader.ResultSexpr.Ok _) false]
             [(reader.ResultSexpr.Err message)
               (and
                 (string.eq message "reader: unterminated list (missing ')')")
-                (= (reader.sexpr-node-pool-len) 0))])]
+                (= (reader.sp-node-pool-len) 0))])]
         [reuse-ok : bool
-          (match (reader.result (lex.lex "(8)"))
+          (match (reader.data-result "(8)")
             [(reader.ResultSexpr.Err _) false]
             [(reader.ResultSexpr.Ok form)
               (match form
-                [(reader.Sexpr.List start length)
+                [(reader.SpannedSexpr.List start length _)
                   (and
                     (= length 1)
-                    (scan-reader-int? (reader.sexpr-node-get start) 8))]
+                    (scan-reader-int? (reader.sp-node-get start) 8))]
                 [_ false])])]
         (begin
-          (reader.sexpr-node-pool-release!)
-          (and
-            wide-ok
-            budget-ok
-            error-ok
-            reuse-ok
-            (= (reader.sexpr-node-pool-base-arena-handle-value) 0)
-            (= (reader.sexpr-builder-base-arena-handle-value) 0)
-            (= (arena.tl_arena_current) caller)))))))
+          (reader.sp-node-pool-reset!)
+          (and wide-ok error-ok reuse-ok (= (arena.tl_arena_current) caller)))))))
 
 (test
   lexer-growth-preserves-records-with-bounded-storage
@@ -254,8 +195,7 @@
   reader-growth-preserves-nested-builders-and-error-reuse
   (unless
     (scan-reader-growth-ok?)
-    (io.panic
-      "scan storage: reader growth, error reuse, or 176 KiB budget failed")))
+    (io.panic "scan storage: reader growth or error reuse failed")))
 
 (test
   scan-storage-restores-transient-caller-and-regrows-after-retirement

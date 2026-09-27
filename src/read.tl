@@ -1,34 +1,10 @@
-;; read.tl - The s-expression READER for TypeLisp's own syntax, factored out
-;; as a `main`-less, importable module.
+;; read.tl - The s-expression reader for TypeLisp's own syntax, as a
+;; `main`-less, importable module.
 ;;
-;; --------------------------------------------------------------------------
-;; Why this module exists (the module signal for reusable reader code).
-;; --------------------------------------------------------------------------
-;; `reader.tl` is the *demo* program for the s-expression reader: it carries a
-;; `main` that reads a sample and folds the resulting tree with `sum-ints`.
-;; Reusable frontend modules need the reader's
-;; `read : (-> (__tl_dyn-array token.Token) Sexpr)` and the `Sexpr` AST it
-;; builds without inheriting that demo `main`.
-;;
-;; The legacy stage0 module loader is whole-program: it concatenates every
-;; imported module's declarations into a single program, then runs the unchanged
-;; `typecheck -> lower -> codegen` pipeline. So two modules that both declare a
-;; `main` and are loaded together produce a duplicate `main` symbol. The
-;; selfhost namespace model specified in SPEC.md replaces
-;; this flat import behavior with qualified module identities. Importing
-;; `reader.tl` (which HAS a `main`) into another command driver that also needs
-;; a `main` would clash.
-;;
-;; The fix is this `main`-less module: it holds the reader's cursor helpers, the
-;; mutually recursive `read-form` / `read-list`, the public `read` entry, AND the
-;; `Sexpr` AST definition. Callers that need to turn source text into tokens
-;; import `lex.tl` alongside this reader module. This module imports the `token`
-;; module for token types and declares NO `main`.
-;; Command drivers and compiler modules can import it and still produce a
-;; concatenated program with exactly one `main`. `reader.tl` stays as the
-;; reader's standalone demo. This mirrors how `lex.tl` was factored from the
-;; `main`-bearing `lexer.tl`: a `main`-less module is the unit of reuse, a
-;; `main`-bearing file is a runnable demo.
+;; It reads the spanned token stream of `lex.tl` into `SpannedSexpr` trees.
+;; `spanned-result` reads source forms for the parser; `data-result` reads one
+;; plain data form (a lockfile, TLCI metadata) from source text. Consumers that
+;; do not need spans walk a tree through `sexpr-view`.
 (import stdlib.str_cat_runtime as str_cat)
 
 (module read)
@@ -49,20 +25,14 @@
 ;; spine. The storage variants are intentionally not a public traversal
 ;; contract: consumers use `SexprView` / `SpannedSexprView`, whose `Cons` step
 ;; carries a value-level tail view and never allocates or stores a recursive
-;; pair. `Sexpr.Str` carries the parser-assigned ID of a string literal's
-;; unescaped inner text. The reader preserves the lexer's `token.Token.Str` ID, so a
+;; pair. `Str` carries the parser-assigned ID of a string literal's unescaped
+;; inner text. The reader preserves the lexer's `token.Token.Str` ID, so a
 ;; quoted string reads as a distinct atom rather than being conflated with a
-;; `Sexpr.Sym` of the same characters. `Sexpr.Char` carries a character-literal
-;; datum (`'x'`), likewise keeping chars distinct from symbols, ints, and
-;; strings.
-(defenum Sexpr
-  (Int i64 String)
-  (Sym ci.InternSyntaxId)
-  (List i64 i64)
-  (Str ci.InternId)
-  (Char char)
-  (Float String))
-
+;; `Sym` of the same characters. `Char` carries a character-literal datum
+;; (`'x'`), likewise keeping chars distinct from symbols, ints, and strings.
+;;
+;; `SexprView` is the span-free view: it drops spans and walks a bracket list
+;; like a parenthesized one.
 (defenum SexprView
   (Int i64 String)
   ;; Symbols retain their mixed renderable/structural syntax identity while
@@ -70,13 +40,13 @@
   ;; identity or reduce it to a renderable source name.
   (Sym ci.InternSyntaxId)
   (Nil)
-  (Cons Sexpr Sexpr)
+  (Cons SpannedSexpr SpannedSexpr)
   (Str ci.InternId)
   (Char char)
   (Float String))
 
 (defenum ResultSexpr
-  (Ok Sexpr)
+  (Ok SpannedSexpr)
   (Err String))
 
 (defenum SpannedSexpr
@@ -102,21 +72,17 @@
   (Ok SpannedSexpr)
   (Err token.SourceError))
 
-;; --- flat Sexpr / SpannedSexpr child-node pools ---
-;; List children are contiguous ids into their corresponding pool. Two plain
+;; --- flat SpannedSexpr child-node pool ---
+;; List children are contiguous ids into the pool. Two plain
 ;; globals (array + count), NOT a struct, avoid the
 ;; opt2 hot-path-inline miscompile seen on the AstExpr pool. The spanned tree
 ;; is transient (consumed into AstExpr, spans copied out by value, then dead),
 ;; so the pool is reset per program parse (see compiler_parse_core.tl). Start
 ;; empty and retain geometrically grown storage: small compile commands should
 ;; not construct 262,144 enum slots before argv dispatch. Dedicated storage
-;; keeps the globals valid across transient driver arenas. The unspanned node
-;; and builder arrays grow in independent owners: replacing one must not copy
-;; or allocate the other's retained high-water capacity. Superseded capacities
-;; are retired after their live prefix moves. Both unspanned owners can
-;; additionally be retired outright once a load has finished
-;; (`sexpr-node-pool-release!`); the spanned pool's cannot, because its origin
-;; records outlive parsing.
+;; keeps the globals valid across transient driver arenas. The pool cannot be
+;; retired once a load has finished, because its origin records outlive
+;; parsing.
 (define sp-node-pool-slots : (__tl_dyn-array SpannedSexpr)
   (__tl_make-array SpannedSexpr 0))
 
@@ -131,48 +97,22 @@
   (__tl_make-array SpannedSexpr 0))
 (define sp-builder-count : i64
   0)
-(define sexpr-node-pool-slots : (__tl_dyn-array Sexpr)
-  (__tl_make-array Sexpr 0))
-(define sexpr-node-pool-base-arena : i64
-  0)
-(define sexpr-builder-base-arena : i64
-  0)
-(define sexpr-node-pool-count : i64
-  0)
-(define sexpr-builder-slots : (__tl_dyn-array Sexpr)
-  (__tl_make-array Sexpr 0))
-(define sexpr-builder-count : i64
-  0)
 
 ;; Permanent zero-length replacements used when a retained-origin compaction
-;; finds no live rows.  Like the unspanned sentinels below, these are allocated
-;; by global initialization and therefore remain valid after a reader-owned
-;; growth arena is destroyed.
+;; finds no live rows. These are allocated by global initialization and
+;; therefore remain valid after a reader-owned growth arena is destroyed.
 (define sp-node-pool-released-slots : (__tl_dyn-array SpannedSexpr)
   (__tl_make-array SpannedSexpr 0))
 (define sp-builder-released-slots : (__tl_dyn-array SpannedSexpr)
   (__tl_make-array SpannedSexpr 0))
 
-;; Permanent zero-length replacements installed by `sexpr-node-pool-release!`.
-;; Both are materialized once during global initialization, in the process
-;; entry arena, so the pool globals still name live storage after their
-;; growth arenas are unmapped and the next push grows from zero into a fresh
-;; arena. The spanned pool cannot be released outright because its origin
-;; records outlive parsing; its sentinels above support the exact-prefix
-;; transfer performed at load handoff instead.
-(define sexpr-node-pool-released-slots : (__tl_dyn-array Sexpr)
-  (__tl_make-array Sexpr 0))
-(define sexpr-builder-released-slots : (__tl_dyn-array Sexpr)
-  (__tl_make-array Sexpr 0))
+;; Set while `data-result` reads: no projection suffixes, and the plain data
+;; reader's error texts.
+(define sp-reader-data-mode? : bool
+  false)
 
 (define (sp-node-pool-base-arena-handle-value) : i64
   sp-node-pool-base-arena)
-
-(define (sexpr-node-pool-base-arena-handle-value) : i64
-  sexpr-node-pool-base-arena)
-
-(define (sexpr-builder-base-arena-handle-value) : i64
-  sexpr-builder-base-arena)
 
 ;; Source symbols remain ids from lexer through reader and parser. Consumers
 ;; request display text explicitly only when diagnostics or data formats need it.
@@ -201,9 +141,6 @@
 
 (define (sp-node-pool-reset-generation-value) : i64
   sp-node-pool-reset-generation)
-
-(define (sexpr-node-pool-len) : i64
-  sexpr-node-pool-count)
 
 ;; Grow is a safety net. The spanned pool is reset per program parse and
 ;; truncated per top-level form (compiler_parse_core.tl), so ordinary inputs
@@ -238,61 +175,6 @@
           (set! sp-node-pool-base-arena storage-root)
           (set! sp-node-pool-slots new-slots))))))
 
-(define (sexpr-storage-grow! [builder-storage? : bool]) : unit
-  (let
-    [old-slots : (__tl_dyn-array Sexpr)
-      (unsafe
-        (if builder-storage?
-          (ptr-read (ptr-addr-of sexpr-builder-slots))
-          (ptr-read (ptr-addr-of sexpr-node-pool-slots))))]
-    [old-capacity : i64 (array-length old-slots)]
-    [capacity : i64
-      (if (= old-capacity 0)
-        1024
-        (* old-capacity 2))]
-    [used : i64
-      (if builder-storage?
-        sexpr-builder-count
-        sexpr-node-pool-count)]
-    [old-arena : i64
-      (if builder-storage?
-        sexpr-builder-base-arena
-        sexpr-node-pool-base-arena)]
-    [caller-arena : i64 (arena.tl_arena_current)]
-    [storage-root : i64 (arena.tl_arena_make)]
-    [new-slots : (__tl_dyn-array Sexpr)
-      (in-arena (arena.Arena storage-root) (__tl_make-array Sexpr capacity))]
-    (begin
-      ;; Child links and pending builders retain indices, not array addresses.
-      ;; Literal payloads belong to source/interner owners. Moving these inline
-      ;; records therefore leaves every index and payload valid, including
-      ;; values already copied out by a caller before this push triggers growth.
-      (unsafe
-        (string.string-runtime-copy-bytes!
-          (ptr-cast (__tl_array-data new-slots) : (MutPtr u8))
-          (ptr-cast (__tl_array-data old-slots) : (Ptr u8))
-          (cast
-            (-
-              (ptr->int (ptr-offset (__tl_array-data new-slots) used))
-              (ptr->int (__tl_array-data new-slots)))
-            : i64)))
-      (if builder-storage?
-        (begin
-          (set! sexpr-builder-base-arena storage-root)
-          (set! sexpr-builder-slots new-slots))
-        (begin
-          (set! sexpr-node-pool-base-arena storage-root)
-          (set! sexpr-node-pool-slots new-slots)))
-      (unless
-        (= old-arena 0)
-        (unsafe
-          (begin
-            (arena.tl_arena_destroy old-arena)
-            (arena.tl_arena_set caller-arena)))))))
-
-(define (sexpr-node-pool-grow!) : unit
-  (sexpr-storage-grow! false))
-
 (define (sp-builder-grow!) : unit
   (let
     [old-cap : i64 (array-length sp-builder-slots)]
@@ -318,9 +200,6 @@
               (set! i (+ i 1))))
           (set! sp-node-pool-base-arena storage-root)
           (set! sp-builder-slots new-slots))))))
-
-(define (sexpr-builder-grow!) : unit
-  (sexpr-storage-grow! true))
 
 (define (sp-node-push [node : SpannedSexpr]) : i64
   (begin
@@ -353,18 +232,6 @@
 (define (sp-node-pool-fill! [id : i64] [node : SpannedSexpr]) : unit
   (set! (array-ref sp-node-pool-slots id) node))
 
-(define (sexpr-node-push [node : Sexpr]) : i64
-  (begin
-    (if (>= sexpr-node-pool-count (array-length sexpr-node-pool-slots))
-      (sexpr-node-pool-grow!)
-      unit)
-    (let
-      [id : i64 sexpr-node-pool-count]
-      (begin
-        (set! (array-ref sexpr-node-pool-slots id) node)
-        (set! sexpr-node-pool-count (+ id 1))
-        id))))
-
 ;; Reader nodes and builder rows live in the reader's arena-backed pools. These
 ;; compatibility accessors expose immutable/shared views without transferring
 ;; ownership out of their global storage.
@@ -373,20 +240,6 @@
     (ptr-read
       (ptr-offset
         (ptr-cast (__tl_array-data sp-node-pool-slots) : (Ptr SpannedSexpr))
-        id))))
-
-(define (sexpr-node-pool-shared-view [id : i64]) : Sexpr
-  (unsafe
-    (ptr-read
-      (ptr-offset
-        (ptr-cast (__tl_array-data sexpr-node-pool-slots) : (Ptr Sexpr))
-        id))))
-
-(define (sexpr-builder-shared-view [id : i64]) : Sexpr
-  (unsafe
-    (ptr-read
-      (ptr-offset
-        (ptr-cast (__tl_array-data sexpr-builder-slots) : (Ptr Sexpr))
         id))))
 
 (define (sp-builder-shared-view [id : i64]) : SpannedSexpr
@@ -398,9 +251,6 @@
 
 (define (sp-node-get [id : i64]) : SpannedSexpr
   (sp-node-pool-shared-view id))
-
-(define (sexpr-node-get [id : i64]) : Sexpr
-  (sexpr-node-pool-shared-view id))
 
 (define (sp-node-pool-truncate! [mark : i64]) : unit
   (set! sp-node-pool-count mark))
@@ -479,119 +329,6 @@
                     unit
                     (arena.tl_arena_set active-arena)))))))))))
 
-(define (sexpr-node-pool-truncate! [mark : i64]) : unit
-  (set! sexpr-node-pool-count mark))
-
-(define (sexpr-node-pool-reset!) : unit
-  (begin
-    (sexpr-node-pool-truncate! 0)
-    (set! sexpr-builder-count 0)))
-
-;; Unmap both unspanned storage owners and reinstall zero-length slot arrays.
-;; Either array may have grown first, so release must handle either owner alone.
-;;
-;; No-dangling argument:
-;;
-;;   - An `Sexpr` is a value enum. Only `Sexpr.List` names pool storage, and it
-;;     names it as an (id, count) range - valid only while the array is live
-;;     and the range is below `sexpr-node-pool-count`. This release zeroes that
-;;     count, so it is exactly a stronger `sexpr-node-pool-reset!`.
-;;   - No `defstruct` in the tree has an `Sexpr` field, and no global, session
-;;     cache, or driver state stores one. Every unspanned consumer converts to
-;;     owned data before returning: `tlci_core` walks a form into `String`/i64
-;;     `TlciMetadata` fields, `package_lock_core.package-lock-parse` and the
-;;     `typelisp.pkg` manifest walkers in `compiler_load.tl` return `String`s.
-;;   - Every unspanned producer is already bracketed by the pool discipline
-;;     this release strengthens: `compiler_parse_core.tl` resets the pool per
-;;     program parse, the loader resets it per session, and typecheck's macro
-;;     expansion marks `sexpr-node-pool-len` and truncates back to that mark.
-;;   - TLCI text is read during module load (dependency `.tlci` interfaces) and
-;;     during artifact emission, never lazily from typecheck or lower.
-;;
-;; Callers must only prove that no read/parse is in flight. Later pushes are
-;; fine: the pool regrows geometrically from zero.
-(define (sexpr-node-pool-release!) : unit
-  (if (and (= sexpr-node-pool-base-arena 0) (= sexpr-builder-base-arena 0))
-    unit
-    (let
-      [retire-arena : i64 sexpr-node-pool-base-arena]
-      [retire-builder-arena : i64 sexpr-builder-base-arena]
-      [retained-arena : i64 (arena.tl_arena_current)]
-      (begin
-        ;; The sentinels remain owned by their permanent globals. Reinstall
-        ;; shared representation views; direct RHS reads would move non-Copy
-        ;; dynamic arrays out of those globals.
-        (set!
-          sexpr-node-pool-slots
-          (unsafe
-            (ptr-read (ptr-addr-of sexpr-node-pool-released-slots))))
-        (set!
-          sexpr-builder-slots
-          (unsafe
-            (ptr-read (ptr-addr-of sexpr-builder-released-slots))))
-        (set! sexpr-node-pool-count 0)
-        (set! sexpr-builder-count 0)
-        (set! sexpr-node-pool-base-arena 0)
-        (set! sexpr-builder-base-arena 0)
-        (unsafe
-          (begin
-            (unless (= retire-arena 0) (arena.tl_arena_destroy retire-arena))
-            (unless
-              (= retire-builder-arena 0)
-              (arena.tl_arena_destroy retire-builder-arena))
-            (arena.tl_arena_set retained-arena)))))))
-
-(define (sexpr-node-pool-release-regrow-ok?) : bool
-  (begin
-    (sexpr-node-pool-release!)
-    (if (and
-      (= (array-length sexpr-node-pool-slots) 0)
-      (= (array-length sexpr-builder-slots) 0)
-      (= sexpr-node-pool-count 0)
-      (= sexpr-builder-count 0)
-      (= sexpr-node-pool-base-arena 0))
-      (let
-        [builder : SexprBuilder (sexpr-builder-new)]
-        [_pushed : SexprBuilder
-          (sexpr-builder-push
-            builder
-            (Sexpr.Sym (ci.intern-syntax-id-from-raw 13)))]
-        [list : Sexpr (sexpr-list-from-builder builder)]
-        [regrown-ok : bool
-          (match list
-            [(Sexpr.List start length)
-              (and
-                (= length 1)
-                (!= sexpr-node-pool-base-arena 0)
-                (> (array-length sexpr-node-pool-slots) 0)
-                (> (array-length sexpr-builder-slots) 0)
-                (match (sexpr-node-get start)
-                  [(Sexpr.Sym value) (= (ci.intern-syntax-id-value value) 13)]
-                  [_ false]))]
-            [_ false])]
-        (begin
-          (sexpr-node-pool-release!)
-          (let
-            [released-again-ok : bool
-              (and
-                (= (array-length sexpr-node-pool-slots) 0)
-                (= (array-length sexpr-builder-slots) 0)
-                (= sexpr-node-pool-count 0)
-                (= sexpr-builder-count 0)
-                (= sexpr-node-pool-base-arena 0))]
-            (begin
-              ;; A release without a backing arena is idempotent.
-              (sexpr-node-pool-release!)
-              (and
-                regrown-ok
-                released-again-ok
-                (= (array-length sexpr-node-pool-slots) 0)
-                (= (array-length sexpr-builder-slots) 0)
-                (= sexpr-node-pool-count 0)
-                (= sexpr-builder-count 0)
-                (= sexpr-node-pool-base-arena 0))))))
-      false)))
-
 ;; A pool grow preserves its source rows, so aggregate relocation must use an
 ;; explicit shared view instead of consuming an element through ordinary
 ;; by-value indexing. Exercise a String-bearing row across the exact capacity
@@ -637,12 +374,9 @@
         scratch
         (begin
           (sp-node-pool-grow!)
-          (sexpr-node-pool-grow!)
-          (sp-builder-grow!)
-          (sexpr-builder-grow!)))
+          (sp-builder-grow!)))
       (arena.destroy-safe! scratch)
       (sp-node-pool-reset!)
-      (sexpr-node-pool-reset!)
       (let
         [growth-ok : bool (sp-node-pool-growth-preserves-string?)]
         [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
@@ -661,60 +395,28 @@
             (= (array-length sp-builder-slots) 0)
             (!= sp-node-pool-base-arena 0)
             (!= sp-node-pool-base-arena sp-arena-before-transfer))]
-        [sexpr-list : Sexpr
-          (sexpr-list-from-builder
-            (sexpr-builder-push
-              (sexpr-builder-new)
-              (Sexpr.Sym (ci.intern-syntax-id-from-raw 9))))]
         (match sp-list
           [(SpannedSexpr.List sp-start sp-length sp-span)
-            (match sexpr-list
-              [(Sexpr.List sexpr-start sexpr-length)
-                (if (and
-                  (= sp-start 0)
-                  (= sp-length 1)
-                  (= sp-span.start-line 1)
-                  (= sexpr-start 0)
-                  (= sexpr-length 1)
-                  growth-ok
-                  retained-transfer-ok)
-                  (match (sp-node-get sp-start)
-                    [(SpannedSexpr.Sym sp-value _)
-                      (match (sexpr-node-get sexpr-start)
-                        [(Sexpr.Sym sexpr-value)
-                          (if (and
-                            (= (ci.intern-syntax-id-value sp-value) 7)
-                            (= (ci.intern-syntax-id-value sexpr-value) 9))
-                            (if (sexpr-node-pool-release-regrow-ok?)
-                              42
-                              3)
-                            1)]
-                        [_ 1])]
-                    [_ 1])
-                  1)]
-              [_ 1])]
+            (if (and
+              (= sp-start 0)
+              (= sp-length 1)
+              (= sp-span.start-line 1)
+              growth-ok
+              retained-transfer-ok)
+              (match (sp-node-get sp-start)
+                [(SpannedSexpr.Sym sp-value _)
+                  (if (= (ci.intern-syntax-id-value sp-value) 7)
+                    42
+                    1)]
+                [_ 1])
+              1)]
           [_ 2])))))
-
-(defstruct SexprBuilder
-  (start i64))
 
 (defstruct SpannedSexprBuilder
   (start i64))
 
-(define (sexpr-builder-new) : SexprBuilder
-  (SexprBuilder sexpr-builder-count))
-
 (define (spanned-sexpr-builder-new) : SpannedSexprBuilder
   (SpannedSexprBuilder sp-builder-count))
-
-(define (sexpr-builder-push [builder : SexprBuilder] [item : Sexpr]) : SexprBuilder
-  (begin
-    (if (>= sexpr-builder-count (array-length sexpr-builder-slots))
-      (sexpr-builder-grow!)
-      unit)
-    (set! (array-ref sexpr-builder-slots sexpr-builder-count) item)
-    (set! sexpr-builder-count (+ sexpr-builder-count 1))
-    builder))
 
 (define (spanned-sexpr-builder-push
   [builder : SpannedSexprBuilder]
@@ -726,20 +428,6 @@
     (set! (array-ref sp-builder-slots sp-builder-count) item)
     (set! sp-builder-count (+ sp-builder-count 1))
     builder))
-
-(define (sexpr-list-from-builder [builder : SexprBuilder]) : Sexpr
-  (let
-    [start : i64 (sexpr-node-pool-len)]
-    [builder-start : i64 builder.start]
-    [len : i64 (- sexpr-builder-count builder-start)]
-    [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (sexpr-node-push (sexpr-builder-shared-view (+ builder-start i)))
-          (set! i (+ i 1))))
-      (set! sexpr-builder-count builder-start)
-      (Sexpr.List start len))))
 
 (define (spanned-sexpr-list-from-builder
   [builder : SpannedSexprBuilder]
@@ -756,9 +444,6 @@
           (set! i (+ i 1))))
       (set! sp-builder-count builder-start)
       (SpannedSexpr.List start len span))))
-
-(define (sexpr-builder-discard! [builder : SexprBuilder]) : unit
-  (set! sexpr-builder-count builder.start))
 
 (define (spanned-sexpr-builder-discard! [builder : SpannedSexprBuilder]) : unit
   (set! sp-builder-count builder.start))
@@ -856,20 +541,6 @@
       (SpannedSexpr.BracketList start length span)]
     [_ (io.panic "reader: bracket form requires a proper list")]))
 
-(define (sexpr-view [s : Sexpr]) : SexprView
-  (match s
-    [(Sexpr.Int n text) (SexprView.Int n text)]
-    [(Sexpr.Sym name) (SexprView.Sym name)]
-    [(Sexpr.List start length)
-      (if (<= length 0)
-        SexprView.Nil
-        (SexprView.Cons
-          (sexpr-node-get start)
-          (Sexpr.List (+ start 1) (- length 1))))]
-    [(Sexpr.Str text) (SexprView.Str text)]
-    [(Sexpr.Char c) (SexprView.Char c)]
-    [(Sexpr.Float text) (SexprView.Float text)]))
-
 (define (spanned-sexpr-view [s : SpannedSexpr]) : SpannedSexprView
   (match s
     [(SpannedSexpr.Int n text span) (SpannedSexprView.Int n text span)]
@@ -887,6 +558,24 @@
     [(SpannedSexpr.BracketList start length span)
       (SpannedSexprView.BracketList (SpannedSexpr.List start length span) span)]))
 
+(define (sexpr-list-view [start : i64] [length : i64] [span : token.SourceSpan]) : SexprView
+  (if (<= length 0)
+    SexprView.Nil
+    (SexprView.Cons
+      (sp-node-get start)
+      (SpannedSexpr.List (+ start 1) (- length 1) span))))
+
+(define (sexpr-view [s : SpannedSexpr]) : SexprView
+  (match s
+    [(SpannedSexpr.Int n text _) (SexprView.Int n text)]
+    [(SpannedSexpr.Sym name _) (SexprView.Sym name)]
+    [(SpannedSexpr.List start length span) (sexpr-list-view start length span)]
+    [(SpannedSexpr.Str text _) (SexprView.Str text)]
+    [(SpannedSexpr.Char c _) (SexprView.Char c)]
+    [(SpannedSexpr.Float text _) (SexprView.Float text)]
+    [(SpannedSexpr.BracketList start length span)
+      (sexpr-list-view start length span)]))
+
 (define (spanned-sexpr-span [s : SpannedSexpr]) : token.SourceSpan
   (match s
     [(SpannedSexpr.Int _ _ span) span]
@@ -897,51 +586,17 @@
     [(SpannedSexpr.Float _ span) span]
     [(SpannedSexpr.BracketList _ _ span) span]))
 
-(define (spanned-sexpr-range-form [start : i64] [length : i64]) : Sexpr
-  (let
-    [builder : SexprBuilder (sexpr-builder-new)]
-    [i : i64 0]
-    (begin
-      (while (< i length)
-        (begin
-          (set!
-            builder
-            (sexpr-builder-push
-              builder
-              (spanned-sexpr-form (sp-node-get (+ start i)))))
-          (set! i (+ i 1))))
-      (sexpr-list-from-builder builder))))
-
-(define (spanned-sexpr-form [s : SpannedSexpr]) : Sexpr
-  (match s
-    [(SpannedSexpr.Int n text _) (Sexpr.Int n text)]
-    [(SpannedSexpr.Sym sym _) (Sexpr.Sym sym)]
-    [(SpannedSexpr.List start length _) (spanned-sexpr-range-form start length)]
-    [(SpannedSexpr.Str text _) (Sexpr.Str text)]
-    [(SpannedSexpr.Char c _) (Sexpr.Char c)]
-    [(SpannedSexpr.Float text _) (Sexpr.Float text)]
-    [(SpannedSexpr.BracketList start length _)
-      (spanned-sexpr-range-form start length)]))
-
 ;; --------------------------------------------------------------------------
 ;; The reader cursor: a single mutable index into the
-;; `(__tl_dyn-array token.Token)`.
+;; `(__tl_dyn-array token.SpannedToken)`.
 ;; --------------------------------------------------------------------------
 ;; A TypeLisp function returns a single value, but the reader must both *return
-;; an `Sexpr`* and *advance past the tokens it consumed*. So the position is an
+;; a form* and *advance past the tokens it consumed*. So the position is an
 ;; out-param: a mutable reference to a single-cell `(__tl_dyn-array i64)`
 ;; (`cur`) holding the index of the token under the cursor.
 ;; Current cursor position (index of the token under the cursor).
 (define (cur-pos [cur : (& cur (__tl_dyn-array i64))]) : i64
   (array-ref cur 0))
-
-;; Kind tag of the token under the cursor, via the imported `token.tag`. This is
-;; the load-bearing cross-import call: the reader classifies a `token.Token` produced
-;; by the imported `lex` using the accessor defined in the imported token model.
-(define (peek-tag
-  [toks : (& toks (__tl_dyn-array token.Token))]
-  [cur : (& cur (__tl_dyn-array i64))]) : i64
-  (token.tag-ref (& (array-ref toks (cur-pos cur)))))
 
 (define (peek-spanned-tag
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -967,12 +622,6 @@
     [(= t (token.tag-comma)) (stable-syntax-id "unquote")]
     [(= t (token.tag-comma-at)) (stable-syntax-id "unquote-splicing")]
     [else (stable-syntax-id "quote")]))
-
-(define (prefix-form [name : ci.InternSyntaxId] [form : Sexpr]) : Sexpr
-  (sexpr-list-from-builder
-    (sexpr-builder-push
-      (sexpr-builder-push (sexpr-builder-new) (Sexpr.Sym name))
-      form)))
 
 (define (prefix-spanned-form
   [name : ci.InternSyntaxId]
@@ -1017,9 +666,14 @@
     (string.int->string (token.span-start-col span))))
 
 (define (unterminated-list-message [expected : i64]) : String
-  (str_cat.str-cat
-    "reader: unterminated list: reached end of input before "
-    (quoted-close-delimiter expected)))
+  (if sp-reader-data-mode?
+    (str_cat.str-cat
+      "reader: unterminated list (missing "
+      (quoted-close-delimiter expected)
+      ")")
+    (str_cat.str-cat
+      "reader: unterminated list: reached end of input before "
+      (quoted-close-delimiter expected))))
 
 (define (mismatched-close-message
   [expected : i64]
@@ -1034,21 +688,19 @@
     (span-location actual-span)))
 
 ;; --------------------------------------------------------------------------
-;; The reader proper: `read-form` and `read-list`, mutually recursive.
+;; The reader proper: forms and lists, mutually recursive.
 ;; --------------------------------------------------------------------------
-;; read-form: read exactly one s-expression starting at the cursor and return
-;; it, advancing the cursor past the tokens it consumed.
-;;   token.Token.Int n text -> Sexpr.Int n text  an integer atom with source spelling
-;;   token.Token.Float s -> Sexpr.Float s        a float atom carrying source text
-;;   token.Token.Sym s -> Sexpr.Sym s            a symbol atom
-;;   token.Token.Str s -> Sexpr.Str s            a string-literal atom (`"..."`)
-;;   token.Token.Char c -> Sexpr.Char c          a character-literal atom (`'x'`)
-;;   token.Token.LParen -> list-result      consume '(' then read a list to its ')'
+;; form-spanned-result: read exactly one s-expression starting at the cursor
+;; and return it, advancing the cursor past the tokens it consumed.
+;;   token.Token.Int n text -> SpannedSexpr.Int  an integer atom with source spelling
+;;   token.Token.Float s -> SpannedSexpr.Float   a float atom carrying source text
+;;   token.Token.Sym s -> SpannedSexpr.Sym       a symbol atom
+;;   token.Token.Str s -> SpannedSexpr.Str       a string-literal atom (`"..."`)
+;;   token.Token.Char c -> SpannedSexpr.Char     a character-literal atom (`'x'`)
+;;   token.Token.LParen -> list-spanned-result   consume '(' then read a list to its ')'
 ;;   token.Token.RParen -> error                 a stray ')' with no opening '(' is malformed
 ;;   token.Token.End -> error                    end of stream where a form was expected
-;; A grammar violation returns a recoverable `ErrSexpr String`; the public
-;; `read` wrapper below still panics for callers that have not moved to
-;; `result`.
+;; A grammar violation returns a recoverable `ResultSpannedSexpr.Err`.
 (define (form-spanned-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [cur : (&mut cur (__tl_dyn-array i64))]) : ResultSpannedSexpr
@@ -1212,7 +864,8 @@
       (spanned-sexpr-adjacent?
         (unsafe
           (ptr-read (ptr-addr-of base)))
-        span))
+        span)
+      (not sp-reader-data-mode?))
       (let
         [text : String (ci.intern-id-str (token.sym-id tok))]
         (if (projection-suffix-symbol? text)
@@ -1254,7 +907,7 @@
       [(= t (token.tag-end))
         (ResultSpannedSexpr.Err
           (token.SourceError (unterminated-list-message close-tag) open-span))]
-      [(opposite-close-delimiter? t close-tag)
+      [(and (opposite-close-delimiter? t close-tag) (not sp-reader-data-mode?))
         (ResultSpannedSexpr.Err
           (token.SourceError (mismatched-close-message close-tag t span) span))]
       [else
@@ -1313,153 +966,6 @@
           (sp-node-pool-truncate! pool-mark)
           (ResultSpannedSexpr.Err err))])))
 
-(define (form-result
-  [toks : (& toks (__tl_dyn-array token.Token))]
-  [cur : (&mut cur (__tl_dyn-array i64))]) : ResultSexpr
-  (let
-    [tok : (& toks token.Token) (& (array-ref toks (cur-pos cur)))]
-    [t : i64 (peek-tag toks cur)]
-    (cond
-      [(= t (token.tag-int))
-        (let
-          [value : i64 (token.int tok)]
-          [text : String (token.int-text tok)]
-          (begin
-            (advance cur)
-            (ResultSexpr.Ok (Sexpr.Int value text))))]
-      [(= t (token.tag-float))
-        (let
-          [text : String (token.float tok)]
-          (begin
-            (advance cur)
-            (ResultSexpr.Ok (Sexpr.Float text))))]
-      [(= t (token.tag-sym))
-        (let
-          [name-id : ci.InternId (token.sym-id tok)]
-          (begin
-            (advance cur)
-            (ResultSexpr.Ok
-              (Sexpr.Sym (ci.intern-syntax-id-from-renderable name-id)))))]
-      [(= t (token.tag-str))
-        (let
-          [string-id : ci.InternId (token.str-id tok)]
-          (begin
-            (advance cur)
-            (ResultSexpr.Ok (Sexpr.Str string-id))))]
-      [(= t (token.tag-char))
-        (let
-          [value : char (token.char tok)]
-          (begin
-            (advance cur)
-            (ResultSexpr.Ok (Sexpr.Char value))))]
-      [(= t (token.tag-lparen))
-        (begin
-          (advance cur)
-          (list-result toks cur))]
-      [(= t (token.tag-lbracket))
-        (begin
-          (advance cur)
-          (bracket-list-result toks cur))]
-      [(prefix-tag? t)
-        (let
-          [name : ci.InternSyntaxId (prefix-symbol t)]
-          (begin
-            (advance cur)
-            (match (form-result toks cur)
-              [(ResultSexpr.Ok form) (ResultSexpr.Ok (prefix-form name form))]
-              [(ResultSexpr.Err message) (ResultSexpr.Err message)])))]
-      [(= t (token.tag-rparen)) (ResultSexpr.Err "reader: unexpected ')'")]
-      [(= t (token.tag-rbracket)) (ResultSexpr.Err "reader: unexpected ']'")]
-      [else (ResultSexpr.Err "reader: unexpected end of input")])))
-
-;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
-;; until the matching ')' into a growable temporary builder. Completing the
-;; form copies that builder once into a contiguous child range in source order.
-;; The base case consumes the closing delimiter and records the range; hitting
-;; `token.Token.End` first returns `ErrSexpr`. Nesting is handled for free: a
-;; head form that starts with '(' re-enters `form-result` -> `list-result`,
-;; completes its own child range, and then becomes one value in this builder.
-(define (list-result-with-close
-  [toks : (& toks (__tl_dyn-array token.Token))]
-  [cur : (&mut cur (__tl_dyn-array i64))]
-  [close-tag : i64]
-  [unterminated-message : String]
-  [builder : SexprBuilder]) : ResultSexpr
-  (let
-    [t : i64 (peek-tag toks cur)]
-    (if (= t close-tag)
-      ;; End of this list: consume the ')' and seal the dense child range.
-      (begin
-        (advance cur)
-        (ResultSexpr.Ok (sexpr-list-from-builder builder)))
-      (if (= t (token.tag-end))
-        (ResultSexpr.Err unterminated-message)
-        ;; A list element: read the next form (which advances the cursor past
-        ;; it, however deeply nested), append it, and continue.
-        (match (form-result toks cur)
-          [(ResultSexpr.Ok head)
-            (list-result-with-close
-              toks
-              cur
-              close-tag
-              unterminated-message
-              (sexpr-builder-push builder head))]
-          [(ResultSexpr.Err message) (ResultSexpr.Err message)])))))
-
-(define (list-result
-  [toks : (& toks (__tl_dyn-array token.Token))]
-  [cur : (&mut cur (__tl_dyn-array i64))]) : ResultSexpr
-  (let
-    [pool-mark : i64 (sexpr-node-pool-len)]
-    [builder : SexprBuilder (sexpr-builder-new)]
-    [result : ResultSexpr
-      (list-result-with-close
-        toks
-        cur
-        (token.tag-rparen)
-        "reader: unterminated list (missing ')')"
-        builder)]
-    (match result
-      [(ResultSexpr.Ok form) (ResultSexpr.Ok form)]
-      [(ResultSexpr.Err message)
-        (begin
-          (sexpr-builder-discard! builder)
-          (sexpr-node-pool-truncate! pool-mark)
-          (ResultSexpr.Err message))])))
-
-(define (bracket-list-result
-  [toks : (& toks (__tl_dyn-array token.Token))]
-  [cur : (&mut cur (__tl_dyn-array i64))]) : ResultSexpr
-  (let
-    [pool-mark : i64 (sexpr-node-pool-len)]
-    [builder : SexprBuilder (sexpr-builder-new)]
-    [result : ResultSexpr
-      (list-result-with-close
-        toks
-        cur
-        (token.tag-rbracket)
-        "reader: unterminated list (missing ']')"
-        builder)]
-    (match result
-      [(ResultSexpr.Ok form) (ResultSexpr.Ok form)]
-      [(ResultSexpr.Err message)
-        (begin
-          (sexpr-builder-discard! builder)
-          (sexpr-node-pool-truncate! pool-mark)
-          (ResultSexpr.Err message))])))
-
-;; read: the public entry point. Read a single top-level form from the front of
-;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing
-;; tokens after the first form are ignored here, as a top-level `read` returns
-;; one datum at a time.)
-(define (result [toks : (__tl_dyn-array token.Token)]) : ResultSexpr
-  (let
-    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (begin
-      (sexpr-node-pool-reset!)
-      (set! (array-ref cur 0) 0)
-      (form-result (& toks) (&mut cur)))))
-
 (define (spanned-result [toks : (__tl_dyn-array token.SpannedToken)]) : ResultSpannedSexpr
   (let
     [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -1467,6 +973,31 @@
       (set! sp-builder-count 0)
       (set! (array-ref cur 0) 0)
       (form-spanned-result (& toks) (&mut cur)))))
+
+;; Read one plain data form from the front of `src` (a lockfile, TLCI
+;; metadata): no projection suffixes, a stray closing delimiter is unexpected
+;; rather than mismatched, and errors are message-only. The form's rows stay in
+;; the node pool; callers truncate it to their own mark once they have copied
+;; out what they need. A lexer error panics.
+(define (data-result [src : String]) : ResultSexpr
+  (match (lexer.spanned-result src)
+    [(lexer.ResultSpannedTokens.Err err)
+      (io.panic (token.source-error-message err))]
+    [(lexer.ResultSpannedTokens.Ok toks)
+      (let
+        [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        (begin
+          (set! (array-ref cur 0) 0)
+          (set! sp-reader-data-mode? true)
+          (let
+            [result : ResultSpannedSexpr
+              (form-spanned-result (& toks) (&mut cur))]
+            (begin
+              (set! sp-reader-data-mode? false)
+              (match result
+                [(ResultSpannedSexpr.Ok form) (ResultSexpr.Ok form)]
+                [(ResultSpannedSexpr.Err err)
+                  (ResultSexpr.Err (token.source-error-message err))])))))]))
 
 (define (symbol-id-preservation-ok?) : bool
   (match (lexer.spanned-result "(alpha alpha)")
@@ -1506,12 +1037,7 @@
             [(ResultSpannedSexpr.Err _) false])))]
     [(lexer.ResultSpannedTokens.Err _) false]))
 
-(define (read [toks : (__tl_dyn-array token.Token)]) : Sexpr
-  (match (result toks)
-    [(ResultSexpr.Ok form) form]
-    [(ResultSexpr.Err message) (io.panic message)]))
-
-(define (reader-test-symbol? [form : Sexpr] [expected : String]) : bool
+(define (reader-test-symbol? [form : SpannedSexpr] [expected : String]) : bool
   (match (sexpr-view form)
     [(SexprView.Sym name-id)
       (string.eq (symbol-text-for-syntax-id name-id) expected)]
@@ -1548,15 +1074,17 @@
                 (token.source-error-message err)
                 "reader: dotted field access cannot use numeric field segments; use tuple-ref or array-ref")])))]))
 
-(define (reader-test-unspanned-dense-ranges?) : bool
-  (match (result (lexer.lex "(alpha (beta gamma) [])"))
+(define (reader-test-data-dense-ranges?) : bool
+  (match (begin
+    (sp-node-pool-reset!)
+    (data-result "(alpha (beta gamma) [])"))
     [(ResultSexpr.Err _) false]
     [(ResultSexpr.Ok form)
       (and
-        (= (sexpr-node-pool-len) 5)
+        (= (sp-node-pool-len) 5)
         (match (unsafe
           (ptr-read (ptr-addr-of form)))
-          [(Sexpr.List start length)
+          [(SpannedSexpr.List start length _)
             (and
               (= start 2)
               (= length 3)
@@ -1639,11 +1167,13 @@
                 [_ false]))])])))
 
 (define (reader-test-prefix-range?) : bool
-  (match (result (lexer.lex "'alpha"))
+  (match (begin
+    (sp-node-pool-reset!)
+    (data-result "'alpha"))
     [(ResultSexpr.Err _) false]
     [(ResultSexpr.Ok form)
       (and
-        (= (sexpr-node-pool-len) 2)
+        (= (sp-node-pool-len) 2)
         (match (sexpr-view form)
           [(SexprView.Cons quote tail)
             (and
@@ -1681,11 +1211,12 @@
 
 (define (reader-test-error-rolls-back-ranges?) : bool
   (let
-    [plain-error-ok : bool
-      (match (result (lexer.lex "((alpha)]"))
+    [_reset-data : unit (sp-node-pool-reset!)]
+    [data-error-ok : bool
+      (match (data-result "((alpha)]")
         [(ResultSexpr.Ok _) false]
         [(ResultSexpr.Err _)
-          (and (= (sexpr-node-pool-len) 0) (= sexpr-builder-count 0))])]
+          (and (= (sp-node-pool-len) 0) (= sp-builder-count 0))])]
     [_reset-spanned : unit (sp-node-pool-reset!)]
     [spanned-error-ok : bool
       (match (lexer.spanned-result "((alpha)]")
@@ -1715,11 +1246,48 @@
                         [(SpannedSexprView.Nil _) true]
                         [_ false]))]
                   [_ false]))])])]
-    [ok : bool (and plain-error-ok spanned-error-ok repeated-read-ok)]
+    [ok : bool (and data-error-ok spanned-error-ok repeated-read-ok)]
     (begin
       (sp-node-pool-reset!)
-      (sexpr-node-pool-reset!)
       ok)))
+
+(define (reader-test-data-error? [source : String] [expected : String]) : bool
+  (match (data-result source)
+    [(ResultSexpr.Ok _) false]
+    [(ResultSexpr.Err message) (string.eq message expected)]))
+
+;; `data-result` keeps the plain data reader's texts, and reads an adjacent
+;; `.name` after a list as a separate symbol.
+(define (reader-test-data-mode?) : bool
+  (let
+    [errors-ok : bool
+      (and
+        (reader-test-data-error?
+          "(alpha"
+          "reader: unterminated list (missing ')')")
+        (reader-test-data-error?
+          "[alpha"
+          "reader: unterminated list (missing ']')")
+        (reader-test-data-error? "(alpha]" "reader: unexpected ']'")
+        (reader-test-data-error? ")" "reader: unexpected ')'")
+        (reader-test-data-error? "" "reader: unexpected end of input"))]
+    [suffix-ok : bool
+      (match (data-result "((alpha).beta)")
+        [(ResultSexpr.Err _) false]
+        [(ResultSexpr.Ok form)
+          (match (sexpr-view form)
+            [(SexprView.Cons inner tail)
+              (and
+                (match (sexpr-view inner)
+                  [(SexprView.Cons alpha _) (reader-test-symbol? alpha "alpha")]
+                  [_ false])
+                (match (sexpr-view tail)
+                  [(SexprView.Cons beta _) (reader-test-symbol? beta ".beta")]
+                  [_ false]))]
+            [_ false])])]
+    (begin
+      (sp-node-pool-reset!)
+      (and errors-ok suffix-ok (not sp-reader-data-mode?)))))
 
 (define (reader-test-typed-traversal-ids?) : bool
   (let
@@ -1739,7 +1307,7 @@
             (ci.intern-id-value source))))]
     [span : token.SourceSpan (token.source-span-new 2 3 2 7)]
     (and
-      (match (sexpr-view (Sexpr.Sym structural))
+      (match (sexpr-view (SpannedSexpr.Sym structural span))
         [(SexprView.Sym found)
           (and
             (ci.intern-syntax-id-eq? found structural)
@@ -1752,7 +1320,7 @@
                   -1))
               "reader-view-name"))]
         [_ false])
-      (match (sexpr-view (Sexpr.Str text))
+      (match (sexpr-view (SpannedSexpr.Str text span))
         [(SexprView.Str found) (ci.intern-id-eq? found text)]
         [_ false])
       (match (spanned-sexpr-view (SpannedSexpr.Sym structural span))
@@ -1775,13 +1343,19 @@
 (test
   reader-dense-child-ranges
   (if (and
-    (reader-test-unspanned-dense-ranges?)
+    (reader-test-data-dense-ranges?)
     (reader-test-spanned-bracket-range?)
     (reader-test-prefix-range?)
     (reader-test-mismatched-delimiter?)
     (reader-test-error-rolls-back-ranges?))
     unit
     (io.panic "reader: dense child range self-test failed")))
+
+(test
+  reader-data-mode
+  (if (reader-test-data-mode?)
+    unit
+    (io.panic "reader: data mode self-test failed")))
 
 (test
   reader-projection-suffixes

@@ -1,8 +1,7 @@
 ;; compiler_ir_types.tl - Self-hosted compiler IR model.
 ;;
-;; This is the first selfhost IR shape for the real compiler pipeline. The data
-;; model is intentionally close to the Rust IR: functions contain blocks, blocks
-;; contain typed instructions, and instructions use explicit vars/values.
+;; Functions contain blocks, blocks contain typed instructions, and
+;; instructions use explicit vars/values.
 (import stdlib.string)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
@@ -206,8 +205,8 @@
   (compiler-ir-symbol name))
 
 ;; Block labels are interned, but into a table the IR owns rather than into the
-;; front end's `intern` pool. That pool is a fixed 131,072 slots sized for source
-;; identifiers and aborts when generated names exhaust it; a whole-program
+;; front end's `intern` pool. That pool is fixed-size, sized for source
+;; identifiers, and aborts when generated names exhaust it; a whole-program
 ;; self-compile creates far more block labels than that. This table grows, so
 ;; the id space is bounded by the labels actually created (refs #5718).
 ;;
@@ -329,11 +328,9 @@
 ;; logical spellings lowering mints for every function, global and call target
 ;; whose identity is not a parsed source symbol -- are interned into a table the
 ;; IR owns rather than into the front end's `intern` pool, for exactly the reason
-;; block labels are (above). That pool is a fixed 131,072 slots sized for source
-;; identifiers and aborts when generated names exhaust it, and a whole-program
-;; self-compile mints ~50,000 derived spellings, the bulk of the generated lane.
-;; This table grows, so the id space is bounded by the symbols actually created
-;; (refs #6293).
+;; block labels are (above): derived spellings are the bulk of a whole-program
+;; self-compile's generated names. This table grows, so the id space is bounded
+;; by the symbols actually created (refs #6293).
 ;;
 ;; Ids are `compiler-ir-symbol-base + dense-index`, placed in the fixed positive
 ;; domain [2*2^32, 3*2^32). This stays disjoint from the complete compact
@@ -744,8 +741,8 @@
 
 ;; SPMD mapping changes only each value. The IR-owned mechanics preserve the
 ;; value class and type metadata, visit exactly logical [0, len), and allocate
-;; one exact-size result array as the previous pass-local loops did. The mapper
-;; and visitor receive extra contexts followed by class and value.
+;; one exact-size result array. The mapper and visitor receive extra contexts
+;; followed by class and value.
 (defmacro (compiler-ir-spmd-call-args-map
   [args : Expr]
   [mapper : Expr]
@@ -5814,8 +5811,7 @@
 (define (compiler-ir-instr-builder-new) : CompilerIrInstrBuilder
   ;; Seed for the common small block: optimizer IR blocks are short
   ;; (entry/guard/branch fragments), so 8 covers most without a grow and
-  ;; halves the transient padding of the old 16 slot seed across the ~16k
-  ;; functions of a self-compile. Capacity is invisible to the final IR
+  ;; keeps the transient padding small. Capacity is invisible to the final IR
   ;; (the escape clone right-sizes every seq).
   (compiler-ir-instr-builder-with-capacity 8))
 
@@ -5843,9 +5839,9 @@
 
 (define (compiler-ir-block-builder-new) : CompilerIrBlockBuilder
   ;; Seed for the common small function: most lowered functions have four
-  ;; or fewer blocks, so 4 covers them without a grow and halves the
-  ;; transient padding of the old 8 slot seed. Capacity is invisible to the
-  ;; final IR (the escape clone right-sizes every seq).
+  ;; or fewer blocks, so 4 covers them without a grow and keeps the transient
+  ;; padding small. Capacity is invisible to the final IR (the escape clone
+  ;; right-sizes every seq).
   (compiler-ir-block-builder-with-capacity 4))
 
 (define (compiler-ir-block-builder-append-list!
@@ -7807,9 +7803,8 @@
         (compiler-ir-label-text default-label))]))
 
 ;; Render into a segmented text buffer: appending one instruction is O(its
-;; rendered size), so a full program render is linear in output bytes instead
-;; of the retired recursive suffix concatenation, which copied the remaining
-;; text once per element (#6115).
+;; rendered size), so a full program render is linear in output bytes rather
+;; than copying the remaining text once per element.
 (define (compiler-ir-instr-seq-render-into
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
@@ -8313,22 +8308,15 @@
     [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) CompilerIrEffect.ControlFlow]))
 
 ;; Source provenance side table for the lowered IR. Kept OUTSIDE
-;;
-;; `CompilerIrProgram` so the optimizer and liveness data model stay unchanged,
-;;
-;; mirroring the Rust pipeline's `SourceSpans`. It maps an IR function's name
-;;
-;; (including generated global-init functions) to the source path id and
-;; `AstSourceSpan` of the
-;;
-;; source construct that produced it, so backend diagnostics can report a real
-;;
-;; line/column instead of falling back to `path:1:1`.
+;; `CompilerIrProgram` so the optimizer and liveness data model stay unchanged.
+;; It maps an IR function's name (including generated global-init functions) to
+;; the source path id and `AstSourceSpan` of the source construct that produced
+;; it, so backend diagnostics can report a real line/column instead of falling
+;; back to `path:1:1`.
 ;;
 ;; The table is a deterministic dense sequence keyed by function symbol ID;
-;; rendering is reserved for diagnostics. Entries
-;;
-;; are appended in lowering order and lookup scans newest-to-oldest.
+;; rendering is reserved for diagnostics. Entries are appended in lowering order
+;; and lookup scans newest-to-oldest.
 (define compiler-debug-info-enabled : bool
   false)
 (define compiler-debug-path-remap-from : String
@@ -8650,8 +8638,8 @@
     key))
 
 ;; Record `name -> span`. Function names are unique in lowered programs. The
-;; dense list stores new entries at the end, and lookup scans newest-to-oldest to
-;; preserve the old cons-list first-binding behavior without O(n^2) appends.
+;; dense list stores new entries at the end, and lookup scans newest-to-oldest,
+;; so the most recently recorded binding wins without O(n^2) appends.
 (define (compiler-source-spans-insert
   [spans : CompilerSourceSpans]
   [name : CompilerIrSymbolId]

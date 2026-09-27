@@ -1,9 +1,8 @@
 ;; compiler_ctfe.tl - Selfhost compile-time function evaluation (CTFE) for
 ;; expression-position `(comptime expr)`.
 ;;
-;; Ports the scalar slice of the Rust reference `src/ctfe.rs`. Supported
-;; compile-time value types are i64, f64/f32, bool, char, unit, type values, and
-;; Expr / list aggregates.
+;; Supported compile-time value types are i64, f64/f32, bool, char, unit, type
+;; values, and Expr / list aggregates.
 ;;
 ;; Evaluation threads persistent environment snapshots through recursion, and
 ;; the step budget ("fuel") through results, so the evaluator stays
@@ -2674,8 +2673,7 @@
 
 ;; Result of evaluating a sub-expression: either a value (carrying the remaining
 ;; fuel) or a diagnostic. Fuel is threaded so each evaluation step decrements a
-;; shared budget across all sub-evaluations, matching the spirit of the Rust
-;; evaluator's per-step 10_000 fuel cap.
+;; shared budget across all sub-evaluations.
 (defenum ResultCtfe
   (Ok CompilerCtfeValue i64)
   (Err (Box cdiag.CompilerDiagnostic)))
@@ -2753,8 +2751,7 @@
       (cdiag.compiler-diagnostic-from-ast-span "" span message)]
     [_ (cdiag.compiler-diagnostic-at-start "" message)]))
 
-;; Human-readable tag for the unsupported-form diagnostic, mirroring
-;; `describe_expr` in src/ctfe.rs.
+;; Human-readable tag for the unsupported-form diagnostic.
 (define (ctfe-describe-expr [expr : ast.AstExpr]) : String
   (match expr
     [(ast.AstExpr.Spanned _ _) "expression"]
@@ -3920,7 +3917,7 @@
 
 ;; Nominal resolution without a whole-list clone: the map lookup and the
 ;; canonical-id field read both work through shared views, so a nested type-key
-;; walk no longer deep-copies the reflection list per recursion level. Only the
+;; walk does not deep-copy the reflection list per recursion level. Only the
 ;; small canonical `AstType` is returned.
 (define (ctfe-reflect-info-canonical-type-lookup
   [infos : (& infos CtfeReflectInfoList)]
@@ -4545,8 +4542,8 @@
 
 ;; --- core evaluator ---------------------------------------------------------
 ;; Evaluate `expr` under `env` with the given remaining `fuel`. Each call
-;; charges one unit of fuel up front (mirroring `use_fuel`); when fuel is
-;; exhausted the evaluation fails deterministically.
+;; charges one unit of fuel up front; when fuel is exhausted the evaluation
+;; fails deterministically.
 (define (compiler-ctfe-eval
   [expr : ast.AstExpr]
   [env : (& env CtfeEnv)]
@@ -5959,7 +5956,7 @@
             18))]
       ;; `floor` folds the two chain-walk stops into one compare: a chain link
       ;; is -1 at the end, so `candidate >= max(0, index-4096)` holds exactly
-      ;; when the old `candidate >= 0` and `index - candidate <= 4096` both did.
+      ;; when `candidate >= 0` and `index - candidate <= 4096` both hold.
       [floor : i64
         (let
           [oldest : i64 (- index 4096)]
@@ -5988,7 +5985,7 @@
               ;; changing which candidate wins. Rejected candidates leave every
               ;; other loop variable alone, so the scan for the next surviving
               ;; candidate is its own loop over `candidate` -- that keeps the
-              ;; ~94% of chain links that lose the probe off the merge path the
+              ;; many chain links that lose the probe off the merge path the
               ;; wider loop needs for best-len and best-offset.
               (while (and
                 (>= candidate floor)

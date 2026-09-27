@@ -173,12 +173,6 @@
       (= (array-ref offsets 2) 3)
       (= (lower.lower-array-var-set-max-offset merged) 4))))
 
-;; Lower every top-level decl of the expanded program. This used to be
-;; a tail-recursive walk (one call per decl), but the inline-aggregate TCO
-;; guard declines frame reuse here, so a whole-compiler input stacked
-;; one ~56KB frame per decl (7,035 frames = 402MB of the measured 502MB stack
-;; peak that forced the 1GB Windows reserves). Iterate instead; the
-;; threaded accumulators become loop state.
 (define (lower-skip-runtime-until-next-module [decls : ast.AstDeclList]) : ast.AstDeclList
   (match (ast.ast-decl-list-step (owned_view.compiler-owned-shared-view decls))
     [(ast.AstDeclListStep.Nil) (ast.ast-decl-list-new)]
@@ -13864,8 +13858,8 @@
 ;; A BoundsCheck lowers to one unsigned `cmpq length, index`, so an operand that
 ;; is already a width-64 integer is handed to the check directly instead of
 ;; through a materialised `Cast ... : u64`. `get` therefore keeps exactly ONE
-;; cast (the i64 gep-offset conversion) where it used to carry three; the length
-;; is loaded as i64 and used as-is.
+;; cast (the i64 gep-offset conversion); the length is loaded as i64 and used
+;; as-is.
 ;;
 ;; `get-narrow` is the width negative: an i32 index really must be extended, so
 ;; its u64 cast survives (two casts: the u64 check operand and the i64 gep

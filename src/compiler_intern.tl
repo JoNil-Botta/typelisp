@@ -190,17 +190,13 @@
 ;: session records. Raising it still requires auditing pool storage, generated
 ;: lanes, and the fixed-size lookup maps. Refs #6258, #6469.
 ;:
-;: 131072 -> 262144 (INTERN-CAP): the root package build (`build --opt-level 0`
-;: over the compiler's own closure, one process for every entry) met the two
-;: lanes at the old bound once the optimizer and allocator sources of #6248's
-;: packets were in the closure -- `tl: intern pool capacity exhausted: source
-;: and generated lanes met` in the stage2 cli gate, and byte-identical on a
-;: local bootstrap. The audit the note above asks for: every pool array is
-;: sized from this constant; the generated-id map is sized with it below
-;: (intern-generated-map-capacity); the structural pair cache, the AST node
-;: pool and the type dedup table carry their own 131072 and are not pool ids;
-;: the compact identity domains sit at 2^32 and above. Doubling costs the pool
-;: about eight megabytes more of fixed storage.
+;: INTERN-CAP: the root package build (`build --opt-level 0` over the
+;: compiler's own closure, one process for every entry) is what fills the two
+;: lanes. For that audit: every pool array is sized from this constant; the
+;: generated-id map is sized with it below (intern-generated-map-capacity); the
+;: structural pair cache, the AST node pool and the type dedup table carry
+;: their own capacities and are not pool ids; the compact identity domains sit
+;: at 2^32 and above.
 (define (intern-capacity) : i64
   262144)
 
@@ -2265,11 +2261,11 @@
 
 ;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
 ;: bucket placement, never the id a string gets (ids are insertion-ordered),
-;: so the function is free to change: byte-at-a-time djb2 was 18.6% of a
-;: stage2 self-compile profile before the marker memos and still ~8% after.
-;: Eight bytes are folded per step with a wrapping multiply; the byte tail is
-;: assembled into one final word. Overflow wraps in i64; the result may be
-;: negative, which is fine -- the bucket mask keeps only the low bits.
+;: so the function is free to change: byte-at-a-time djb2 was a large share of
+;: a self-compile profile. Eight bytes are folded per step with a wrapping
+;: multiply; the byte tail is assembled into one final word. Overflow wraps in
+;: i64; the result may be negative, which is fine -- the bucket mask keeps only
+;: the low bits.
 ;; --- compile-profile interning instrumentation ---
 ;; Deterministic per (compiler, input) counters that drive the redundant-
 ;; interning elimination work: hash-words counts every string hash (the real
@@ -3979,9 +3975,9 @@
 ;: `intern-generated-canonical-name` would have matched on.
 ;:
 ;: The canonical generated namespace is one namespace, so two mints of one
-;: spelling used to be one id however far apart they were -- which is how a
-;: derived symbol spelled like a runtime builtin (`tl_arena_current`, say) came
-;: out equal to that builtin's id, and why the backend can decide "the runtime
+;: spelling are one id however far apart they are -- which is how a derived
+;: symbol spelled like a runtime builtin (`tl_arena_current`, say) comes out
+;: equal to that builtin's id, and why the backend can decide "the runtime
 ;: provides this" with an integer compare. The IR's derived symbol table mints
 ;: outside this pool, so it asks here first and defers to an identity that
 ;: already exists rather than minting a second one for the same spelling.

@@ -1924,10 +1924,9 @@
               [(csym.ResultCompilerSymbols.Err _) false]))))]
     [(parser.ResultAstProgram.Err _) false]))
 
-;; Registry handle bounds (#7921): members round-trip through the handle at and
-;; around the old 1000 stride and at the new limits, distinct owners never share
-;; a handle, and a member index past the limit is a registration error rather
-;; than a handle.
+;; Registry handle bounds: members round-trip through the handle around index
+;; 1000 and at the limits, distinct owners never share a handle, and a member
+;; index past the limit is a registration error rather than a handle.
 (define (compiler-registry-handle-roundtrip-ok?
   [owner-index : i64]
   [child-index : i64]) : bool

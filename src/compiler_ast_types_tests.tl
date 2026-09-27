@@ -139,8 +139,8 @@
           (set! index (+ index 1))))
       out)))
 
-;; The AstType-taking constructors keep their signature and intern the type
-;; themselves, so the ~50 call sites that build a literal type are unchanged.
+;; The AstType-taking constructors intern the type themselves, so call sites
+;; can pass a literal type directly.
 ;; The `-id` twins below are for walks that already hold an AstTypeId and
 ;; would otherwise round-trip it through `ty-node-get`/`ty-node-push`.
 (define (ast-expr-ann [expr : i64] [ty : ast.AstType]) : i64

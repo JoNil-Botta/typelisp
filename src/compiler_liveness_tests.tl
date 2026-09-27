@@ -1,5 +1,5 @@
 ;; compiler_liveness_tests.tl - Liveness fixture builders and self-test checks
-;; split from production compiler_liveness.tl (simplify.md A1, #5169 pattern).
+;; split from production compiler_liveness.tl.
 ;;
 ;; Main-less companion imported by src/tests/compiler_liveness_smoke.tl: it
 ;; holds the CompilerLiveI64Set/scratch -ok? checks, the IR function fixtures,

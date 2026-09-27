@@ -490,8 +490,8 @@
 ;;
 ;; A generated module is materialized in FULL and typechecked in full,
 ;; independent of which of its methods a consumer references, because the
-;; reachability gate now runs AFTER typecheck (see
-;; lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools).
+;; reachability gate runs AFTER typecheck (see
+;; `lower-prune-unreachable-functions-with-clone-roots-and-plan`).
 ;; Referencing `push` only vs. `push` + `map` therefore adds zero new typecheck
 ;; work on the (vector C43Point) module and cannot surface a new type error from
 ;; its body. Both variants must lower cleanly.

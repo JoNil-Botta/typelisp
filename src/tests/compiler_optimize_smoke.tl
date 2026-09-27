@@ -1268,13 +1268,9 @@
             (opt-switch-entry-default-label dense-blocks)
             (ir.compiler-ir-label "fallback")))
         4]
-      [(ot.opt-block-list-has-label?
-          (opt.compiler-opt-global-shared-view dense-blocks)
-          (ir.compiler-ir-label "cmp1"))
+      [(ot.opt-block-list-has-label? dense-blocks (ir.compiler-ir-label "cmp1"))
         5]
-      [(ot.opt-block-list-has-label?
-          (opt.compiler-opt-global-shared-view dense-blocks)
-          (ir.compiler-ir-label "cmp2"))
+      [(ot.opt-block-list-has-label? dense-blocks (ir.compiler-ir-label "cmp2"))
         6]
       [(ot.opt-block-list-has-label? dense-blocks (ir.compiler-ir-label "cmp3"))
         7]
@@ -1325,7 +1321,7 @@
         18]
       [(not (opt-switch-test-block-starts-with-mov? prefix-entry)) 19]
       [(ot.opt-block-list-has-label?
-          (opt.compiler-opt-global-shared-view prefix-blocks)
+          prefix-blocks
           (ir.compiler-ir-label "cmp1"))
         20]
       [(ot.opt-block-list-has-label?
@@ -1524,9 +1520,7 @@
             5
             (opt-switch-test-arm-label 5)))
         82]
-      [(ot.opt-block-list-has-label?
-          (opt.compiler-opt-global-shared-view hop-blocks)
-          (ir.compiler-ir-label "hop"))
+      [(ot.opt-block-list-has-label? hop-blocks (ir.compiler-ir-label "hop"))
         83]
       [(ot.opt-block-list-has-label? hop-blocks (ir.compiler-ir-label "cmp4"))
         84]
@@ -2352,11 +2346,7 @@
                     (opt.compiler-opt-global-shared-view blocks))
                   7))
               (+ 20 (ir.compiler-ir-block-list-count blocks))]
-            [(not
-                (=
-                  (ot.opt-count-phi-blocks
-                    (opt.compiler-opt-global-shared-view blocks))
-                  2))
+            [(not (= (ot.opt-count-phi-blocks blocks) 2))
               (+ 40 (ot.opt-count-phi-blocks blocks))]
             [(not (smoke-inline-phi-loop-repaired? blocks)) 61]
             [(not (opt.opt-inline-structure-ok? blocks)) 62]

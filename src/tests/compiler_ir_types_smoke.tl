@@ -1952,7 +1952,7 @@
         (compiler-ir-smoke-representation-kind-group?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             group-ty)
           2
           2)
@@ -1961,7 +1961,7 @@
         (compiler-ir-smoke-representation-kind-group?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             region-ty)
           2
           2)
@@ -1970,7 +1970,7 @@
         (compiler-ir-smoke-representation-kind-group?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             signature-ty)
           2
           2)
@@ -1979,35 +1979,35 @@
         (compiler-ir-smoke-representation-kind-one?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             one-ty))
         (return 4))
       (unless
         (compiler-ir-smoke-representation-kind-unknown?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             conflict-ty))
         (return 5))
       (unless
         (compiler-ir-smoke-representation-kind-unknown?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             private-ty))
         (return 6))
       (unless
         (compiler-ir-smoke-representation-kind-unknown?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             malformed-ty))
         (return 7))
       (unless
         (compiler-ir-smoke-representation-kind-unknown?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             (ast.AstType.Var 99)))
         (return 8))
       (unless

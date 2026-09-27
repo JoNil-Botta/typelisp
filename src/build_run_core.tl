@@ -817,28 +817,25 @@
   (cond
     [(not
         (compiler_object_elf.compiler-object-elf-sections-supported?
-          (owned_view.compiler-owned-shared-view image.sections)))
+          image.sections))
       (SourceToolLinuxDirectObjectEligibility.Fallback
         backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
     [(not
         (compiler_object_elf.compiler-object-elf-relocation-list-supported?
-          (owned_view.compiler-owned-shared-view image.relocations)))
+          image.relocations))
       (SourceToolLinuxDirectObjectEligibility.Fallback
         backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
     [(not
         (and
           (compiler_object_elf.compiler-object-elf-relocation-sites-known?
-            (owned_view.compiler-owned-shared-view image)
-            (owned_view.compiler-owned-shared-view image.relocations))
-          (compiler_object_elf.compiler-object-elf-text-targets-known?
-            (owned_view.compiler-owned-shared-view image))
+            image
+            image.relocations)
+          (compiler_object_elf.compiler-object-elf-text-targets-known? image)
           (compiler_object_elf.compiler-object-elf-text-relocation-count-matches?
-            (owned_view.compiler-owned-shared-view image))))
+            image)))
       (SourceToolLinuxDirectObjectEligibility.Fallback
         backend.CompilerDirectObjectFallbackReason.ObjectFixup)]
-    [(not
-        (compiler_object_elf.compiler-object-elf-image-supported?
-          (owned_view.compiler-owned-shared-view image)))
+    [(not (compiler_object_elf.compiler-object-elf-image-supported? image))
       (SourceToolLinuxDirectObjectEligibility.Fallback
         backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
     [(match kind
@@ -846,12 +843,12 @@
           (not
             (or
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view image.symbols)
+                image.symbols
                 "_tl_start"
                 (cobj.CompilerObjectSymbolBinding.Export)
                 (cobj.CompilerObjectSymbolKind.Function))
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view image.symbols)
+                image.symbols
                 "main"
                 (cobj.CompilerObjectSymbolBinding.Export)
                 (cobj.CompilerObjectSymbolKind.Function))))]

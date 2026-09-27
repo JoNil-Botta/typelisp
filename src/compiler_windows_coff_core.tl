@@ -66,17 +66,13 @@
   [symbols : cobj.CompilerObjectSymbolList]
   [target : String]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [ok : bool true]
     [done : bool false]
     (begin
       (while (and (not done) (< index count))
-        (match (cobj.compiler-object-symbol-list-ref
-          (owned_view.compiler-owned-shared-view symbols)
-          index)
+        (match (cobj.compiler-object-symbol-list-ref symbols index)
           [(cobj.CompilerObjectSymbol.Symbol name binding kind _)
             (if (string.eq name target)
               (begin
@@ -97,9 +93,7 @@
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (cobj.compiler-object-relocation-list-ref
-          (owned_view.compiler-owned-shared-view relocs)
-          index)
+        (match (cobj.compiler-object-relocation-list-ref relocs index)
           [(cobj.CompilerObjectRelocation.Relocation _ _ _ target)
             (if (compiler-windows-coff-relocation-target-linkable?
               (owned_view.compiler-owned-shared-view symbols)
@@ -110,9 +104,7 @@
 
 (define (compiler-windows-coff-linkability [image : cobj.CompilerObjectImage]) : CompilerWindowsCoffLinkability
   (cond
-    [(not
-        (compiler_object_coff.compiler-object-coff-image-supported?
-          (owned_view.compiler-owned-shared-view image)))
+    [(not (compiler_object_coff.compiler-object-coff-image-supported? image))
       (CompilerWindowsCoffLinkability.Unavailable
         compiler_backend.CompilerDirectObjectFallbackReason.UnsupportedCoffImage)]
     [(not
@@ -123,7 +115,7 @@
         compiler_backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
     [(not
         (cobj.compiler-object-symbol-list-contains?
-          (owned_view.compiler-owned-shared-view image.symbols)
+          image.symbols
           "_tl_start"
           (cobj.CompilerObjectSymbolBinding.Export)
           (cobj.CompilerObjectSymbolKind.Function)))
@@ -131,7 +123,7 @@
         compiler_backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
     [(<
         (compiler_object_coff.compiler-object-coff-section-label-offset
-          (owned_view.compiler-owned-shared-view image)
+          image
           (cobj.CompilerObjectSectionKind.Text)
           "tl_setup_argv")
         0)
@@ -189,8 +181,7 @@
   (begin
     (cfg
       compile-profile
-      (compiler_driver_core.compiler-driver-profile-start-phase
-        (profile_state.compiler-profile-state-shared-view profile-state)))
+      (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
     (match (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
       backend-state
       pools
@@ -200,7 +191,7 @@
       spans
       true
       false
-      (profile_state.compiler-profile-state-shared-view profile-state))
+      profile-state)
       [(compiler_backend.ResultCompilerBackendBuffer.Ok asm)
         (begin
           (cfg
@@ -267,9 +258,9 @@
       typecheck-state)
     (match (compiler-windows-coff-object-program-eligibility
       backend-state
-      (owned_view.compiler-owned-shared-view pools)
+      pools
       (owned_view.compiler-owned-shared-view program)
-      (profile_state.compiler-profile-state-shared-view profile-state))
+      profile-state)
       [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
         (compiler-windows-batch-emit-assembly
           backend-state
@@ -286,24 +277,23 @@
           (cfg
             compile-profile
             (compiler_driver_core.compiler-driver-profile-start-phase
-              (profile_state.compiler-profile-state-shared-view profile-state)))
+              profile-state))
           (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
             backend-state
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             (owned_view.compiler-owned-shared-view program)
             (compiler_backend.CompilerBackendTarget.Windows)
             mode
             (owned_view.compiler-owned-shared-view spans)
             true
             false
-            (profile_state.compiler-profile-state-shared-view profile-state))
+            profile-state)
             [(compiler_backend.ResultCompilerBackendObject.Ok image)
               (begin
                 (cfg
                   compile-profile
                   (compiler_driver_core.compiler-driver-profile-finish-phase
-                    (profile_state.compiler-profile-state-shared-view
-                      profile-state)
+                    profile-state
                     "backend.object-image"))
                 (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
                   typecheck-state
@@ -315,10 +305,9 @@
                       (cfg
                         compile-profile
                         (compiler_driver_core.compiler-driver-profile-start-phase
-                          (profile_state.compiler-profile-state-shared-view
-                            profile-state)))
+                          profile-state))
                       (match (compiler_object_coff.compiler-object-coff-render
-                        (owned_view.compiler-owned-shared-view image))
+                        image)
                         [(compiler_object_coff.ResultCompilerObjectCoff.Ok
                             object)
                           (begin
@@ -421,15 +410,14 @@
       (compiler_driver_core.compiler-driver-retire-frontend-arena!)
       (cfg
         compile-profile
-        (compiler_driver_core.compiler-driver-profile-start-phase
-          (profile_state.compiler-profile-state-shared-view profile-state)))
+        (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program
         program
         spans
         (compiler_optimize.OptimizeRequest
           (owned_view.compiler-owned-shared-view pools)
           opt-level
-          (profile_state.compiler-profile-state-shared-view profile-state)
+          profile-state
           false
           (compiler_ir_types.compiler-ir-representation-index-empty)))
         [(compiler_optimize.CompilerOptimizedProgram.Program
@@ -439,7 +427,7 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (profile_state.compiler-profile-state-shared-view profile-state)
+                profile-state
                 "optimize"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
               typecheck-state

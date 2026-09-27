@@ -3,6 +3,7 @@
 (import compiler_regalloc as reg)
 (import compiler_regalloc_tests as reg_tests)
 (import compiler_ir_types as ir)
+(import compiler_ir_text as irt)
 
 (define (compiler-regalloc-smoke-instr-seq-prepend
   [instr : ir.CompilerIrInstr]
@@ -44,20 +45,11 @@
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-regalloc-smoke-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 1)
-              (reg_tests.compiler-reg-i64-ty))
+            (irt.instr "%0 = mov 1 : i64")
             (compiler-regalloc-smoke-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.I64 2)
-                (reg_tests.compiler-reg-i64-ty))
+              (irt.instr "%1 = mov 2 : i64")
               (compiler-regalloc-smoke-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  2
-                  (ir.CompilerIrValue.I64 3)
-                  (reg_tests.compiler-reg-i64-ty))
+                (irt.instr "%2 = mov 3 : i64")
                 (compiler-regalloc-smoke-instr-seq-prepend
                   (ir.compiler-ir-test-spmd-private-call
                     (ci.intern-generated-canonical-name "spmd_helper")
@@ -69,16 +61,9 @@
                       3
                       (ir.CompilerIrSpmdValueClass.Varying)
                       (reg_tests.compiler-reg-i64-ty)))
-                  (compiler-regalloc-smoke-instr-seq-prepend
-                    (ir.CompilerIrInstr.Mov
-                      4
-                      (ir.CompilerIrValue.Var 3)
-                      (reg_tests.compiler-reg-i64-ty))
-                    (compiler-regalloc-smoke-instr-seq-prepend
-                      (ir.CompilerIrInstr.Return
-                        (ir.CompilerIrMaybeValue.Some
-                          (ir.CompilerIrValue.Var 4)))
-                      (ir.compiler-ir-instr-seq-empty))))))))
+                  (irt.instrs
+                    "%4 = mov %3 : i64
+                     return %4"))))))
         ir.CompilerIrBlockList.Nil)
       ir.CompilerIrFunctionAbi.Ordinary)))
 
@@ -116,44 +101,22 @@
 (define (compiler-reg-smoke-descriptor-pair-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ci.intern-generated-canonical-name "descriptor_pair")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "handle" (ast.AstType.String) 0)
-      (ir.compiler-ir-param-seq-empty))
+    (irt.params "handle=%0:String")
     (ast.AstType.I64)
     8
     (ir.compiler-ir-block-cons
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-regalloc-smoke-instr-seq-prepend
-          (ir.CompilerIrInstr.Load
-            1
-            (ir.CompilerIrValue.Var 0)
-            (ast.AstType.U64))
+          (irt.instr "%1 = load %0 : u64")
           (compiler-regalloc-smoke-instr-seq-prepend
-            (ir.CompilerIrInstr.Gep
-              2
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 8)
-              (ast.AstType.U8))
+            (irt.instr "%2 = gep %0, 8 : u8")
             (compiler-regalloc-smoke-instr-seq-prepend
-              (ir.CompilerIrInstr.Load
-                3
-                (ir.CompilerIrValue.Var 2)
-                (ast.AstType.I64))
+              (irt.instr "%3 = load %2 : i64")
               (compiler-regalloc-smoke-instr-seq-prepend
-                (ir.CompilerIrInstr.Pack
-                  4
-                  (ir.compiler-ir-value-seq-prepend
-                    (ir.CompilerIrValue.Var 1)
-                    (ir.compiler-ir-value-seq-prepend
-                      (ir.CompilerIrValue.Var 3)
-                      (ir.compiler-ir-value-seq-empty)))
-                  (ast.AstType.String))
+                (irt.instr "%4 = pack [%1, %3] : String")
                 (compiler-regalloc-smoke-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    5
-                    (ir.CompilerIrValue.Var 4)
-                    (ast.AstType.String))
+                  (irt.instr "%5 = mov %4 : String")
                   (compiler-regalloc-smoke-instr-seq-prepend
                     (ir.ir-instr-descriptor-pair-data
                       6
@@ -162,11 +125,7 @@
                       (ir.ir-instr-descriptor-pair-length
                         7
                         (ir.CompilerIrValue.Var 5))
-                      (compiler-regalloc-smoke-instr-seq-prepend
-                        (ir.CompilerIrInstr.Return
-                          (ir.CompilerIrMaybeValue.Some
-                            (ir.CompilerIrValue.Var 7)))
-                        (ir.compiler-ir-instr-seq-empty))))))))))
+                      (irt.instrs "return %7")))))))))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 

@@ -6,6 +6,7 @@
 (import compiler_abi as cabi)
 (import compiler_liveness as live)
 (import compiler_ir_types as ir)
+(import compiler_ir_text as irt)
 (import compiler_owned_view as owned_view)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
@@ -262,75 +263,22 @@
 (cfg
   test
   (define (compiler-reg-early-exit-general-test-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "early_exit_general")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "n" (ast.AstType.I64) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "limit" (ast.AstType.I64) 1)
-          (ir.compiler-ir-param-seq-empty)))
-      (ast.AstType.I64)
-      5
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              2
-              (ir.CompilerIrBinOp.Le)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.I64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 2)
-                (ir.compiler-ir-label "zero")
-                (ir.compiler-ir-label "guard_limit"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "zero")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "guard_limit")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  3
-                  (ir.CompilerIrBinOp.Gt)
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.Var 1)
-                  (ast.AstType.I64))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var 3)
-                    (ir.compiler-ir-label "one")
-                    (ir.compiler-ir-label "body"))
-                  (ir.compiler-ir-instr-seq-empty))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "one")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 1)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "body")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Call
-                      4
-                      (ir.compiler-ir-test-symbol "work")
-                      ir.CompilerIrCallArgs.Nil
-                      (ast.AstType.I64))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "entry"))
-                      (ir.compiler-ir-instr-seq-empty))))
-                ir.CompilerIrBlockList.Nil)))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @early_exit_general(n=%0:i64, limit=%1:i64) -> i64 vars 5 {
+       entry:
+         %2 = le %0, 0 : i64
+         branch %2, zero, guard_limit
+       zero:
+         return 0
+       guard_limit:
+         %3 = gt %0, %1 : i64
+         branch %3, one, body
+       one:
+         return 1
+       body:
+         %4 = call work() : i64
+         jump entry
+       }")))
 
 (cfg
   test
@@ -390,51 +338,17 @@
 (cfg
   test
   (define (compiler-reg-early-exit-float-guard-test-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "early_exit_float_guard")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "actual" (ast.AstType.F64) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "expected" (ast.AstType.F64) 1)
-          (ir.compiler-ir-param-seq-empty)))
-      (ast.AstType.Unit)
-      4
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              2
-              (ir.CompilerIrBinOp.Eq)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 1)
-              (ast.AstType.F64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 2)
-                (ir.compiler-ir-label "equal")
-                (ir.compiler-ir-label "failure"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "equal")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "failure")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Call
-                  3
-                  (ir.compiler-ir-test-symbol "report_float_failure")
-                  ir.CompilerIrCallArgs.Nil
-                  (ast.AstType.Unit))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty))))
-            ir.CompilerIrBlockList.Nil)))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @early_exit_float_guard(actual=%0:f64, expected=%1:f64) -> unit vars 4 {
+       entry:
+         %2 = eq %0, %1 : f64
+         branch %2, equal, failure
+       equal:
+         return
+       failure:
+         %3 = call report_float_failure() : unit
+         return
+       }")))
 
 (cfg
   test
@@ -456,83 +370,24 @@
 (cfg
   test
   (define (compiler-reg-cold-call-test-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "cold_call_split")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "map" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "key" (compiler-reg-i64-ty) 1)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "value" (compiler-reg-i64-ty) 2)
-            (ir.compiler-ir-param-seq-empty))))
-      (ast.AstType.I64)
-      6
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Bool false)
-              (ir.compiler-ir-label "cold")
-              (ir.compiler-ir-label "bypass"))
-            (ir.compiler-ir-instr-seq-empty)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "cold")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                3
-                (ir.compiler-ir-test-symbol "grow")
-                (ir.CompilerIrCallArgs.Nil)
-                (ast.AstType.Unit))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "bypass")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "join")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    4
-                    (ir.CompilerIrBinOp.Add)
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.CompilerIrValue.Var 1)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.BinOp
-                      5
-                      (ir.CompilerIrBinOp.Add)
-                      (ir.CompilerIrValue.Var 4)
-                      (ir.CompilerIrValue.Var 2)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                      (ir.compiler-ir-instr-seq-empty)))))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "loop")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Bool false)
-                      (ir.compiler-ir-label "loop")
-                      (ir.compiler-ir-label "exit"))
-                    (ir.compiler-ir-instr-seq-empty)))
-                (ir.compiler-ir-block-cons
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "exit")
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Return
-                        (ir.CompilerIrMaybeValue.Some
-                          (ir.CompilerIrValue.Var 5)))
-                      (ir.compiler-ir-instr-seq-empty)))
-                  ir.CompilerIrBlockList.Nil))))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @cold_call_split(map=%0:i64, key=%1:i64, value=%2:i64) -> i64 vars 6 {
+       entry:
+         branch false, cold, bypass
+       cold:
+         %3 = call grow() : unit
+         jump join
+       bypass:
+         jump join
+       join:
+         %4 = add %0, %1 : i64
+         %5 = add %4, %2 : i64
+         jump loop
+       loop:
+         branch false, loop, exit
+       exit:
+         return %5
+       }")))
 
 (cfg
   test
@@ -634,58 +489,21 @@
 (cfg
   test
   (define (compiler-reg-call-hole-loop-shape-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "call_hole_loop_shape")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-            (ir.compiler-ir-instr-seq-empty)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "header")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Bool false)
-                  (ir.compiler-ir-label "latch")
-                  (ir.compiler-ir-label "miss"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "latch")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                  (ir.compiler-ir-instr-seq-empty)))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "miss")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 1)))
-                    (ir.compiler-ir-instr-seq-empty)))
-                (ir.compiler-ir-block-cons
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "exit")
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Return
-                        (ir.CompilerIrMaybeValue.Some
-                          (ir.CompilerIrValue.I64 0)))
-                      (ir.compiler-ir-instr-seq-empty)))
-                  ir.CompilerIrBlockList.Nil))))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @call_hole_loop_shape() -> i64 vars 1 {
+       entry:
+         jump header
+       header:
+         branch false, body, exit
+       body:
+         branch false, latch, miss
+       latch:
+         jump header
+       miss:
+         return 1
+       exit:
+         return 0
+       }")))
 
 (cfg
   test
@@ -757,66 +575,54 @@
   (define (compiler-reg-block-weights-switch-block [label : String]) : ir.CompilerIrBlock
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label label)
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Switch
-          (ir.CompilerIrValue.Var 0)
-          3
-          (ir.compiler-ir-switch-case-seq3
-            (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "s0"))
-            (ir.CompilerIrSwitchCase.Case 1 (ir.compiler-ir-label "s1"))
-            (ir.CompilerIrSwitchCase.Case 2 (ir.compiler-ir-label "s2")))
-          (ir.compiler-ir-label "s3"))
-        (ir.compiler-ir-instr-seq-empty)))))
+      (irt.instrs "switch %0 base 3 [0:s0, 1:s1, 2:s2] default s3"))))
 
 (cfg
   test
   (define (compiler-reg-block-weights-return-block [label : String]) : ir.CompilerIrBlock
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label label)
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Return
-          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-        (ir.compiler-ir-instr-seq-empty)))))
+      (irt.instrs "return 0"))))
 
 ;; entry -> header -> body -> {left, right}; left -> join; right dispatches to
 ;; s0..s3 -> join; join -> header; header -> exit.
 (cfg
   test
   (define (compiler-reg-block-weights-dispatch-loop-blocks) : ir.CompilerIrBlockList
-    (ir.compiler-ir-block-cons
-      (compiler-reg-block-weights-jump-block "entry" "header")
-      (ir.compiler-ir-block-cons
-        (compiler-reg-block-weights-branch-block "header" "body" "exit")
-        (ir.compiler-ir-block-cons
-          (compiler-reg-block-weights-branch-block "body" "left" "right")
-          (ir.compiler-ir-block-cons
-            (compiler-reg-block-weights-jump-block "left" "join")
-            (ir.compiler-ir-block-cons
-              (compiler-reg-block-weights-switch-block "right")
-              (ir.compiler-ir-block-cons
-                (compiler-reg-block-weights-jump-block "s0" "join")
-                (ir.compiler-ir-block-cons
-                  (compiler-reg-block-weights-jump-block "s1" "join")
-                  (ir.compiler-ir-block-cons
-                    (compiler-reg-block-weights-jump-block "s2" "join")
-                    (ir.compiler-ir-block-cons
-                      (compiler-reg-block-weights-jump-block "s3" "join")
-                      (ir.compiler-ir-block-cons
-                        (compiler-reg-block-weights-jump-block "join" "header")
-                        (ir.compiler-ir-block-cons
-                          (compiler-reg-block-weights-return-block "exit")
-                          ir.CompilerIrBlockList.Nil)))))))))))))
+    (irt.blocks
+      "entry:
+         jump header
+       header:
+         branch false, body, exit
+       body:
+         branch false, left, right
+       left:
+         jump join
+       right:
+         switch %0 base 3 [0:s0, 1:s1, 2:s2] default s3
+       s0:
+         jump join
+       s1:
+         jump join
+       s2:
+         jump join
+       s3:
+         jump join
+       join:
+         jump header
+       exit:
+         return 0")))
 
 (cfg
   test
   (define (compiler-reg-block-weights-straight-blocks) : ir.CompilerIrBlockList
-    (ir.compiler-ir-block-cons
-      (compiler-reg-block-weights-jump-block "entry" "next")
-      (ir.compiler-ir-block-cons
-        (compiler-reg-block-weights-jump-block "next" "last")
-        (ir.compiler-ir-block-cons
-          (compiler-reg-block-weights-return-block "last")
-          ir.CompilerIrBlockList.Nil)))))
+    (irt.blocks
+      "entry:
+         jump next
+       next:
+         jump last
+       last:
+         return 0")))
 
 (cfg
   test
@@ -867,91 +673,28 @@
 (cfg
   test
   (define (compiler-reg-call-hole-cold-arm-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "call_hole_cold_arm")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      3
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Bool false)
-              (ir.compiler-ir-label "cold")
-              (ir.compiler-ir-label "join"))
-            (ir.compiler-ir-instr-seq-empty)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "cold")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                0
-                (ir.compiler-ir-test-symbol "f")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "join")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "header")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Bool false)
-                    (ir.compiler-ir-label "body")
-                    (ir.compiler-ir-label "exit"))
-                  (ir.compiler-ir-instr-seq-empty)))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "body")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Call
-                      1
-                      (ir.compiler-ir-test-symbol "g")
-                      (ir.CompilerIrCallArgs.Nil)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Branch
-                        (ir.CompilerIrValue.Bool false)
-                        (ir.compiler-ir-label "arm")
-                        (ir.compiler-ir-label "latch"))
-                      (ir.compiler-ir-instr-seq-empty))))
-                (ir.compiler-ir-block-cons
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "arm")
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Call
-                        2
-                        (ir.compiler-ir-test-symbol "h")
-                        (ir.CompilerIrCallArgs.Nil)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                        (ir.compiler-ir-instr-seq-empty))))
-                  (ir.compiler-ir-block-cons
-                    (ir.CompilerIrBlock.Block
-                      (ir.compiler-ir-label "latch")
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Jump
-                          (ir.compiler-ir-label "header"))
-                        (ir.compiler-ir-instr-seq-empty)))
-                    (ir.compiler-ir-block-cons
-                      (ir.CompilerIrBlock.Block
-                        (ir.compiler-ir-label "exit")
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Return
-                            (ir.CompilerIrMaybeValue.Some
-                              (ir.CompilerIrValue.I64 0)))
-                          (ir.compiler-ir-instr-seq-empty)))
-                      ir.CompilerIrBlockList.Nil))))))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @call_hole_cold_arm() -> i64 vars 3 {
+       entry:
+         branch false, cold, join
+       cold:
+         %0 = call f() : i64
+         jump join
+       join:
+         jump header
+       header:
+         branch false, body, exit
+       body:
+         %1 = call g() : i64
+         branch false, arm, latch
+       arm:
+         %2 = call h() : i64
+         jump latch
+       latch:
+         jump header
+       exit:
+         return 0
+       }")))
 
 (cfg
   test
@@ -1006,50 +749,18 @@
 (cfg
   test
   (define (compiler-reg-call-hole-bypass-loop-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "call_hole_bypass_loop")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Bool false)
-              (ir.compiler-ir-label "fast")
-              (ir.compiler-ir-label "slow"))
-            (ir.compiler-ir-instr-seq-empty)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "fast")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                0
-                (ir.compiler-ir-test-symbol "bulk")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "slow")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Bool false)
-                  (ir.compiler-ir-label "slow")
-                  (ir.compiler-ir-label "join"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "join")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @call_hole_bypass_loop() -> i64 vars 1 {
+       entry:
+         branch false, fast, slow
+       fast:
+         %0 = call bulk() : i64
+         jump join
+       slow:
+         branch false, slow, join
+       join:
+         return 0
+       }")))
 
 (cfg
   test
@@ -1085,79 +796,26 @@
 (cfg
   test
   (define (compiler-reg-call-hole-loop-arm-bypass-loop-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "call_hole_loop_arm_bypass_loop")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-            (ir.compiler-ir-instr-seq-empty)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "header")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Bool false)
-                  (ir.compiler-ir-label "fast")
-                  (ir.compiler-ir-label "slow"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "fast")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Call
-                    0
-                    (ir.compiler-ir-test-symbol "bulk")
-                    (ir.CompilerIrCallArgs.Nil)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                    (ir.compiler-ir-instr-seq-empty))))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "slow")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Bool false)
-                      (ir.compiler-ir-label "slow")
-                      (ir.compiler-ir-label "join"))
-                    (ir.compiler-ir-instr-seq-empty)))
-                (ir.compiler-ir-block-cons
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "join")
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                      (ir.compiler-ir-instr-seq-empty)))
-                  (ir.compiler-ir-block-cons
-                    (ir.CompilerIrBlock.Block
-                      (ir.compiler-ir-label "latch")
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Jump
-                          (ir.compiler-ir-label "header"))
-                        (ir.compiler-ir-instr-seq-empty)))
-                    (ir.compiler-ir-block-cons
-                      (ir.CompilerIrBlock.Block
-                        (ir.compiler-ir-label "exit")
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Return
-                            (ir.CompilerIrMaybeValue.Some
-                              (ir.CompilerIrValue.I64 0)))
-                          (ir.compiler-ir-instr-seq-empty)))
-                      ir.CompilerIrBlockList.Nil))))))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @call_hole_loop_arm_bypass_loop() -> i64 vars 1 {
+       entry:
+         jump header
+       header:
+         branch false, body, exit
+       body:
+         branch false, fast, slow
+       fast:
+         %0 = call bulk() : i64
+         jump join
+       slow:
+         branch false, slow, join
+       join:
+         jump latch
+       latch:
+         jump header
+       exit:
+         return 0
+       }")))
 
 ;; What the in-loop discount is FOR: a memory-class value whose references sit
 ;; on the loop body and whose only crossing sits on a halved arm now satisfies
@@ -1402,63 +1060,18 @@
 (cfg
   test
   (define (compiler-reg-call-hole-rewrite-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "call_hole_rewrite")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      6
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                1
-                (ir.compiler-ir-test-symbol "f")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Call
-                  2
-                  (ir.compiler-ir-test-symbol "g")
-                  (ir.CompilerIrCallArgs.Nil)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    3
-                    (ir.CompilerIrBinOp.Mul)
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Mov
-                      0
-                      (ir.CompilerIrValue.I64 9)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Call
-                        4
-                        (ir.compiler-ir-test-symbol "h")
-                        (ir.CompilerIrCallArgs.Nil)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.BinOp
-                          5
-                          (ir.CompilerIrBinOp.Add)
-                          (ir.CompilerIrValue.Var 3)
-                          (ir.CompilerIrValue.Var 0)
-                          (compiler-reg-i64-ty))
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Return
-                            (ir.CompilerIrMaybeValue.Some
-                              (ir.CompilerIrValue.Var 5)))
-                          (ir.compiler-ir-instr-seq-empty))))))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @call_hole_rewrite() -> i64 vars 6 {
+       entry:
+         %0 = mov 7 : i64
+         %1 = call f() : i64
+         %2 = call g() : i64
+         %3 = mul %0, %0 : i64
+         %0 = mov 9 : i64
+         %4 = call h() : i64
+         %5 = add %3, %0 : i64
+         return %5
+       }")))
 
 ;; Run the rewrite over a whole function with `%0..%(selected-count-1)` carried,
 ;; building the flow the same way `compiler-reg-call-hole-split-round` does.
@@ -1601,58 +1214,24 @@
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-seq3
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (ir.CompilerIrInstr.Call
-              1
-              (ir.compiler-ir-test-symbol "f")
-              (ir.CompilerIrCallArgs.Nil)
-              (compiler-reg-i64-ty))
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Bool false)
-              (ir.compiler-ir-label "then")
-              (ir.compiler-ir-label "else"))))
+            (irt.instr "%0 = mov 7 : i64")
+            (irt.instr "%1 = call f() : i64")
+            (irt.instr "branch false, then, else")))
         (ir.compiler-ir-block-cons
           (ir.compiler-ir-block
             (ir.compiler-ir-label "then")
             (ir.compiler-ir-instr-seq4
-              (ir.CompilerIrInstr.Call
-                2
-                (ir.compiler-ir-test-symbol "g")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
-              (ir.CompilerIrInstr.Call
-                6
-                (ir.compiler-ir-test-symbol "k")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
-              (ir.CompilerIrInstr.BinOp
-                3
-                (ir.CompilerIrBinOp.Mul)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
+              (irt.instr "%2 = call g() : i64")
+              (irt.instr "%6 = call k() : i64")
+              (irt.instr "%3 = mul %0, %0 : i64")
+              (irt.instr "return %3")))
           (ir.compiler-ir-block-cons
             (ir.compiler-ir-block
               (ir.compiler-ir-label "else")
               (ir.compiler-ir-instr-seq3
-                (ir.CompilerIrInstr.Call
-                  4
-                  (ir.compiler-ir-test-symbol "h")
-                  (ir.CompilerIrCallArgs.Nil)
-                  (compiler-reg-i64-ty))
-                (ir.CompilerIrInstr.BinOp
-                  5
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))))
+                (irt.instr "%4 = call h() : i64")
+                (irt.instr "%5 = add %0, %0 : i64")
+                (irt.instr "return %5")))
             ir.CompilerIrBlockList.Nil)))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
@@ -1737,51 +1316,27 @@
       (ir.compiler-ir-block-cons
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-seq1
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Bool false)
-              (ir.compiler-ir-label "a")
-              (ir.compiler-ir-label "b"))))
+          (ir.compiler-ir-instr-seq1 (irt.instr "branch false, a, b")))
         (ir.compiler-ir-block-cons
           (ir.compiler-ir-block
             (ir.compiler-ir-label "a")
             (ir.compiler-ir-instr-seq3
-              (ir.CompilerIrInstr.Mov
-                0
-                (ir.CompilerIrValue.I64 7)
-                (compiler-reg-i64-ty))
-              (ir.CompilerIrInstr.Call
-                1
-                (ir.compiler-ir-test-symbol "f")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
+              (irt.instr "%0 = mov 7 : i64")
+              (irt.instr "%1 = call f() : i64")
               (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
           (ir.compiler-ir-block-cons
             (ir.compiler-ir-block
               (ir.compiler-ir-label "b")
               (ir.compiler-ir-instr-seq2
-                (ir.CompilerIrInstr.Mov
-                  0
-                  (ir.CompilerIrValue.I64 8)
-                  (compiler-reg-i64-ty))
+                (irt.instr "%0 = mov 8 : i64")
                 (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
             (ir.compiler-ir-block-cons
               (ir.compiler-ir-block
                 (ir.compiler-ir-label "join")
                 (ir.compiler-ir-instr-seq3
-                  (ir.CompilerIrInstr.Call
-                    2
-                    (ir.compiler-ir-test-symbol "g")
-                    (ir.CompilerIrCallArgs.Nil)
-                    (compiler-reg-i64-ty))
-                  (ir.CompilerIrInstr.BinOp
-                    3
-                    (ir.CompilerIrBinOp.Mul)
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
+                  (irt.instr "%2 = call g() : i64")
+                  (irt.instr "%3 = mul %0, %0 : i64")
+                  (irt.instr "return %3")))
               ir.CompilerIrBlockList.Nil))))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
@@ -1848,43 +1403,18 @@
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-seq3
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (ir.CompilerIrInstr.Call
-              1
-              (ir.compiler-ir-test-symbol "f")
-              (ir.CompilerIrCallArgs.Nil)
-              (compiler-reg-i64-ty))
+            (irt.instr "%0 = mov 7 : i64")
+            (irt.instr "%1 = call f() : i64")
             (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "next"))))
         (ir.compiler-ir-block-cons
           (ir.compiler-ir-block
             (ir.compiler-ir-label "next")
             (ir.compiler-ir-instr-seq5
-              (ir.CompilerIrInstr.BinOp
-                3
-                (ir.CompilerIrBinOp.Mul)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (ir.CompilerIrInstr.Mov
-                0
-                (ir.CompilerIrValue.I64 9)
-                (compiler-reg-i64-ty))
-              (ir.CompilerIrInstr.Call
-                2
-                (ir.compiler-ir-test-symbol "g")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
-              (ir.CompilerIrInstr.BinOp
-                4
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.Var 3)
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))
+              (irt.instr "%3 = mul %0, %0 : i64")
+              (irt.instr "%0 = mov 9 : i64")
+              (irt.instr "%2 = call g() : i64")
+              (irt.instr "%4 = add %3, %0 : i64")
+              (irt.instr "return %4")))
           ir.CompilerIrBlockList.Nil))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
@@ -2130,17 +1660,10 @@
             (set! index (+ index 1))))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Call
-            (+ count 1)
-            (ir.compiler-ir-test-symbol "call_hole_sink")
-            (ir.CompilerIrCallArgs.Nil)
-            (compiler-reg-i64-ty)))
+          (irt.instr "%11 = call call_hole_sink() : i64"))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Mov
-            (+ count 2)
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty)))
+          (irt.instr "%12 = mov 0 : i64"))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop")))
@@ -2180,12 +1703,7 @@
             (set! index (+ index 1))))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.BinOp
-            counter
-            (ir.CompilerIrBinOp.Add)
-            (ir.CompilerIrValue.Var counter)
-            (ir.CompilerIrValue.I64 1)
-            (compiler-reg-i64-ty)))
+          (irt.instr "%12 = add %12, 1 : i64"))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop")))
@@ -2201,9 +1719,7 @@
       [cond-var : i64 (+ count 3)]
       (ir.CompilerIrFunction.Function
         (ir.compiler-ir-test-symbol "call_hole_round")
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "bound" (compiler-reg-i64-ty) 0)
-          (ir.compiler-ir-param-seq-empty))
+        (irt.params "bound=%0:i64")
         (ast.AstType.I64)
         (compiler-reg-call-hole-round-vars)
         (ir.compiler-ir-block-cons
@@ -2211,34 +1727,16 @@
             (ir.compiler-ir-label "entry")
             (compiler-reg-call-hole-round-entry))
           (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "loop")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  cond-var
-                  (ir.CompilerIrBinOp.Lt)
-                  (ir.CompilerIrValue.Var counter)
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var cond-var)
-                    (ir.compiler-ir-label "body")
-                    (ir.compiler-ir-label "exit"))
-                  (ir.compiler-ir-instr-seq-empty))))
+            (irt.block
+              "loop:
+                 %13 = lt %12, %0 : i64
+                 branch %13, body, exit")
             (ir.compiler-ir-block-cons
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "body")
                 (compiler-reg-call-hole-round-body))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "exit")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some
-                        (ir.CompilerIrValue.Var acc)))
-                    (ir.compiler-ir-instr-seq-empty)))
-                ir.CompilerIrBlockList.Nil))))
+              (irt.blocks "exit:
+                   return %11"))))
         ir.CompilerIrFunctionAbi.Ordinary))))
 
 (cfg
@@ -2356,74 +1854,20 @@
 (cfg
   test
   (define (compiler-reg-call-hole-csr-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "call_hole_csr")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "b" (compiler-reg-i64-ty) 1)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
-            (ir.compiler-ir-param-seq-empty))))
-      (ast.AstType.I64)
-      8
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              3
-              (ir.CompilerIrBinOp.Lt)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 1)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 3)
-                (ir.compiler-ir-label "grow")
-                (ir.compiler-ir-label "hot"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "grow")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                4
-                (ir.compiler-ir-test-symbol "f")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Call
-                  5
-                  (ir.compiler-ir-test-symbol "g")
-                  (ir.CompilerIrCallArgs.Nil)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "hot"))
-                  (ir.compiler-ir-instr-seq-empty)))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "hot")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  6
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.Var 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    7
-                    (ir.CompilerIrBinOp.Add)
-                    (ir.CompilerIrValue.Var 6)
-                    (ir.CompilerIrValue.Var 2)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 7)))
-                    (ir.compiler-ir-instr-seq-empty)))))
-            ir.CompilerIrBlockList.Nil)))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @call_hole_csr(a=%0:i64, b=%1:i64, c=%2:i64) -> i64 vars 8 {
+       entry:
+         %3 = lt %0, %1 : i64
+         branch %3, grow, hot
+       grow:
+         %4 = call f() : i64
+         %5 = call g() : i64
+         jump hot
+       hot:
+         %6 = add %0, %1 : i64
+         %7 = add %6, %2 : i64
+         return %7
+       }")))
 
 (cfg
   test
@@ -2607,9 +2051,7 @@
     [callee : i64]) : ir.CompilerIrFunction
     (ir.CompilerIrFunction.Function
       (compiler-reg-call-hole-cold-arms-name)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-empty))
+      (irt.params "a=%0:i64")
       (ast.AstType.I64)
       (+ arms 2)
       (compiler-reg-call-hole-cold-arms-chain 0 arms callee)
@@ -2779,256 +2221,62 @@
 (cfg
   test
   (define (compiler-reg-loop-park-direct-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_park_direct")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "bound" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-empty))
-      (ast.AstType.I64)
-      9
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 100)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.I64 200)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "preheader"))
-                (ir.compiler-ir-instr-seq-empty)))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "preheader")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                8
-                (ir.CompilerIrValue.I64 7)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "header")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Phi
-                  3
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.Var 8)
-                    (ir.compiler-ir-label "preheader")
-                    (ir.compiler-ir-phi-input-seq-prepend
-                      (ir.CompilerIrValue.Var 6)
-                      (ir.compiler-ir-label "latch")
-                      (ir.compiler-ir-phi-input-seq-empty)))
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    5
-                    (ir.CompilerIrBinOp.Lt)
-                    (ir.CompilerIrValue.Var 3)
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Var 5)
-                      (ir.compiler-ir-label "body")
-                      (ir.compiler-ir-label "exit"))
-                    (ir.compiler-ir-instr-seq-empty)))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "body")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    4
-                    (ir.CompilerIrBinOp.Add)
-                    (ir.CompilerIrValue.Var 3)
-                    (ir.CompilerIrValue.Var 2)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                    (ir.compiler-ir-instr-seq-empty))))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "latch")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.BinOp
-                      6
-                      (ir.CompilerIrBinOp.Add)
-                      (ir.CompilerIrValue.Var 3)
-                      (ir.CompilerIrValue.I64 1)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                      (ir.compiler-ir-instr-seq-empty))))
-                (ir.compiler-ir-block-cons
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "exit")
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.BinOp
-                        7
-                        (ir.CompilerIrBinOp.Add)
-                        (ir.CompilerIrValue.Var 1)
-                        (ir.CompilerIrValue.Var 3)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Return
-                          (ir.CompilerIrMaybeValue.Some
-                            (ir.CompilerIrValue.Var 7)))
-                        (ir.compiler-ir-instr-seq-empty))))
-                  ir.CompilerIrBlockList.Nil))))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_park_direct(bound=%0:i64) -> i64 vars 9 {
+       entry:
+         %1 = mov 100 : i64
+         %2 = mov 200 : i64
+         jump preheader
+       preheader:
+         %8 = mov 7 : i64
+         jump header
+       header:
+         %3 = phi [%8, preheader], [%6, latch] : i64
+         %5 = lt %3, %0 : i64
+         branch %5, body, exit
+       body:
+         %4 = add %3, %2 : i64
+         jump latch
+       latch:
+         %6 = add %3, 1 : i64
+         jump header
+       exit:
+         %7 = add %1, %3 : i64
+         return %7
+       }")))
 
 (cfg
   test
   (define (compiler-reg-loop-park-splice-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_park_splice")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "bound" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-empty))
-      (ast.AstType.I64)
-      11
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 100)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.I64 200)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  10
-                  (ir.CompilerIrBinOp.Lt)
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.I64 5)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var 10)
-                    (ir.compiler-ir-label "preheader")
-                    (ir.compiler-ir-label "other"))
-                  (ir.compiler-ir-instr-seq-empty))))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "other")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                8
-                (ir.CompilerIrValue.I64 9)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "preheader")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "header")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Phi
-                    3
-                    (ir.compiler-ir-phi-input-seq-prepend
-                      (ir.CompilerIrValue.I64 0)
-                      (ir.compiler-ir-label "preheader")
-                      (ir.compiler-ir-phi-input-seq-prepend
-                        (ir.CompilerIrValue.Var 6)
-                        (ir.compiler-ir-label "latch")
-                        (ir.compiler-ir-phi-input-seq-empty)))
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.BinOp
-                      5
-                      (ir.CompilerIrBinOp.Lt)
-                      (ir.CompilerIrValue.Var 3)
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Branch
-                        (ir.CompilerIrValue.Var 5)
-                        (ir.compiler-ir-label "body")
-                        (ir.compiler-ir-label "exit"))
-                      (ir.compiler-ir-instr-seq-empty)))))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "body")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.BinOp
-                      4
-                      (ir.CompilerIrBinOp.Add)
-                      (ir.CompilerIrValue.Var 3)
-                      (ir.CompilerIrValue.Var 2)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                      (ir.compiler-ir-instr-seq-empty))))
-                (ir.compiler-ir-block-cons
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "latch")
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.BinOp
-                        6
-                        (ir.CompilerIrBinOp.Add)
-                        (ir.CompilerIrValue.Var 3)
-                        (ir.CompilerIrValue.I64 1)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Branch
-                          (ir.CompilerIrValue.Var 5)
-                          (ir.compiler-ir-label "header")
-                          (ir.compiler-ir-label "ret_blk"))
-                        (ir.compiler-ir-instr-seq-empty))))
-                  (ir.compiler-ir-block-cons
-                    (ir.CompilerIrBlock.Block
-                      (ir.compiler-ir-label "ret_blk")
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Return
-                          (ir.CompilerIrMaybeValue.Some
-                            (ir.CompilerIrValue.Var 4)))
-                        (ir.compiler-ir-instr-seq-empty)))
-                    (ir.compiler-ir-block-cons
-                      (ir.CompilerIrBlock.Block
-                        (ir.compiler-ir-label "exit")
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Phi
-                            7
-                            (ir.compiler-ir-phi-input-seq-prepend
-                              (ir.CompilerIrValue.Var 3)
-                              (ir.compiler-ir-label "header")
-                              (ir.compiler-ir-phi-input-seq-prepend
-                                (ir.CompilerIrValue.Var 8)
-                                (ir.compiler-ir-label "other")
-                                (ir.compiler-ir-phi-input-seq-empty)))
-                            (compiler-reg-i64-ty))
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.BinOp
-                              9
-                              (ir.CompilerIrBinOp.Add)
-                              (ir.CompilerIrValue.Var 1)
-                              (ir.CompilerIrValue.Var 7)
-                              (compiler-reg-i64-ty))
-                            (compiler-reg-test-instr-seq-prepend
-                              (ir.CompilerIrInstr.Return
-                                (ir.CompilerIrMaybeValue.Some
-                                  (ir.CompilerIrValue.Var 9)))
-                              (ir.compiler-ir-instr-seq-empty)))))
-                      ir.CompilerIrBlockList.Nil))))))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_park_splice(bound=%0:i64) -> i64 vars 11 {
+       entry:
+         %1 = mov 100 : i64
+         %2 = mov 200 : i64
+         %10 = lt %0, 5 : i64
+         branch %10, preheader, other
+       other:
+         %8 = mov 9 : i64
+         jump exit
+       preheader:
+         jump header
+       header:
+         %3 = phi [0, preheader], [%6, latch] : i64
+         %5 = lt %3, %0 : i64
+         branch %5, body, exit
+       body:
+         %4 = add %3, %2 : i64
+         jump latch
+       latch:
+         %6 = add %3, 1 : i64
+         branch %5, header, ret_blk
+       ret_blk:
+         return %4
+       exit:
+         %7 = phi [%3, header], [%8, other] : i64
+         %9 = add %1, %7 : i64
+         return %9
+       }")))
 
 (cfg
   test
@@ -3352,34 +2600,13 @@
     (let
       [seq : ir.CompilerIrBlockSeq
         (live.compiler-live-ir-block-list-to-seq
-          (ir.compiler-ir-block-cons
-            (compiler-reg-block-weights-switch-block "sw")
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "shared")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Switch
-                    (ir.CompilerIrValue.Var 0)
-                    2
-                    (ir.compiler-ir-switch-case-seq2
-                      (ir.CompilerIrSwitchCase.Case
-                        0
-                        (ir.compiler-ir-label "s0"))
-                      (ir.CompilerIrSwitchCase.Case
-                        1
-                        (ir.compiler-ir-label "s3")))
-                    (ir.compiler-ir-label "s3"))
-                  (ir.compiler-ir-instr-seq-empty)))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "br")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Var 0)
-                      (ir.compiler-ir-label "s0")
-                      (ir.compiler-ir-label "s1"))
-                    (ir.compiler-ir-instr-seq-empty)))
-                ir.CompilerIrBlockList.Nil))))]
+          (irt.blocks
+            "sw:
+               switch %0 base 3 [0:s0, 1:s1, 2:s2] default s3
+             shared:
+               switch %0 base 2 [0:s0, 1:s3] default s3
+             br:
+               branch %0, s0, s1"))]
       (and
         ;; case edges are pinned by the jump table
         (not
@@ -3835,26 +3062,12 @@
 (cfg
   test
   (define (compiler-reg-park-nest-entry-block) : ir.CompilerIrBlock
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Mov
-          10
-          (ir.CompilerIrValue.I64 11)
-          (compiler-reg-i64-ty))
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            11
-            (ir.CompilerIrValue.I64 12)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              12
-              (ir.CompilerIrValue.I64 13)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (compiler-reg-park-nest-label "pre." 0))
-              (ir.compiler-ir-instr-seq-empty))))))))
+    (irt.block
+      "entry:
+         %10 = mov 11 : i64
+         %11 = mov 12 : i64
+         %12 = mov 13 : i64
+         jump pre.0")))
 
 (cfg
   test
@@ -3919,21 +3132,10 @@
               (ir.CompilerIrBinOp.Add)
               (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level))
               (ir.CompilerIrValue.Var 0))
-            (compiler-reg-test-instr-seq-prepend
-              (compiler-reg-park-nest-binop
-                67
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.Var 10)
-                (ir.CompilerIrValue.Var 11))
-              (compiler-reg-test-instr-seq-prepend
-                (compiler-reg-park-nest-binop
-                  68
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var 67)
-                  (ir.CompilerIrValue.Var 12))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "land"))
-                  (ir.compiler-ir-instr-seq-empty))))))))))
+            (irt.instrs
+              "%67 = add %10, %11 : i64
+               %68 = add %67, %12 : i64
+               jump land")))))))
 
 (cfg
   test
@@ -3942,11 +3144,7 @@
       (compiler-reg-park-nest-label "lat." level)
       (if (= level (- levels 1))
         (compiler-reg-test-instr-seq-prepend
-          (compiler-reg-park-nest-binop
-            69
-            (ir.CompilerIrBinOp.Add)
-            (ir.CompilerIrValue.Var 66)
-            (ir.CompilerIrValue.Var 68))
+          (irt.instr "%69 = add %66, %68 : i64")
           (compiler-reg-test-instr-seq-prepend
             (compiler-reg-park-nest-binop
               (compiler-reg-park-nest-next level)
@@ -3980,22 +3178,10 @@
           (ir.CompilerIrInstr.Jump
             (compiler-reg-park-nest-label "lat." (- level 1)))
           (ir.compiler-ir-instr-seq-empty))
-        (compiler-reg-test-instr-seq-prepend
-          (compiler-reg-park-nest-binop
-            70
-            (ir.CompilerIrBinOp.Add)
-            (ir.CompilerIrValue.Var 10)
-            (ir.CompilerIrValue.Var 11))
-          (compiler-reg-test-instr-seq-prepend
-            (compiler-reg-park-nest-binop
-              71
-              (ir.CompilerIrBinOp.Add)
-              (ir.CompilerIrValue.Var 70)
-              (ir.CompilerIrValue.Var 12))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 71)))
-              (ir.compiler-ir-instr-seq-empty))))))))
+        (irt.instrs
+          "%70 = add %10, %11 : i64
+           %71 = add %70, %12 : i64
+           return %71")))))
 
 ;; The rotated inner loop, in the versioner's `__bce_fast` form: `land` is the
 ;; rotate landing block and the loop's dedicated preheader, `ihdr` opens with
@@ -4004,85 +3190,35 @@
 (cfg
   test
   (define (compiler-reg-park-nest-land-block) : ir.CompilerIrBlock
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "land")
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "ihdr"))
-        (ir.compiler-ir-instr-seq-empty)))))
+    (irt.block "land:
+         jump ihdr")))
 
 (cfg
   test
   (define (compiler-reg-park-nest-ihdr-block) : ir.CompilerIrBlock
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "ihdr")
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Phi
-          60
-          (ir.compiler-ir-phi-input-seq-prepend
-            (ir.CompilerIrValue.I64 0)
-            (ir.compiler-ir-label "land")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.Var 64)
-              (ir.compiler-ir-label "imerge")
-              (ir.compiler-ir-phi-input-seq-empty)))
-          (compiler-reg-i64-ty))
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "ibody"))
-          (ir.compiler-ir-instr-seq-empty))))))
+    (irt.block
+      "ihdr:
+         %60 = phi [0, land], [%64, imerge] : i64
+         jump ibody")))
 
 (cfg
   test
   (define (compiler-reg-park-nest-ibody-block) : ir.CompilerIrBlock
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "ibody")
-      (compiler-reg-test-instr-seq-prepend
-        (compiler-reg-park-nest-binop
-          61
-          (ir.CompilerIrBinOp.Add)
-          (ir.CompilerIrValue.Var 1)
-          (ir.CompilerIrValue.Var 60))
-        (compiler-reg-test-instr-seq-prepend
-          (compiler-reg-park-nest-binop
-            62
-            (ir.CompilerIrBinOp.Add)
-            (ir.CompilerIrValue.Var 2)
-            (ir.CompilerIrValue.Var 60))
-          (compiler-reg-test-instr-seq-prepend
-            (compiler-reg-park-nest-binop
-              63
-              (ir.CompilerIrBinOp.Lt)
-              (ir.CompilerIrValue.Var 61)
-              (ir.CompilerIrValue.Var 62))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 63)
-                (ir.compiler-ir-label "imerge")
-                (ir.compiler-ir-label "iexit"))
-              (ir.compiler-ir-instr-seq-empty))))))))
+    (irt.block
+      "ibody:
+         %61 = add %1, %60 : i64
+         %62 = add %2, %60 : i64
+         %63 = lt %61, %62 : i64
+         branch %63, imerge, iexit")))
 
 (cfg
   test
   (define (compiler-reg-park-nest-imerge-block) : ir.CompilerIrBlock
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "imerge")
-      (compiler-reg-test-instr-seq-prepend
-        (compiler-reg-park-nest-binop
-          64
-          (ir.CompilerIrBinOp.Add)
-          (ir.CompilerIrValue.Var 60)
-          (ir.CompilerIrValue.I64 1))
-        (compiler-reg-test-instr-seq-prepend
-          (compiler-reg-park-nest-binop
-            65
-            (ir.CompilerIrBinOp.Lt)
-            (ir.CompilerIrValue.Var 64)
-            (ir.CompilerIrValue.Var 0))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Var 65)
-              (ir.compiler-ir-label "ihdr")
-              (ir.compiler-ir-label "iexit"))
-            (ir.compiler-ir-instr-seq-empty)))))))
+    (irt.block
+      "imerge:
+         %64 = add %60, 1 : i64
+         %65 = lt %64, %0 : i64
+         branch %65, ihdr, iexit")))
 
 (cfg
   test
@@ -4090,16 +3226,7 @@
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "iexit")
       (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Phi
-          66
-          (ir.compiler-ir-phi-input-seq-prepend
-            (ir.CompilerIrValue.I64 0)
-            (ir.compiler-ir-label "ibody")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.I64 1)
-              (ir.compiler-ir-label "imerge")
-              (ir.compiler-ir-phi-input-seq-empty)))
-          (compiler-reg-i64-ty))
+        (irt.instr "%66 = phi [0, ibody], [1, imerge] : i64")
         (compiler-reg-test-instr-seq-prepend
           (ir.CompilerIrInstr.Jump
             (compiler-reg-park-nest-label "lat." (- levels 1)))
@@ -4157,9 +3284,7 @@
             (set! level (- level 1))))
         (ir.CompilerIrFunction.Function
           (ir.compiler-ir-test-symbol "loop_park_deep_nest")
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "bound" (compiler-reg-i64-ty) 0)
-            (ir.compiler-ir-param-seq-empty))
+          (irt.params "bound=%0:i64")
           (ast.AstType.I64)
           80
           (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq blocks write))
@@ -4417,114 +3542,39 @@
 (cfg
   test
   (define (compiler-reg-scavenge-hole-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "scavenge_segment_hole")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      4
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (ast.AstType.I64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.Var 0)
-                (ast.AstType.I64))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "middle"))
-                (ir.compiler-ir-instr-seq-empty)))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "middle")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                2
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.Var 1)
-                (ir.CompilerIrValue.I64 1)
-                (ast.AstType.I64))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "tail"))
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "tail")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  0
-                  (ir.CompilerIrValue.I64 9)
-                  (ast.AstType.I64))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    3
-                    (ir.CompilerIrBinOp.Add)
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.CompilerIrValue.Var 2)
-                    (ast.AstType.I64))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-                    (ir.compiler-ir-instr-seq-empty)))))
-            ir.CompilerIrBlockList.Nil)))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @scavenge_segment_hole() -> i64 vars 4 {
+       entry:
+         %0 = mov 7 : i64
+         %1 = mov %0 : i64
+         jump middle
+       middle:
+         %2 = add %1, 1 : i64
+         jump tail
+       tail:
+         %0 = mov 9 : i64
+         %3 = add %0, %2 : i64
+         return %3
+       }")))
 
 ;; Rotated layout: entry -> body -> latch -> {body, exit}. Var 1 is READ in
 ;; `latch` (laid out second) and DEFINED in `body` (laid out third).
 (cfg
   test
   (define (compiler-reg-scavenge-rotated-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "scavenge_segment_rotated")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      3
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))
-            (ir.compiler-ir-instr-seq-empty)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "latch")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                2
-                (ir.CompilerIrBinOp.Lt)
-                (ir.CompilerIrValue.Var 1)
-                (ir.CompilerIrValue.I64 10)
-                (ast.AstType.I64))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Var 2)
-                  (ir.compiler-ir-label "body")
-                  (ir.compiler-ir-label "exit"))
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  1
-                  (ir.CompilerIrValue.I64 7)
-                  (ast.AstType.I64))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                  (ir.compiler-ir-instr-seq-empty))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @scavenge_segment_rotated() -> i64 vars 3 {
+       entry:
+         jump body
+       latch:
+         %2 = lt %1, 10 : i64
+         branch %2, body, exit
+       body:
+         %1 = mov 7 : i64
+         jump latch
+       exit:
+         return %1
+       }")))
 
 (cfg
   test
@@ -4650,134 +3700,53 @@
 (cfg
   test
   (define (compiler-reg-param-register-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "param_registers")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "b" (compiler-reg-i64-ty) 1)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
-            (ir.compiler-ir-param-seq-empty))))
-      (ast.AstType.Unit)
-      3
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "pa")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "pb")
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "pc")
-                  (ir.CompilerIrValue.Var 2)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @param_registers(a=%0:i64, b=%1:i64, c=%2:i64) -> unit vars 3 {
+       entry:
+         store @pa, %0 : i64
+         store @pb, %1 : i64
+         store @pc, %2 : i64
+         return
+       }")))
 
 (cfg
   test
   (define (compiler-reg-float-param-register-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "float_param_registers")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-f64-ty) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "b" (compiler-reg-f64-ty) 1)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "c" (compiler-reg-f64-ty) 2)
-            (ir.compiler-ir-param-seq-empty))))
-      (ast.AstType.Unit)
-      3
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "fa")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-f64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "fb")
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-f64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "fc")
-                  (ir.CompilerIrValue.Var 2)
-                  (compiler-reg-f64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @float_param_registers(a=%0:f64, b=%1:f64, c=%2:f64) -> unit vars 3 {
+       entry:
+         store @fa, %0 : f64
+         store @fb, %1 : f64
+         store @fc, %2 : f64
+         return
+       }")))
 
 (cfg
   test
   (define (compiler-reg-low-xmm-splat-boundary-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "low_xmm_splat_boundary")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "value" (compiler-reg-f64-ty) 0)
-        (ir.compiler-ir-param-seq-empty))
-      (ast.AstType.Unit)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Splat
-              1
-              (ir.CompilerIrValue.I64 7)
-              4
-              (ast.AstType.I64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "low_xmm_splat_sink")
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-f64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @low_xmm_splat_boundary(value=%0:f64) -> unit vars 2 {
+       entry:
+         %1 = splat 7 lanes 4 : i64
+         store @low_xmm_splat_sink, %0 : f64
+         return
+       }")))
 
 (cfg
   test
   (define (compiler-reg-low-xmm-vector-clobber-function) : ir.CompilerIrFunction
     (ir.CompilerIrFunction.Function
       (ir.compiler-ir-test-symbol "low_xmm_vector_clobber")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "value" (compiler-reg-f64-ty) 0)
-        (ir.compiler-ir-param-seq-empty))
+      (irt.params "value=%0:f64")
       (ast.AstType.Unit)
       4
       (ir.compiler-ir-block-cons
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Splat
-              1
-              (ir.CompilerIrValue.I64 3)
-              4
-              (ast.AstType.I64))
+            (irt.instr "%1 = splat 3 lanes 4 : i64")
             (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Splat
-                2
-                (ir.CompilerIrValue.I64 5)
-                4
-                (ast.AstType.I64))
+              (irt.instr "%2 = splat 5 lanes 4 : i64")
               (compiler-reg-test-instr-seq-prepend
                 (ir.ir-instr-vector-bin-op
                   3
@@ -4786,14 +3755,9 @@
                   (ir.CompilerIrValue.Var 2)
                   4
                   (ast.AstType.I64))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "low_xmm_vector_sink")
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-f64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                    (ir.compiler-ir-instr-seq-empty)))))))
+                (irt.instrs
+                  "store @low_xmm_vector_sink, %0 : f64
+                   return")))))
         ir.CompilerIrBlockList.Nil)
       ir.CompilerIrFunctionAbi.Ordinary)))
 
@@ -4832,15 +3796,7 @@
         (set! (array-ref args 3) (ir.CompilerIrValue.Var 3))
         (ir.CompilerIrFunction.Function
           (ir.compiler-ir-test-symbol "mixed_float_call_args")
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "i" (compiler-reg-i64-ty) 0)
-            (ir.compiler-ir-param-seq-prepend
-              (ir.CompilerIrParam.Param "a" (compiler-reg-f64-ty) 1)
-              (ir.compiler-ir-param-seq-prepend
-                (ir.CompilerIrParam.Param "b" (compiler-reg-f64-ty) 2)
-                (ir.compiler-ir-param-seq-prepend
-                  (ir.CompilerIrParam.Param "c" (compiler-reg-f64-ty) 3)
-                  (ir.compiler-ir-param-seq-empty)))))
+          (irt.params "i=%0:i64, a=%1:f64, b=%2:f64, c=%3:f64")
           (ast.AstType.Unit)
           5
           (ir.compiler-ir-block-cons
@@ -4852,9 +3808,7 @@
                   (ir.compiler-ir-test-symbol "mixed_float_callee")
                   (ir.CompilerIrCallArgs.Array args)
                   (ast.AstType.Unit))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty))))
+                (irt.instrs "return")))
             ir.CompilerIrBlockList.Nil)
           ir.CompilerIrFunctionAbi.Ordinary)))))
 
@@ -4885,11 +3839,7 @@
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Call
-              7
-              (ir.compiler-ir-test-symbol "side_effect")
-              (ir.CompilerIrCallArgs.Nil)
-              (ast.AstType.Unit))
+            (irt.instr "%7 = call side_effect() : unit")
             instrs))
         (set! i 6)
         (while (>= i 0)
@@ -4927,138 +3877,82 @@
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "p5")
-              (ir.CompilerIrValue.Var 5)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @p5, %5 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g12")
-              (ir.CompilerIrValue.Var 12)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @g12, %12 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g11")
-              (ir.CompilerIrValue.Var 11)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @g11, %11 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g10")
-              (ir.CompilerIrValue.Var 10)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @g10, %10 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g9")
-              (ir.CompilerIrValue.Var 9)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @g9, %9 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g8")
-              (ir.CompilerIrValue.Var 8)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @g8, %8 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g7")
-              (ir.CompilerIrValue.Var 7)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @g7, %7 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g6")
-              (ir.CompilerIrValue.Var 6)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @g6, %6 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              12
-              (ir.CompilerIrValue.I64 12)
-              (compiler-reg-i64-ty))
+            (irt.instr "%12 = mov 12 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              11
-              (ir.CompilerIrValue.I64 11)
-              (compiler-reg-i64-ty))
+            (irt.instr "%11 = mov 11 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              10
-              (ir.CompilerIrValue.I64 10)
-              (compiler-reg-i64-ty))
+            (irt.instr "%10 = mov 10 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              9
-              (ir.CompilerIrValue.I64 9)
-              (compiler-reg-i64-ty))
+            (irt.instr "%9 = mov 9 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              8
-              (ir.CompilerIrValue.I64 8)
-              (compiler-reg-i64-ty))
+            (irt.instr "%8 = mov 8 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              7
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
+            (irt.instr "%7 = mov 7 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              6
-              (ir.CompilerIrValue.I64 6)
-              (compiler-reg-i64-ty))
+            (irt.instr "%6 = mov 6 : i64")
             instrs))
         (ir.CompilerIrFunction.Function
           (ir.compiler-ir-test-symbol "zero_call_param_conflict")
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-            (ir.compiler-ir-param-seq-prepend
-              (ir.CompilerIrParam.Param "b" (compiler-reg-i64-ty) 1)
-              (ir.compiler-ir-param-seq-prepend
-                (ir.CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
-                (ir.compiler-ir-param-seq-prepend
-                  (ir.CompilerIrParam.Param "d" (compiler-reg-i64-ty) 3)
-                  (ir.compiler-ir-param-seq-prepend
-                    (ir.CompilerIrParam.Param "e" (compiler-reg-i64-ty) 4)
-                    (ir.compiler-ir-param-seq-prepend
-                      (ir.CompilerIrParam.Param "f" (compiler-reg-i64-ty) 5)
-                      (ir.compiler-ir-param-seq-empty)))))))
+          (irt.params
+            "a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64")
           (ast.AstType.Unit)
           13
           (ir.compiler-ir-block-cons
@@ -5069,28 +3963,12 @@
 (cfg
   test
   (define (compiler-reg-param-clobber-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "param_clobber")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-empty))
-      (ast.AstType.I64)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Call
-              1
-              (ir.compiler-ir-test-symbol "side_effect")
-              (ir.CompilerIrCallArgs.Nil)
-              (ast.AstType.Unit))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-              (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @param_clobber(arg=%0:i64) -> i64 vars 2 {
+       entry:
+         %1 = call side_effect() : unit
+         return %0
+       }")))
 
 (cfg
   test
@@ -5104,15 +3982,10 @@
           (ir.compiler-ir-param-seq-empty))
         (ast.AstType.Unit)
         2
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov 1 (ir.CompilerIrValue.Var 0) ty)
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                (ir.compiler-ir-instr-seq-empty))))
-          ir.CompilerIrBlockList.Nil)
+        (irt.blocks
+          "entry:
+             %1 = mov %0 : ParamAggregate
+             return")
         ir.CompilerIrFunctionAbi.Ordinary))))
 
 (cfg
@@ -5121,38 +3994,13 @@
   ;; in-range CONSTANT (emitted as `shrq $3` -- no %rcx/%cl use). Params keep
   ;; their ABI pins.
   (define (compiler-reg-param-const-shift-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "param_const_shift")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "n" (compiler-reg-i64-ty) 1)
-          (ir.compiler-ir-param-seq-empty)))
-      (ast.AstType.I64)
-      3
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              2
-              (ir.CompilerIrBinOp.Shr (ast.AstType.I64))
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 3)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                2
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.Var 2)
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @param_const_shift(a=%0:i64, n=%1:i64) -> i64 vars 3 {
+       entry:
+         %2 = shr %0, 3 : i64
+         %2 = add %2, %1 : i64
+         return %2
+       }")))
 
 (cfg
   test
@@ -5160,38 +4008,13 @@
   ;; backend moves the count into %rcx and shifts by %cl). `a` (var 0) is live
   ;; across the shift: t = a >> n; return t + a.
   (define (compiler-reg-param-var-shift-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "param_var_shift")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "n" (compiler-reg-i64-ty) 1)
-          (ir.compiler-ir-param-seq-empty)))
-      (ast.AstType.I64)
-      3
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              2
-              (ir.CompilerIrBinOp.Shr (ast.AstType.I64))
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 1)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                2
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.Var 2)
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @param_var_shift(a=%0:i64, n=%1:i64) -> i64 vars 3 {
+       entry:
+         %2 = shr %0, %1 : i64
+         %2 = add %2, %0 : i64
+         return %2
+       }")))
 
 (cfg
   test
@@ -5243,42 +4066,14 @@
   ;; t + t -- a (var 0) ends at point 0, the call is at point 2, so %rdi stays
   ;; pinned while the call-spanning t (var 1) takes a callee-saved home.
   (define (compiler-reg-param-dead-before-call-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "param_dead_before_call")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-empty))
-      (ast.AstType.I64)
-      4
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              1
-              (ir.CompilerIrBinOp.Add)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                2
-                (ir.compiler-ir-test-symbol "side_effect")
-                (ir.CompilerIrCallArgs.Nil)
-                (ast.AstType.Unit))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  3
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.CompilerIrValue.Var 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-                  (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @param_dead_before_call(a=%0:i64) -> i64 vars 4 {
+       entry:
+         %1 = add %0, %0 : i64
+         %2 = call side_effect() : unit
+         %3 = add %1, %1 : i64
+         return %3
+       }")))
 
 (cfg
   test
@@ -5311,47 +4106,14 @@
   ;; pool order past those, with %rsi/%rdi held by the two kept pins, is %r9 --
   ;; a caller-saved home in a function with no call, so no CSR push/pop.
   (define (compiler-reg-param-rdx-div-span-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "param_rdx_div_span")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "b" (compiler-reg-i64-ty) 1)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
-            (ir.compiler-ir-param-seq-empty))))
-      (ast.AstType.I64)
-      6
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              3
-              (ir.CompilerIrBinOp.Add)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                4
-                (ir.CompilerIrBinOp.Div)
-                (ir.CompilerIrValue.Var 3)
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  5
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var 4)
-                  (ir.CompilerIrValue.Var 2)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))
-                  (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @param_rdx_div_span(a=%0:i64, b=%1:i64, c=%2:i64) -> i64 vars 6 {
+       entry:
+         %3 = add %0, %0 : i64
+         %4 = div %3, %1 : i64
+         %5 = add %4, %2 : i64
+         return %5
+       }")))
 
 (cfg
   test
@@ -5385,56 +4147,15 @@
   ;; copy can read the register it is given; it spans no call; and the shift
   ;; narrowing still forbids exactly %rcx.
   (define (compiler-reg-param-rcx-shift-span-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "param_rcx_shift_span")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "n" (compiler-reg-i64-ty) 1)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
-            (ir.compiler-ir-param-seq-prepend
-              (ir.CompilerIrParam.Param "d" (compiler-reg-i64-ty) 3)
-              (ir.compiler-ir-param-seq-empty)))))
-      (ast.AstType.I64)
-      8
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              4
-              (ir.CompilerIrBinOp.Add)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                5
-                (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
-                (ir.CompilerIrValue.Var 4)
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  6
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var 5)
-                  (ir.CompilerIrValue.Var 2)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    7
-                    (ir.CompilerIrBinOp.Add)
-                    (ir.CompilerIrValue.Var 6)
-                    (ir.CompilerIrValue.Var 3)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 7)))
-                    (ir.compiler-ir-instr-seq-empty)))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @param_rcx_shift_span(a=%0:i64, n=%1:i64, c=%2:i64, d=%3:i64) -> i64 vars 8 {
+       entry:
+         %4 = add %0, %0 : i64
+         %5 = shl %4, %1 : i64
+         %6 = add %5, %2 : i64
+         %7 = add %6, %3 : i64
+         return %7
+       }")))
 
 (cfg
   test
@@ -5468,44 +4189,15 @@
   ;; clobbered %rdi. compiler-reg-param-pins-demote! must revoke the pin and
   ;; the class must land on ONE callee-saved home instead.
   (define (compiler-reg-param-pin-coalesce-demote-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "param_pin_coalesce_demote")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-empty))
-      (ast.AstType.Unit)
-      4
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              3
-              (ir.CompilerIrBinOp.Add)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Call
-                  2
-                  (ir.compiler-ir-test-symbol "side_effect")
-                  (ir.CompilerIrCallArgs.Nil)
-                  (ast.AstType.Unit))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "g")
-                    (ir.CompilerIrValue.Var 1)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                    (ir.compiler-ir-instr-seq-empty)))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @param_pin_coalesce_demote(a=%0:i64) -> unit vars 4 {
+       entry:
+         %3 = add %0, %0 : i64
+         %1 = mov %0 : i64
+         %2 = call side_effect() : unit
+         store @g, %1 : i64
+         return
+       }")))
 
 (cfg
   test
@@ -5685,32 +4377,13 @@
 (cfg
   test
   (define (compiler-reg-entry-forbidden-i64-params-7) : ir.CompilerIrParamSeq
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "p0" (compiler-reg-i64-ty) 0)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "p1" (compiler-reg-i64-ty) 1)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "p2" (compiler-reg-i64-ty) 2)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "p3" (compiler-reg-i64-ty) 3)
-            (ir.compiler-ir-param-seq-prepend
-              (ir.CompilerIrParam.Param "p4" (compiler-reg-i64-ty) 4)
-              (ir.compiler-ir-param-seq-prepend
-                (ir.CompilerIrParam.Param "p5" (compiler-reg-i64-ty) 5)
-                (ir.compiler-ir-param-seq-prepend
-                  (ir.CompilerIrParam.Param "p6" (compiler-reg-i64-ty) 6)
-                  (ir.compiler-ir-param-seq-empty))))))))))
+    (irt.params
+      "p0=%0:i64, p1=%1:i64, p2=%2:i64, p3=%3:i64, p4=%4:i64, p5=%5:i64, p6=%6:i64")))
 
 (cfg
   test
   (define (compiler-reg-entry-forbidden-float-params-3) : ir.CompilerIrParamSeq
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "p0" (ast.AstType.F64) 0)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "p1" (compiler-reg-i64-ty) 1)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "p2" (compiler-reg-i64-ty) 2)
-          (ir.compiler-ir-param-seq-empty))))))
+    (irt.params "p0=%0:f64, p1=%1:i64, p2=%2:i64")))
 
 (cfg
   test
@@ -6026,10 +4699,7 @@
                   (ir.compiler-ir-test-symbol "callee")
                   (ir.CompilerIrCallArgs.Array args)
                   (ast.AstType.I64))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))
-                  (ir.compiler-ir-instr-seq-empty))))
+                (irt.instrs "return %5")))
             ir.CompilerIrBlockList.Nil)
           ir.CompilerIrFunctionAbi.Ordinary)))))
 
@@ -6149,75 +4819,27 @@
 (cfg
   test
   (define (compiler-reg-remat-weight-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_weight")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                1
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.I64 1)
-                (ir.CompilerIrValue.I64 2)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "use1")
-                  (ir.CompilerIrValue.Var 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "use0a")
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Store
-                      (ir.compiler-ir-test-symbol "use0b")
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                      (ir.compiler-ir-instr-seq-empty))))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @remat_weight() -> unit vars 2 {
+       entry:
+         %0 = mov 7 : i64
+         %1 = add 1, 2 : i64
+         store @use1, %1 : i64
+         store @use0a, %0 : i64
+         store @use0b, %0 : i64
+         return
+       }")))
 
 (cfg
   test
   (define (compiler-reg-remat-multi-def-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_multi_def")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                0
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.I64 1)
-                (ir.CompilerIrValue.I64 2)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @remat_multi_def() -> unit vars 1 {
+       entry:
+         %0 = mov 7 : i64
+         %0 = add 1, 2 : i64
+         return
+       }")))
 
 ;; ---------------------------------------------------------------------------
 ;; R5: invariant-load facts.
@@ -6234,58 +4856,28 @@
     [extra : ir.CompilerIrInstrSeq]) : ir.CompilerIrFunction
     (ir.CompilerIrFunction.Function
       (ir.compiler-ir-test-symbol "invariant_descriptor")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "v" (ast.AstType.Ref 0 0) 0)
-        (ir.compiler-ir-param-seq-empty))
+      (irt.params "v=%0:(& size-of i64)")
       (ast.AstType.Unit)
       9
       (ir.compiler-ir-block-cons
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Gep
-              1
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.U8))
+            (irt.instr "%1 = gep %0, 0 : u8")
             (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Load
-                2
-                (ir.CompilerIrValue.Var 1)
-                (ast.AstType.DynArray 0))
+              (irt.instr "%2 = load %1 : (__tl_dyn-array i64)")
               (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Gep
-                  3
-                  (ir.CompilerIrValue.Var 2)
-                  (ir.CompilerIrValue.I64 1)
-                  (compiler-reg-i64-ty))
+                (irt.instr "%3 = gep %2, 1 : i64")
                 (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Load
-                    4
-                    (ir.CompilerIrValue.Var 3)
-                    (compiler-reg-i64-ty))
+                  (irt.instr "%4 = load %3 : i64")
                   (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Gep
-                      5
-                      (ir.CompilerIrValue.Var 2)
-                      (ir.CompilerIrValue.I64 0)
-                      (compiler-reg-i64-ty))
+                    (irt.instr "%5 = gep %2, 0 : i64")
                     (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Load
-                        6
-                        (ir.CompilerIrValue.Var 5)
-                        (ast.AstType.U64))
+                      (irt.instr "%6 = load %5 : u64")
                       (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Gep
-                          7
-                          (ir.CompilerIrValue.Var 6)
-                          (ir.CompilerIrValue.Var 4)
-                          (compiler-reg-i64-ty))
+                        (irt.instr "%7 = gep %6, %4 : i64")
                         (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.StorePtr
-                            (ir.CompilerIrValue.Var 7)
-                            (ir.CompilerIrValue.I64 0)
-                            (compiler-reg-i64-ty))
+                          (irt.instr "store_ptr %7, 0 : i64")
                           extra)))))))))
         ir.CompilerIrBlockList.Nil)
       ir.CompilerIrFunctionAbi.Ordinary)))
@@ -6293,9 +4885,7 @@
 (cfg
   test
   (define (compiler-reg-invariant-return-seq) : ir.CompilerIrInstrSeq
-    (compiler-reg-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-      (ir.compiler-ir-instr-seq-empty))))
+    (irt.instrs "return")))
 
 (cfg
   test
@@ -6339,10 +4929,7 @@
       [facts : reg.CompilerRegInvariantFacts
         (compiler-reg-invariant-facts-for
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.StorePtr
-              (ir.CompilerIrValue.Var 3)
-              (ir.CompilerIrValue.I64 0)
-              (compiler-reg-i64-ty))
+            (irt.instr "store_ptr %3, 0 : i64")
             (compiler-reg-invariant-return-seq)))]
       (and
         (not (reg.compiler-reg-invariant-facts-word-load? facts 2))
@@ -6361,11 +4948,7 @@
       [facts : reg.CompilerRegInvariantFacts
         (compiler-reg-invariant-facts-for
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Call
-              8
-              (ir.compiler-ir-test-symbol "vec_push")
-              ir.CompilerIrCallArgs.Nil
-              (ast.AstType.Unit))
+            (irt.instr "%8 = call vec_push() : unit")
             (compiler-reg-invariant-return-seq)))]
       (and
         (not (reg.compiler-reg-invariant-facts-word-load? facts 2))
@@ -6477,16 +5060,8 @@
   test
   (define (compiler-reg-remat-classifier-ok?) : bool
     (and
-      (compiler-reg-remat-defn?
-        (ir.CompilerIrInstr.Mov
-          10
-          (ir.CompilerIrValue.I64 1)
-          (compiler-reg-i64-ty)))
-      (compiler-reg-remat-defn?
-        (ir.CompilerIrInstr.Mov
-          11
-          (ir.CompilerIrValue.Bool true)
-          (ast.AstType.Bool)))
+      (compiler-reg-remat-defn? (irt.instr "%10 = mov 1 : i64"))
+      (compiler-reg-remat-defn? (irt.instr "%11 = mov true : bool"))
       (compiler-reg-remat-defn?
         (ir.CompilerIrInstr.Mov
           12
@@ -6497,80 +5072,29 @@
           13
           (ir.CompilerIrValue.F64 0x3ff0000000000000)
           (compiler-reg-f64-ty)))
-      (compiler-reg-remat-defn?
-        (ir.CompilerIrInstr.Mov
-          14
-          (ir.CompilerIrValue.GlobalAddr (ir.compiler-ir-test-symbol "global"))
-          (ast.AstType.U64)))
-      (not
-        (compiler-reg-remat-defn?
-          (ir.CompilerIrInstr.Mov
-            15
-            (ir.CompilerIrValue.Global (ir.compiler-ir-test-symbol "global"))
-            (compiler-reg-i64-ty))))
+      (compiler-reg-remat-defn? (irt.instr "%14 = mov &@global : u64"))
+      (not (compiler-reg-remat-defn? (irt.instr "%15 = mov @global : i64")))
       (compiler-reg-remat-defn-with-invariant-loads?
-        (ir.CompilerIrInstr.Mov
-          16
-          (ir.CompilerIrValue.Global (ir.compiler-ir-test-symbol "global"))
-          (compiler-reg-i64-ty))
+        (irt.instr "%16 = mov @global : i64")
         true)
-      (compiler-reg-remat-defn?
-        (ir.CompilerIrInstr.Gep
-          17
-          (ir.CompilerIrValue.GlobalAddr (ir.compiler-ir-test-symbol "global"))
-          (ir.CompilerIrValue.I64 2)
-          (compiler-reg-i64-ty)))
+      (compiler-reg-remat-defn? (irt.instr "%17 = gep &@global, 2 : i64"))
       (not
-        (compiler-reg-remat-defn?
-          (ir.CompilerIrInstr.Gep
-            18
-            (ir.CompilerIrValue.GlobalAddr
-              (ir.compiler-ir-test-symbol "global"))
-            (ir.CompilerIrValue.Var 0)
-            (compiler-reg-i64-ty))))
+        (compiler-reg-remat-defn? (irt.instr "%18 = gep &@global, %0 : i64")))
       ;; R5: `gep BASE, K` with a REGISTER base and a constant offset is one
       ;; `leaq K*w(%base), %r` -- exactly the cost of the reload it replaces --
       ;; so the shape is admitted here; whether the base is really in a register
       ;; and live at a given use is the rewrite's per-use question.
-      (compiler-reg-remat-defn?
-        (ir.CompilerIrInstr.Gep
-          19
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 2)
-          (compiler-reg-i64-ty)))
-      (not
-        (compiler-reg-remat-defn?
-          (ir.CompilerIrInstr.Gep
-            27
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Var 1)
-            (compiler-reg-i64-ty))))
-      (not
-        (compiler-reg-remat-defn?
-          (ir.CompilerIrInstr.Load
-            20
-            (ir.CompilerIrValue.GlobalAddr
-              (ir.compiler-ir-test-symbol "global"))
-            (compiler-reg-i64-ty))))
+      (compiler-reg-remat-defn? (irt.instr "%19 = gep %0, 2 : i64"))
+      (not (compiler-reg-remat-defn? (irt.instr "%27 = gep %0, %1 : i64")))
+      (not (compiler-reg-remat-defn? (irt.instr "%20 = load &@global : i64")))
       (compiler-reg-remat-defn-with-invariant-loads?
-        (ir.CompilerIrInstr.Load
-          21
-          (ir.CompilerIrValue.GlobalAddr (ir.compiler-ir-test-symbol "global"))
-          (compiler-reg-i64-ty))
+        (irt.instr "%21 = load &@global : i64")
         true)
       (not
         (compiler-reg-remat-defn-with-invariant-loads?
-          (ir.CompilerIrInstr.Load
-            22
-            (ir.CompilerIrValue.Var 0)
-            (compiler-reg-i64-ty))
+          (irt.instr "%22 = load %0 : i64")
           true))
-      (not
-        (compiler-reg-remat-defn?
-          (ir.CompilerIrInstr.Mov
-            23
-            (ir.CompilerIrValue.Var 0)
-            (compiler-reg-i64-ty))))
+      (not (compiler-reg-remat-defn? (irt.instr "%23 = mov %0 : i64")))
       ;; W3: a String/Function/Bytes mov materialises as one
       ;; `leaq label(%rip)` and IS rematerialisable, so the spill-weight
       ;; discount must see it as a candidate (it was missing before).
@@ -6579,19 +5103,8 @@
           24
           (ir.CompilerIrValue.String "heap")
           (ast.AstType.String)))
-      (compiler-reg-remat-defn?
-        (ir.CompilerIrInstr.Mov
-          26
-          (ir.CompilerIrValue.Function (ir.compiler-ir-test-symbol "fn"))
-          (ast.AstType.U64)))
-      (not
-        (compiler-reg-remat-defn?
-          (ir.CompilerIrInstr.BinOp
-            25
-            (ir.CompilerIrBinOp.Add)
-            (ir.CompilerIrValue.I64 1)
-            (ir.CompilerIrValue.I64 2)
-            (compiler-reg-i64-ty)))))))
+      (compiler-reg-remat-defn? (irt.instr "%26 = mov fn@fn : u64"))
+      (not (compiler-reg-remat-defn? (irt.instr "%25 = add 1, 2 : i64"))))))
 
 (cfg
   test
@@ -6752,10 +5265,7 @@
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-seq3
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
+            (irt.instr "%0 = mov 7 : i64")
             (ir.CompilerIrInstr.AddrOf 1 0)
             (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)))
         ir.CompilerIrBlockList.Nil)
@@ -6774,20 +5284,9 @@
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-seq3
             (if load-shape?
-              (ir.CompilerIrInstr.Load
-                0
-                (ir.CompilerIrValue.GlobalAddr
-                  (ir.compiler-ir-test-symbol "frozen"))
-                (compiler-reg-i64-ty))
-              (ir.CompilerIrInstr.Mov
-                0
-                (ir.CompilerIrValue.Global
-                  (ir.compiler-ir-test-symbol "frozen"))
-                (compiler-reg-i64-ty)))
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "sink")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
+              (irt.instr "%0 = load &@frozen : i64")
+              (irt.instr "%0 = mov @frozen : i64"))
+            (irt.instr "store @sink, %0 : i64")
             (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)))
         ir.CompilerIrBlockList.Nil)
       ir.CompilerIrFunctionAbi.Ordinary)))
@@ -6922,58 +5421,37 @@
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "hot0b")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @hot0b, %0 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "hot0a")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @hot0a, %0 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "cold1")
-              (ir.CompilerIrValue.Var 1)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @cold1, %1 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use5")
-              (ir.CompilerIrValue.Var 5)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use5, %5 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use4")
-              (ir.CompilerIrValue.Var 4)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use4, %4 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use3")
-              (ir.CompilerIrValue.Var 3)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use3, %3 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use2")
-              (ir.CompilerIrValue.Var 2)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use2, %2 : i64")
             instrs))
         ;; #perf: syscall after the uses so every value crosses it (call-spanning)
         ;; -- the partition gates off and the 6 candidates oversubscribe the 5
@@ -6984,59 +5462,37 @@
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Syscall
-              6
-              (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 39)))
+            (irt.instr "%6 = syscall(39)")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              5
-              (ir.CompilerIrValue.I64 5)
-              (compiler-reg-i64-ty))
+            (irt.instr "%5 = mov 5 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              4
-              (ir.CompilerIrValue.I64 4)
-              (compiler-reg-i64-ty))
+            (irt.instr "%4 = mov 4 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              3
-              (ir.CompilerIrValue.I64 3)
-              (compiler-reg-i64-ty))
+            (irt.instr "%3 = mov 3 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              2
-              (ir.CompilerIrValue.I64 2)
-              (compiler-reg-i64-ty))
+            (irt.instr "%2 = mov 2 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              1
-              (ir.CompilerIrBinOp.Add)
-              (ir.CompilerIrValue.I64 1)
-              (ir.CompilerIrValue.I64 2)
-              (compiler-reg-i64-ty))
+            (irt.instr "%1 = add 1, 2 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 0)
-              (compiler-reg-i64-ty))
+            (irt.instr "%0 = mov 0 : i64")
             instrs))
         (ir.CompilerIrFunction.Function
           (ir.compiler-ir-test-symbol "remat_spill_weight_eviction")
@@ -7106,153 +5562,97 @@
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "hot0c")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @hot0c, %0 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "hot0b")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @hot0b, %0 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "hot0a")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @hot0a, %0 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "cold1")
-              (ir.CompilerIrValue.Var 1)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @cold1, %1 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use5b")
-              (ir.CompilerIrValue.Var 5)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use5b, %5 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use5a")
-              (ir.CompilerIrValue.Var 5)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use5a, %5 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use4b")
-              (ir.CompilerIrValue.Var 4)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use4b, %4 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use4a")
-              (ir.CompilerIrValue.Var 4)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use4a, %4 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use3b")
-              (ir.CompilerIrValue.Var 3)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use3b, %3 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use3a")
-              (ir.CompilerIrValue.Var 3)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use3a, %3 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use2b")
-              (ir.CompilerIrValue.Var 2)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use2b, %2 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "use2a")
-              (ir.CompilerIrValue.Var 2)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @use2a, %2 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Syscall
-              6
-              (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 39)))
+            (irt.instr "%6 = syscall(39)")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              5
-              (ir.CompilerIrValue.I64 5)
-              (compiler-reg-i64-ty))
+            (irt.instr "%5 = mov 5 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              4
-              (ir.CompilerIrValue.I64 4)
-              (compiler-reg-i64-ty))
+            (irt.instr "%4 = mov 4 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              3
-              (ir.CompilerIrValue.I64 3)
-              (compiler-reg-i64-ty))
+            (irt.instr "%3 = mov 3 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              2
-              (ir.CompilerIrValue.I64 2)
-              (compiler-reg-i64-ty))
+            (irt.instr "%2 = mov 2 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 1)
-              (compiler-reg-i64-ty))
+            (irt.instr "%1 = mov 1 : i64")
             instrs))
         (set!
           instrs
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 0)
-              (compiler-reg-i64-ty))
+            (irt.instr "%0 = mov 0 : i64")
             instrs))
         (ir.CompilerIrFunction.Function
           (ir.compiler-ir-test-symbol "spill_weight_eviction")
@@ -7287,106 +5687,30 @@
     ;; partition gates off. var0 and vars 2-5 are used inside the loop (loop-depth
     ;; weighted) while var1 is the single cold exit value -- the unique
     ;; spill-weight eviction victim despite var0/var1 sharing one static use each.
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_spill_weight_eviction")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      7
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.I64 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  2
-                  (ir.CompilerIrValue.I64 2)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    3
-                    (ir.CompilerIrValue.I64 3)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Mov
-                      4
-                      (ir.CompilerIrValue.I64 4)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Mov
-                        5
-                        (ir.CompilerIrValue.I64 5)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Syscall
-                          6
-                          (ir.CompilerIrCallArgs.One
-                            (ir.CompilerIrValue.I64 39)))
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Jump
-                            (ir.compiler-ir-label "loop"))
-                          (ir.compiler-ir-instr-seq-empty))))))))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "hot0")
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "hot2")
-                  (ir.CompilerIrValue.Var 2)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "hot3")
-                    (ir.CompilerIrValue.Var 3)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Store
-                      (ir.compiler-ir-test-symbol "hot4")
-                      (ir.CompilerIrValue.Var 4)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Store
-                        (ir.compiler-ir-test-symbol "hot5")
-                        (ir.CompilerIrValue.Var 5)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Branch
-                          (ir.CompilerIrValue.Bool false)
-                          (ir.compiler-ir-label "body")
-                          (ir.compiler-ir-label "exit"))
-                        (ir.compiler-ir-instr-seq-empty))))))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "cold1")
-                    (ir.CompilerIrValue.Var 1)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                    (ir.compiler-ir-instr-seq-empty))))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_spill_weight_eviction() -> unit vars 7 {
+       entry:
+         %0 = mov 0 : i64
+         %1 = mov 1 : i64
+         %2 = mov 2 : i64
+         %3 = mov 3 : i64
+         %4 = mov 4 : i64
+         %5 = mov 5 : i64
+         %6 = syscall(39)
+         jump loop
+       loop:
+         store @hot0, %0 : i64
+         store @hot2, %2 : i64
+         store @hot3, %3 : i64
+         store @hot4, %4 : i64
+         store @hot5, %5 : i64
+         branch false, body, exit
+       body:
+         jump loop
+       exit:
+         store @cold1, %1 : i64
+         return
+       }")))
 
 (cfg
   test
@@ -7504,67 +5828,29 @@
                 (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l1"))
                 (ir.compiler-ir-instr-seq-empty)))))
         (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "l1")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                0
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.I64 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Bool false)
-                  (ir.compiler-ir-label "l2")
-                  (ir.compiler-ir-label "exit"))
-                (ir.compiler-ir-instr-seq-empty))))
+          (irt.block
+            "l1:
+               %0 = add %0, 1 : i64
+               branch false, l2, exit")
           (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "l2")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Bool false)
-                  (ir.compiler-ir-label "l3")
-                  (ir.compiler-ir-label "l1latch"))
-                (ir.compiler-ir-instr-seq-empty)))
+            (irt.block "l2:
+                 branch false, l3, l1latch")
             (ir.compiler-ir-block-cons
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "l3")
                 (compiler-reg-foldable-rebate-checks
                   5
                   fold?
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Bool false)
-                      (ir.compiler-ir-label "l3latch")
-                      (ir.compiler-ir-label "l2latch"))
-                    (ir.compiler-ir-instr-seq-empty))))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "l3latch")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l3"))
-                    (ir.compiler-ir-instr-seq-empty)))
-                (ir.compiler-ir-block-cons
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "l2latch")
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l2"))
-                      (ir.compiler-ir-instr-seq-empty)))
-                  (ir.compiler-ir-block-cons
-                    (ir.CompilerIrBlock.Block
-                      (ir.compiler-ir-label "l1latch")
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l1"))
-                        (ir.compiler-ir-instr-seq-empty)))
-                    (ir.compiler-ir-block-cons
-                      (ir.CompilerIrBlock.Block
-                        (ir.compiler-ir-label "exit")
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                          (ir.compiler-ir-instr-seq-empty)))
-                      ir.CompilerIrBlockList.Nil))))))))
+                  (irt.instrs "branch false, l3latch, l2latch")))
+              (irt.blocks
+                "l3latch:
+                   jump l3
+                 l2latch:
+                   jump l2
+                 l1latch:
+                   jump l1
+                 exit:
+                   return")))))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
@@ -7984,100 +6270,38 @@
 (cfg
   test
   (define (compiler-reg-remat-rewrite-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_rewrite")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "use0a")
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "use0b")
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @remat_rewrite() -> unit vars 1 {
+       entry:
+         %0 = mov 7 : i64
+         store @use0a, %0 : i64
+         store @use0b, %0 : i64
+         return
+       }")))
 
 (cfg
   test
   (define (compiler-reg-remat-conflict-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_conflict")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.I64 9)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "use0")
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "keep1")
-                    (ir.CompilerIrValue.Var 1)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                    (ir.compiler-ir-instr-seq-empty)))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @remat_conflict() -> unit vars 2 {
+       entry:
+         %0 = mov 7 : i64
+         %1 = mov 9 : i64
+         store @use0, %0 : i64
+         store @keep1, %1 : i64
+         return
+       }")))
 
 (cfg
   test
   (define (compiler-reg-remat-caller-clobber-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_caller_clobber")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.GlobalAddr
-                (ir.compiler-ir-test-symbol "callee"))
-              (ast.AstType.U64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.CallIndirect
-                1
-                (ir.CompilerIrValue.Var 0)
-                ir.CompilerIrCallArgs.Nil
-                (ast.AstType.Unit))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @remat_caller_clobber() -> unit vars 2 {
+       entry:
+         %0 = mov &@callee : u64
+         %1 = call* %0() : unit
+         return
+       }")))
 
 (cfg
   test
@@ -8091,10 +6315,7 @@
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
+            (irt.instr "%0 = mov 7 : i64")
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.AddrOf 1 0)
               (compiler-reg-test-instr-seq-prepend
@@ -8102,59 +6323,29 @@
                   (ir.compiler-ir-test-symbol "addr")
                   (ir.CompilerIrValue.Var 1)
                   (reg.compiler-reg-addr-of-result-type))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty))))))
+                (irt.instrs "return")))))
         ir.CompilerIrBlockList.Nil)
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
   (define (compiler-reg-remat-global-mov-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_global_mov")
-      (ir.compiler-ir-param-seq-empty)
-      (compiler-reg-i64-ty)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.Global
-                (ir.compiler-ir-test-symbol "global_value"))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-              (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @remat_global_mov() -> i64 vars 1 {
+       entry:
+         %0 = mov @global_value : i64
+         return %0
+       }")))
 
 (cfg
   test
   (define (compiler-reg-remat-global-load-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_global_load")
-      (ir.compiler-ir-param-seq-empty)
-      (compiler-reg-i64-ty)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Load
-              0
-              (ir.CompilerIrValue.GlobalAddr
-                (ir.compiler-ir-test-symbol "global_value"))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-              (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @remat_global_load() -> i64 vars 1 {
+       entry:
+         %0 = load &@global_value : i64
+         return %0
+       }")))
 
 (cfg
   test
@@ -8164,81 +6355,32 @@
       (ir.compiler-ir-param-seq-empty)
       (reg.compiler-reg-addr-of-result-type)
       1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Gep
-              0
-              (ir.CompilerIrValue.GlobalAddr
-                (ir.compiler-ir-test-symbol "global_value"))
-              (ir.CompilerIrValue.I64 3)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-              (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil)
+      (irt.blocks
+        "entry:
+           %0 = gep &@global_value, 3 : i64
+           return %0")
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (cfg
   test
   (define (compiler-reg-remat-global-mutating-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_global_mutating")
-      (ir.compiler-ir-param-seq-empty)
-      (compiler-reg-i64-ty)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.Global
-                (ir.compiler-ir-test-symbol "global_value"))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "global_value")
-                (ir.CompilerIrValue.I64 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                (ir.compiler-ir-instr-seq-empty)))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @remat_global_mutating() -> i64 vars 1 {
+       entry:
+         %0 = mov @global_value : i64
+         store @global_value, 1 : i64
+         return %0
+       }")))
 
 (cfg
   test
   (define (compiler-reg-remat-parameter-global-rhs-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_parameter_global_rhs")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "x" (compiler-reg-i64-ty) 0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "y" (compiler-reg-i64-ty) 1)
-          (ir.compiler-ir-param-seq-empty)))
-      (compiler-reg-i64-ty)
-      3
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              2
-              (ir.CompilerIrBinOp.Mul)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Global
-                (ir.compiler-ir-test-symbol "global_value"))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-              (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @remat_parameter_global_rhs(x=%0:i64, y=%1:i64) -> i64 vars 3 {
+       entry:
+         %2 = mul %0, @global_value : i64
+         return %2
+       }")))
 
 (cfg
   test
@@ -8703,50 +6845,23 @@
   (define (compiler-reg-call-spanning-post-call-stores
     [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
     (compiler-reg-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Store
-        (ir.compiler-ir-test-symbol "g0")
-        (ir.CompilerIrValue.Var 0)
-        (compiler-reg-i64-ty))
+      (irt.instr "store @g0, %0 : i64")
       (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Store
-          (ir.compiler-ir-test-symbol "g1")
-          (ir.CompilerIrValue.Var 1)
-          (compiler-reg-i64-ty))
+        (irt.instr "store @g1, %1 : i64")
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g2")
-            (ir.CompilerIrValue.Var 2)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g2, %2 : i64")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g3")
-              (ir.CompilerIrValue.Var 3)
-              (compiler-reg-i64-ty))
+            (irt.instr "store @g3, %3 : i64")
             (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "g4")
-                (ir.CompilerIrValue.Var 4)
-                (compiler-reg-i64-ty))
+              (irt.instr "store @g4, %4 : i64")
               (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "g5")
-                  (ir.CompilerIrValue.Var 5)
-                  (compiler-reg-i64-ty))
+                (irt.instr "store @g5, %5 : i64")
                 (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "g6")
-                    (ir.CompilerIrValue.Var 6)
-                    (compiler-reg-i64-ty))
+                  (irt.instr "store @g6, %6 : i64")
                   (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Store
-                      (ir.compiler-ir-test-symbol "g5b")
-                      (ir.CompilerIrValue.Var 5)
-                      (compiler-reg-i64-ty))
+                    (irt.instr "store @g5b, %5 : i64")
                     (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Store
-                        (ir.compiler-ir-test-symbol "g5c")
-                        (ir.CompilerIrValue.Var 5)
-                        (compiler-reg-i64-ty))
+                      (irt.instr "store @g5c, %5 : i64")
                       tail)))))))))))
 
 (cfg
@@ -8754,40 +6869,19 @@
   (define (compiler-reg-call-spanning-defs-before
     [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
     (compiler-reg-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Mov
-        0
-        (ir.CompilerIrValue.I64 0)
-        (compiler-reg-i64-ty))
+      (irt.instr "%0 = mov 0 : i64")
       (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Mov
-          1
-          (ir.CompilerIrValue.I64 1)
-          (compiler-reg-i64-ty))
+        (irt.instr "%1 = mov 1 : i64")
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            2
-            (ir.CompilerIrValue.I64 2)
-            (compiler-reg-i64-ty))
+          (irt.instr "%2 = mov 2 : i64")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              3
-              (ir.CompilerIrValue.I64 3)
-              (compiler-reg-i64-ty))
+            (irt.instr "%3 = mov 3 : i64")
             (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                4
-                (ir.CompilerIrValue.I64 4)
-                (compiler-reg-i64-ty))
+              (irt.instr "%4 = mov 4 : i64")
               (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  5
-                  (ir.CompilerIrValue.I64 5)
-                  (compiler-reg-i64-ty))
+                (irt.instr "%5 = mov 5 : i64")
                 (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    6
-                    (ir.CompilerIrValue.I64 6)
-                    (compiler-reg-i64-ty))
+                  (irt.instr "%6 = mov 6 : i64")
                   tail)))))))))
 
 (cfg
@@ -8795,25 +6889,34 @@
   (define (compiler-reg-call-spanning-call-before
     [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
     (compiler-reg-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Call
-        7
-        (ir.compiler-ir-test-symbol "side_effect")
-        (ir.CompilerIrCallArgs.Nil)
-        (ast.AstType.Unit))
+      (irt.instr "%7 = call side_effect() : unit")
       tail)))
 
 (cfg
   test
   (define (compiler-reg-call-spanning-multiblock-local-function) : ir.CompilerIrFunction
     (let
-      [body-tail : ir.CompilerIrInstrSeq
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))
-          (ir.compiler-ir-instr-seq-empty))]
+      [body-tail : ir.CompilerIrInstrSeq (irt.instrs "jump exit")]
       [body : ir.CompilerIrInstrSeq
-        (compiler-reg-call-spanning-defs-before
-          (compiler-reg-call-spanning-call-before
-            (compiler-reg-call-spanning-post-call-stores body-tail)))]
+        (irt.instrs
+          "%0 = mov 0 : i64
+           %1 = mov 1 : i64
+           %2 = mov 2 : i64
+           %3 = mov 3 : i64
+           %4 = mov 4 : i64
+           %5 = mov 5 : i64
+           %6 = mov 6 : i64
+           %7 = call side_effect() : unit
+           store @g0, %0 : i64
+           store @g1, %1 : i64
+           store @g2, %2 : i64
+           store @g3, %3 : i64
+           store @g4, %4 : i64
+           store @g5, %5 : i64
+           store @g6, %6 : i64
+           store @g5b, %5 : i64
+           store @g5c, %5 : i64
+           jump exit")]
       (ir.CompilerIrFunction.Function
         (ir.compiler-ir-test-symbol "call_spanning_multiblock_local")
         (ir.compiler-ir-param-seq-empty)
@@ -8841,14 +6944,16 @@
   (define (compiler-reg-call-spanning-multiblock-boundary-function) : ir.CompilerIrFunction
     (let
       [entry : ir.CompilerIrInstrSeq
-        (compiler-reg-call-spanning-defs-before
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))
-            (ir.compiler-ir-instr-seq-empty)))]
-      [body-tail : ir.CompilerIrInstrSeq
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))
-          (ir.compiler-ir-instr-seq-empty))]
+        (irt.instrs
+          "%0 = mov 0 : i64
+           %1 = mov 1 : i64
+           %2 = mov 2 : i64
+           %3 = mov 3 : i64
+           %4 = mov 4 : i64
+           %5 = mov 5 : i64
+           %6 = mov 6 : i64
+           jump body")]
+      [body-tail : ir.CompilerIrInstrSeq (irt.instrs "jump exit")]
       [body : ir.CompilerIrInstrSeq
         (compiler-reg-call-spanning-call-before
           (compiler-reg-call-spanning-post-call-stores body-tail))]
@@ -8940,40 +7045,23 @@
     [call-in-loop? : bool]) : ir.CompilerIrFunction
     (let
       [loop-tail : ir.CompilerIrInstrSeq
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.BinOp
-            2
-            (ir.CompilerIrBinOp.Add)
-            (ir.CompilerIrValue.Var 1)
-            (ir.CompilerIrValue.Var 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.Var 2)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 2)
-                (ir.compiler-ir-label "loop")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty))))]
+        (irt.instrs
+          "%2 = add %1, %0 : i64
+           %1 = mov %2 : i64
+           branch %2, loop, exit")]
       [loop-body : ir.CompilerIrInstrSeq
         (if define-in-loop?
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 9)
-              (compiler-reg-i64-ty))
-            loop-tail)
+          (irt.instrs
+            "%0 = mov 9 : i64
+             %2 = add %1, %0 : i64
+             %1 = mov %2 : i64
+             branch %2, loop, exit")
           (if call-in-loop?
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                3
-                (ir.compiler-ir-test-symbol "side_effect")
-                (ir.CompilerIrCallArgs.Nil)
-                (ast.AstType.Unit))
-              loop-tail)
+            (irt.instrs
+              "%3 = call side_effect() : unit
+               %2 = add %1, %0 : i64
+               %1 = mov %2 : i64
+               branch %2, loop, exit")
             loop-tail))]
       (ir.CompilerIrFunction.Function
         (ir.compiler-ir-test-symbol "loop_region_fixture")
@@ -8981,30 +7069,15 @@
         (ast.AstType.Unit)
         4
         (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                0
-                (ir.CompilerIrValue.I64 7)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  1
-                  (ir.CompilerIrValue.I64 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                  (ir.compiler-ir-instr-seq-empty)))))
+          (irt.block
+            "entry:
+               %0 = mov 7 : i64
+               %1 = mov 0 : i64
+               jump loop")
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block (ir.compiler-ir-label "loop") loop-body)
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))
+            (irt.blocks "exit:
+                 return")))
         ir.CompilerIrFunctionAbi.Ordinary))))
 
 ;; Collect loop rows for var 0 (marked a full-grade candidate) and return the
@@ -9369,36 +7442,17 @@
         (ast.AstType.Unit)
         7
         (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                0
-                (ir.CompilerIrValue.I64 7)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  3
-                  (ir.CompilerIrValue.I64 11)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    1
-                    (ir.CompilerIrValue.I64 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                    (ir.compiler-ir-instr-seq-empty))))))
+          (irt.block
+            "entry:
+               %0 = mov 7 : i64
+               %3 = mov 11 : i64
+               %1 = mov 0 : i64
+               jump loop")
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "loop")
               (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  2
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
+                (irt.instr "%2 = add %1, %0 : i64")
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.BinOp
                     5
@@ -9406,36 +7460,14 @@
                     (ir.CompilerIrValue.Var 2)
                     mid
                     (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.BinOp
-                      6
-                      (ir.CompilerIrBinOp.Add)
-                      (ir.CompilerIrValue.Var 5)
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Mov
-                        1
-                        (ir.CompilerIrValue.Var 6)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Branch
-                          (ir.CompilerIrValue.Var 6)
-                          (ir.compiler-ir-label "loop")
-                          (ir.compiler-ir-label "exit"))
-                        (ir.compiler-ir-instr-seq-empty)))))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    4
-                    (ir.CompilerIrValue.Var 3)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                    (ir.compiler-ir-instr-seq-empty))))
-              ir.CompilerIrBlockList.Nil)))
+                  (irt.instrs
+                    "%6 = add %5, %0 : i64
+                     %1 = mov %6 : i64
+                     branch %6, loop, exit"))))
+            (irt.blocks
+              "exit:
+                 %4 = mov %3 : i64
+                 return")))
         ir.CompilerIrFunctionAbi.Ordinary))))
 
 ;; r12/r13: two callee-saved homes that clear the loop-pool hazard filter.
@@ -10088,31 +8120,14 @@
 (cfg
   test
   (define (compiler-reg-edge-copy-linear-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "edge_copy_linear")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "hot"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "hot")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @edge_copy_linear() -> i64 vars 1 {
+       entry:
+         %0 = mov 7 : i64
+         jump hot
+       hot:
+         return %0
+       }")))
 
 (cfg
   test
@@ -10155,51 +8170,19 @@
 (cfg
   test
   (define (compiler-reg-edge-copy-backedge-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "edge_copy_backedge")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "sink")
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                  (ir.compiler-ir-instr-seq-empty))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @edge_copy_backedge() -> i64 vars 1 {
+       entry:
+         %0 = mov 7 : i64
+         jump loop
+       loop:
+         branch false, body, exit
+       body:
+         store @sink, %0 : i64
+         jump loop
+       exit:
+         return %0
+       }")))
 
 (cfg
   test
@@ -10251,47 +8234,18 @@
 (cfg
   test
   (define (compiler-reg-edge-copy-critical-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "edge_copy_critical")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "hot")
-                (ir.compiler-ir-label "cold"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "other")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "hot"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "hot")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "cold")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @edge_copy_critical() -> i64 vars 1 {
+       entry:
+         %0 = mov 7 : i64
+         branch false, hot, cold
+       other:
+         jump hot
+       hot:
+         return %0
+       cold:
+         return 0
+       }")))
 
 (cfg
   test
@@ -10396,63 +8350,21 @@
 (cfg
   test
   (define (compiler-reg-leaf-csr-split-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "leaf_csr_split")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                1
-                (ir.CompilerIrBinOp.Eq)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.I64 7)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.compiler-ir-label "body")
-                  (ir.compiler-ir-label "exit"))
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "hot0")
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "hot1")
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                    (ir.compiler-ir-instr-seq-empty)))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @leaf_csr_split() -> i64 vars 2 {
+       entry:
+         %0 = mov 7 : i64
+         jump loop
+       loop:
+         %1 = eq %0, 7 : i64
+         branch %1, body, exit
+       body:
+         store @hot0, %0 : i64
+         store @hot1, %0 : i64
+         jump loop
+       exit:
+         return 0
+       }")))
 
 (cfg
   test
@@ -10545,236 +8457,77 @@
 (cfg
   test
   (define (compiler-reg-loop-split-rewrite-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_split_rewrite")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "hot0")
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "hot1")
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                    (ir.compiler-ir-instr-seq-empty)))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_split_rewrite() -> i64 vars 1 {
+       entry:
+         %0 = mov 7 : i64
+         jump loop
+       loop:
+         branch false, body, exit
+       body:
+         store @hot0, %0 : i64
+         store @hot1, %0 : i64
+         jump loop
+       exit:
+         return %0
+       }")))
 
 (cfg
   test
   (define (compiler-reg-loop-split-two-rewrite-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_split_two_rewrite")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.I64 11)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                (ir.compiler-ir-instr-seq-empty)))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "hot0")
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "hot1")
-                    (ir.CompilerIrValue.Var 1)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Store
-                      (ir.compiler-ir-test-symbol "hot2")
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Store
-                        (ir.compiler-ir-test-symbol "hot3")
-                        (ir.CompilerIrValue.Var 1)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                        (ir.compiler-ir-instr-seq-empty)))))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_split_two_rewrite() -> i64 vars 2 {
+       entry:
+         %0 = mov 7 : i64
+         %1 = mov 11 : i64
+         jump loop
+       loop:
+         branch false, body, exit
+       body:
+         store @hot0, %0 : i64
+         store @hot1, %1 : i64
+         store @hot2, %0 : i64
+         store @hot3, %1 : i64
+         jump loop
+       exit:
+         return %0
+       }")))
 
 (cfg
   test
   (define (compiler-reg-loop-split-low-benefit-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_split_low_benefit")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "hot0")
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                  (ir.compiler-ir-instr-seq-empty))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_split_low_benefit() -> i64 vars 1 {
+       entry:
+         %0 = mov 7 : i64
+         jump loop
+       loop:
+         branch false, body, exit
+       body:
+         store @hot0, %0 : i64
+         jump loop
+       exit:
+         return %0
+       }")))
 
 (cfg
   test
   (define (compiler-reg-loop-split-phi-region-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_split_phi_region")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Phi
-                  1
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.compiler-ir-label "loop")
-                    (ir.compiler-ir-phi-input-seq-empty))
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "hot0")
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Store
-                      (ir.compiler-ir-test-symbol "hot1")
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                      (ir.compiler-ir-instr-seq-empty))))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_split_phi_region() -> i64 vars 2 {
+       entry:
+         %0 = mov 7 : i64
+         jump loop
+       loop:
+         branch false, body, exit
+       body:
+         %1 = phi [%0, loop] : i64
+         store @hot0, %0 : i64
+         store @hot1, %0 : i64
+         jump loop
+       exit:
+         return %0
+       }")))
 
 (cfg
   test
@@ -10963,62 +8716,22 @@
   ;; and only the multi-block region can home it. Every body block is entered
   ;; from inside the region, so the region is single-entry at `loop`.
   (define (compiler-reg-loop-split-nblock-invariant-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_split_nblock_invariant")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "body1")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "body1")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "hot0")
-                  (ir.CompilerIrValue.Var 0)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "hot1")
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body2"))
-                    (ir.compiler-ir-instr-seq-empty)))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "body2")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                  (ir.compiler-ir-instr-seq-empty)))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "exit")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                    (ir.compiler-ir-instr-seq-empty)))
-                ir.CompilerIrBlockList.Nil)))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_split_nblock_invariant() -> i64 vars 1 {
+       entry:
+         %0 = mov 7 : i64
+         jump loop
+       loop:
+         branch false, body1, exit
+       body1:
+         store @hot0, %0 : i64
+         store @hot1, %0 : i64
+         jump body2
+       body2:
+         jump loop
+       exit:
+         return %0
+       }")))
 
 (cfg
   test
@@ -11028,72 +8741,24 @@
   ;; the region register -- so the single-entry gate must refuse it and the whole
   ;; loop-split rewrite must be a no-op.
   (define (compiler-reg-loop-split-nblock-outside-entry-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_split_nblock_outside_entry")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      1
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Bool false)
-                (ir.compiler-ir-label "loop")
-                (ir.compiler-ir-label "side"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "side")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body2"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "loop")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Bool false)
-                  (ir.compiler-ir-label "body1")
-                  (ir.compiler-ir-label "exit"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "body1")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "hot0")
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Store
-                      (ir.compiler-ir-test-symbol "hot1")
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body2"))
-                      (ir.compiler-ir-instr-seq-empty)))))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "body2")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                    (ir.compiler-ir-instr-seq-empty)))
-                (ir.compiler-ir-block-cons
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "exit")
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Return
-                        (ir.CompilerIrMaybeValue.Some
-                          (ir.CompilerIrValue.Var 0)))
-                      (ir.compiler-ir-instr-seq-empty)))
-                  ir.CompilerIrBlockList.Nil))))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_split_nblock_outside_entry() -> i64 vars 1 {
+       entry:
+         %0 = mov 7 : i64
+         branch false, loop, side
+       side:
+         jump body2
+       loop:
+         branch false, body1, exit
+       body1:
+         store @hot0, %0 : i64
+         store @hot1, %0 : i64
+         jump body2
+       body2:
+         jump loop
+       exit:
+         return %0
+       }")))
 
 (cfg
   test
@@ -11172,50 +8837,16 @@
 (cfg
   test
   (define (compiler-reg-loop-split-clobber-scan-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "loop_split_clobber_scan")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      5
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "loop")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.I64 3)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  2
-                  (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.Var 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    3
-                    (ir.CompilerIrBinOp.Div)
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.CompilerIrValue.Var 1)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.BinOp
-                      4
-                      (ir.CompilerIrBinOp.Mul)
-                      (ir.CompilerIrValue.Var 0)
-                      (ir.CompilerIrValue.Var 1)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-                      (ir.compiler-ir-instr-seq-empty))))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @loop_split_clobber_scan() -> i64 vars 5 {
+       loop:
+         %0 = mov 7 : i64
+         %1 = mov 3 : i64
+         %2 = shl %0, %1 : i64
+         %3 = div %0, %1 : i64
+         %4 = mul %0, %1 : i64
+         jump loop
+       }")))
 
 (cfg
   test
@@ -11686,42 +9317,15 @@
 (cfg
   test
   (define (compiler-reg-liveness-handle-phi-fixture) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "liveness_handle_phi")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "loop")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Phi
-                1
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.compiler-ir-label "entry")
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.Var 1)
-                    (ir.compiler-ir-label "loop")
-                    (ir.compiler-ir-phi-input-seq-empty)))
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                (ir.compiler-ir-instr-seq-empty))))
-          ir.CompilerIrBlockList.Nil))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @liveness_handle_phi() -> i64 vars 2 {
+       entry:
+         %0 = mov 7 : i64
+         jump loop
+       loop:
+         %1 = phi [%0, entry], [%1, loop] : i64
+         return %1
+       }")))
 
 (cfg
   test
@@ -12002,37 +9606,21 @@
           [phi-excluded : live.CompilerLiveI64Set
             (let
               [set-empty (live.compiler-live-set-empty)]
-              [phi
-                (ir.CompilerIrInstr.Phi
-                  0
-                  (ir.compiler-ir-phi-input-seq-empty)
-                  (ast.AstType.Struct (ci.intern "Pair")))]
+              [phi (irt.instr "%0 = phi  : Pair")]
               [set1 (live.compiler-live-set1 0)]
               (reg.compiler-reg-group-pair-excluded-instr set-empty phi set1))]
           [call-caller-unsafe : live.CompilerLiveI64Set
             (reg.compiler-reg-group-pair-caller-unsafe-instr
               (live.compiler-live-set-empty)
-              (ir.CompilerIrInstr.Call
-                1
-                (ir.compiler-ir-test-symbol "callee")
-                (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
-                (ast.AstType.I64)))]
+              (irt.instr "%1 = call callee(%0) : i64"))]
           [indirect-call-caller-unsafe : live.CompilerLiveI64Set
             (reg.compiler-reg-group-pair-caller-unsafe-instr
               (live.compiler-live-set-empty)
-              (ir.CompilerIrInstr.CallIndirect
-                1
-                (ir.CompilerIrValue.Var 2)
-                (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
-                (ast.AstType.I64)))]
+              (irt.instr "%1 = call* %2(%0) : i64"))]
           [indirect-c-call-caller-unsafe : live.CompilerLiveI64Set
             (reg.compiler-reg-group-pair-caller-unsafe-instr
               (live.compiler-live-set-empty)
-              (ir.CompilerIrInstr.CallIndirectC
-                1
-                (ir.CompilerIrValue.Var 2)
-                (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
-                (ast.AstType.I64)))]
+              (irt.instr "%1 = call_c* %2(%0) : i64"))]
           [pair-conflicts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [pair-conflict-count : i64
             (reg.compiler-reg-group-pair-conflict-vars!
@@ -12534,22 +10122,11 @@
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
+            (irt.instr "%0 = mov 7 : i64")
             (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.I64 9)
-                (compiler-reg-i64-ty))
+              (irt.instr "%1 = mov 9 : i64")
               (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  2
-                  (ir.CompilerIrBinOp.Lt)
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.Var 1)
-                  (compiler-reg-i64-ty))
+                (irt.instr "%2 = lt %0, %1 : i64")
                 (compiler-reg-test-instr-seq-prepend
                   (ir.ir-instr-select
                     3
@@ -12566,11 +10143,7 @@
                       (ir.CompilerIrValue.Var 1)
                       4
                       (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Return
-                        (ir.CompilerIrMaybeValue.Some
-                          (ir.CompilerIrValue.Var 3)))
-                      (ir.compiler-ir-instr-seq-empty))))))))
+                    (irt.instrs "return %3")))))))
         ir.CompilerIrBlockList.Nil)
       ir.CompilerIrFunctionAbi.Ordinary)))
 
@@ -12730,27 +10303,14 @@
   test
   (define (compiler-reg-color-phi-web-blocks [live-after-phi : bool]) : ir.CompilerIrBlockList
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            1
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
-            (ir.compiler-ir-instr-seq-empty))))
+      (irt.block "entry:
+           %1 = mov 7 : i64
+           jump merge")
       (ir.compiler-ir-block-cons
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "merge")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              0
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.Var 1)
-                (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-seq-empty))
-              (compiler-reg-i64-ty))
+            (irt.instr "%0 = phi [%1, entry] : i64")
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some
@@ -12826,70 +10386,27 @@
   test
   (define (compiler-reg-color-web-merge-blocks [overlap : bool]) : ir.CompilerIrBlockList
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            3
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-            (ir.compiler-ir-instr-seq-empty))))
+      (irt.block "entry:
+           %3 = mov 7 : i64
+           jump header")
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "header")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              0
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.Var 2)
-                (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 3)
-                  (ir.compiler-ir-label "entry")
-                  (ir.compiler-ir-phi-input-seq-empty)))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 0)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty))))
+        (irt.block
+          "header:
+             %0 = phi [%2, latch], [%3, entry] : i64
+             branch %0, body, exit")
         (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "body")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
-              (ir.compiler-ir-instr-seq-empty)))
+          (irt.block "body:
+               jump merge")
           (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "merge")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Phi
-                  1
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.compiler-ir-label "body")
-                    (ir.compiler-ir-phi-input-seq-empty))
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                  (ir.compiler-ir-instr-seq-empty))))
+            (irt.block
+              "merge:
+                 %1 = phi [%0, body] : i64
+                 jump latch")
             (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "latch")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Phi
-                    2
-                    (ir.compiler-ir-phi-input-seq-prepend
-                      (ir.CompilerIrValue.Var 1)
-                      (ir.compiler-ir-label "merge")
-                      (ir.compiler-ir-phi-input-seq-empty))
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                    (ir.compiler-ir-instr-seq-empty))))
+              (irt.block
+                "latch:
+                   %2 = phi [%1, merge] : i64
+                   jump header")
               (ir.compiler-ir-block-cons
                 (ir.CompilerIrBlock.Block
                   (ir.compiler-ir-label "exit")
@@ -12973,55 +10490,22 @@
   test
   (define (compiler-reg-color-step-witness-blocks [outlives : bool]) : ir.CompilerIrBlockList
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            2
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-            (ir.compiler-ir-instr-seq-empty))))
+      (irt.block "entry:
+           %2 = mov 0 : i64
+           jump header")
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "header")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              0
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.Var 1)
-                (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 2)
-                  (ir.compiler-ir-label "entry")
-                  (ir.compiler-ir-phi-input-seq-empty)))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 0)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty))))
+        (irt.block
+          "header:
+             %0 = phi [%1, latch], [%2, entry] : i64
+             branch %0, body, exit")
         (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "body")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                1
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.I64 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                (ir.compiler-ir-instr-seq-empty))))
+          (irt.block
+            "body:
+               %1 = add %0, 1 : i64
+               jump latch")
           (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "latch")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                (ir.compiler-ir-instr-seq-empty)))
+            (irt.block "latch:
+                 jump header")
             (ir.compiler-ir-block-cons
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "exit")
@@ -13107,67 +10591,24 @@
   test
   (define (compiler-reg-color-witness-chain-blocks [outlives : bool]) : ir.CompilerIrBlockList
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            4
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-            (ir.compiler-ir-instr-seq-empty))))
+      (irt.block "entry:
+           %4 = mov 0 : i64
+           jump header")
       (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "header")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              0
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.Var 3)
-                (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 4)
-                  (ir.compiler-ir-label "entry")
-                  (ir.compiler-ir-phi-input-seq-empty)))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 0)
-                (ir.compiler-ir-label "body")
-                (ir.compiler-ir-label "exit"))
-              (ir.compiler-ir-instr-seq-empty))))
+        (irt.block
+          "header:
+             %0 = phi [%3, latch], [%4, entry] : i64
+             branch %0, body, exit")
         (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "body")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                1
-                (ir.CompilerIrBinOp.Mul)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.I64 3)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  2
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.CompilerIrValue.I64 5)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    3
-                    (ir.CompilerIrValue.Var 2)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                    (ir.compiler-ir-instr-seq-empty))))))
+          (irt.block
+            "body:
+               %1 = mul %0, 3 : i64
+               %2 = add %1, 5 : i64
+               %3 = mov %2 : i64
+               jump latch")
           (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "latch")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                (ir.compiler-ir-instr-seq-empty)))
+            (irt.block "latch:
+                 jump header")
             (ir.compiler-ir-block-cons
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "exit")
@@ -13251,86 +10692,24 @@
 (cfg
   test
   (define (compiler-reg-color-carry-priority-blocks) : ir.CompilerIrBlockList
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            4
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-            (ir.compiler-ir-instr-seq-empty))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "header")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              0
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.Var 3)
-                (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 4)
-                  (ir.compiler-ir-label "entry")
-                  (ir.compiler-ir-phi-input-seq-empty)))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 0)
-                (ir.compiler-ir-label "left")
-                (ir.compiler-ir-label "right"))
-              (ir.compiler-ir-instr-seq-empty))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "left")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.I64 9)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
-                (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "right")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "merge")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Phi
-                    2
-                    (ir.compiler-ir-phi-input-seq-prepend
-                      (ir.CompilerIrValue.Var 1)
-                      (ir.compiler-ir-label "left")
-                      (ir.compiler-ir-phi-input-seq-prepend
-                        (ir.CompilerIrValue.Var 0)
-                        (ir.compiler-ir-label "right")
-                        (ir.compiler-ir-phi-input-seq-empty)))
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                    (ir.compiler-ir-instr-seq-empty))))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "latch")
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Phi
-                      3
-                      (ir.compiler-ir-phi-input-seq-prepend
-                        (ir.CompilerIrValue.Var 2)
-                        (ir.compiler-ir-label "merge")
-                        (ir.compiler-ir-phi-input-seq-empty))
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                      (ir.compiler-ir-instr-seq-empty))))
-                ir.CompilerIrBlockList.Nil))))))))
+    (irt.blocks
+      "entry:
+         %4 = mov 7 : i64
+         jump header
+       header:
+         %0 = phi [%3, latch], [%4, entry] : i64
+         branch %0, left, right
+       left:
+         %1 = mov 9 : i64
+         jump merge
+       right:
+         jump merge
+       merge:
+         %2 = phi [%1, left], [%0, right] : i64
+         jump latch
+       latch:
+         %3 = phi [%2, merge] : i64
+         jump header")))
 
 (cfg
   test
@@ -13418,64 +10797,21 @@
     [_ false]))
 
 (define (compiler-reg-early-scratch-test-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "early_scratch_literal_divmod")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 42)
-            (ast.AstType.I64))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              1
-              (ir.CompilerIrBinOp.SafeMod)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 7)
-              (ast.AstType.I64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-              (ir.compiler-ir-instr-seq-empty)))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @early_scratch_literal_divmod() -> i64 vars 2 {
+     entry:
+       %0 = mov 42 : i64
+       %1 = safe_mod %0, 7 : i64
+       return %1
+     }"))
 
 (define (compiler-reg-early-scratch-nontarget-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.BoundsCheck
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 8)
-          (ir.compiler-ir-label "ok"))
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Switch
-            (ir.CompilerIrValue.Var 0)
-            1
-            (ir.compiler-ir-switch-case-seq-empty)
-            (ir.compiler-ir-label "other"))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              1
-              (ir.CompilerIrBinOp.SafeMod)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 1)
-              (ast.AstType.I64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                1
-                (ir.CompilerIrBinOp.Mod)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.I64 7)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-seq-empty))))))
-    ir.CompilerIrBlockList.Nil))
+  (irt.blocks
+    "entry:
+       bounds_check %0, 8 message \"ok\"
+       switch %0 base 1 [] default other
+       %1 = safe_mod %0, %1 : i64
+       %1 = mod %0, 7 : i64"))
 
 (define (compiler-reg-early-scratch-slot-range-ok?
   [model : (& model reg.CompilerRegEarlyScratchModel)]
@@ -13957,35 +11293,14 @@
   (ast.AstType.F64))
 
 (define (compiler-reg-reuse-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "reuse")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 1)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g0")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.I64 2)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @reuse() -> unit vars 2 {
+     entry:
+       %0 = mov 1 : i64
+       store @g0, %0 : i64
+       %1 = mov 2 : i64
+       return %1
+     }"))
 
 (define (compiler-reg-f64-reuse-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -14002,107 +11317,36 @@
             (ir.CompilerIrValue.F64 0x3ff8000000000000)
             (compiler-reg-f64-ty))
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Store
-              (ir.compiler-ir-test-symbol "g0")
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-f64-ty))
+            (irt.instr "store @g0, %0 : f64")
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Mov
                 1
                 (ir.CompilerIrValue.F64 0x4004000000000000)
                 (compiler-reg-f64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                (ir.compiler-ir-instr-seq-empty))))))
+              (irt.instrs "return %1")))))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-overlap-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "overlap")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    8
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 1)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.I64 2)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  3
-                  (ir.CompilerIrValue.I64 3)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    4
-                    (ir.CompilerIrValue.I64 4)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Mov
-                      5
-                      (ir.CompilerIrValue.I64 5)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Mov
-                        6
-                        (ir.CompilerIrValue.I64 6)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Store
-                          (ir.compiler-ir-test-symbol "g0")
-                          (ir.CompilerIrValue.Var 0)
-                          (compiler-reg-i64-ty))
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Store
-                            (ir.compiler-ir-test-symbol "g1")
-                            (ir.CompilerIrValue.Var 1)
-                            (compiler-reg-i64-ty))
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.Store
-                              (ir.compiler-ir-test-symbol "g2")
-                              (ir.CompilerIrValue.Var 2)
-                              (compiler-reg-i64-ty))
-                            (compiler-reg-test-instr-seq-prepend
-                              (ir.CompilerIrInstr.Store
-                                (ir.compiler-ir-test-symbol "g3")
-                                (ir.CompilerIrValue.Var 3)
-                                (compiler-reg-i64-ty))
-                              (compiler-reg-test-instr-seq-prepend
-                                (ir.CompilerIrInstr.Store
-                                  (ir.compiler-ir-test-symbol "g4")
-                                  (ir.CompilerIrValue.Var 4)
-                                  (compiler-reg-i64-ty))
-                                (compiler-reg-test-instr-seq-prepend
-                                  (ir.CompilerIrInstr.Store
-                                    (ir.compiler-ir-test-symbol "g5")
-                                    (ir.CompilerIrValue.Var 5)
-                                    (compiler-reg-i64-ty))
-                                  (compiler-reg-test-instr-seq-prepend
-                                    (ir.CompilerIrInstr.Store
-                                      (ir.compiler-ir-test-symbol "g6")
-                                      (ir.CompilerIrValue.Var 6)
-                                      (compiler-reg-i64-ty))
-                                    (compiler-reg-test-instr-seq-prepend
-                                      (ir.CompilerIrInstr.Return
-                                        ir.CompilerIrMaybeValue.No)
-                                      (ir.compiler-ir-instr-seq-empty)))))))))))))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @overlap() -> unit vars 8 {
+     entry:
+       %0 = mov 0 : i64
+       %1 = mov 1 : i64
+       %2 = mov 2 : i64
+       %3 = mov 3 : i64
+       %4 = mov 4 : i64
+       %5 = mov 5 : i64
+       %6 = mov 6 : i64
+       store @g0, %0 : i64
+       store @g1, %1 : i64
+       store @g2, %2 : i64
+       store @g3, %3 : i64
+       store @g4, %4 : i64
+       store @g5, %5 : i64
+       store @g6, %6 : i64
+       return
+     }"))
 
 (define (compiler-reg-f64-overlap-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -14138,69 +11382,25 @@
                     4
                     (ir.CompilerIrValue.F64 0x4012000000000000)
                     (compiler-reg-f64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Store
-                      (ir.compiler-ir-test-symbol "g0")
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-f64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Store
-                        (ir.compiler-ir-test-symbol "g1")
-                        (ir.CompilerIrValue.Var 1)
-                        (compiler-reg-f64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Store
-                          (ir.compiler-ir-test-symbol "g2")
-                          (ir.CompilerIrValue.Var 2)
-                          (compiler-reg-f64-ty))
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Store
-                            (ir.compiler-ir-test-symbol "g3")
-                            (ir.CompilerIrValue.Var 3)
-                            (compiler-reg-f64-ty))
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.Store
-                              (ir.compiler-ir-test-symbol "g4")
-                              (ir.CompilerIrValue.Var 4)
-                              (compiler-reg-f64-ty))
-                            (compiler-reg-test-instr-seq-prepend
-                              (ir.CompilerIrInstr.Return
-                                ir.CompilerIrMaybeValue.No)
-                              (ir.compiler-ir-instr-seq-empty)))))))))))))
+                  (irt.instrs
+                    "store @g0, %0 : f64
+                     store @g1, %1 : f64
+                     store @g2, %2 : f64
+                     store @g3, %3 : f64
+                     store @g4, %4 : f64
+                     return")))))))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-call-live-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "call_live")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 9)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Call
-              1
-              (ir.compiler-ir-test-symbol "side_effect")
-              (ir.CompilerIrCallArgs.Nil)
-              (ast.AstType.Unit))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @call_live() -> unit vars 3 {
+     entry:
+       %0 = mov 9 : i64
+       %1 = call side_effect() : unit
+       %2 = mov %0 : i64
+       return %2
+     }"))
 
 (define (compiler-reg-f64-call-live-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -14216,62 +11416,23 @@
             0
             (ir.CompilerIrValue.F64 0x4023000000000000)
             (compiler-reg-f64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Call
-              1
-              (ir.compiler-ir-test-symbol "side_effect")
-              (ir.CompilerIrCallArgs.Nil)
-              (ast.AstType.Unit))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-f64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty))))))
+          (irt.instrs
+            "%1 = call side_effect() : unit
+             %2 = mov %0 : f64
+             return %2")))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-call-arg-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "call_arg")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 1)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 2)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                2
-                (ir.compiler-ir-test-symbol "use_args")
-                (ir.CompilerIrCallArgs.Two
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.Var 1))
-                (ast.AstType.Unit))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  3
-                  (ir.CompilerIrValue.I64 3)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-                  (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @call_arg() -> unit vars 4 {
+     entry:
+       %0 = mov 1 : i64
+       %1 = mov 2 : i64
+       %2 = call use_args(%0, %1) : unit
+       %3 = mov 3 : i64
+       return %3
+     }"))
 
 (define (compiler-reg-f64-call-arg-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -14288,20 +11449,13 @@
             (ir.CompilerIrValue.F64 0x3ff8000000000000)
             (compiler-reg-f64-ty))
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Call
-              1
-              (ir.compiler-ir-test-symbol "takes_f64")
-              (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
-              (ast.AstType.Unit))
+            (irt.instr "%1 = call takes_f64(%0) : unit")
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Mov
                 2
                 (ir.CompilerIrValue.F64 0x4004000000000000)
                 (compiler-reg-f64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty))))))
+              (irt.instrs "return %2")))))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
@@ -14310,43 +11464,15 @@
 ;; scalar arg (var 1). Every arg is single-GP-register passed, and var 0 is
 ;; used again after the call, so it spans the call point.
 (define (compiler-reg-handle-call-arg-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "handle_call_arg")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Call
-            0
-            (ir.compiler-ir-test-symbol "make_handle")
-            (ir.CompilerIrCallArgs.Nil)
-            (ast.ast-ty-dyn-array (ast.AstType.I64)))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 2)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Call
-                2
-                (ir.compiler-ir-test-symbol "use_args")
-                (ir.CompilerIrCallArgs.Two
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.Var 1))
-                (ast.AstType.Unit))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  3
-                  (ir.CompilerIrValue.Var 0)
-                  (ast.ast-ty-dyn-array (ast.AstType.I64)))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @handle_call_arg() -> unit vars 4 {
+     entry:
+       %0 = call make_handle() : (__tl_dyn-array i64)
+       %1 = mov 2 : i64
+       %2 = call use_args(%0, %1) : unit
+       %3 = mov %0 : (__tl_dyn-array i64)
+       return
+     }"))
 
 (define (compiler-reg-func2-ty) : ast.AstType
   (ast.ast-ty-func
@@ -14371,29 +11497,13 @@
     (ir.compiler-ir-test-symbol "indirect_call_arg")
     (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "callee" (compiler-reg-func2-ty) 0)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 1)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "b" (compiler-reg-i64-ty) 2)
-          (ir.compiler-ir-param-seq-empty))))
+      (irt.params "a=%1:i64, b=%2:i64"))
     (compiler-reg-i64-ty)
     4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.CallIndirect
-            3
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrCallArgs.Two
-              (ir.CompilerIrValue.Var 1)
-              (ir.CompilerIrValue.Var 2))
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-            (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)
+    (irt.blocks
+      "entry:
+         %3 = call* %0(%1, %2) : i64
+         return %3")
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-indirect-call-arg4-function) : ir.CompilerIrFunction
@@ -14409,15 +11519,7 @@
         (ir.compiler-ir-test-symbol "indirect_call_arg4")
         (ir.compiler-ir-param-seq-prepend
           (ir.CompilerIrParam.Param "callee" (compiler-reg-func4-ty) 0)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 1)
-            (ir.compiler-ir-param-seq-prepend
-              (ir.CompilerIrParam.Param "b" (compiler-reg-i64-ty) 2)
-              (ir.compiler-ir-param-seq-prepend
-                (ir.CompilerIrParam.Param "c" (compiler-reg-i64-ty) 3)
-                (ir.compiler-ir-param-seq-prepend
-                  (ir.CompilerIrParam.Param "d" (compiler-reg-i64-ty) 4)
-                  (ir.compiler-ir-param-seq-empty))))))
+          (irt.params "a=%1:i64, b=%2:i64, c=%3:i64, d=%4:i64"))
         (compiler-reg-i64-ty)
         6
         (ir.compiler-ir-block-cons
@@ -14429,23 +11531,14 @@
                 (ir.CompilerIrValue.Var 0)
                 (ir.CompilerIrCallArgs.Array args)
                 (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))
-                (ir.compiler-ir-instr-seq-empty))))
+              (irt.instrs "return %5")))
           ir.CompilerIrBlockList.Nil)
         ir.CompilerIrFunctionAbi.Ordinary))))
 
 (define (compiler-reg-c-abi-store-result-arg-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ir.compiler-ir-test-symbol "c_abi_store_result_arg")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "base" (compiler-reg-i64-ty) 0)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 1)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "b" (compiler-reg-i64-ty) 2)
-          (ir.compiler-ir-param-seq-empty))))
+    (irt.params "base=%0:i64, a=%1:i64, b=%2:i64")
     (ast.AstType.Unit)
     3
     (ir.compiler-ir-block-cons
@@ -14461,18 +11554,14 @@
             (ir.CompilerIrCAbiReturnSlotSeq
               (__tl_make-array ir.CompilerIrCAbiReturnSlot 0)
               0))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-            (ir.compiler-ir-instr-seq-empty))))
+          (irt.instrs "return")))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-ineligible-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ir.compiler-ir-test-symbol "ineligible")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
-      (ir.compiler-ir-param-seq-empty))
+    (irt.params "arg=%0:i64")
     (ast.AstType.Unit)
     7
     (ir.compiler-ir-block-cons
@@ -14520,208 +11609,69 @@
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-param-livein-gap-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "param_livein_gap")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
-      (ir.compiler-ir-param-seq-empty))
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))
-          (ir.compiler-ir-instr-seq-empty)))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "body")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-              (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @param_livein_gap(arg=%0:i64) -> i64 vars 2 {
+     entry:
+       jump body
+     body:
+       %1 = mov 7 : i64
+       return %0
+     }"))
 
 (define (compiler-reg-single-block-livein-gap-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "single_block_livein_gap")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
-      (ir.compiler-ir-param-seq-empty))
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            1
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-            (ir.compiler-ir-instr-seq-empty))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @single_block_livein_gap(arg=%0:i64) -> i64 vars 2 {
+     entry:
+       %1 = mov 7 : i64
+       return %0
+     }"))
 
 (define (compiler-reg-move-chain-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "move_chain")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 41)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @move_chain() -> i64 vars 3 {
+     entry:
+       %0 = mov 41 : i64
+       %1 = mov %0 : i64
+       %2 = mov %1 : i64
+       return %2
+     }"))
 
 (define (compiler-reg-same-value-multi-def-census-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "same_value_multi_def_census")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Alloc 0 (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @same_value_multi_def_census() -> i64 vars 2 {
+     entry:
+       %0 = alloc i64
+       %0 = mov 7 : i64
+       %1 = mov %0 : i64
+       return %1
+     }"))
 
 (define (compiler-reg-phi-join-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "phi_join")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-            (ir.compiler-ir-instr-seq-empty))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "join")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              1
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.Var 0)
-                (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-seq-empty))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-              (ir.compiler-ir-instr-seq-empty))))
-        ir.CompilerIrBlockList.Nil))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @phi_join() -> i64 vars 2 {
+     entry:
+       %0 = mov 7 : i64
+       jump join
+     join:
+       %1 = phi [%0, entry] : i64
+       return %1
+     }"))
 
 (define (compiler-reg-loop-backedge-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "loop_backedge")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-            (ir.compiler-ir-instr-seq-empty))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "loop")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              1
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.Var 0)
-                (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 2)
-                  (ir.compiler-ir-label "body")
-                  (ir.compiler-ir-phi-input-seq-empty)))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Bool false)
-                  (ir.compiler-ir-label "body")
-                  (ir.compiler-ir-label "exit"))
-                (ir.compiler-ir-instr-seq-empty)))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "body")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "exit")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty)))
-            ir.CompilerIrBlockList.Nil))))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @loop_backedge() -> i64 vars 3 {
+     entry:
+       %0 = mov 0 : i64
+       jump loop
+     loop:
+       %1 = phi [%0, entry], [%2, body] : i64
+       %2 = mov %1 : i64
+       branch false, body, exit
+     body:
+       jump loop
+     exit:
+       return %2
+     }"))
 
 ;; Single-block accumulator carry plus a loop counter. The accumulator back-edge
 ;; value is defined in the block and only feeds successor phis, so EP relaxation
@@ -14738,62 +11688,23 @@
     (ast.AstType.I64)
     6
     (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-          (ir.compiler-ir-instr-seq-empty)))
+      (irt.block "entry:
+           jump loop")
       (ir.compiler-ir-block-cons
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "loop")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              0
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.I64 0)
-                (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 3)
-                  (ir.compiler-ir-label "loop")
-                  (ir.compiler-ir-phi-input-seq-empty)))
-              (compiler-reg-i64-ty))
+            (irt.instr "%0 = phi [0, entry], [%3, loop] : i64")
             (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Phi
-                1
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.I64 0)
-                  (ir.compiler-ir-label "entry")
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.Var 4)
-                    (ir.compiler-ir-label "loop")
-                    (ir.compiler-ir-phi-input-seq-empty)))
-                (compiler-reg-i64-ty))
+              (irt.instr "%1 = phi [0, entry], [%4, loop] : i64")
               (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  2
-                  ir.CompilerIrBinOp.Add
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.I64 1)
-                  (compiler-reg-i64-ty))
+                (irt.instr "%2 = add %0, 1 : i64")
                 (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    3
-                    (ir.CompilerIrValue.Var 2)
-                    (compiler-reg-i64-ty))
+                  (irt.instr "%3 = mov %2 : i64")
                   (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.BinOp
-                      4
-                      ir.CompilerIrBinOp.Add
-                      (ir.CompilerIrValue.Var 1)
-                      (ir.CompilerIrValue.I64 1)
-                      (compiler-reg-i64-ty))
+                    (irt.instr "%4 = add %1, 1 : i64")
                     (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.BinOp
-                        5
-                        ir.CompilerIrBinOp.Lt
-                        (ir.CompilerIrValue.Var 4)
-                        (ir.CompilerIrValue.I64 10)
-                        (ast.AstType.Bool))
+                      (irt.instr "%5 = lt %4, 10 : bool")
                       (compiler-reg-test-instr-seq-prepend
                         (ir.CompilerIrInstr.Branch
                           (ir.CompilerIrValue.Var 5)
@@ -14804,14 +11715,8 @@
                             (ir.compiler-ir-label "exit")
                             (ir.compiler-ir-label "loop")))
                         (ir.compiler-ir-instr-seq-empty)))))))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "exit")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))
+        (irt.blocks "exit:
+             return %3")))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-self-loop-exit-live-phi-mask-shape-ok?
@@ -14826,271 +11731,77 @@
 ;; increment v1, so v0 is live on the exit edge. Sharing one register would let
 ;; `add` destroy the value the exit reads, so the web must stay excluded.
 (define (compiler-reg-self-loop-counter-exit-read-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "self_loop_counter_exit_read")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-          (ir.compiler-ir-instr-seq-empty)))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "loop")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              0
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.I64 0)
-                (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.compiler-ir-label "loop")
-                  (ir.compiler-ir-phi-input-seq-empty)))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                1
-                ir.CompilerIrBinOp.Add
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.I64 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  2
-                  ir.CompilerIrBinOp.Lt
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.CompilerIrValue.I64 10)
-                  (ast.AstType.Bool))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var 2)
-                    (ir.compiler-ir-label "loop")
-                    (ir.compiler-ir-label "exit"))
-                  (ir.compiler-ir-instr-seq-empty))))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "exit")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @self_loop_counter_exit_read() -> i64 vars 3 {
+     entry:
+       jump loop
+     loop:
+       %0 = phi [0, entry], [%1, loop] : i64
+       %1 = add %0, 1 : i64
+       %2 = lt %1, 10 : bool
+       branch %2, loop, exit
+     exit:
+       return %0
+     }"))
 
 ;; Negative counter shape 2: the PHI RESULT v0 is read AGAIN inside the block,
 ;; after the increment v1 that feeds the back edge. The increment would destroy
 ;; v0 before that read, so the web must stay excluded here too.
 (define (compiler-reg-self-loop-counter-late-read-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "self_loop_counter_late_read")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
-          (ir.compiler-ir-instr-seq-empty)))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "loop")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Phi
-              0
-              (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.I64 0)
-                (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.compiler-ir-label "loop")
-                  (ir.compiler-ir-phi-input-seq-empty)))
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                1
-                ir.CompilerIrBinOp.Add
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.I64 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  2
-                  ir.CompilerIrBinOp.Mul
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.I64 3)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    3
-                    ir.CompilerIrBinOp.Lt
-                    (ir.CompilerIrValue.Var 1)
-                    (ir.CompilerIrValue.I64 10)
-                    (ast.AstType.Bool))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Var 3)
-                      (ir.compiler-ir-label "loop")
-                      (ir.compiler-ir-label "exit"))
-                    (ir.compiler-ir-instr-seq-empty)))))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "exit")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @self_loop_counter_late_read() -> i64 vars 4 {
+     entry:
+       jump loop
+     loop:
+       %0 = phi [0, entry], [%1, loop] : i64
+       %1 = add %0, 1 : i64
+       %2 = mul %0, 3 : i64
+       %3 = lt %1, 10 : bool
+       branch %3, loop, exit
+     exit:
+       return %2
+     }"))
 
 (define (compiler-reg-destructive-straight-chain-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "destructive_straight_chain")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 40)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              1
-              ir.CompilerIrBinOp.Add
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 3)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                2
-                ir.CompilerIrBinOp.Sub
-                (ir.CompilerIrValue.Var 1)
-                (ir.CompilerIrValue.I64 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @destructive_straight_chain() -> i64 vars 3 {
+     entry:
+       %0 = mov 40 : i64
+       %1 = add %0, 3 : i64
+       %2 = sub %1, 1 : i64
+       return %2
+     }"))
 
 (define (compiler-reg-destructive-noncommutative-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "destructive_noncommutative")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 40)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 3)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                2
-                ir.CompilerIrBinOp.Sub
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  3
-                  ir.CompilerIrBinOp.Add
-                  (ir.CompilerIrValue.Var 2)
-                  (ir.CompilerIrValue.I64 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-                  (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @destructive_noncommutative() -> i64 vars 4 {
+     entry:
+       %0 = mov 40 : i64
+       %1 = mov 3 : i64
+       %2 = sub %0, %1 : i64
+       %3 = add %2, 1 : i64
+       return %3
+     }"))
 
 (define (compiler-reg-destructive-commutative-rhs-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "destructive_commutative_rhs")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 40)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              1
-              ir.CompilerIrBinOp.Add
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 3)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                2
-                ir.CompilerIrBinOp.Add
-                (ir.CompilerIrValue.I64 1)
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @destructive_commutative_rhs() -> i64 vars 3 {
+     entry:
+       %0 = mov 40 : i64
+       %1 = add %0, 3 : i64
+       %2 = add 1, %1 : i64
+       return %2
+     }"))
 
 (define (compiler-reg-destructive-div-exclusion-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "destructive_div_exclusion")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 40)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              1
-              ir.CompilerIrBinOp.Div
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 2)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                2
-                ir.CompilerIrBinOp.Add
-                (ir.CompilerIrValue.Var 1)
-                (ir.CompilerIrValue.I64 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @destructive_div_exclusion() -> i64 vars 3 {
+     entry:
+       %0 = mov 40 : i64
+       %1 = div %0, 2 : i64
+       %2 = add %1, 1 : i64
+       return %2
+     }"))
 
 (define (compiler-reg-destructive-chain-ok?) : bool
   (let
@@ -15167,38 +11878,17 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 40)
-            (compiler-reg-i64-ty))
+          (irt.instr "%0 = mov 40 : i64")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 0)
-              (compiler-reg-i64-ty))
+            (irt.instr "%1 = mov 0 : i64")
             (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.I64 7)
-                (compiler-reg-i64-ty))
+              (irt.instr "%2 = mov 7 : i64")
               (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  3
-                  ir.CompilerIrBinOp.Add
-                  (ir.CompilerIrValue.Var 2)
-                  (ir.CompilerIrValue.I64 1)
-                  (compiler-reg-i64-ty))
+                (irt.instr "%3 = add %2, 1 : i64")
                 (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Gep
-                    4
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.CompilerIrValue.Var 1)
-                    (compiler-reg-i64-ty))
+                  (irt.instr "%4 = gep %0, %1 : i64")
                   (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Load
-                      5
-                      (ir.CompilerIrValue.Var 4)
-                      (compiler-reg-i64-ty))
+                    (irt.instr "%5 = load %4 : i64")
                     (compiler-reg-test-instr-seq-prepend
                       (ir.CompilerIrInstr.BinOp
                         6
@@ -15207,30 +11897,12 @@
                         (ir.CompilerIrValue.Var 3)
                         (compiler-reg-i64-ty))
                       (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.BinOp
-                          7
-                          ir.CompilerIrBinOp.Add
-                          (ir.CompilerIrValue.Var 6)
-                          (ir.CompilerIrValue.I64 1)
-                          (compiler-reg-i64-ty))
+                        (irt.instr "%7 = add %6, 1 : i64")
                         (if double-use-load?
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.BinOp
-                              8
-                              ir.CompilerIrBinOp.Add
-                              (ir.CompilerIrValue.Var 7)
-                              (ir.CompilerIrValue.Var 5)
-                              (compiler-reg-i64-ty))
-                            (compiler-reg-test-instr-seq-prepend
-                              (ir.CompilerIrInstr.Return
-                                (ir.CompilerIrMaybeValue.Some
-                                  (ir.CompilerIrValue.Var 8)))
-                              (ir.compiler-ir-instr-seq-empty)))
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.Return
-                              (ir.CompilerIrMaybeValue.Some
-                                (ir.CompilerIrValue.Var 7)))
-                            (ir.compiler-ir-instr-seq-empty))))))))))))
+                          (irt.instrs
+                            "%8 = add %7, %5 : i64
+                             return %8")
+                          (irt.instrs "return %7")))))))))))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
@@ -15243,79 +11915,21 @@
 ;; The rhs-defining load sits three slots back, which is exactly the shape the
 ;; preference declines.
 (define (compiler-reg-alu-load-pair-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "alu_load_pair")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    10
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 40)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.I64 2)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  3
-                  ir.CompilerIrBinOp.Add
-                  (ir.CompilerIrValue.Var 2)
-                  (ir.CompilerIrValue.I64 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Gep
-                    4
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.CompilerIrValue.Var 1)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Load
-                      5
-                      (ir.CompilerIrValue.Var 4)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Gep
-                        6
-                        (ir.CompilerIrValue.Var 0)
-                        (ir.CompilerIrValue.Var 3)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Load
-                          7
-                          (ir.CompilerIrValue.Var 6)
-                          (compiler-reg-i64-ty))
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.BinOp
-                            8
-                            ir.CompilerIrBinOp.BitAnd
-                            (ir.CompilerIrValue.Var 7)
-                            (ir.CompilerIrValue.Var 5)
-                            (compiler-reg-i64-ty))
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.BinOp
-                              9
-                              ir.CompilerIrBinOp.Add
-                              (ir.CompilerIrValue.Var 8)
-                              (ir.CompilerIrValue.I64 1)
-                              (compiler-reg-i64-ty))
-                            (compiler-reg-test-instr-seq-prepend
-                              (ir.CompilerIrInstr.Return
-                                (ir.CompilerIrMaybeValue.Some
-                                  (ir.CompilerIrValue.Var 9)))
-                              (ir.compiler-ir-instr-seq-empty)))))))))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @alu_load_pair() -> i64 vars 10 {
+     entry:
+       %0 = mov 40 : i64
+       %1 = mov 0 : i64
+       %2 = mov 2 : i64
+       %3 = add %2, 1 : i64
+       %4 = gep %0, %1 : i64
+       %5 = load %4 : i64
+       %6 = gep %0, %3 : i64
+       %7 = load %6 : i64
+       %8 = bit_and %7, %5 : i64
+       %9 = add %8, 1 : i64
+       return %9
+     }"))
 
 (define (compiler-reg-alu-load-lhs-moves
   [op : ir.CompilerIrBinOp]
@@ -15343,12 +11957,7 @@
         (set! (array-ref flags 6) 1)
         unit)
       (reg.compiler-reg-copy-hints-from-binops-instr!
-        (ir.CompilerIrInstr.BinOp
-          6
-          ir.CompilerIrBinOp.BitAnd
-          (ir.CompilerIrValue.Var 5)
-          (ir.CompilerIrValue.Var 3)
-          (compiler-reg-i64-ty))
+        (irt.instr "%6 = bit_and %5, %3 : i64")
         (&mut hints)
         parents
         flags)
@@ -15384,36 +11993,14 @@
       (= (compiler-reg-alu-copy-hint-for false) 5))))
 
 (define (compiler-reg-same-value-clobber-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "same_value_clobber")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Call
-              1
-              (ir.compiler-ir-test-symbol "side_effect")
-              ir.CompilerIrCallArgs.Nil
-              (ast.AstType.Unit))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @same_value_clobber() -> i64 vars 3 {
+     entry:
+       %0 = mov 7 : i64
+       %1 = call side_effect() : unit
+       %2 = mov %0 : i64
+       return %2
+     }"))
 
 ;; M-C (part 1) census shapes for the extended (mutable-source) same-value
 ;; relation. `safe`: the source's second def lies OUTSIDE the copy's liveness
@@ -15421,255 +12008,65 @@
 ;; refused. `chain`: a copy-of-copy must not smuggle a member past the def
 ;; (the transitive hazard). `cast`: the width-64 int cast counts as a copy.
 (define (compiler-reg-sv-multi-safe-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "sv_multi_safe")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "g")
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  0
-                  (ir.CompilerIrValue.I64 9)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @sv_multi_safe() -> i64 vars 2 {
+     entry:
+       %0 = mov 7 : i64
+       %1 = mov %0 : i64
+       store @g, %1 : i64
+       %0 = mov 9 : i64
+       return %0
+     }"))
 
 (define (compiler-reg-sv-multi-reject-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "sv_multi_reject")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                0
-                (ir.CompilerIrValue.I64 9)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "g")
-                  (ir.CompilerIrValue.Var 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @sv_multi_reject() -> i64 vars 2 {
+     entry:
+       %0 = mov 7 : i64
+       %1 = mov %0 : i64
+       %0 = mov 9 : i64
+       store @g, %1 : i64
+       return %0
+     }"))
 
 (define (compiler-reg-sv-multi-chain-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "sv_multi_chain")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              2
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                0
-                (ir.CompilerIrValue.I64 9)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  3
-                  (ir.CompilerIrValue.Var 2)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "g")
-                    (ir.CompilerIrValue.Var 3)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                    (ir.compiler-ir-instr-seq-empty))))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @sv_multi_chain() -> i64 vars 4 {
+     entry:
+       %0 = mov 7 : i64
+       %2 = mov %0 : i64
+       %0 = mov 9 : i64
+       %3 = mov %2 : i64
+       store @g, %3 : i64
+       return %0
+     }"))
 
 (define (compiler-reg-sv-multi-cast-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "sv_multi_cast")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Cast
-              1
-              (ir.CompilerIrValue.Var 0)
-              (ast.AstType.I64)
-              (ast.AstType.U64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "g")
-                (ir.CompilerIrValue.Var 1)
-                (ast.AstType.U64))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  0
-                  (ir.CompilerIrValue.I64 9)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty)))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
-
-;; ---------------------------------------------------------------------------
-;; P22: nested value-identical copies coalesce ACROSS a call.
-;;
-;; Every fixture below is the loop-index/bounds-check shape the benchmarks show:
-;; a long-lived value `0` that is live across a real call (so the kind-6
-;; clobber-span exclusion keeps it out of the plain same-value relation) and a
-;; short copy `1` of it whose whole live hull sits inside `0`'s. The merged
-;; class hull is then exactly `0`'s hull, so the class inherits the call
-;; crossing `0` already carried and nothing else.
-(define (compiler-reg-p22-nested-copy-function
-  [copy : ir.CompilerIrInstr]
-  [use-ty : ast.AstType]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "p22_nested_copy")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            copy
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "g")
-                (ir.CompilerIrValue.Var 1)
-                use-ty)
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Call
-                  2
-                  (ir.compiler-ir-test-symbol "side_effect")
-                  ir.CompilerIrCallArgs.Nil
-                  (ast.AstType.Unit))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "g")
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                    (ir.compiler-ir-instr-seq-empty))))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @sv_multi_cast() -> i64 vars 2 {
+     entry:
+       %0 = mov 7 : i64
+       %1 = cast %0 : i64 to u64
+       store @g, %1 : u64
+       %0 = mov 9 : i64
+       return %0
+     }"))
 
 ;; The mutable-source hazard must survive the relaxation: `0` is redefined
 ;; INSIDE the copy's liveness, so the two are not the same value at the copy's
 ;; use however neatly their hulls nest.
 (define (compiler-reg-p22-nested-reject-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "p22_nested_reject")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 7)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                0
-                (ir.CompilerIrValue.I64 9)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "g")
-                  (ir.CompilerIrValue.Var 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Call
-                    2
-                    (ir.compiler-ir-test-symbol "side_effect")
-                    ir.CompilerIrCallArgs.Nil
-                    (ast.AstType.Unit))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Store
-                      (ir.compiler-ir-test-symbol "g")
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Return
-                        (ir.CompilerIrMaybeValue.Some
-                          (ir.CompilerIrValue.Var 0)))
-                      (ir.compiler-ir-instr-seq-empty)))))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @p22_nested_reject() -> i64 vars 3 {
+     entry:
+       %0 = mov 7 : i64
+       %1 = mov %0 : i64
+       %0 = mov 9 : i64
+       store @g, %1 : i64
+       %2 = call side_effect() : unit
+       store @g, %0 : i64
+       return %0
+     }"))
 
 (define (compiler-reg-p22-nested-same-home? [func : ir.CompilerIrFunction]) : bool
   (match (reg.compiler-reg-plan-function-scalar func)
@@ -15680,52 +12077,68 @@
   (and
     ;; A same-width signedness cast whose source stays live shares its home.
     (compiler-reg-p22-nested-same-home?
-      (compiler-reg-p22-nested-copy-function
-        (ir.CompilerIrInstr.Cast
-          1
-          (ir.CompilerIrValue.Var 0)
-          (ast.AstType.I64)
-          (ast.AstType.U64))
-        (ast.AstType.U64)))
+      (irt.func
+        "function @p22_nested_copy() -> i64 vars 3 {
+         entry:
+           %0 = mov 7 : i64
+           %1 = cast %0 : i64 to u64
+           store @g, %1 : u64
+           %2 = call side_effect() : unit
+           store @g, %0 : i64
+           return %0
+         }"))
     ;; Same in the other signedness direction.
     (compiler-reg-p22-nested-same-home?
-      (compiler-reg-p22-nested-copy-function
-        (ir.CompilerIrInstr.Cast
-          1
-          (ir.CompilerIrValue.Var 0)
-          (ast.AstType.U64)
-          (ast.AstType.I64))
-        (compiler-reg-i64-ty)))
+      (irt.func
+        "function @p22_nested_copy() -> i64 vars 3 {
+         entry:
+           %0 = mov 7 : i64
+           %1 = cast %0 : u64 to i64
+           store @g, %1 : i64
+           %2 = call side_effect() : unit
+           store @g, %0 : i64
+           return %0
+         }"))
     ;; A plain Mov whose source stays live shares its home.
     (compiler-reg-p22-nested-same-home?
-      (compiler-reg-p22-nested-copy-function
-        (ir.CompilerIrInstr.Mov
-          1
-          (ir.CompilerIrValue.Var 0)
-          (compiler-reg-i64-ty))
-        (compiler-reg-i64-ty)))
+      (irt.func
+        "function @p22_nested_copy() -> i64 vars 3 {
+         entry:
+           %0 = mov 7 : i64
+           %1 = mov %0 : i64
+           store @g, %1 : i64
+           %2 = call side_effect() : unit
+           store @g, %0 : i64
+           return %0
+         }"))
     ;; A NARROWING cast is real work -- the destination home holds the
     ;; sign-normalized 32-bit value, which is not the source's bit pattern --
     ;; so it must keep its own home.
     (not
       (compiler-reg-p22-nested-same-home?
-        (compiler-reg-p22-nested-copy-function
-          (ir.CompilerIrInstr.Cast
-            1
-            (ir.CompilerIrValue.Var 0)
-            (ast.AstType.I64)
-            (ast.AstType.I32))
-          (ast.AstType.I32))))
+        (irt.func
+          "function @p22_nested_copy() -> i64 vars 3 {
+           entry:
+             %0 = mov 7 : i64
+             %1 = cast %0 : i64 to i32
+             store @g, %1 : i32
+             %2 = call side_effect() : unit
+             store @g, %0 : i64
+             return %0
+           }")))
     ;; A widening cast is real work too.
     (not
       (compiler-reg-p22-nested-same-home?
-        (compiler-reg-p22-nested-copy-function
-          (ir.CompilerIrInstr.Cast
-            1
-            (ir.CompilerIrValue.Var 0)
-            (ast.AstType.I32)
-            (compiler-reg-i64-ty))
-          (compiler-reg-i64-ty))))
+        (irt.func
+          "function @p22_nested_copy() -> i64 vars 3 {
+           entry:
+             %0 = mov 7 : i64
+             %1 = cast %0 : i32 to i64
+             store @g, %1 : i64
+             %2 = call side_effect() : unit
+             store @g, %0 : i64
+             return %0
+           }")))
     ;; Nesting lifts the clobber-span refusal ONLY. A source redefined inside
     ;; the copy's liveness is still refused.
     (not
@@ -15733,102 +12146,31 @@
         (compiler-reg-p22-nested-reject-function)))))
 
 (define (compiler-reg-interference-blocks-coalesce-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "interference_blocks_coalesce")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 9)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.Var 0)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "keep")
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @interference_blocks_coalesce() -> i64 vars 2 {
+     entry:
+       %0 = mov 9 : i64
+       %1 = mov %0 : i64
+       store @keep, %0 : i64
+       return %1
+     }"))
 
 (define (compiler-reg-spill-coalesce-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "spill_coalesce")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.I64)
-    6
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 1)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.I64 2)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  3
-                  (ir.CompilerIrValue.I64 3)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    4
-                    (ir.CompilerIrValue.I64 4)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Store
-                      (ir.compiler-ir-test-symbol "g0")
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Store
-                        (ir.compiler-ir-test-symbol "g1")
-                        (ir.CompilerIrValue.Var 1)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Store
-                          (ir.compiler-ir-test-symbol "g2")
-                          (ir.CompilerIrValue.Var 2)
-                          (compiler-reg-i64-ty))
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Store
-                            (ir.compiler-ir-test-symbol "g3")
-                            (ir.CompilerIrValue.Var 3)
-                            (compiler-reg-i64-ty))
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.Mov
-                              5
-                              (ir.CompilerIrValue.Var 4)
-                              (compiler-reg-i64-ty))
-                            (compiler-reg-test-instr-seq-prepend
-                              (ir.CompilerIrInstr.Return
-                                (ir.CompilerIrMaybeValue.Some
-                                  (ir.CompilerIrValue.Var 5)))
-                              (ir.compiler-ir-instr-seq-empty)))))))))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @spill_coalesce() -> i64 vars 6 {
+     entry:
+       %0 = mov 0 : i64
+       %1 = mov 1 : i64
+       %2 = mov 2 : i64
+       %3 = mov 3 : i64
+       %4 = mov 4 : i64
+       store @g0, %0 : i64
+       store @g1, %1 : i64
+       store @g2, %2 : i64
+       store @g3, %3 : i64
+       %5 = mov %4 : i64
+       return %5
+     }"))
 
 (define (compiler-reg-vector-home-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -15840,19 +12182,9 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.VectorLoad
-            0
-            (ir.CompilerIrValue.I64 0)
-            (ir.CompilerIrValue.I64 0)
-            4
-            (ast.AstType.I64))
+          (irt.instr "%0 = vector_load 0, 0 lanes 4 : i64")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.VectorLoad
-              1
-              (ir.CompilerIrValue.I64 0)
-              (ir.CompilerIrValue.I64 4)
-              4
-              (ast.AstType.I64))
+            (irt.instr "%1 = vector_load 0, 4 lanes 4 : i64")
             (compiler-reg-test-instr-seq-prepend
               (ir.ir-instr-vector-bin-op
                 2
@@ -15876,9 +12208,7 @@
                     (ir.CompilerIrValue.Var 3)
                     4
                     (ast.AstType.I64))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                    (ir.compiler-ir-instr-seq-empty))))))))
+                  (irt.instrs "return")))))))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
@@ -15894,18 +12224,9 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.VectorLoad
-            0
-            (ir.CompilerIrValue.I64 0)
-            (ir.CompilerIrValue.I64 0)
-            4
-            (ast.AstType.I64))
+          (irt.instr "%0 = vector_load 0, 0 lanes 4 : i64")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.CpuId
-              1
-              (ir.CompilerIrValue.I64 0)
-              (ir.CompilerIrValue.I64 0)
-              0)
+            (irt.instr "%1 = cpuid 0, 0 word 0")
             (compiler-reg-test-instr-seq-prepend
               (ir.ir-instr-vector-store
                 (ir.CompilerIrValue.I64 0)
@@ -15913,9 +12234,7 @@
                 (ir.CompilerIrValue.Var 0)
                 4
                 (ast.AstType.I64))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                (ir.compiler-ir-instr-seq-empty))))))
+              (irt.instrs "return")))))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
@@ -15929,23 +12248,11 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Splat
-            0
-            (ir.CompilerIrValue.I64 0)
-            8
-            (ast.AstType.I64))
+          (irt.instr "%0 = splat 0 lanes 8 : i64")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Splat
-              1
-              (ir.CompilerIrValue.I64 1)
-              8
-              (ast.AstType.I64))
+            (irt.instr "%1 = splat 1 lanes 8 : i64")
             (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Splat
-                2
-                (ir.CompilerIrValue.I64 2)
-                8
-                (ast.AstType.I64))
+              (irt.instr "%2 = splat 2 lanes 8 : i64")
               (compiler-reg-test-instr-seq-prepend
                 (ir.ir-instr-vector-store
                   (ir.CompilerIrValue.I64 0)
@@ -15976,61 +12283,25 @@
                         (ir.CompilerIrValue.Var 4)
                         8
                         (ast.AstType.I64))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                        (ir.compiler-ir-instr-seq-empty))))))))))
+                      (irt.instrs "return")))))))))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-mask-home-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "mask_home")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    5
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.TailMask
-            0
-            (ir.CompilerIrValue.I64 0)
-            (ir.CompilerIrValue.I64 8)
-            8)
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.TailMask
-              1
-              (ir.CompilerIrValue.I64 4)
-              (ir.CompilerIrValue.I64 8)
-              8)
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.MaskBinOp
-                2
-                (ir.CompilerIrMaskBinOp.And)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.Var 1)
-                8)
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.MaskNot 3 (ir.CompilerIrValue.Var 2) 8)
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.MaskReduce
-                    4
-                    (ir.CompilerIrMaskReduceOp.Any)
-                    (ir.CompilerIrValue.Var 3)
-                    8)
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))
-                    (ir.compiler-ir-instr-seq-empty))))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @mask_home() -> unit vars 5 {
+     entry:
+       %0 = tail_mask 0, 8 lanes 8
+       %1 = tail_mask 4, 8 lanes 8
+       %2 = mask_and %0, %1 lanes 8
+       %3 = mask_not %2 lanes 8
+       %4 = mask_reduce_any %3 lanes 8
+       return %4
+     }"))
 
 (define (compiler-reg-mask-pressure-uses [index : i64]) : ir.CompilerIrInstrSeq
   (if (>= index 7)
-    (compiler-reg-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Return
-        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 13)))
-      (ir.compiler-ir-instr-seq-empty))
+    (irt.instrs "return %13")
     (compiler-reg-test-instr-seq-prepend
       (ir.CompilerIrInstr.MaskReduce
         (+ 7 index)
@@ -16369,84 +12640,24 @@
         (compiler-reg-same-location? assignments 1 2))]))
 
 (define (compiler-reg-syscall-clobber-overlap-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "syscall_clobber_overlap")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    7
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 1)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.I64 2)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  3
-                  (ir.CompilerIrValue.I64 3)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    4
-                    (ir.CompilerIrValue.I64 4)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Mov
-                      5
-                      (ir.CompilerIrValue.I64 5)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Syscall
-                        6
-                        (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 39)))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Store
-                          (ir.compiler-ir-test-symbol "g0")
-                          (ir.CompilerIrValue.Var 0)
-                          (compiler-reg-i64-ty))
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Store
-                            (ir.compiler-ir-test-symbol "g1")
-                            (ir.CompilerIrValue.Var 1)
-                            (compiler-reg-i64-ty))
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.Store
-                              (ir.compiler-ir-test-symbol "g2")
-                              (ir.CompilerIrValue.Var 2)
-                              (compiler-reg-i64-ty))
-                            (compiler-reg-test-instr-seq-prepend
-                              (ir.CompilerIrInstr.Store
-                                (ir.compiler-ir-test-symbol "g3")
-                                (ir.CompilerIrValue.Var 3)
-                                (compiler-reg-i64-ty))
-                              (compiler-reg-test-instr-seq-prepend
-                                (ir.CompilerIrInstr.Store
-                                  (ir.compiler-ir-test-symbol "g4")
-                                  (ir.CompilerIrValue.Var 4)
-                                  (compiler-reg-i64-ty))
-                                (compiler-reg-test-instr-seq-prepend
-                                  (ir.CompilerIrInstr.Store
-                                    (ir.compiler-ir-test-symbol "g5")
-                                    (ir.CompilerIrValue.Var 5)
-                                    (compiler-reg-i64-ty))
-                                  (compiler-reg-test-instr-seq-prepend
-                                    (ir.CompilerIrInstr.Return
-                                      ir.CompilerIrMaybeValue.No)
-                                    (ir.compiler-ir-instr-seq-empty))))))))))))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @syscall_clobber_overlap() -> unit vars 7 {
+     entry:
+       %0 = mov 0 : i64
+       %1 = mov 1 : i64
+       %2 = mov 2 : i64
+       %3 = mov 3 : i64
+       %4 = mov 4 : i64
+       %5 = mov 5 : i64
+       %6 = syscall(39)
+       store @g0, %0 : i64
+       store @g1, %1 : i64
+       store @g2, %2 : i64
+       store @g3, %3 : i64
+       store @g4, %4 : i64
+       store @g5, %5 : i64
+       return
+     }"))
 
 (define (compiler-reg-call-spanning-caller-saved-function) : ir.CompilerIrFunction
   (let
@@ -16460,139 +12671,87 @@
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g5c")
-            (ir.CompilerIrValue.Var 5)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g5c, %5 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g5b")
-            (ir.CompilerIrValue.Var 5)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g5b, %5 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g6")
-            (ir.CompilerIrValue.Var 6)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g6, %6 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g5")
-            (ir.CompilerIrValue.Var 5)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g5, %5 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g4")
-            (ir.CompilerIrValue.Var 4)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g4, %4 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g3")
-            (ir.CompilerIrValue.Var 3)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g3, %3 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g2")
-            (ir.CompilerIrValue.Var 2)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g2, %2 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g1")
-            (ir.CompilerIrValue.Var 1)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g1, %1 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g0")
-            (ir.CompilerIrValue.Var 0)
-            (compiler-reg-i64-ty))
+          (irt.instr "store @g0, %0 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Call
-            7
-            (ir.compiler-ir-test-symbol "side_effect")
-            (ir.CompilerIrCallArgs.Nil)
-            (ast.AstType.Unit))
+          (irt.instr "%7 = call side_effect() : unit")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            6
-            (ir.CompilerIrValue.I64 6)
-            (compiler-reg-i64-ty))
+          (irt.instr "%6 = mov 6 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            5
-            (ir.CompilerIrValue.I64 5)
-            (compiler-reg-i64-ty))
+          (irt.instr "%5 = mov 5 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            4
-            (ir.CompilerIrValue.I64 4)
-            (compiler-reg-i64-ty))
+          (irt.instr "%4 = mov 4 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            3
-            (ir.CompilerIrValue.I64 3)
-            (compiler-reg-i64-ty))
+          (irt.instr "%3 = mov 3 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            2
-            (ir.CompilerIrValue.I64 2)
-            (compiler-reg-i64-ty))
+          (irt.instr "%2 = mov 2 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            1
-            (ir.CompilerIrValue.I64 1)
-            (compiler-reg-i64-ty))
+          (irt.instr "%1 = mov 1 : i64")
           instrs))
       (set!
         instrs
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
+          (irt.instr "%0 = mov 0 : i64")
           instrs))
       (ir.CompilerIrFunction.Function
         (ir.compiler-ir-test-symbol "call_spanning_caller_saved")
@@ -17571,180 +13730,51 @@
 ;; Two-arm dispatcher, every arm a TAIL call. `k` selects the arm; both
 ;; parameters are marshalled (permuted) into the outgoing argument registers.
 (define (compiler-reg-tail-dispatch-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "tail_dispatch")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "k" (compiler-reg-i64-ty) 0)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "v" (compiler-reg-i64-ty) 1)
-        (ir.compiler-ir-param-seq-empty)))
-    (compiler-reg-i64-ty)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.BinOp
-            2
-            (ir.CompilerIrBinOp.Eq)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Var 2)
-              (ir.compiler-ir-label "arm_a")
-              (ir.compiler-ir-label "arm_b"))
-            (ir.compiler-ir-instr-seq-empty))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "arm_a")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.TailCall
-              (ir.compiler-ir-test-symbol "step_a")
-              (ir.CompilerIrCallArgs.Two
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.Var 1))
-              (compiler-reg-i64-ty))
-            (ir.compiler-ir-instr-seq-empty)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "arm_b")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.TailCall
-                (ir.compiler-ir-test-symbol "step_b")
-                (ir.CompilerIrCallArgs.Two
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.CompilerIrValue.Var 0))
-                (compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @tail_dispatch(k=%0:i64, v=%1:i64) -> i64 vars 3 {
+     entry:
+       %2 = eq %0, 0 : i64
+       branch %2, arm_a, arm_b
+     arm_a:
+       tailcall step_a(%0, %1) : i64
+     arm_b:
+       tailcall step_b(%1, %0) : i64
+     }"))
 
 ;; Same dispatcher with a REAL call in the arm that runs FIRST in block order,
 ;; and both parameters live across it. Nothing may be un-pinned here.
 (define (compiler-reg-tail-dispatch-real-call-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "tail_dispatch_real")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "k" (compiler-reg-i64-ty) 0)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "v" (compiler-reg-i64-ty) 1)
-        (ir.compiler-ir-param-seq-empty)))
-    (compiler-reg-i64-ty)
-    4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.BinOp
-            2
-            (ir.CompilerIrBinOp.Eq)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Var 2)
-              (ir.compiler-ir-label "call_arm")
-              (ir.compiler-ir-label "tail_arm"))
-            (ir.compiler-ir-instr-seq-empty))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "call_arm")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Call
-              3
-              (ir.compiler-ir-test-symbol "side_effect")
-              ir.CompilerIrCallArgs.Nil
-              (ast.AstType.Unit))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "gk")
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "gv")
-                  (ir.CompilerIrValue.Var 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty))))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "tail_arm")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.TailCall
-                (ir.compiler-ir-test-symbol "step_b")
-                (ir.CompilerIrCallArgs.Two
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.CompilerIrValue.Var 0))
-                (compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @tail_dispatch_real(k=%0:i64, v=%1:i64) -> i64 vars 4 {
+     entry:
+       %2 = eq %0, 0 : i64
+       branch %2, call_arm, tail_arm
+     call_arm:
+       %3 = call side_effect() : unit
+       store @gk, %0 : i64
+       store @gv, %1 : i64
+       return %0
+     tail_arm:
+       tailcall step_b(%1, %0) : i64
+     }"))
 
 ;; MIXED. `call_arm` runs first in block order and holds a real call that only
 ;; `v` is live across; `k` is referenced at entry and again in the LAST block,
 ;; so the real call sits inside `k`'s coarse interval HULL and inside no live
 ;; SEGMENT of it. `k` must therefore keep %rdi while `v` must not keep %rsi.
 (define (compiler-reg-tail-dispatch-mixed-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "tail_dispatch_mixed")
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "k" (compiler-reg-i64-ty) 0)
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "v" (compiler-reg-i64-ty) 1)
-        (ir.compiler-ir-param-seq-empty)))
-    (compiler-reg-i64-ty)
-    4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.BinOp
-            2
-            (ir.CompilerIrBinOp.Eq)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 0)
-            (compiler-reg-i64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Var 2)
-              (ir.compiler-ir-label "call_arm")
-              (ir.compiler-ir-label "tail_arm"))
-            (ir.compiler-ir-instr-seq-empty))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "call_arm")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Call
-              3
-              (ir.compiler-ir-test-symbol "side_effect")
-              ir.CompilerIrCallArgs.Nil
-              (ast.AstType.Unit))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "gv")
-                (ir.CompilerIrValue.Var 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                (ir.compiler-ir-instr-seq-empty)))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "tail_arm")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.TailCall
-                (ir.compiler-ir-test-symbol "step_b")
-                (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
-                (compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @tail_dispatch_mixed(k=%0:i64, v=%1:i64) -> i64 vars 4 {
+     entry:
+       %2 = eq %0, 0 : i64
+       branch %2, call_arm, tail_arm
+     call_arm:
+       %3 = call side_effect() : unit
+       store @gv, %1 : i64
+       return %1
+     tail_arm:
+       tailcall step_b(%0) : i64
+     }"))
 
 ;; Kind 0 counts the whole call-like family; kind 6 drops the tail calls and
 ;; keeps every resuming call. The pure dispatcher has TWO kind-0 points and NO
@@ -18015,18 +14045,8 @@
       (reg.compiler-reg-win64-caller-saved-integer-registers)]
     [win-callees : reg.CompilerRegIdSeq
       (reg.compiler-reg-win64-callee-saved-integer-registers)]
-    [copy-instr : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.CopyBytes
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        24)]
-    [add-instr : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.BinOp
-        2
-        (ir.CompilerIrBinOp.Add)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        (ast.AstType.I64))]
+    [copy-instr : ir.CompilerIrInstr (irt.instr "copy_bytes %0, %1, 24")]
+    [add-instr : ir.CompilerIrInstr (irt.instr "%2 = add %0, %1 : i64")]
     (and
       (reg.compiler-reg-id-seq-contains?
         (clone sysv-callers)
@@ -18551,44 +14571,19 @@
       (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))))
 
 (define (compiler-reg-color-storage-function) : ir.CompilerIrFunction
-  (let
-    [big : ast.AstType (ast.AstType.Struct (ci.intern "BigStorage"))]
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "storage_ranges")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      6
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Alloc 0 (clone big))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Alloc 1 (clone big))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.AddrOf 2 1)
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.StorePtr
-                    (ir.CompilerIrValue.Var 2)
-                    (ir.CompilerIrValue.I64 11)
-                    (ast.AstType.I64))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Alloc 3 (clone big))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Alloc 4 big)
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.AddrOf 5 4)
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.StorePtr
-                            (ir.CompilerIrValue.Var 5)
-                            (ir.CompilerIrValue.I64 22)
-                            (ast.AstType.I64))
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.Return
-                              ir.CompilerIrMaybeValue.No)
-                            (ir.compiler-ir-instr-seq-empty)))))))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+  (irt.func
+    "function @storage_ranges() -> unit vars 6 {
+     entry:
+       %0 = alloc BigStorage
+       %1 = alloc BigStorage
+       %2 = addr_of %1
+       store_ptr %2, 11 : i64
+       %3 = alloc BigStorage
+       %4 = alloc BigStorage
+       %5 = addr_of %4
+       store_ptr %5, 22 : i64
+       return
+     }"))
 
 ;; Stack-only planning still needs enough lifetime information to color the
 ;; frame. The two inline-storage ranges below live on mutually exclusive CFG
@@ -18596,131 +14591,46 @@
 ;; share. Parameter var 0 must nevertheless retain its identity for prologue
 ;; spills.
 (define (compiler-reg-stack-only-storage-branch-function) : ir.CompilerIrFunction
-  (let
-    [big : ast.AstType (ast.AstType.Struct (ci.intern "StackOnlyStorage"))]
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "stack_only_storage_branch")
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "condition" (ast.AstType.Bool) 0)
-        (ir.compiler-ir-param-seq-empty))
-      (ast.AstType.Unit)
-      9
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Var 0)
-              (ir.compiler-ir-label "left")
-              (ir.compiler-ir-label "right"))
-            (ir.compiler-ir-instr-seq-empty)))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "left")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Alloc 1 (clone big))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Alloc 2 (clone big))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.AddrOf 3 2)
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.BinOp
-                      4
-                      (ir.CompilerIrBinOp.Add)
-                      (ir.CompilerIrValue.I64 10)
-                      (ir.CompilerIrValue.I64 1)
-                      (ast.AstType.I64))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.StorePtr
-                        (ir.CompilerIrValue.Var 3)
-                        (ir.CompilerIrValue.Var 4)
-                        (ast.AstType.I64))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                        (ir.compiler-ir-instr-seq-empty))))))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "right")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Alloc 5 (clone big))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Alloc 6 big)
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.AddrOf 7 6)
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.BinOp
-                        8
-                        (ir.CompilerIrBinOp.Add)
-                        (ir.CompilerIrValue.I64 20)
-                        (ir.CompilerIrValue.I64 2)
-                        (ast.AstType.I64))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.StorePtr
-                          (ir.CompilerIrValue.Var 7)
-                          (ir.CompilerIrValue.Var 8)
-                          (ast.AstType.I64))
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Jump
-                            (ir.compiler-ir-label "join"))
-                          (ir.compiler-ir-instr-seq-empty))))))))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "join")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil))))
-      ir.CompilerIrFunctionAbi.Ordinary)))
+  (irt.func
+    "function @stack_only_storage_branch(condition=%0:bool) -> unit vars 9 {
+     entry:
+       branch %0, left, right
+     left:
+       %1 = alloc StackOnlyStorage
+       %2 = alloc StackOnlyStorage
+       %3 = addr_of %2
+       %4 = add 10, 1 : i64
+       store_ptr %3, %4 : i64
+       jump join
+     right:
+       %5 = alloc StackOnlyStorage
+       %6 = alloc StackOnlyStorage
+       %7 = addr_of %6
+       %8 = add 20, 2 : i64
+       store_ptr %7, %8 : i64
+       jump join
+     join:
+       return
+     }"))
 
 ;; The first address remains live across construction of the second range and
 ;; escapes through a call. Its backing range must stay private even though the
 ;; planner itself performs no scalar register allocation.
 (define (compiler-reg-stack-only-storage-escape-function) : ir.CompilerIrFunction
-  (let
-    [big : ast.AstType (ast.AstType.Struct (ci.intern "StackOnlyEscape"))]
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "stack_only_storage_escape")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      7
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Alloc 0 (clone big))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Alloc 1 (clone big))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.AddrOf 2 1)
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.StorePtr
-                    (ir.CompilerIrValue.Var 2)
-                    (ir.CompilerIrValue.I64 11)
-                    (ast.AstType.I64))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Alloc 3 (clone big))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Alloc 4 big)
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.AddrOf 5 4)
-                        (compiler-reg-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.StorePtr
-                            (ir.CompilerIrValue.Var 5)
-                            (ir.CompilerIrValue.I64 22)
-                            (ast.AstType.I64))
-                          (compiler-reg-test-instr-seq-prepend
-                            (ir.CompilerIrInstr.Call
-                              6
-                              (ir.compiler-ir-test-symbol "escape")
-                              (ir.CompilerIrCallArgs.One
-                                (ir.CompilerIrValue.Var 2))
-                              (ast.AstType.Unit))
-                            (compiler-reg-test-instr-seq-prepend
-                              (ir.CompilerIrInstr.Return
-                                ir.CompilerIrMaybeValue.No)
-                              (ir.compiler-ir-instr-seq-empty))))))))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+  (irt.func
+    "function @stack_only_storage_escape() -> unit vars 7 {
+     entry:
+       %0 = alloc StackOnlyEscape
+       %1 = alloc StackOnlyEscape
+       %2 = addr_of %1
+       store_ptr %2, 11 : i64
+       %3 = alloc StackOnlyEscape
+       %4 = alloc StackOnlyEscape
+       %5 = addr_of %4
+       store_ptr %5, 22 : i64
+       %6 = call escape(%2) : unit
+       return
+     }"))
 
 (define (compiler-reg-color-pointer-assignments) : reg.CompilerRegAssignmentTable
   (reg.compiler-reg-assignment-insert
@@ -18902,9 +14812,7 @@
       (reg.compiler-reg-call-split-empty)
       (reg.compiler-reg-split-plan-empty))
     (live.compiler-live-set-empty)
-    (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "pinned" (ast.AstType.I64) 1)
-      (ir.compiler-ir-param-seq-empty))
+    (irt.params "pinned=%1:i64")
     ir.CompilerIrBlockList.Nil
     3
     3
@@ -18920,22 +14828,8 @@
 (define (compiler-reg-color-avx2-param-ranges-ok?) : bool
   (let
     [params : ir.CompilerIrParamSeq
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param
-          "__tl_spmd_active_mask_avx2"
-          (ast.AstType.Bool)
-          0)
-        (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param
-            "__tl_spmd_varying_arg_avx2_x"
-            (ast.AstType.I64)
-            1)
-          (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param
-              "__tl_spmd_index_base"
-              (ast.AstType.I64)
-              2)
-            (ir.compiler-ir-param-seq-empty))))]
+      (irt.params
+        "__tl_spmd_active_mask_avx2=%0:bool, __tl_spmd_varying_arg_avx2_x=%1:i64, __tl_spmd_index_base=%2:i64")]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-insert
         (reg.compiler-reg-assignment-table-empty)
@@ -19037,10 +14931,7 @@
 
 (define (compiler-reg-color-spill-scratch-demand-ok?) : bool
   (let
-    [params : ir.CompilerIrParamSeq
-      (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "real" (ast.AstType.I64) 0)
-        (ir.compiler-ir-param-seq-empty))]
+    [params : ir.CompilerIrParamSeq (irt.params "real=%0:i64")]
     (match (reg.compiler-reg-color-stack-slots
       (ast.ast-node-pool-reader-type-segment-bases)
       (reg.CompilerRegPlan.Plan
@@ -19065,39 +14956,14 @@
       [(reg.CompilerRegColoring.None) false])))
 
 (define (compiler-reg-color-vector-stack-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "vector_stack_slots")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.VectorLoad
-            0
-            (ir.CompilerIrValue.I64 0)
-            (ir.CompilerIrValue.I64 0)
-            4
-            (ast.AstType.I64))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.VectorLoad
-              1
-              (ir.CompilerIrValue.I64 0)
-              (ir.CompilerIrValue.I64 0)
-              8
-              (ast.AstType.I64))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.TailMask
-                2
-                (ir.CompilerIrValue.I64 0)
-                (ir.CompilerIrValue.I64 1)
-                8)
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                (ir.compiler-ir-instr-seq-empty))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @vector_stack_slots() -> unit vars 3 {
+     entry:
+       %0 = vector_load 0, 0 lanes 4 : i64
+       %1 = vector_load 0, 0 lanes 8 : i64
+       %2 = tail_mask 0, 1 lanes 8
+       return
+     }"))
 
 (define (compiler-reg-color-vector-stack-slots-ok?) : bool
   (match (compiler-reg-color-vector-stack-function)
@@ -19145,22 +15011,13 @@
           (ast.AstType.I32))
         (&mut words))
       (reg.compiler-reg-vector-stack-words-instr!
-        (ir.CompilerIrInstr.MaskBinOp
-          1
-          (ir.CompilerIrMaskBinOp.And)
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 0)
-          8)
+        (irt.instr "%1 = mask_and %0, %0 lanes 8")
         (&mut words))
       (reg.compiler-reg-vector-stack-words-instr!
         (ir.CompilerIrInstr.MaskNot 2 (ir.CompilerIrValue.Var 1) 8)
         (&mut words))
       (reg.compiler-reg-vector-stack-words-instr!
-        (ir.CompilerIrInstr.TailMask
-          3
-          (ir.CompilerIrValue.I64 0)
-          (ir.CompilerIrValue.I64 1)
-          8)
+        (irt.instr "%3 = tail_mask 0, 1 lanes 8")
         (&mut words))
       (reg.compiler-reg-vector-stack-words-instr!
         (ir.ir-instr-predicated-load
@@ -19198,31 +15055,15 @@
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            2
-            (ir.CompilerIrValue.Var 1)
-            (ast.AstType.I64))
+          (irt.instr "%2 = mov %1 : i64")
           (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.Var 0)
-              (ast.AstType.I64))
+            (irt.instr "%1 = mov %0 : i64")
             (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Splat
-                0
-                (ir.CompilerIrValue.I64 7)
-                8
-                (ast.AstType.I64))
+              (irt.instr "%0 = splat 7 lanes 8 : i64")
               (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  5
-                  (ir.CompilerIrValue.Var 4)
-                  (ast.AstType.Bool))
+                (irt.instr "%5 = mov %4 : bool")
                 (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    4
-                    (ir.CompilerIrValue.Var 3)
-                    (ast.AstType.Bool))
+                  (irt.instr "%4 = mov %3 : bool")
                   (compiler-reg-test-instr-seq-prepend
                     (ir.ir-instr-vector-compare
                       3
@@ -19231,9 +15072,7 @@
                       (ir.CompilerIrValue.Var 0)
                       8
                       (ast.AstType.I64))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                      (ir.compiler-ir-instr-seq-empty)))))))))
+                    (irt.instrs "return"))))))))
       ir.CompilerIrBlockList.Nil)
     ir.CompilerIrFunctionAbi.Ordinary))
 
@@ -19325,11 +15164,7 @@
       (if structural?
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Cast
-            12
-            (ir.CompilerIrValue.Var 2)
-            (ast.AstType.Array (ci.intern "i64") 2)
-            (ast.AstType.U64)))
+          (irt.instr "%12 = cast %2 : (Array i64 2) to u64"))
         unit)
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
@@ -19363,18 +15198,10 @@
         (begin
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
-            (ir.CompilerIrInstr.Gep
-              10
-              (ir.CompilerIrValue.Var 2)
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.U64)))
+            (irt.instr "%10 = gep %2, 0 : u64"))
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
-            (ir.CompilerIrInstr.Call
-              11
-              (ir.compiler-ir-test-symbol "escaping_pointer")
-              (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 10))
-              (ast.AstType.U64))))
+            (irt.instr "%11 = call escaping_pointer(%10) : u64")))
         unit)
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
@@ -19388,11 +15215,7 @@
       (if structural?
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Cast
-            13
-            (ir.CompilerIrValue.Var 7)
-            (ast.AstType.Array (ci.intern "i64") 2)
-            (ast.AstType.U64)))
+          (irt.instr "%13 = cast %7 : (Array i64 2) to u64"))
         unit)
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
@@ -19413,10 +15236,7 @@
       (if overlap?
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Load
-            10
-            (ir.CompilerIrValue.Var 3)
-            (ast.AstType.I64)))
+          (irt.instr "%10 = load %3 : i64"))
         unit)
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
@@ -19692,16 +15512,12 @@
     (ir.compiler-ir-instr-seq-empty)))
 
 (define (compiler-reg-loop-nest-return) : ir.CompilerIrInstrSeq
-  (compiler-reg-test-instr-seq-prepend
-    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-    (ir.compiler-ir-instr-seq-empty)))
+  (irt.instrs "return"))
 
 ;; A block that ends WITHOUT a terminator: control runs on into whatever block
 ;; is laid out next, an edge no instruction names.
 (define (compiler-reg-loop-nest-open) : ir.CompilerIrInstrSeq
-  (compiler-reg-test-instr-seq-prepend
-    (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 1) (compiler-reg-i64-ty))
-    (ir.compiler-ir-instr-seq-empty)))
+  (irt.instrs "%0 = mov 1 : i64"))
 
 (define (compiler-reg-loop-nest-block
   [label : String]
@@ -19773,10 +15589,8 @@
       (compiler-reg-loop-nest-block
         "join"
         (compiler-reg-loop-nest-return)
-        (compiler-reg-loop-nest-block
-          "cold"
-          (compiler-reg-loop-nest-jump "join")
-          ir.CompilerIrBlockList.Nil)))))
+        (irt.blocks "cold:
+             jump join")))))
 
 (define (compiler-reg-loop-nest-sunk-cold-ok?) : bool
   (let
@@ -19911,13 +15725,11 @@
   (compiler-reg-loop-nest-block
     "entry"
     (compiler-reg-loop-nest-return)
-    (compiler-reg-loop-nest-block
-      "dead-header"
-      (compiler-reg-loop-nest-jump "dead-latch")
-      (compiler-reg-loop-nest-block
-        "dead-latch"
-        (compiler-reg-loop-nest-jump "dead-header")
-        ir.CompilerIrBlockList.Nil))))
+    (irt.blocks
+      "dead-header:
+         jump dead-latch
+       dead-latch:
+         jump dead-header")))
 
 (define (compiler-reg-loop-nest-unreachable-ok?) : bool
   (let
@@ -20431,36 +16243,17 @@
 ;; miscompile. The live-in bridge opens the segment at the odd point below the
 ;; block's first instruction, so the call lands inside the hull for every order.
 (define (compiler-reg-live-in-call-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "live_in_call")
-    (ir.compiler-ir-param-seq-empty)
-    (compiler-reg-i64-ty)
-    2
-    (compiler-reg-loop-nest-block
-      "entry"
-      (compiler-reg-loop-nest-jump "def")
-      (compiler-reg-loop-nest-block
-        "use"
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Call
-            1
-            (ir.compiler-ir-test-symbol "side_effect")
-            (ir.CompilerIrCallArgs.Nil)
-            (ast.AstType.Unit))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-            (ir.compiler-ir-instr-seq-empty)))
-        (compiler-reg-loop-nest-block
-          "def"
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 9)
-              (compiler-reg-i64-ty))
-            (compiler-reg-loop-nest-jump "use"))
-          ir.CompilerIrBlockList.Nil)))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @live_in_call() -> i64 vars 2 {
+     entry:
+       jump def
+     use:
+       %1 = call side_effect() : unit
+       return %0
+     def:
+       %0 = mov 9 : i64
+       jump use
+     }"))
 
 (define (compiler-reg-live-in-call-ok?) : bool
   (let
@@ -21151,77 +16944,22 @@
 (cfg
   test
   (define (compiler-reg-trace-fixture-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "trace_reason_vocabulary")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.I64)
-      9
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              0
-              (ir.CompilerIrBinOp.Add)
-              (ir.CompilerIrValue.I64 1)
-              (ir.CompilerIrValue.I64 1)
-              (compiler-reg-i64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                1
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.I64 2)
-                (ir.CompilerIrValue.I64 1)
-                (compiler-reg-i64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.BinOp
-                  2
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.I64 3)
-                  (ir.CompilerIrValue.I64 1)
-                  (compiler-reg-i64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.BinOp
-                    3
-                    (ir.CompilerIrBinOp.Add)
-                    (ir.CompilerIrValue.I64 4)
-                    (ir.CompilerIrValue.I64 1)
-                    (compiler-reg-i64-ty))
-                  (compiler-reg-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.BinOp
-                      4
-                      (ir.CompilerIrBinOp.Add)
-                      (ir.CompilerIrValue.I64 5)
-                      (ir.CompilerIrValue.I64 1)
-                      (compiler-reg-i64-ty))
-                    (compiler-reg-test-instr-seq-prepend
-                      (ir.CompilerIrInstr.BinOp
-                        5
-                        (ir.CompilerIrBinOp.Add)
-                        (ir.CompilerIrValue.I64 6)
-                        (ir.CompilerIrValue.I64 1)
-                        (compiler-reg-i64-ty))
-                      (compiler-reg-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Call
-                          6
-                          (ir.compiler-ir-test-symbol "work")
-                          ir.CompilerIrCallArgs.Nil
-                          (ast.AstType.I64))
-                        (compiler-reg-test-instr-seq-prepend
-                          (compiler-reg-trace-fixture-add-instr 7 0 1)
-                          (compiler-reg-test-instr-seq-prepend
-                            (compiler-reg-trace-fixture-add-instr 7 2 3)
-                            (compiler-reg-test-instr-seq-prepend
-                              (compiler-reg-trace-fixture-add-instr 7 4 5)
-                              (compiler-reg-test-instr-seq-prepend
-                                (compiler-reg-trace-fixture-add-instr 8 7 6)
-                                (compiler-reg-test-instr-seq-prepend
-                                  (ir.CompilerIrInstr.Return
-                                    (ir.CompilerIrMaybeValue.Some
-                                      (ir.CompilerIrValue.Var 8)))
-                                  (ir.compiler-ir-instr-seq-empty))))))))))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+    (irt.func
+      "function @trace_reason_vocabulary() -> i64 vars 9 {
+       entry:
+         %0 = add 1, 1 : i64
+         %1 = add 2, 1 : i64
+         %2 = add 3, 1 : i64
+         %3 = add 4, 1 : i64
+         %4 = add 5, 1 : i64
+         %5 = add 6, 1 : i64
+         %6 = call work() : i64
+         %7 = add %0, %1 : i64
+         %7 = add %2, %3 : i64
+         %7 = add %4, %5 : i64
+         %8 = add %7, %6 : i64
+         return %8
+       }")))
 
 (cfg
   test

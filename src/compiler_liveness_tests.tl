@@ -7,6 +7,7 @@
 ;; production module keeps only the analyzer itself.
 (import compiler_liveness as live)
 (import compiler_ir_types as ir)
+(import compiler_ir_text as irt)
 (import compiler_ast_types as ast)
 (import stdlib.io)
 
@@ -262,71 +263,31 @@
     (begin
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.Mov
-          0
-          (ir.CompilerIrValue.Var 10)
-          (compiler-live-i64-ty)))
+        (irt.instr "%0 = mov %10 : i64"))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.BinOp
-          1
-          ir.CompilerIrBinOp.Add
-          (ir.CompilerIrValue.Var 7)
-          (ir.CompilerIrValue.Var 7)
-          (compiler-live-i64-ty)))
+        (irt.instr "%1 = add %7, %7 : i64"))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
         (ir.CompilerIrInstr.AddrOf 2 33))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.Gep
-          3
-          (ir.CompilerIrValue.Var 40)
-          (ir.CompilerIrValue.I64 8)
-          (compiler-live-i64-ty)))
+        (irt.instr "%3 = gep %40, 8 : i64"))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.Call
-          4
-          (ir.compiler-ir-test-symbol "f")
-          (ir.CompilerIrCallArgs.Two
-            (ir.CompilerIrValue.Var 41)
-            (ir.CompilerIrValue.Var 41))
-          (compiler-live-i64-ty)))
+        (irt.instr "%4 = call f(%41, %41) : i64"))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.Pack
-          5
-          (ir.compiler-ir-value-seq-prepend
-            (ir.CompilerIrValue.Var 42)
-            (ir.compiler-ir-value-seq-prepend
-              (ir.CompilerIrValue.Var 43)
-              (ir.compiler-ir-value-seq-empty)))
-          (compiler-live-i64-ty)))
+        (irt.instr "%5 = pack [%42, %43] : i64"))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.Phi
-          6
-          (ir.compiler-ir-phi-input-seq-prepend
-            (ir.CompilerIrValue.Var 44)
-            (ir.compiler-ir-label "a")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.Var 44)
-              (ir.compiler-ir-label "b")
-              (ir.compiler-ir-phi-input-seq-empty)))
-          (compiler-live-i64-ty)))
+        (irt.instr "%6 = phi [%44, a], [%44, b] : i64"))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.StorePtr
-          (ir.CompilerIrValue.Var 45)
-          (ir.CompilerIrValue.Var 46)
-          (compiler-live-i64-ty)))
+        (irt.instr "store_ptr %45, %46 : i64"))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var 47)
-          (ir.compiler-ir-label "a")
-          (ir.compiler-ir-label "b")))
+        (irt.instr "branch %47, a, b"))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
 ;; The two id-driven scratch steps must leave the row -- and the trimmed active
@@ -415,10 +376,7 @@
     [overflow-ok : bool
       (=
         (live.compiler-live-instr-use-ids-into!
-          (ir.CompilerIrInstr.StorePtr
-            (ir.CompilerIrValue.Var 3)
-            (ir.CompilerIrValue.Var 4)
-            (compiler-live-i64-ty))
+          (irt.instr "store_ptr %3, %4 : i64")
           (&mut narrow))
         -1)]
     (and
@@ -429,25 +387,6 @@
 
 (define (compiler-live-i64-ty) : ast.AstType
   (ast.AstType.I64))
-
-(define (compiler-live-instr-seq6
-  [first : ir.CompilerIrInstr]
-  [second : ir.CompilerIrInstr]
-  [third : ir.CompilerIrInstr]
-  [fourth : ir.CompilerIrInstr]
-  [fifth : ir.CompilerIrInstr]
-  [sixth : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (__tl_make-array ir.CompilerIrInstr 6)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (set! (array-ref slots 1) second)
-      (set! (array-ref slots 2) third)
-      (set! (array-ref slots 3) fourth)
-      (set! (array-ref slots 4) fifth)
-      (set! (array-ref slots 5) sixth)
-      (ir.CompilerIrInstrSeq slots 6))))
 
 (define (compiler-live-instr-seq7
   [first : ir.CompilerIrInstr]
@@ -470,178 +409,55 @@
       (set! (array-ref slots 6) seventh)
       (ir.CompilerIrInstrSeq slots 7))))
 
-(define (compiler-live-instr-seq8
-  [first : ir.CompilerIrInstr]
-  [second : ir.CompilerIrInstr]
-  [third : ir.CompilerIrInstr]
-  [fourth : ir.CompilerIrInstr]
-  [fifth : ir.CompilerIrInstr]
-  [sixth : ir.CompilerIrInstr]
-  [seventh : ir.CompilerIrInstr]
-  [eighth : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (__tl_make-array ir.CompilerIrInstr 8)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (set! (array-ref slots 1) second)
-      (set! (array-ref slots 2) third)
-      (set! (array-ref slots 3) fourth)
-      (set! (array-ref slots 4) fifth)
-      (set! (array-ref slots 5) sixth)
-      (set! (array-ref slots 6) seventh)
-      (set! (array-ref slots 7) eighth)
-      (ir.CompilerIrInstrSeq slots 8))))
-
 (define (compiler-live-straight-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "straight")
-    (ir.compiler-ir-param-seq-empty)
-    (compiler-live-i64-ty)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-seq3
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 1)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.BinOp
-            1
-            ir.CompilerIrBinOp.Add
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Var 2)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @straight() -> i64 vars 3 {
+     entry:
+       %0 = mov 1 : i64
+       %1 = add %0, %2 : i64
+       return %1
+     }"))
 
 (define (compiler-live-branch-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "branch")
-    (ir.compiler-ir-param-seq-empty)
-    (compiler-live-i64-ty)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-seq1
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var 0)
-            (ir.compiler-ir-label "then")
-            (ir.compiler-ir-label "else"))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "then")
-          (ir.compiler-ir-instr-seq1
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "else")
-            (ir.compiler-ir-instr-seq1
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))))
-          ir.CompilerIrBlockList.Nil)))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @branch() -> i64 vars 3 {
+     entry:
+       branch %0, then, else
+     then:
+       return %1
+     else:
+       return %2
+     }"))
 
 (define (compiler-live-phi-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "phi")
-    (ir.compiler-ir-param-seq-empty)
-    (compiler-live-i64-ty)
-    4
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-seq1
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var 0)
-            (ir.compiler-ir-label "left")
-            (ir.compiler-ir-label "right"))))
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "left")
-          (ir.compiler-ir-instr-seq2
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.I64 10)
-              (compiler-live-i64-ty))
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "right")
-            (ir.compiler-ir-instr-seq2
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.I64 20)
-                (compiler-live-i64-ty))
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "join")
-              (ir.compiler-ir-instr-seq2
-                (ir.CompilerIrInstr.Phi
-                  3
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.Var 1)
-                    (ir.compiler-ir-label "left")
-                    (ir.compiler-ir-phi-input-seq-prepend
-                      (ir.CompilerIrValue.Var 2)
-                      (ir.compiler-ir-label "right")
-                      (ir.compiler-ir-phi-input-seq-empty)))
-                  (compiler-live-i64-ty))
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
-            ir.CompilerIrBlockList.Nil))))
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @phi() -> i64 vars 4 {
+     entry:
+       branch %0, left, right
+     left:
+       %1 = mov 10 : i64
+       jump join
+     right:
+       %2 = mov 20 : i64
+       jump join
+     join:
+       %3 = phi [%1, left], [%2, right] : i64
+       return %3
+     }"))
 
 (define (compiler-live-use-def-ok?) : bool
   (let
     [use-def : live.CompilerLiveUseDef
       (live.compiler-live-block-use-def
-        (compiler-live-instr-seq8
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.Var 10)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.BinOp
-            1
-            ir.CompilerIrBinOp.Add
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Var 11)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.UnOp
-            2
-            ir.CompilerIrUnOp.Neg
-            (ir.CompilerIrValue.Var 12)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Call
-            3
-            (ir.compiler-ir-test-symbol "f")
-            (ir.CompilerIrCallArgs.Two
-              (ir.CompilerIrValue.Var 1)
-              (ir.CompilerIrValue.Var 13))
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Store
-            (ir.compiler-ir-test-symbol "g")
-            (ir.CompilerIrValue.Var 14)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var 15)
-            (ir.compiler-ir-label "a")
-            (ir.compiler-ir-label "b"))
-          (ir.CompilerIrInstr.Phi
-            4
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.Var 16)
-              (ir.compiler-ir-label "a")
-              (ir.compiler-ir-phi-input-seq-empty))
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))]
+        (irt.instrs
+          "%0 = mov %10 : i64
+           %1 = add %0, %11 : i64
+           %2 = neg %12 : i64
+           %3 = call f(%1, %13) : i64
+           store @g, %14 : i64
+           branch %15, a, b
+           %4 = phi [%16, a] : i64
+           return %4"))]
     (and
       (live.compiler-live-set-eq?
         use-def.uses
@@ -657,30 +473,10 @@
     [use-def : live.CompilerLiveUseDef
       (live.compiler-live-block-use-def
         (ir.compiler-ir-instr-seq4
-          (ir.CompilerIrInstr.Phi
-            1
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.Var 5)
-              (ir.compiler-ir-label "body")
-              (ir.compiler-ir-phi-input-seq-empty))
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Phi
-            2
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.Var 1)
-              (ir.compiler-ir-label "body")
-              (ir.compiler-ir-phi-input-seq-empty))
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.BinOp
-            5
-            ir.CompilerIrBinOp.Add
-            (ir.CompilerIrValue.Var 1)
-            (ir.CompilerIrValue.I64 1)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var 5)
-            (ir.compiler-ir-label "body")
-            (ir.compiler-ir-label "exit"))))]
+          (irt.instr "%1 = phi [%5, body] : i64")
+          (irt.instr "%2 = phi [%1, body] : i64")
+          (irt.instr "%5 = add %1, 1 : i64")
+          (irt.instr "branch %5, body, exit")))]
     (and
       (live.compiler-live-set-contains? use-def.uses 1)
       (live.compiler-live-set-contains? use-def.uses 5)
@@ -693,27 +489,13 @@
   (let
     [use-def : live.CompilerLiveUseDef
       (live.compiler-live-block-use-def
-        (compiler-live-instr-seq6
-          (ir.CompilerIrInstr.Alloc 0 (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.AddrOf 1 0)
-          (ir.CompilerIrInstr.Gep
-            2
-            (ir.CompilerIrValue.Var 1)
-            (ir.CompilerIrValue.Var 10)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Load
-            3
-            (ir.CompilerIrValue.Var 2)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.StorePtr
-            (ir.CompilerIrValue.Var 2)
-            (ir.CompilerIrValue.Var 11)
-            (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Cast
-            4
-            (ir.CompilerIrValue.Var 3)
-            (compiler-live-i64-ty)
-            (ast.AstType.I32))))]
+        (irt.instrs
+          "%0 = alloc i64
+           %1 = addr_of %0
+           %2 = gep %1, %10 : i64
+           %3 = load %2 : i64
+           store_ptr %2, %11 : i64
+           %4 = cast %3 : i64 to i32"))]
     (and
       (live.compiler-live-set-eq? use-def.uses (live.compiler-live-set2 10 11))
       (live.compiler-live-set-eq? use-def.defs (compiler-live-set5 0 1 2 3 4)))))
@@ -721,11 +503,7 @@
 ;; StoreOwned defines nothing and reads both its address and its value.
 (define (compiler-live-store-owned-use-def-ok?) : bool
   (let
-    [store : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.StoreOwned
-        (ir.CompilerIrValue.Var 70)
-        (ir.CompilerIrValue.Var 71)
-        (ast.AstType.String))]
+    [store : ir.CompilerIrInstr (irt.instr "store_owned %71 -> %70 : String")]
     (and
       (= (ir.compiler-ir-instr-dst (clone store)) -1)
       (live.compiler-live-set-eq?
@@ -741,11 +519,7 @@
       (live.compiler-live-block-use-def
         (compiler-live-instr-seq7
           (ir.CompilerIrInstr.LaneId 0 4 (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.Splat
-            1
-            (ir.CompilerIrValue.Var 10)
-            4
-            (compiler-live-i64-ty))
+          (irt.instr "%1 = splat %10 lanes 4 : i64")
           (ir.ir-instr-vector-bin-op
             2
             (ir.CompilerIrBinOp.Add)
@@ -753,11 +527,7 @@
             (ir.CompilerIrValue.Var 1)
             4
             (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.TailMask
-            3
-            (ir.CompilerIrValue.Var 11)
-            (ir.CompilerIrValue.Var 12)
-            4)
+          (irt.instr "%3 = tail_mask %11, %12 lanes 4")
           (ir.ir-instr-predicated-load
             4
             (ir.CompilerIrValue.Var 13)
@@ -772,11 +542,7 @@
             (ir.CompilerIrValue.Var 3)
             4
             (compiler-live-i64-ty))
-          (ir.CompilerIrInstr.MaskReduce
-            5
-            (ir.CompilerIrMaskReduceOp.Any)
-            (ir.CompilerIrValue.Var 3)
-            4)))]
+          (irt.instr "%5 = mask_reduce_any %3 lanes 4")))]
     (and
       (live.compiler-live-set-eq?
         use-def.uses
@@ -944,16 +710,8 @@
 
 (define (compiler-live-switch-ok?) : bool
   (let
-    [cases : ir.CompilerIrSwitchCaseSeq
-      (ir.compiler-ir-switch-case-seq2
-        (ir.CompilerIrSwitchCase.Case 4 (ir.compiler-ir-label "four"))
-        (ir.CompilerIrSwitchCase.Case 5 (ir.compiler-ir-label "five")))]
     [instr : ir.CompilerIrInstr
-      (ir.CompilerIrInstr.Switch
-        (ir.CompilerIrValue.Var 9)
-        4
-        cases
-        (ir.compiler-ir-label "other"))]
+      (irt.instr "switch %9 base 4 [4:four, 5:five] default other")]
     [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq1 instr)]
     [block : ir.CompilerIrBlock
       (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") (clone instrs))]

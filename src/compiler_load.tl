@@ -121,17 +121,11 @@
 (define (compiler-load-reader-node-pool-arena-handle) : i64
   (reader.sp-node-pool-base-arena-handle-value))
 
-(define (compiler-load-reader-sexpr-pool-arena-handle) : i64
-  (reader.sexpr-node-pool-base-arena-handle-value))
-
-(define (compiler-load-reader-sexpr-builder-arena-handle) : i64
-  (reader.sexpr-builder-base-arena-handle-value))
-
-;; Retire the frontend scanning storage once a whole-program load has returned
-;; its `ast.AstDeclList`. Both owners are pure scan scratch whose contents were
-;; already copied out by value; see the no-dangling arguments at their release
-;; sites in `lex.tl` and `read.tl`. Only single-entry compile paths call this:
-;; a session that reuses loader state across jobs would just pay the regrow.
+;; Retire the frontend token buffer once a whole-program load has returned its
+;; `ast.AstDeclList`. It is pure scan scratch whose contents were already copied
+;; out by value; see the no-dangling argument at its release site in `lex.tl`.
+;; Only single-entry compile paths call this: a session that reuses loader
+;; state across jobs would just pay the regrow.
 ;;
 ;; The spanned reader pool (`reader-node-pool`) is deliberately NOT released
 ;; here. It doubles as the declaration/member origin side table: the parser
@@ -142,14 +136,12 @@
 ;; every origin lookup to `None`, so those records must live as long as the
 ;; declarations they describe.
 (define (compiler-load-release-frontend-scan-arenas!) : unit
-  (begin
-    (lexer.spanned-token-buffer-release!)
-    (reader.sexpr-node-pool-release!)))
+  (lexer.spanned-token-buffer-release!))
 
 ;; Whole-program uncached handoff: release pure scan storage and transfer the
 ;; compact declaration/member/semantic-origin prefix out of the reader arena
 ;; whose capacity was sized by the largest transient source form.  Source text,
-;; token rows, unspanned forms, and reader builders are not part of this graph;
+;; token rows and reader builders are not part of this graph;
 ;; the stable row ids and by-value spans are the only data later diagnostics,
 ;; symbol collection, semantic indexing, and macro/typecheck paths consume.
 (define (compiler-load-transfer-frontend-handoff!) : unit
@@ -2851,7 +2843,6 @@
 (define (compiler-load-session-reset-pools!) : unit
   (begin
     (parser.compiler-parse-decl-origin-cache-reset!)
-    (reader.sexpr-node-pool-reset!)
     ;; Global resets do not own the previously installed context cells. Detach
     ;; before truncating so stale scratch-owned cells are not updated.
     (ast.ast-node-pool-active-context-clear!)
@@ -2881,7 +2872,6 @@
   [pools : ast.AstNodePoolContext]) : unit
   (begin
     (parser.compiler-parse-decl-origin-cache-reset!)
-    (reader.sexpr-node-pool-reset!)
     (compiler-load-session-state-surface-summaries-reset!
       (owned_view.compiler-owned-shared-view state))
     (compiler-load-session-state-lazy-qualified-observer-reset! state)
@@ -4851,20 +4841,6 @@
 ;; Prelude source selection is physical, but its loader path is deliberately
 ;; canonical. That keeps module identity, import restoration, diagnostics, and
 ;; deduplication independent of the absolute/relative spelling of a stdlib root.
-(define (compiler-load-stdlib-prelude-source-with-roots-cfg
-  [path : String]
-  [source : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-source-with-paths-and-roots-expect-cfg
-    path
-    source
-    seen
-    stdlib-roots
-    ast.AstMaybeModuleName.No
-    cfgs))
-
 (define (compiler-load-stdlib-prelude-file-with-roots-cfg
   [path : String]
   [seen : sym_i64_env.SymI64Env]
@@ -4880,7 +4856,7 @@
           (compiler-load-note-embedded-equivalent-if-matching!
             suffix
             (string.copy source-path))
-          (compiler-load-stdlib-prelude-source-with-roots-cfg
+          (compiler-load-source-with-paths-and-roots-cfg
             (string.copy path)
             (compiler-load-read-file-text source-path)
             seen
@@ -4893,7 +4869,7 @@
             (begin
               (compiler-load-note-embedded-module! (string.copy path))
               (compiler-load-session-note-embedded-stdlib-source!)
-              (compiler-load-stdlib-prelude-source-with-roots-cfg
+              (compiler-load-source-with-paths-and-roots-cfg
                 (string.copy path)
                 source
                 seen
@@ -17233,7 +17209,7 @@
 
 ;: Extract a single `"value"` from a field tail `("value")`.
 (define (compiler-load-manifest-string-value
-  [ftail : reader.Sexpr]
+  [ftail : reader.SpannedSexpr]
   [fname : String]) : ResultPkgString
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons vhead vrest)
@@ -17262,7 +17238,7 @@
 (define (compiler-load-manifest-github-pin
   [alias : String]
   [address : String]
-  [pin-form : reader.Sexpr]) : ResultPkgString
+  [pin-form : reader.SpannedSexpr]) : ResultPkgString
   (match (reader.sexpr-view pin-form)
     [(reader.SexprView.Cons pin-kind-node pin-tail)
       (match (reader.sexpr-view pin-kind-node)
@@ -17326,7 +17302,7 @@
 
 (define (compiler-load-manifest-github-value
   [alias : String]
-  [source-tail : reader.Sexpr]) : ResultPkgString
+  [source-tail : reader.SpannedSexpr]) : ResultPkgString
   (match (reader.sexpr-view source-tail)
     [(reader.SexprView.Cons address-node after-address)
       (match (reader.sexpr-view address-node)
@@ -17364,7 +17340,7 @@
           "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`"))]))
 
 (define (compiler-load-manifest-dependency-value
-  [etail : reader.Sexpr]
+  [etail : reader.SpannedSexpr]
   [alias : String]) : ResultPkgString
   (match (reader.sexpr-view etail)
     [(reader.SexprView.Cons vhead vrest)
@@ -17419,7 +17395,7 @@
       (ResultCompilerPkgKind.Err
         "manifest field `kind` must be `bin`, `staticlib`, or `lib`"))))
 
-(define (compiler-load-manifest-kind-value [ftail : reader.Sexpr]) : ResultCompilerPkgKind
+(define (compiler-load-manifest-kind-value [ftail : reader.SpannedSexpr]) : ResultCompilerPkgKind
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons vhead vrest)
       (match (reader.sexpr-view vrest)
@@ -17443,7 +17419,7 @@
 (define (compiler-load-manifest-cons-dep
   [alias : String]
   [path : String]
-  [rest : reader.Sexpr]) : ResultCompilerPkgDeps
+  [rest : reader.SpannedSexpr]) : ResultCompilerPkgDeps
   (cond
     [(string.eq alias "")
       (ResultCompilerPkgDeps.Err "dependency alias must not be empty")]
@@ -17469,7 +17445,7 @@
               (compiler-pkg-deps-cons alias path tail-deps)))])]))
 
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
-(define (compiler-load-manifest-parse-deps [entries : reader.Sexpr]) : ResultCompilerPkgDeps
+(define (compiler-load-manifest-parse-deps [entries : reader.SpannedSexpr]) : ResultCompilerPkgDeps
   (match (reader.sexpr-view entries)
     [(reader.SexprView.Nil)
       (ResultCompilerPkgDeps.Ok (compiler-pkg-deps-empty))]
@@ -17604,7 +17580,7 @@
 
 ;: Parse the one-or-more non-empty string values of one `link` sub-field.
 (define (compiler-load-manifest-link-values
-  [values : reader.Sexpr]
+  [values : reader.SpannedSexpr]
   [fname : String]
   [acc : fs.FsStringVector]) : ResultPkgStrVec
   (match (reader.sexpr-view values)
@@ -17667,7 +17643,7 @@
 
 ;: Walk the `(field "...")` entries of a `(link ...)` section.
 (define (compiler-load-manifest-parse-link-into
-  [entries : reader.Sexpr]
+  [entries : reader.SpannedSexpr]
   [acc : CompilerPkgLink]) : ResultCompilerPkgLink
   (match (reader.sexpr-view entries)
     [(reader.SexprView.Nil) (ResultCompilerPkgLink.Ok acc)]
@@ -17701,7 +17677,7 @@
         "`link` must be a list of `(field \"...\")` entries")]))
 
 ;: Parse a `(link ...)` manifest section into a CompilerPkgLink.
-(define (compiler-load-manifest-parse-link [entries : reader.Sexpr]) : ResultCompilerPkgLink
+(define (compiler-load-manifest-parse-link [entries : reader.SpannedSexpr]) : ResultCompilerPkgLink
   (compiler-load-manifest-parse-link-into entries (compiler-pkg-link-empty)))
 
 (define (compiler-load-manifest-default-entry [kind : CompilerPkgKind]) : String
@@ -17724,7 +17700,7 @@
 ;: check required fields and synthesize convention defaults for omitted kind
 ;: and entry.
 (define (compiler-load-manifest-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [name : String]
   [has-name : bool]
   [version : String]
@@ -17931,7 +17907,7 @@
         "package fields must be lists like `(name \"...\")`")]))
 
 ;: Parse the top-level `(package ...)` form.
-(define (compiler-load-manifest-from-form [form : reader.Sexpr]) : ResultCompilerPkgManifest
+(define (compiler-load-manifest-from-form [form : reader.SpannedSexpr]) : ResultCompilerPkgManifest
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view head)
@@ -17961,7 +17937,7 @@
       (ResultCompilerPkgManifest.Err "manifest must be a `(package ...)` form")]))
 
 (define (compiler-load-manifest-fields-have?
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [target : (& target str)]) : bool
   (match (reader.sexpr-view fields)
     [(reader.SexprView.Nil) false]
@@ -17980,7 +17956,7 @@
     [_ false]))
 
 (define (compiler-load-manifest-form-has-field?
-  [form : reader.Sexpr]
+  [form : reader.SpannedSexpr]
   [target : (& target str)]) : bool
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
@@ -17992,7 +17968,8 @@
         [_ false])]
     [_ false]))
 
-(define (compiler-load-manifest-needs-kind-inference? [form : reader.Sexpr]) : bool
+(define (compiler-load-manifest-needs-kind-inference?
+  [form : reader.SpannedSexpr]) : bool
   (and
     (not (compiler-load-manifest-form-has-field? (clone form) "kind"))
     (not (compiler-load-manifest-form-has-field? form "entry"))))
@@ -18107,8 +18084,7 @@
   [form : reader.SpannedSexpr]
   [manifest : CompilerPkgManifest]) : ResultCompilerPkgManifestDiagnostic
   (let
-    [raw-form : reader.Sexpr
-      (reader.spanned-sexpr-form (ast.ast-place-shared-view form))]
+    [raw-form : reader.SpannedSexpr (ast.ast-place-shared-view form)]
     (if (compiler-load-manifest-needs-kind-inference? raw-form)
       (match (compiler-load-manifest-infer-kind-from-files (string.copy path))
         [(ResultCompilerPkgKind.Ok kind)
@@ -18125,8 +18101,7 @@
 (define (compiler-load-parse-manifest-form-diagnostic
   [path : String]
   [form : reader.SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
-  (match (compiler-load-manifest-from-form
-    (reader.spanned-sexpr-form (ast.ast-place-shared-view form)))
+  (match (compiler-load-manifest-from-form (ast.ast-place-shared-view form))
     [(ResultCompilerPkgManifest.Ok manifest)
       (compiler-load-manifest-validate-library-dependencies path form manifest)]
     [(ResultCompilerPkgManifest.Err message)
@@ -18136,8 +18111,7 @@
 (define (compiler-load-parse-manifest-form-diagnostic-infer-kind
   [path : String]
   [form : reader.SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
-  (match (compiler-load-manifest-from-form
-    (reader.spanned-sexpr-form (ast.ast-place-shared-view form)))
+  (match (compiler-load-manifest-from-form (ast.ast-place-shared-view form))
     [(ResultCompilerPkgManifest.Ok manifest)
       (compiler-load-manifest-apply-kind-inference path form manifest)]
     [(ResultCompilerPkgManifest.Err message)
@@ -18151,7 +18125,6 @@
   [source : String]) : ResultCompilerPkgManifestDiagnostic
   (let
     [mark : i64 (reader.sp-node-pool-len)]
-    [sexpr-mark : i64 (reader.sexpr-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
       (match (lexer.spanned-result source)
         [(lexer.ResultSpannedTokens.Err err)
@@ -18166,7 +18139,6 @@
               (compiler-load-parse-manifest-form-diagnostic path form)])])]
     (begin
       (reader.sp-node-pool-truncate! mark)
-      (reader.sexpr-node-pool-truncate! sexpr-mark)
       result)))
 
 (define (compiler-load-parse-manifest-diagnostic-infer-kind
@@ -18174,7 +18146,6 @@
   [source : String]) : ResultCompilerPkgManifestDiagnostic
   (let
     [mark : i64 (reader.sp-node-pool-len)]
-    [sexpr-mark : i64 (reader.sexpr-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
       (match (lexer.spanned-result source)
         [(lexer.ResultSpannedTokens.Err err)
@@ -18191,7 +18162,6 @@
                 form)])])]
     (begin
       (reader.sp-node-pool-truncate! mark)
-      (reader.sexpr-node-pool-truncate! sexpr-mark)
       result)))
 
 ;: Parse a manifest source string into a structured manifest. This compatibility

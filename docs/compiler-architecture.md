@@ -89,7 +89,7 @@ and register-allocation decisions still read generated helper and parameter
 spellings; #7493 moves them onto the descriptor.
 
 The lowerer's checked expression dispatcher delegates complete families to
-focused helpers. The [expression-family ledger](compiler-lowering-dispatch.md)
+focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance
 contract for those boundaries.
 
@@ -419,7 +419,7 @@ interning is published to the job's intern owner before handoff. The generated
 import runtime fixtures and interleaved loader-state smoke guard these contracts.
 
 Handwritten runtime, startup, and direct-object x86-64 code is covered by the
-closed [compiler-owned executable template registry](compiler-x64-executable-templates.md).
+closed [compiler-owned executable template registry](../docs/compiler-x64-executable-templates.md).
 It records mutation-sensitive source identities and typed control/frame events
 for later native-code certification.
 
@@ -549,7 +549,7 @@ for a description, minimal failing example, suggested fix, and related
 references. Code lookup is ASCII case-insensitive. `typelisp explain --list`
 prints the registry and `typelisp explain --search <term>` searches its titles
 and prose. The code list, with owners and construction sites, is in
-[diagnostic-codes.md](diagnostic-codes.md).
+[diagnostic-codes.md](../docs/diagnostic-codes.md).
 
 ## Async process ownership
 

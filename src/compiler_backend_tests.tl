@@ -292,7 +292,6 @@
       arg-ty
       is-float
       stack-idx
-      ""
       backend-state)
       [(backend.ResultCompilerBackend.Ok _)
         (backend.ResultCompilerBackend.Ok
@@ -7007,8 +7006,6 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-empty)
           (ir.compiler-ir-extern-seq-empty))
-        ""
-        ""
         (backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
@@ -7031,8 +7028,6 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-empty)
           (ir.compiler-ir-extern-seq-empty))
-        ""
-        ""
         (backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
@@ -7050,8 +7045,6 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-empty)
           (ir.compiler-ir-extern-seq-empty))
-        ""
-        ""
         (backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
@@ -7069,8 +7062,6 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-empty)
           (ir.compiler-ir-extern-seq-empty))
-        ""
-        ""
         (backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(backend.ResultCompilerBackend.Ok asm)
@@ -7089,8 +7080,6 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-empty)
           (ir.compiler-ir-extern-seq-empty))
-        ""
-        ""
         (backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(backend.ResultCompilerBackend.Ok asm)
@@ -7681,25 +7670,22 @@
         0
         index)]
     [asm : backend.ResultCompilerBackend
-      (begin
-        (set-state-current-c-memory-planned-xmm! index.backend-state "%xmm11")
-        (backend.compiler-backend-emit-call-args
-          bases
-          backend.CompilerBackendTarget.Linux
-          assignments
-          (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
-          types
-          false
-          0
-          0
-          0
-          0
-          0
-          "%r14"
-          (owned_view.compiler-owned-shared-view diag)
-          index
-          1
-          index.backend-state))]
+      (backend.compiler-backend-emit-call-args
+        bases
+        backend.CompilerBackendTarget.Linux
+        assignments
+        (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
+        types
+        false
+        0
+        0
+        0
+        0
+        0
+        (owned_view.compiler-owned-shared-view diag)
+        index
+        1
+        index.backend-state)]
     [asm-text : String
       (match asm
         [(backend.ResultCompilerBackend.Ok text) text]
@@ -7730,7 +7716,6 @@
         0
         0
         0
-        "%r14"
         (owned_view.compiler-owned-shared-view diag)
         index
         1
@@ -7765,7 +7750,6 @@
         0
         0
         0
-        "%r14"
         diag
         index
         1
@@ -7795,8 +7779,6 @@
         index
         2
         index.backend-state)]
-    [_reset-xmm : unit
-      (set-state-current-c-memory-planned-xmm! index.backend-state "")]
     [param-text : String
       (match params-asm
         [(backend.ResultCompilerBackend.Ok text) text]
@@ -7820,26 +7802,26 @@
       (= stack-count11 2)
       (asm-has?
         asm-text
-        "    movq %r12, %r14\n"
-        "    movups (%r14), %xmm11\n"
-        "    movups %xmm11, 0(%rsp)\n"
-        "    movq 16(%r14), %xmm11\n"
-        "    movq %xmm11, 16(%rsp)\n")
+        "    movq %r12, %r10\n"
+        "    movups (%r10), %xmm2\n"
+        "    movups %xmm2, 0(%rsp)\n"
+        "    movq 16(%r10), %xmm2\n"
+        "    movq %xmm2, 16(%rsp)\n")
       (asm-has?
         asm9-text
-        "    movb 8(%r14), %r14b\n"
-        "    movb %r14b, 8(%rsp)\n")
-      (asm-lacks? asm9-text "    movd 8(%r14)," "    movd %xmm11, 8(%rsp)")
+        "    movb 8(%r10), %r10b\n"
+        "    movb %r10b, 8(%rsp)\n")
+      (asm-lacks? asm9-text "    movd 8(%r10)," "    movd %xmm2, 8(%rsp)")
       (asm-has?
         asm11-text
-        "    movq %r12, %r14\n"
-        "    movw 8(%r14), %r14w\n"
-        "    movw %r14w, 8(%rsp)\n"
-        "    movq %r14, %xmm11\n"
-        "    movq %xmm11, %r14\n"
-        "    movb 10(%r14), %r14b\n"
-        "    movb %r14b, 10(%rsp)\n")
-      (asm-lacks? asm11-text "    movd 8(%r14)," "    movd 10(%r14),")
+        "    movq %r12, %r10\n"
+        "    movw 8(%r10), %r10w\n"
+        "    movw %r10w, 8(%rsp)\n"
+        "    movq %r10, %xmm2\n"
+        "    movq %xmm2, %r10\n"
+        "    movb 10(%r10), %r10b\n"
+        "    movb %r10b, 10(%rsp)\n")
+      (asm-lacks? asm11-text "    movd 8(%r10)," "    movd 10(%r10),")
       (asm-has? param-text "    movq %rdi, %r13\n" "    leaq 16(%rbp), %r12\n")
       (asm-lacks? param-text "movq 16(%rbp),"))))
 
@@ -8204,7 +8186,6 @@
       0
       0
       0
-      ""
       (cdiag.compiler-diagnostic-at-start "" "")
       index
       4
@@ -8914,7 +8895,6 @@
       (ir.compiler-ir-label "yes")
       (ir.compiler-ir-label "no")
       (backend.CompilerBackendMaybeLabel.No)
-      "%r9"
       backend-state)
       [(backend.ResultCompilerBackend.Ok asm)
         (let
@@ -9078,7 +9058,7 @@
             (ast.AstType.String)
             (ir.CompilerIrValue.String "global-string"))]
         [collections : backend.CompilerBackendProgramCollections
-          (backend.compiler-backend-collect-program-collections
+          (compiler-backend-collect-program-collections
             (ir.CompilerIrProgram.Program
               globals
               functions
@@ -11349,7 +11329,6 @@
       (ir.CompilerIrValue.Var 0)
       (ir.CompilerIrValue.Var 1)
       (ast.AstType.I64)
-      "%r8"
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(backend.ResultCompilerBackend.Ok add-asm)
@@ -11363,7 +11342,6 @@
           (ir.CompilerIrValue.Var 0)
           (ir.CompilerIrValue.Var 1)
           (ast.AstType.Bool)
-          "%r8"
           (backend.compiler-backend-state-new
             (ci.intern-compat-state-capture-active)))
           [(backend.ResultCompilerBackend.Ok cmp-asm)
@@ -13456,10 +13434,7 @@ g:
         (ir.compiler-ir-label "join")
         (ir.compiler-ir-label "entry")
         program-index
-        vars
-        ""
-        ""
-        ""))))
+        vars))))
 
 (define (compiler-backend-phi-xmm-stage-bracket-shape?
   [asm : String]
@@ -13722,10 +13697,7 @@ g:
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))
-      4
-      ""
-      ""
-      "")
+      4)
     (has "    movq $1, -8(%rbp)\n")
     (lacks "    movl $1, %eax\n" "    movq %rax, -8(%rbp)\n")))
 
@@ -13740,10 +13712,7 @@ g:
       (ast.ast-node-pool-reader-type-segment-bases)
       (ir.compiler-ir-function-seq-empty)
       (ir.compiler-ir-extern-seq-empty))
-    4
-    ""
-    ""
-    "")
+    4)
     [(backend.ResultCompilerBackend.Ok reg-reg)
       (match (backend.compiler-backend-emit-phi-edge-copies
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -13755,10 +13724,7 @@ g:
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-empty)
           (ir.compiler-ir-extern-seq-empty))
-        4
-        ""
-        ""
-        "")
+        4)
         [(backend.ResultCompilerBackend.Ok spill-reg)
           (match (backend.compiler-backend-emit-phi-edge-copies
             (ast.ast-node-pool-reader-type-segment-bases)
@@ -13770,10 +13736,7 @@ g:
               (ast.ast-node-pool-reader-type-segment-bases)
               (ir.compiler-ir-function-seq-empty)
               (ir.compiler-ir-extern-seq-empty))
-            4
-            ""
-            ""
-            "")
+            4)
             [(backend.ResultCompilerBackend.Ok reg-spill)
               (and
                 (asm-has? reg-reg "    movq %r13, %r12\n")
@@ -14025,10 +13988,7 @@ g:
         (ir.compiler-ir-label "join")
         (ir.compiler-ir-label "entry")
         program-index
-        0
-        ""
-        ""
-        "")
+        0)
         [(backend.ResultCompilerBackend.Ok same-home)
           (match (backend.compiler-backend-emit-phi-edge-copies
             (ast.ast-node-pool-reader-type-segment-bases)
@@ -14037,10 +13997,7 @@ g:
             (ir.compiler-ir-label "join")
             (ir.compiler-ir-label "back")
             program-index
-            0
-            ""
-            ""
-            "")
+            0)
             [(backend.ResultCompilerBackend.Ok cycle)
               (and
                 (string.eq same-home "")
@@ -14111,10 +14068,7 @@ g:
           (ir.compiler-ir-label "join")
           (ir.compiler-ir-label "back")
           program-index
-          0
-          ""
-          ""
-          "")
+          0)
         (has
           "    movq -8(%rbp), %r10\n"
           "    movq %r10, -512(%rbp)\n"
@@ -14160,10 +14114,7 @@ g:
           (ir.compiler-ir-label "join")
           (ir.compiler-ir-label "back")
           program-index
-          4
-          ""
-          ""
-          "")
+          4)
         (has
           "    movq %r12, -512(%rbp)\n"
           "    movq %r13, -520(%rbp)\n"
@@ -14207,10 +14158,7 @@ g:
         (ir.compiler-ir-label "join")
         (ir.compiler-ir-label "entry")
         index
-        2
-        ""
-        ""
-        "")]
+        2)]
     [_group-disable : unit
       (backend.compiler-backend-group-vars-disable! backend-state)]
     (match copied
@@ -14227,111 +14175,54 @@ g:
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
-    [_backend-state : backend.CompilerBackendState index.backend-state]
-    [_prev-register-count : i64
-      (cfg test (state-phi-xmm-cycle-register-count _backend-state) 0)]
-    [_prev-fallback-count : i64
-      (cfg test (state-phi-xmm-cycle-fallback-count _backend-state) 0)]
-    [_set : unit
-      (cfg
-        test
-        (begin
-          (set-state-phi-xmm-cycle-register-count! _backend-state 0)
-          (set-state-phi-xmm-cycle-fallback-count! _backend-state 0))
-        unit)]
-    [ok : bool
-      (and
-        (asm-ok?
-          (backend.compiler-backend-emit-phi-edge-copies
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (compiler-backend-phi-f64-cycle-assignments)
-            (compiler-backend-phi-f64-cycle-blocks)
-            (ir.compiler-ir-label "join")
-            (ir.compiler-ir-label "back")
-            index
-            2
-            ""
-            ""
-            "%xmm4")
-          (has "    movsd %xmm2, %xmm4\n" "    movsd %xmm4, %xmm3\n")
-          (lacks "-512(%rbp)" "%rsp" "%xmm0" "%xmm14" "%xmm15"))
-        (asm-ok?
-          (backend.compiler-backend-emit-phi-edge-copies
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (compiler-backend-phi-f64-cycle-assignments)
-            (compiler-backend-phi-f64-cycle-blocks)
-            (ir.compiler-ir-label "join")
-            (ir.compiler-ir-label "back")
-            index
-            2
-            ""
-            ""
-            "")
-          (has "    movsd %xmm2, -512(%rbp)\n" "    movsd -512(%rbp), %xmm3\n"))
-        (asm-ok?
-          (backend.compiler-backend-emit-phi-edge-copies
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (compiler-backend-phi-f32-three-cycle-assignments)
-            (compiler-backend-phi-f32-three-cycle-blocks)
-            (ir.compiler-ir-label "join")
-            (ir.compiler-ir-label "back")
-            index
-            3
-            ""
-            ""
-            "%xmm4")
-          (has "    movss %xmm2, %xmm4\n" "%xmm4")
-          (lacks "-512(%rbp)" "movsd"))
-        (asm-ok?
-          (backend.compiler-backend-emit-phi-edge-copies
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (compiler-backend-phi-f64-spill-cycle-assignments)
-            (compiler-backend-phi-f64-cycle-blocks)
-            (ir.compiler-ir-label "join")
-            (ir.compiler-ir-label "back")
-            index
-            2
-            ""
-            ""
-            "%xmm4")
-          (has "-512(%rbp)")
-          (lacks "    movsd -16(%rbp), %xmm4\n"))
-        (asm-ok?
-          (backend.compiler-backend-emit-phi-edge-copies
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (compiler-backend-phi-group-f64-cycle-assignments)
-            (compiler-backend-phi-group-f64-cycle-blocks)
-            (ir.compiler-ir-label "join")
-            (ir.compiler-ir-label "back")
-            (compiler-backend-register-group-f64-test-index)
-            4
-            ""
-            ""
-            "")
-          (has
-            "    movq %xmm2, -512(%rbp)\n"
-            "    movq %xmm3, -520(%rbp)\n"
-            "    movq -520(%rbp), %xmm5\n"
-            "    movq -512(%rbp), %xmm4\n")
-          (lacks "%rsp" "%xmm14" "%xmm15"))
-        (cfg
-          test
-          (and
-            (= (state-phi-xmm-cycle-register-count _backend-state) 2)
-            (= (state-phi-xmm-cycle-fallback-count _backend-state) 1))
-          true))]
-    [_restore : unit
-      (cfg
-        test
-        (begin
-          (set-state-phi-xmm-cycle-register-count!
-            _backend-state
-            _prev-register-count)
-          (set-state-phi-xmm-cycle-fallback-count!
-            _backend-state
-            _prev-fallback-count))
-        unit)]
-    ok))
+    (and
+      (asm-ok?
+        (backend.compiler-backend-emit-phi-edge-copies
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-phi-f64-cycle-assignments)
+          (compiler-backend-phi-f64-cycle-blocks)
+          (ir.compiler-ir-label "join")
+          (ir.compiler-ir-label "back")
+          index
+          2)
+        (has "    movsd %xmm2, -512(%rbp)\n" "    movsd -512(%rbp), %xmm3\n"))
+      (asm-ok?
+        (backend.compiler-backend-emit-phi-edge-copies
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-phi-f32-three-cycle-assignments)
+          (compiler-backend-phi-f32-three-cycle-blocks)
+          (ir.compiler-ir-label "join")
+          (ir.compiler-ir-label "back")
+          index
+          3)
+        (has "    movss %xmm2, -512(%rbp)\n" "    movss -512(%rbp), %xmm5\n")
+        (lacks "movsd"))
+      (asm-ok?
+        (backend.compiler-backend-emit-phi-edge-copies
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-phi-f64-spill-cycle-assignments)
+          (compiler-backend-phi-f64-cycle-blocks)
+          (ir.compiler-ir-label "join")
+          (ir.compiler-ir-label "back")
+          index
+          2)
+        (has "-512(%rbp)")
+        (lacks "    movsd -16(%rbp), %xmm4\n"))
+      (asm-ok?
+        (backend.compiler-backend-emit-phi-edge-copies
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-phi-group-f64-cycle-assignments)
+          (compiler-backend-phi-group-f64-cycle-blocks)
+          (ir.compiler-ir-label "join")
+          (ir.compiler-ir-label "back")
+          (compiler-backend-register-group-f64-test-index)
+          4)
+        (has
+          "    movq %xmm2, -512(%rbp)\n"
+          "    movq %xmm3, -520(%rbp)\n"
+          "    movq -520(%rbp), %xmm5\n"
+          "    movq -512(%rbp), %xmm4\n")
+        (lacks "%rsp" "%xmm14" "%xmm15")))))
 
 (define (compiler-backend-arg-cycle-temp-slot-ok?) : bool
   (let
@@ -14382,7 +14273,6 @@ g:
         0
         1
         0
-        ""
         (cdiag.compiler-diagnostic-at-start "" "")
         (compiler-backend-program-index-build
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -14415,7 +14305,6 @@ g:
         0
         1
         0
-        ""
         (cdiag.compiler-diagnostic-at-start "" "")
         (compiler-backend-program-index-build
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -14447,7 +14336,6 @@ g:
         0
         0
         0
-        ""
         (cdiag.compiler-diagnostic-at-start "" "")
         (compiler-backend-program-index-build
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -17335,21 +17223,19 @@ g:
       (ir.CompilerIrValue.Var 1)
       4
       (ast.AstType.I64)
-      "%r14"
-      "%xmm14"
       "%xmm0"
       "%xmm1"
       (cdiag.compiler-diagnostic-at-start "" "")
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
     (has
-      "    vmovdqu %ymm6, %ymm14\n"
-      "    vpslldq $8, %ymm14, %ymm0\n"
-      "    vperm2i128 $0, %ymm14, %ymm14, %ymm0\n"
+      "    vmovdqu %ymm6, %ymm15\n"
+      "    vpslldq $8, %ymm15, %ymm0\n"
+      "    vperm2i128 $0, %ymm15, %ymm15, %ymm0\n"
       "    vpcmpgtq "
       "    vpandn "
-      "    vmovq %r14, %xmm0\n"
-      "    vmovdqu %ymm14, -64(%rbp)\n")))
+      "    vmovq %r10, %xmm0\n"
+      "    vmovdqu %ymm15, -64(%rbp)\n")))
 
 (define (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?) : bool
   (let
@@ -17365,8 +17251,6 @@ g:
           (ir.CompilerIrValue.Var 1)
           4
           (ast.AstType.I64)
-          "%r14"
-          "%xmm14"
           "%xmm0"
           "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
@@ -17385,8 +17269,6 @@ g:
           (ir.CompilerIrValue.Var 1)
           32
           (ast.AstType.Bool)
-          "%r14"
-          "%xmm14"
           "%xmm0"
           "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
@@ -17394,8 +17276,8 @@ g:
             (ci.intern-compat-state-capture-active)))
         (has
           "    vmovdqu -64(%rbp), %ymm7\n"
-          "    movq -8(%rbp), %r14\n"
-          "    setne %r14b\n"
+          "    movq -8(%rbp), %r10\n"
+          "    setne %r10b\n"
           "    vpbroadcastb %xmm0, %ymm0\n")))))
 
 (define (compiler-backend-avx2-vector-prefix-bool-spill-ok?) : bool
@@ -17408,21 +17290,19 @@ g:
       (ir.CompilerIrValue.Var 1)
       32
       (ast.AstType.Bool)
-      "%r14"
-      "%xmm14"
       "%xmm0"
       "%xmm1"
       (cdiag.compiler-diagnostic-at-start "" "")
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
     (has
-      "    vpslldq $1, %ymm14, %ymm0\n"
-      "    vpslldq $8, %ymm14, %ymm0\n"
+      "    vpslldq $1, %ymm15, %ymm0\n"
+      "    vpslldq $8, %ymm15, %ymm0\n"
       "    vpbroadcastb %xmm0, %ymm0\n"
-      "    setne %r14b\n"
-      "    vpand %ymm0, %ymm14, %ymm14\n")
+      "    setne %r10b\n"
+      "    vpand %ymm0, %ymm15, %ymm15\n")
     (lacks "%al")
-    (has "    vmovdqu %ymm14, -64(%rbp)\n")))
+    (has "    vmovdqu %ymm15, -64(%rbp)\n")))
 
 (define (compiler-backend-avx512-vector-prefix-numeric-spill-ok?) : bool
   (let
@@ -17438,20 +17318,18 @@ g:
           (ir.CompilerIrValue.Var 1)
           8
           (ast.AstType.I64)
-          "%r14"
-          "%xmm14"
           "%xmm0"
           "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
           (backend.compiler-backend-state-new
             (ci.intern-compat-state-capture-active)))
         (has
-          "    vmovdqu64 %zmm6, %zmm14\n"
-          "    valignq $7, %zmm1, %zmm14, %zmm0\n"
+          "    vmovdqu64 %zmm6, %zmm15\n"
+          "    valignq $7, %zmm1, %zmm15, %zmm0\n"
           "    kshiftlw $4, %k7, %k7\n"
-          "    vpminsq %zmm0, %zmm14, %zmm14{%k7}\n"
-          "    vpbroadcastq %r14, %zmm0\n"
-          "    vmovdqu64 %zmm14, -64(%rbp)\n"))
+          "    vpminsq %zmm0, %zmm15, %zmm15{%k7}\n"
+          "    vpbroadcastq %r8, %zmm0\n"
+          "    vmovdqu64 %zmm15, -64(%rbp)\n"))
       (asm-ok?
         (backend.compiler-backend-emit-avx512-vector-prefix
           assignments
@@ -17461,18 +17339,16 @@ g:
           (ir.CompilerIrValue.Var 1)
           16
           (ast.AstType.I32)
-          "%r14"
-          "%xmm14"
           "%xmm0"
           "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
           (backend.compiler-backend-state-new
             (ci.intern-compat-state-capture-active)))
         (has
-          "    valignd $15, %zmm1, %zmm14, %zmm0\n"
-          "    valignd $8, %zmm1, %zmm14, %zmm0\n"
-          "    vpmaxsd %zmm0, %zmm14, %zmm14{%k7}\n"
-          "    vpbroadcastd %r14d, %zmm0\n")))))
+          "    valignd $15, %zmm1, %zmm15, %zmm0\n"
+          "    valignd $8, %zmm1, %zmm15, %zmm0\n"
+          "    vpmaxsd %zmm0, %zmm15, %zmm15{%k7}\n"
+          "    vpbroadcastd %r8d, %zmm0\n")))))
 
 (define (compiler-backend-avx512-vector-prefix-bool-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%k2 %1=%rax %2=spill:-64"))
@@ -17493,21 +17369,19 @@ g:
           (ir.CompilerIrValue.Var 1)
           64
           (ast.AstType.Bool)
-          "%r14"
-          "%r13"
           "%xmm0"
           "%xmm1"
           (owned_view.compiler-owned-shared-view diag)
           (backend.compiler-backend-state-new
             (ci.intern-compat-state-capture-active)))
         (has
-          "    kmovq %k2, %r13\n"
-          "    notq %r13\n"
-          "    shlq $32, %r14\n"
-          "    movq %rax, %r14\n"
-          "    setne %r14b\n"
-          "    andq %r14, %r13\n"
-          "    kmovq %r13, %k7\n"
+          "    kmovq %k2, %r11\n"
+          "    notq %r11\n"
+          "    shlq $32, %r10\n"
+          "    movq %rax, %r10\n"
+          "    setne %r10b\n"
+          "    andq %r10, %r11\n"
+          "    kmovq %r11, %k7\n"
           "    kmovq %k7, -64(%rbp)\n")
         (lacks "    kmovq %k2, %rax\n" "%zmm"))
       (asm-ok?
@@ -17519,8 +17393,6 @@ g:
           (ir.CompilerIrValue.Var 1)
           64
           (ast.AstType.Bool)
-          "%r14"
-          "%r13"
           "%xmm0"
           "%xmm1"
           diag
@@ -17528,10 +17400,10 @@ g:
             (ci.intern-compat-state-capture-active)))
         (has
           "    kmovq -64(%rbp), %k7\n"
-          "    kmovq %k7, %r13\n"
-          "    movq -8(%rbp), %r14\n"
-          "    orq %r14, %r13\n"
-          "    kmovq %r13, %k3\n")
+          "    kmovq %k7, %r11\n"
+          "    movq -8(%rbp), %r10\n"
+          "    orq %r10, %r11\n"
+          "    kmovq %r11, %k3\n")
         (lacks "%rax")))))
 
 (define (compiler-backend-avx512-predicated-load-spill-dst-ok?) : bool
@@ -19481,7 +19353,7 @@ g:
 (define (compiler-backend-avx512-mask-spill-plan-ok?) : bool
   (match (reg_tests.compiler-reg-plan-function
     (compiler-backend-avx512-mask-spill-function))
-    [(regalloc.CompilerRegPlan.Plan assignments _ _ _ _ _)
+    [(regalloc.CompilerRegPlan.Plan assignments _ _ _ _)
       (compiler-backend-avx512-mask-spill-assignment? assignments 0)]))
 
 (define (compiler-backend-avx512-mask-spill-compile-ok?) : bool
@@ -21499,7 +21371,7 @@ g:
             ir.CompilerIrBlockList.Nil)
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       functions
       (ir.compiler-ir-extern-seq-empty))
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -21528,7 +21400,7 @@ g:
           cbi.compiler-builtin-id-tl-region-reset
           "tl_region_reset"
           (ast.AstType.Unit)))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -21552,7 +21424,7 @@ g:
           link-id
           (ast.ast-extern-link-input-list-new)
           true))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -21563,7 +21435,7 @@ g:
             (backend.compiler-backend-runtime-tail-startup-profile?
               (backend.compiler-backend-runtime-plan-tail plan))
             features.startup-profile
-            (match (backend.compiler-backend-runtime-plan-for
+            (match (compiler-backend-runtime-plan-for
               (ir.compiler-ir-function-seq-empty)
               (ir.compiler-ir-extern-seq-empty))
               [(backend.ResultBackendRuntimePlan.Ok empty-plan)
@@ -21612,7 +21484,7 @@ g:
           debug-id
           (ast.ast-extern-link-input-list-new)
           false))]
-    (match (backend.compiler-backend-runtime-plan-for functions externs)
+    (match (compiler-backend-runtime-plan-for functions externs)
       [(backend.ResultBackendRuntimePlan.Ok plan)
         (let
           [features : runtime_common.CompilerBackendRuntimeFeatures
@@ -21662,7 +21534,7 @@ g:
               (compiler-backend-runtime-prelude-test-function
                 "stdlib/runtime.tl::int-to-string")
               (ir.compiler-ir-function-seq-empty)))))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       functions
       (ir.compiler-ir-extern-seq-empty))
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -22964,8 +22836,6 @@ g:
         (ast.AstType.I8)
         (ast.AstType.I64)
         index
-        ""
-        ""
         index.backend-state)
         [(backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movsbq %r12b, %rbx\n")]
@@ -22980,8 +22850,6 @@ g:
         (ast.AstType.U8)
         (ast.AstType.U64)
         index
-        ""
-        ""
         index.backend-state)
         [(backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movzbq -48(%rbp), %rbx\n")]
@@ -24464,7 +24332,6 @@ g:
       leaf
       subleaf
       1
-      "%r14"
       backend-state)
       [(backend.ResultCompilerBackend.Ok asm) asm]
       [(backend.ResultCompilerBackend.Err _) ""])))
@@ -24482,11 +24349,11 @@ g:
     (and
       (asm-has?
         win64-wrapper
-        "    movq %rcx, %rax\n    movq %rdx, %rcx\n    movq %rbx, %r14\n    cpuid\n")
+        "    movq %rcx, %rax\n    movq %rdx, %rcx\n    movq %rbx, %r8\n    cpuid\n")
       (asm-lacks? win64-wrapper "    movq %rdx, %rcx\n    movq %rcx, %rax\n")
       (asm-has?
         sysv-wrapper
-        "    movq %rsi, %rcx\n    movq %rdi, %rax\n    movq %rbx, %r14\n    cpuid\n")
+        "    movq %rsi, %rcx\n    movq %rdi, %rax\n    movq %rbx, %r8\n    cpuid\n")
       (compiler-backend-cpuid-operand-boundaries-ok?))))
 
 ;; The remaining operand-home shapes of #7927. A leaf in %rcx with the subleaf in
@@ -24525,18 +24392,18 @@ g:
     (and
       (asm-has?
         swap
-        "    movq %rax, %r9\n    movq %rcx, %rax\n    movq %r9, %rcx\n    movq %rbx, %r14\n    cpuid\n")
+        "    movq %rax, %r9\n    movq %rcx, %rax\n    movq %r9, %rcx\n    movq %rbx, %r8\n    cpuid\n")
       (asm-lacks? in-place ", %rcx\n" "    movq %rcx, %rax\n")
-      (asm-has? in-place "    movq %rbx, %r14\n    cpuid\n")
+      (asm-has? in-place "    movq %rbx, %r8\n    cpuid\n")
       (asm-has?
         subleaf-in-rax
-        "    movq %rax, %rcx\n    movq %rdx, %rax\n    movq %rbx, %r14\n    cpuid\n")
+        "    movq %rax, %rcx\n    movq %rdx, %rax\n    movq %rbx, %r8\n    cpuid\n")
       (asm-has?
         literal-subleaf
-        "    movq %rcx, %rax\n    xorl %ecx, %ecx\n    movq %rbx, %r14\n    cpuid\n")
+        "    movq %rcx, %rax\n    xorl %ecx, %ecx\n    movq %rbx, %r8\n    cpuid\n")
       (asm-has?
         literal-leaf
-        "    movq %rax, %rcx\n    movl $7, %eax\n    movq %rbx, %r14\n    cpuid\n"))))
+        "    movq %rax, %rcx\n    movl $7, %eax\n    movq %rbx, %r8\n    cpuid\n"))))
 
 (define (compiler-backend-low-level-instr-ok?) : bool
   (and
@@ -24636,8 +24503,6 @@ g:
       (ast.ast-node-pool-reader-type-segment-bases)
       (ir.compiler-ir-function-seq-empty)
       (ir.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-direct-float-precision-cast-home-ok?) : bool
@@ -24679,8 +24544,6 @@ g:
       (ast.ast-node-pool-reader-type-segment-bases)
       (ir.compiler-ir-function-seq-empty)
       (ir.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-spill-float-precision-cast-home-ok?) : bool
@@ -24722,8 +24585,6 @@ g:
       (ast.ast-node-pool-reader-type-segment-bases)
       (ir.compiler-ir-function-seq-empty)
       (ir.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-direct-int-to-float-cast-home-ok?) : bool
@@ -24755,8 +24616,6 @@ g:
       (ast.ast-node-pool-reader-type-segment-bases)
       (ir.compiler-ir-function-seq-empty)
       (ir.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-spill-int-to-float-cast-home-ok?) : bool
@@ -24792,8 +24651,6 @@ g:
       (ast.ast-node-pool-reader-type-segment-bases)
       (ir.compiler-ir-function-seq-empty)
       (ir.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-spill-u64-to-float-cast-home-ok?) : bool
@@ -24833,8 +24690,6 @@ g:
       (ast.ast-node-pool-reader-type-segment-bases)
       (ir.compiler-ir-function-seq-empty)
       (ir.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-direct-float-to-int-cast-home-ok?) : bool
@@ -24866,8 +24721,6 @@ g:
       (ast.ast-node-pool-reader-type-segment-bases)
       (ir.compiler-ir-function-seq-empty)
       (ir.compiler-ir-extern-seq-empty))
-    ""
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-spill-float-to-int-cast-home-ok?) : bool
@@ -24891,8 +24744,7 @@ g:
 
 (define (compiler-backend-float-to-u64-cast-with-homes
   [from-ty : ast.AstType]
-  [assignments : regalloc.CompilerRegAssignmentTable]
-  [planned-gp : String]) : backend.ResultCompilerBackend
+  [assignments : regalloc.CompilerRegAssignmentTable]) : backend.ResultCompilerBackend
   (backend.compiler-backend-emit-cast
     (ast.ast-node-pool-reader-type-segment-bases)
     "test_cast"
@@ -24906,29 +24758,24 @@ g:
       (ast.ast-node-pool-reader-type-segment-bases)
       (ir.compiler-ir-function-seq-empty)
       (ir.compiler-ir-extern-seq-empty))
-    "%xmm4"
-    planned-gp
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-direct-float-to-u64-cast-asm [from-ty : ast.AstType]) : backend.ResultCompilerBackend
   (compiler-backend-float-to-u64-cast-with-homes
     from-ty
-    (reg-homes "%0=%xmm2 %1=%r12")
-    ""))
+    (reg-homes "%0=%xmm2 %1=%r12")))
 
 (define (compiler-backend-spill-dst-float-to-u64-cast-asm
   [from-ty : ast.AstType]) : backend.ResultCompilerBackend
   (compiler-backend-float-to-u64-cast-with-homes
     from-ty
-    (reg-homes "%0=%xmm3 %1=spill:-16")
-    "%r8"))
+    (reg-homes "%0=%xmm3 %1=spill:-16")))
 
 (define (compiler-backend-spill-src-float-to-u64-cast-asm
   [from-ty : ast.AstType]) : backend.ResultCompilerBackend
   (compiler-backend-float-to-u64-cast-with-homes
     from-ty
-    (reg-homes "%0=spill:-8 %1=%r12")
-    ""))
+    (reg-homes "%0=spill:-8 %1=%r12")))
 
 (define (compiler-backend-float-to-u64-cast-shape-ok?
   [result : backend.ResultCompilerBackend]
@@ -24956,76 +24803,40 @@ g:
   (and
     (compiler-backend-float-to-u64-cast-shape-ok?
       (compiler-backend-direct-float-to-u64-cast-asm (ast.AstType.F64))
-      "    movsd %xmm2, %xmm4\n"
+      "    movsd %xmm2, %xmm3\n"
       "sd"
-      "    cvttsd2siq %xmm4, %r12\n"
+      "    cvttsd2siq %xmm3, %r12\n"
       "")
     (compiler-backend-float-to-u64-cast-shape-ok?
       (compiler-backend-direct-float-to-u64-cast-asm (ast.AstType.F32))
-      "    movss %xmm2, %xmm4\n"
+      "    movss %xmm2, %xmm3\n"
       "ss"
-      "    cvttss2siq %xmm4, %r12\n"
+      "    cvttss2siq %xmm3, %r12\n"
       "")
     (compiler-backend-float-to-u64-cast-shape-ok?
       (compiler-backend-spill-dst-float-to-u64-cast-asm (ast.AstType.F64))
-      "    movsd %xmm3, %xmm4\n"
+      "    movsd %xmm3, %xmm2\n"
       "sd"
-      "    cvttsd2siq %xmm4, %r8\n"
+      "    cvttsd2siq %xmm2, %r8\n"
       "    movq %r8, -16(%rbp)\n")
     (compiler-backend-float-to-u64-cast-shape-ok?
       (compiler-backend-spill-dst-float-to-u64-cast-asm (ast.AstType.F32))
-      "    movss %xmm3, %xmm4\n"
+      "    movss %xmm3, %xmm2\n"
       "ss"
-      "    cvttss2siq %xmm4, %r8\n"
+      "    cvttss2siq %xmm2, %r8\n"
       "    movq %r8, -16(%rbp)\n")
     (compiler-backend-float-to-u64-cast-shape-ok?
       (compiler-backend-spill-src-float-to-u64-cast-asm (ast.AstType.F64))
-      "    movsd -8(%rbp), %xmm4\n"
+      "    movsd -8(%rbp), %xmm2\n"
       "sd"
-      "    cvttsd2siq %xmm4, %r12\n"
+      "    cvttsd2siq %xmm2, %r12\n"
       "")
     (compiler-backend-float-to-u64-cast-shape-ok?
       (compiler-backend-spill-src-float-to-u64-cast-asm (ast.AstType.F32))
-      "    movss -8(%rbp), %xmm4\n"
+      "    movss -8(%rbp), %xmm2\n"
       "ss"
-      "    cvttss2siq %xmm4, %r12\n"
+      "    cvttss2siq %xmm2, %r12\n"
       "")))
-
-(define (compiler-backend-float-to-u64-scratch-plan-ok?) : bool
-  (let
-    [direct : regalloc.CompilerRegAssignmentTable
-      (reg-homes "%0=%xmm2 %1=%r12")]
-    [spilled : regalloc.CompilerRegAssignmentTable
-      (reg-homes "%0=spill:-8 %1=spill:-16")]
-    (and
-      (regalloc.compiler-reg-scratch-cast-xmm-needed?
-        direct
-        1
-        (ir.CompilerIrValue.Var 0)
-        (ast.AstType.F64)
-        (ast.AstType.U64))
-      (=
-        (regalloc.compiler-reg-scratch-cast-gp-count
-          direct
-          1
-          (ir.CompilerIrValue.Var 0)
-          (ast.AstType.F64)
-          (ast.AstType.U64))
-        0)
-      (regalloc.compiler-reg-scratch-cast-xmm-needed?
-        spilled
-        1
-        (ir.CompilerIrValue.Var 0)
-        (ast.AstType.F32)
-        (ast.AstType.U64))
-      (=
-        (regalloc.compiler-reg-scratch-cast-gp-count
-          spilled
-          1
-          (ir.CompilerIrValue.Var 0)
-          (ast.AstType.F32)
-          (ast.AstType.U64))
-        1))))
 
 (define (compiler-backend-float-to-u64-threshold-collection-ok?) : bool
   (let
@@ -25067,8 +24878,6 @@ g:
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))
-      ""
-      ""
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
     (has "    movslq %r12d, %r8\n" "    movq %r8, -16(%rbp)\n")
@@ -26514,7 +26323,6 @@ g:
     (ir.CompilerIrValue.Var 0)
     (ir.CompilerIrValue.Var 1)
     ty
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-spill-float-arith-home-ok?) : bool
@@ -26598,7 +26406,6 @@ g:
     (ir.CompilerIrValue.Var 0)
     (ir.CompilerIrValue.Var 1)
     (ast.AstType.Bool)
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-direct-float-compare-home-ok?) : bool
@@ -26645,7 +26452,6 @@ g:
     (ir.CompilerIrValue.Var 0)
     (ir.CompilerIrValue.Var 1)
     (ast.AstType.Bool)
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-spill-float-compare-home-ok?) : bool
@@ -26691,7 +26497,6 @@ g:
     (ir.CompilerIrValue.Var 0)
     (ir.CompilerIrValue.Var 2)
     ty
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-fallback-float-compare-asm [ty : ast.AstType]) : backend.ResultCompilerBackend
@@ -26714,7 +26519,6 @@ g:
     (ir.CompilerIrValue.Var 0)
     (ir.CompilerIrValue.Var 1)
     (ast.AstType.Bool)
-    ""
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-fallback-float-binop-home-ok?) : bool
@@ -29324,7 +29128,6 @@ g:
       0
       0
       0
-      ""
       (cdiag.compiler-diagnostic-at-start "" "")
       (compiler-backend-program-index-build
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -29365,7 +29168,6 @@ g:
         (ir.CompilerIrValue.Var 0)
         0
         2
-        ""
         ty
         index
         index.backend-state)
@@ -29585,7 +29387,6 @@ g:
         0
         0
         0
-        "%r14"
         (owned_view.compiler-owned-shared-view diag)
         index
         1
@@ -29664,7 +29465,6 @@ g:
         0
         0
         0
-        "%r14"
         (owned_view.compiler-owned-shared-view diag)
         index
         1
@@ -29721,7 +29521,6 @@ g:
         0
         6
         0
-        "%r14"
         diag
         index
         2
@@ -29820,8 +29619,8 @@ g:
         "    movl $13, %edx\n"
         "    movl $14, %ecx\n"
         "    movl $15, %r8d\n"
-        "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n"
-        "    movq %r13, %r14\n    movq %r14, 8(%rsp)\n"
+        "    movq %r12, %r10\n    movq %r10, 0(%rsp)\n"
+        "    movq %r13, %r10\n    movq %r10, 8(%rsp)\n"
         "    movl $16, %r9d\n")
       (asm-lacks? pressure-call "    movq %r12, %r9\n" "    movq %r13, %r9\n")
       (asm-has?
@@ -29902,8 +29701,8 @@ g:
         2)
       (asm-has?
         exhausted-call
-        "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n"
-        "    movq %xmm3, %r14\n    movq %r14, 8(%rsp)\n"
+        "    movq %r12, %r10\n    movq %r10, 0(%rsp)\n"
+        "    movq %xmm3, %r10\n    movq %r10, 8(%rsp)\n"
         "    movsd %xmm4, %xmm0\n")
       (asm-lacks? exhausted-call "    movsd %xmm3, %xmm0\n")
       (asm-has?
@@ -30421,7 +30220,7 @@ g:
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-empty)
         (backend.compiler-backend-global-shared-view externs))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       (backend.compiler-backend-global-shared-view externs))
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -30636,7 +30435,6 @@ g:
       (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 41))
       (ast.AstType.I64)
       (regalloc.compiler-reg-assignment-table-empty)
-      ""
       (regalloc.compiler-reg-var-types-empty)
       functions
       (ir.compiler-ir-extern-seq-empty)
@@ -30661,7 +30459,6 @@ g:
       ir.CompilerIrCallArgs.Nil
       (ast.AstType.I64)
       (regalloc.compiler-reg-assignment-table-empty)
-      ""
       (regalloc.compiler-reg-var-types-empty)
       functions
       (ir.compiler-ir-extern-seq-empty)
@@ -30743,7 +30540,6 @@ g:
             (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 3))
             (ast.AstType.I64)
             assignments
-            "%r10"
             (regalloc.compiler-reg-var-types-empty)
             functions
             (ir.compiler-ir-extern-seq-empty)
@@ -30811,7 +30607,6 @@ g:
           (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 3))
           (ast.AstType.I64)
           assignments
-          "%r10"
           (regalloc.compiler-reg-var-types-empty)
           functions
           (ir.compiler-ir-extern-seq-empty)
@@ -37192,7 +36987,6 @@ b_keep:
         (compiler-backend-direct-float-to-int-cast-home-ok?)
         (compiler-backend-spill-float-to-int-cast-home-ok?)
         (compiler-backend-float-to-u64-cast-homes-ok?)
-        (compiler-backend-float-to-u64-scratch-plan-ok?)
         (compiler-backend-float-to-u64-threshold-collection-ok?)
         (compiler-backend-spill-int-cast-home-ok?)
         (compiler-backend-implicit-main-ok?))
@@ -37769,7 +37563,6 @@ b_keep:
     lhs
     rhs
     ty
-    ""
     backend-state))
 
 (define (compiler-backend-emit-branch
@@ -37787,7 +37580,6 @@ b_keep:
     true-label
     false-label
     fallthrough
-    ""
     backend-state))
 
 (define (compiler-backend-program-index-build-with-profile-state
@@ -39100,38 +38892,6 @@ b_keep:
           function-b
           backend.compiler-backend-function-bool-fpo-bare-frame
           false)
-        (backend.compiler-backend-function-state-set-string!
-          function-a
-          backend.compiler-backend-function-string-current-c-memory-planned-xmm
-          "a-c-xmm")
-        (backend.compiler-backend-function-state-set-string!
-          function-b
-          backend.compiler-backend-function-string-current-c-memory-planned-xmm
-          "b-c-xmm")
-        (backend.compiler-backend-function-state-set-string!
-          function-a
-          backend.compiler-backend-function-string-current-phi-planned-cycle
-          "a-gp-cycle")
-        (backend.compiler-backend-function-state-set-string!
-          function-b
-          backend.compiler-backend-function-string-current-phi-planned-cycle
-          "b-gp-cycle")
-        (backend.compiler-backend-function-state-set-string!
-          function-a
-          backend.compiler-backend-function-string-current-phi-planned-xmm-cycle
-          "a-xmm-cycle")
-        (backend.compiler-backend-function-state-set-string!
-          function-b
-          backend.compiler-backend-function-string-current-phi-planned-xmm-cycle
-          "b-xmm-cycle")
-        (backend.compiler-backend-function-state-set-string!
-          function-a
-          backend.compiler-backend-function-string-current-phi-planned-stage
-          "a-stage")
-        (backend.compiler-backend-function-state-set-string!
-          function-b
-          backend.compiler-backend-function-string-current-phi-planned-stage
-          "b-stage")
         (backend.compiler-backend-function-state-set-bool!
           function-a
           backend.compiler-backend-function-bool-use-home-mask-active
@@ -39233,22 +38993,6 @@ b_keep:
               backend.compiler-backend-function-i64-rax-override-var
               -1)
             ok)))]
-    [a-c-xmm : String
-      (backend.compiler-backend-current-c-memory-planned-xmm state-a)]
-    [b-c-xmm : String
-      (backend.compiler-backend-current-c-memory-planned-xmm state-b)]
-    [a-gp-cycle : String
-      (backend.compiler-backend-current-phi-planned-cycle state-a)]
-    [b-gp-cycle : String
-      (backend.compiler-backend-current-phi-planned-cycle state-b)]
-    [a-xmm-cycle : String
-      (backend.compiler-backend-current-phi-planned-xmm-cycle state-a)]
-    [b-xmm-cycle : String
-      (backend.compiler-backend-current-phi-planned-xmm-cycle state-b)]
-    [a-stage : String
-      (backend.compiler-backend-current-phi-planned-stage state-a)]
-    [b-stage : String
-      (backend.compiler-backend-current-phi-planned-stage state-b)]
     [a-drift-result : i64
       (backend.compiler-backend-gep-fold-next!
         function-a
@@ -39327,14 +39071,6 @@ b_keep:
         (backend.compiler-backend-function-state-bool?
           function-b
           backend.compiler-backend-function-bool-fpo-bare-frame))
-      (string.eq a-c-xmm "a-c-xmm")
-      (string.eq b-c-xmm "b-c-xmm")
-      (string.eq a-gp-cycle "a-gp-cycle")
-      (string.eq b-gp-cycle "b-gp-cycle")
-      (string.eq a-xmm-cycle "a-xmm-cycle")
-      (string.eq b-xmm-cycle "b-xmm-cycle")
-      (string.eq a-stage "a-stage")
-      (string.eq b-stage "b-stage")
       (backend.compiler-backend-function-state-bool?
         function-a
         backend.compiler-backend-function-bool-use-home-mask-active)
@@ -39409,22 +39145,6 @@ b_keep:
       (backend.compiler-backend-function-state-assignment-index function-a)]
     [index-b : regalloc.CompilerRegAssignmentTable
       (backend.compiler-backend-function-state-assignment-index function-b)]
-    [a-c-xmm : String
-      (backend.compiler-backend-current-c-memory-planned-xmm state-a)]
-    [b-c-xmm : String
-      (backend.compiler-backend-current-c-memory-planned-xmm state-b)]
-    [a-gp-cycle : String
-      (backend.compiler-backend-current-phi-planned-cycle state-a)]
-    [b-gp-cycle : String
-      (backend.compiler-backend-current-phi-planned-cycle state-b)]
-    [a-xmm-cycle : String
-      (backend.compiler-backend-current-phi-planned-xmm-cycle state-a)]
-    [b-xmm-cycle : String
-      (backend.compiler-backend-current-phi-planned-xmm-cycle state-b)]
-    [a-stage : String
-      (backend.compiler-backend-current-phi-planned-stage state-a)]
-    [b-stage : String
-      (backend.compiler-backend-current-phi-planned-stage state-b)]
     (and
       (=
         (array-length (regalloc.compiler-reg-assignment-table-present index-a))
@@ -39475,14 +39195,6 @@ b_keep:
         (backend.compiler-backend-function-state-bool?
           function-a
           backend.compiler-backend-function-bool-fpo-bare-frame))
-      (string.eq a-c-xmm "")
-      (string.eq b-c-xmm "b-c-xmm")
-      (string.eq a-gp-cycle "")
-      (string.eq b-gp-cycle "b-gp-cycle")
-      (string.eq a-xmm-cycle "")
-      (string.eq b-xmm-cycle "b-xmm-cycle")
-      (string.eq a-stage "")
-      (string.eq b-stage "b-stage")
       (not
         (backend.compiler-backend-function-state-bool?
           function-a
@@ -39621,14 +39333,6 @@ b_keep:
   (backend.compiler-backend-function-scratch-set-i64-array!
     function-state
     backend.compiler-backend-scratch-i64-array-const-hoist-site-regs
-    value))
-
-(define (set-state-current-c-memory-planned-xmm!
-  [backend-state : backend.CompilerBackendState]
-  [value : String]) : unit
-  (backend.compiler-backend-function-state-set-string!
-    (backend.compiler-backend-state-function-state backend-state)
-    backend.compiler-backend-function-string-current-c-memory-planned-xmm
     value))
 
 (define (set-state-current-phi-targets!
@@ -40794,3 +40498,20 @@ b_keep:
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-instr-list-contains-xorpd-rip? instrs target)]))
+
+(define (compiler-backend-collect-program-collections
+  [program : ir.CompilerIrProgram]) : backend.CompilerBackendProgramCollections
+  (match program
+    [(ir.CompilerIrProgram.Program globals functions _)
+      (backend.compiler-backend-collect-program-collections-with-iag
+        globals
+        functions
+        (backend.compiler-backend-iag-census-disabled))]))
+
+(define (compiler-backend-runtime-plan-for
+  [functions : ir.CompilerIrFunctionSeq]
+  [externs : ir.CompilerIrExternSeq]) : backend.ResultBackendRuntimePlan
+  (backend.compiler-backend-runtime-plan-for-with-backend-state
+    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))
+    functions
+    externs))

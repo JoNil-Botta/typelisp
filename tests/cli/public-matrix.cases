@@ -1,0 +1,844 @@
+# Public CLI command matrix: backend modes, targets, typecheck diagnostics, and
+# run/build execution including the direct (--direct) planners, native link
+# inputs and package profiles (gate stage2-public-tool-surface).
+do none
+target -
+opt -
+
+file main42.tl
+(define (main) : i64 42)
+end-file
+
+file simd-fill.tl
+(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
+(define (main) : i64
+  (let
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    (begin
+      (fill a b out 17)
+      42)))
+end-file
+
+file argv-echo.tl
+(import stdlib.io)
+(import stdlib.byte_buf)
+(import stdlib.string)
+
+(define (fixture-cstr-len [p : (Ptr u8)]) : i64
+  (let
+    [n : i64 0]
+    (begin
+      (while (not (= (unsafe (ptr-read (ptr-offset p n))) (cast 0 : u8)))
+        (set! n (+ n 1)))
+      n)))
+(define (fixture-stdout-write [text : String]) : unit
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
+(define (fixture-arg [index : i64]) : String
+  (let
+    [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
+    [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv index)))]
+    (unsafe (string-from-bytes raw (fixture-cstr-len raw)))))
+(define (main) : i64
+  (begin
+    (fixture-stdout-write (fixture-arg 1))
+    (if (string.eq (fixture-arg 2) "colon:arg") 13 2)))
+end-file
+
+file hello-status.tl
+(import stdlib.io)
+(import stdlib.byte_buf)
+
+(define (fixture-stdout-write [text : String]) : unit
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
+(define (main) : i64
+  (begin
+    (fixture-stdout-write "hello")
+    7))
+end-file
+
+case compile-backend
+mode scalar avx2 avx512
+step compile-backend-{{mode}}
+run compile "{{work}}/main42.tl" --backend-mode {{mode}} -o "{{dir}}/main.s"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/main.s
+contains main:
+if-mode avx2
+contains vzeroupper
+end-if
+
+case compile-backend-avx512-shape
+run compile "{{work}}/simd-fill.tl" --backend-mode avx512 -o "{{dir}}/main.s"
+stderr empty
+in file {{dir}}/main.s
+contains %zmm
+contains %k
+contains vmovdqu64
+not-contains vector/mask IR emission is not implemented
+
+case compile-target
+each windows-x86_64 windows_x86_64
+file main.tl
+(import stdlib.io)
+
+(define (main) : i64
+  (begin
+    (io.print-format "{}" (cast 3 : i64))
+    42))
+end-file
+run compile "{{dir}}/main.tl" --target {{each}} -o "{{dir}}/main.s"
+stderr empty
+in file {{dir}}/main.s
+contains-any     .globl main || .globl main
+not-contains     .globl _start
+contains-any     .extern WriteFile || .extern WriteFile
+contains     sub $32, %rsp
+narrow ranges:^_tl_stdlib_runtime_(runtime|stdlib_runtime|stdlib_runtime_runtime)_os_write:$~^_tl_.*:$
+not-contains     call tl_alloc
+match     leaq [0-9]+\(%rsp\)
+
+case unknown-target-and-mode
+step compile-unknown-target
+run compile "{{work}}/main42.tl" --target plan9-x86_64
+exit nonzero
+stdout empty
+stderr contains Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64
+step build-unknown-target
+run build "{{work}}/main42.tl" --target plan9-x86_64
+exit nonzero
+stdout empty
+stderr contains build: unknown target plan9-x86_64
+step run-unknown-target
+run run "{{work}}/main42.tl" --target plan9-x86_64
+exit nonzero
+stdout empty
+stderr contains run: unknown target plan9-x86_64
+step compile-unknown-backend-mode
+run compile "{{work}}/main42.tl" --backend-mode neon
+exit nonzero
+stdout empty
+stderr contains Error: unknown backend mode 'neon'. Expected scalar, avx2, or avx512
+step build-unknown-backend-mode
+run build "{{work}}/main42.tl" --backend-mode neon
+exit nonzero
+stdout empty
+stderr contains build: unknown backend mode neon
+step run-unknown-backend-mode
+run run "{{work}}/main42.tl" --backend-mode neon
+exit nonzero
+stdout empty
+stderr contains run: unknown backend mode neon
+
+case check-unsupported-type-kind
+file main.tl
+(define (f [T : type]) : i64 0)
+end-file
+run check "{{dir}}/main.tl"
+exit nonzero
+stdout empty
+stderr contains unknown type type
+stderr contains TypeLisp has no source-level type parameters
+stderr not-contains backend:
+
+case check-runtime-type-literal
+file main.tl
+(define (main) : i64 (comptime (type i64)))
+end-file
+run check "{{dir}}/main.tl"
+exit nonzero
+stdout empty
+stderr contains type value i64 is compile-time only
+stderr not-contains backend:
+
+case check-region-builtin-escape
+file main.tl
+(import stdlib.string)
+
+(define (main) : String
+  (with-arena r (string.int->string 41)))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains region-tagged value
+stderr contains cannot escape with-arena
+stderr contains error[E0205]
+stderr contains 4 |   (with-arena r (string.int->string 41)))
+stderr contains |                 ^^^^^^^^^^^^^^^
+stderr contains = help: use with-escape to clone one supported result out of `r`
+
+case check-stdlib-region-escape
+file main.tl
+(import stdlib.string)
+
+(define (main) : String
+  (with-arena outer
+    (with-arena inner
+      (let
+        [s : String "  scoped  "]
+        (string.trim (& s))))))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains region-tagged value
+stderr contains cannot escape with-arena 'inner'
+
+case check-text-buf-region-scalar
+file main.tl
+(import stdlib.text_buf)
+
+(define (main) : i64
+  (let [buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")]
+    (with-arena inner
+      (string-length (text_buf.render buf)))))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+
+case check-text-buf-region-escape
+file main.tl
+(import stdlib.text_buf)
+
+(define (main) : String
+  (let [buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")]
+    (with-arena outer
+      (with-arena inner
+        (text_buf.render buf)))))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains region-tagged value
+stderr contains cannot escape with-arena 'inner'
+
+case check-numeric-cast-matrix
+file main.tl
+(define (main) : i64 (cast (cast 42 : f64) : i64))
+end-file
+run check "{{dir}}/main.tl"
+stdout contains Type checking passed!
+
+case check-unsupported-cast
+file main.tl
+(define (main) : i64 (cast true : i64))
+end-file
+run check "{{dir}}/main.tl"
+exit nonzero
+stdout empty
+stderr contains-any cast requires scalar numeric (integer/char/float) source and target || cast requires integer/char source and target
+
+case check-inexact-f32-literal
+file main.tl
+(define (main) : f32 0.1)
+end-file
+run check "{{dir}}/main.tl"
+stdout contains Type checking passed!
+
+case run-output-status
+run run "{{work}}/hello-status.tl"
+exit 7
+stderr empty
+stdout contains hello
+
+case run-stdin
+file stdin.tl
+(import stdlib.io)
+(import stdlib.byte_buf)
+
+(define (fixture-stdout-write [text : String]) : unit
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
+(define (fixture-read-stdin) : String
+  (let
+    [read : io.StdinRead (io.stdin-read-bytes 256)]
+    (byte_buf.to-string (io.stdin-read-buffer read))))
+(define (main) : unit
+  (fixture-stdout-write (fixture-read-stdin)))
+end-file
+file stdin.in
+hello from stdin
+end-file
+run run "{{dir}}/stdin.tl" < "{{dir}}/stdin.in"
+stderr empty
+stdout contains hello from stdin
+
+# `run` executes a SIMD mode only where the host has the ISA.
+case run-backend
+mode avx2 avx512
+if-isa {{mode}}
+step run-backend-{{mode}}
+run run "{{work}}/main42.tl" --backend-mode {{mode}} -- arg
+exit 42
+stdout empty
+stderr empty
+end-if
+
+case spmd-exec
+mode scalar avx2 avx512
+file spmd.tl
+(define (main) : i64
+  (let
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 64)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 64)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 64)]
+    [i : i64 0]
+    (begin
+      (while (< i 64)
+        (begin
+          (set! (array-ref a i) (+ i 1))
+          (set! (array-ref b i) (* i 2))
+          (set! i (+ i 1))))
+      (foreach
+        ([j : i64 0 64])
+        (set! (array-ref out j) (+ (array-ref a j) (array-ref b j))))
+      (bit-and (array-ref out 63) 255))))
+end-file
+if-isa {{mode}}
+step spmd-exec-{{mode}}
+run run "{{dir}}/spmd.tl" --backend-mode {{mode}} -- arg
+exit 190
+stdout empty
+stderr empty
+end-if
+
+case build-package-avx512
+file typelisp.pkg
+(package
+  (name "backend_mode_build")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+sh mkdir -p "{{dir}}/src" && cp "{{work}}/simd-fill.tl" "{{dir}}/src/main.tl"
+run build --manifest-path "{{dir}}/typelisp.pkg" --backend-mode avx512
+stderr empty
+stdout match Built[ ]
+if-host linux
+test -f "{{dir}}/target/release/backend_mode_build.s"
+in file {{dir}}/target/release/backend_mode_build.s
+contains %zmm
+contains %k
+contains vmovdqu64
+end-if
+
+case build-argument-errors
+step build-source-missing-output-value
+run build "{{work}}/main42.tl" -o
+exit nonzero
+stdout empty
+stderr contains build: -o requires a value
+step build-output-without-source
+run build -o "{{dir}}/app"
+exit nonzero
+stdout empty
+stderr contains-any Error: build -o requires a source file argument || build: -o requires a source file argument
+step build-source-missing-file
+run build "{{dir}}/missing.tl"
+exit nonzero
+stdout empty
+stderr contains-any cannot read module || cannot read import
+
+# The direct build/run planners on paths with spaces.
+case selfhost-build-tool
+if-host linux
+test -n "$(command -v as)"
+test -n "$(command -v ld)"
+test -n "$(command -v cc)"
+test -n "$(command -v ar)"
+end-if
+sh mkdir -p "{{dir}}/with space" "{{dir}}/stdlib one"
+file with space/main file.tl
+(define (main) : i64 23)
+end-file
+step selfhost-build-tool
+run build --direct "{{dir}}/with space/main file.tl" -o "{{dir}}/with space/the program{{exe}}" --target {{host-target}} --backend-mode scalar
+stderr empty
+stdout contains Built {{native-dir}}/with space/the program{{exe}}
+test -f "{{dir}}/with space/the program{{exe}}"
+step selfhost-build-tool-output
+exec "{{dir}}/with space/the program{{exe}}"
+exit 23
+stderr empty
+step selfhost-build-source-locked
+run build --direct "{{dir}}/with space/main file.tl" --locked
+exit nonzero
+stdout empty
+stderr contains build: --locked is only valid for package builds
+step selfhost-build-source-update-lock
+run build --direct "{{dir}}/with space/main file.tl" --update-lock
+exit nonzero
+stdout empty
+stderr contains build: --update-lock is only valid for package builds
+step selfhost-build-tool-avx2
+run build --direct "{{dir}}/with space/main file.tl" -o "{{dir}}/with space/avx2 program{{exe}}" --target {{host-target}} --backend-mode avx2
+stderr empty
+stdout contains Built {{native-dir}}/with space/avx2 program{{exe}}
+test -f "{{dir}}/with space/avx2 program{{exe}}"
+step selfhost-run-tool-missing-target
+run run --direct "{{dir}}/with space/main file.tl" --target
+exit nonzero
+stdout empty
+stderr contains run: --target requires a value
+
+# Native libraries through --link-lib, constructors, and a package manifest
+# `(link ...)` section (#2892): a relative search path resolves against the
+# manifest directory, and a windows-libraries entry is filtered out on Linux.
+case link-lib
+hosts linux
+file ffi_add7.s
+    .globl ffi_add7
+ffi_add7:
+    movq %rdi, %rax
+    addq $7, %rax
+    ret
+    .section .note.GNU-stack,"",@progbits
+end-file
+file ffi_ctor.c
+static long ffi_ctor_value_state = 0;
+
+__attribute__((constructor)) static void ffi_ctor_init(void) {
+    ffi_ctor_value_state = 42;
+}
+
+long ffi_ctor_value(void) {
+    return ffi_ctor_value_state;
+}
+end-file
+file with space/link file.tl
+(extern (ffi_add7 [x : i64]) : i64)
+(define (main) : i64 (ffi_add7 35))
+end-file
+file with space/ctor file.tl
+(import stdlib.string)
+
+(extern (ffi_ctor_value) : i64)
+(define (main) : i64
+  (if (string.eq (string.int->string (ffi_ctor_value)) "42")
+    (ffi_ctor_value)
+    1))
+end-file
+step link-lib-assemble
+exec as "{{dir}}/ffi_add7.s" -o "{{dir}}/ffi_add7.o"
+stdout empty
+stderr empty
+step link-lib-archive
+exec ar rcs "{{dir}}/libffi_add7.a" "{{dir}}/ffi_add7.o"
+stdout empty
+stderr empty
+step selfhost-build-tool-link-lib
+run build --direct "{{dir}}/with space/link file.tl" -o "{{dir}}/with space/link program" --target linux-x86_64 --backend-mode scalar --link-search "{{dir}}" --link-lib ffi_add7
+stderr empty
+stdout contains Built {{dir}}/with space/link program
+step selfhost-build-tool-link-output
+exec "{{dir}}/with space/link program"
+exit 42
+stderr empty
+step selfhost-run-tool-link-lib
+run run --direct "{{dir}}/with space/link file.tl" --target linux-x86_64 --backend-mode scalar --link-search "{{dir}}" --link-lib ffi_add7
+exit 42
+stdout empty
+stderr empty
+step public-build-link-lib
+run build "{{dir}}/with space/link file.tl" -o "{{dir}}/with space/public link program" --target linux-x86_64 --link-search "{{dir}}" --link-lib ffi_add7
+stderr empty
+stdout contains Built {{dir}}/with space/public link program
+step public-build-link-output
+exec "{{dir}}/with space/public link program"
+exit 42
+stderr empty
+step public-run-link-lib
+run run "{{dir}}/with space/link file.tl" --target linux-x86_64 --link-search "{{dir}}" --link-lib ffi_add7
+exit 42
+stdout empty
+stderr empty
+step link-lib-ctor-compile
+exec cc -c "{{dir}}/ffi_ctor.c" -o "{{dir}}/ffi_ctor.o"
+stdout empty
+stderr empty
+step link-lib-ctor-archive
+exec ar rcs "{{dir}}/libffi_ctor.a" "{{dir}}/ffi_ctor.o"
+stdout empty
+stderr empty
+step selfhost-run-tool-link-ctor
+run run --direct "{{dir}}/with space/ctor file.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" --link-search "{{dir}}" --link-lib ffi_ctor
+exit 42
+stdout empty
+stderr empty
+step public-run-link-ctor
+run run "{{dir}}/with space/ctor file.tl" --target linux-x86_64 --stdlib-root "{{root}}/stdlib" --link-search "{{dir}}" --link-lib ffi_ctor
+exit 42
+stdout empty
+stderr empty
+file pkg-link/typelisp.pkg
+(package
+  (name "pkg_link_app")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (link
+    (search-paths "vendor")
+    (linux-libraries "ffi_add7")
+    (windows-libraries "pkg_link_missing_on_linux")))
+end-file
+file pkg-link/src/main.tl
+(extern (ffi_add7 [x : i64]) : i64)
+(define (main) : i64 (ffi_add7 35))
+end-file
+sh mkdir -p "{{dir}}/pkg-link/vendor" && cp "{{dir}}/libffi_add7.a" "{{dir}}/pkg-link/vendor/"
+step pkg-link-build
+run build --manifest-path "{{dir}}/pkg-link/typelisp.pkg" --target linux-x86_64
+stderr empty
+stdout match Built[ ]
+test -x "{{dir}}/pkg-link/target/release/pkg_link_app"
+step pkg-link-output
+exec "{{dir}}/pkg-link/target/release/pkg_link_app"
+exit 42
+stdout empty
+stderr empty
+# Manifest link inputs merge with extern metadata: the library name stays on
+# the extern and only the search path comes from the manifest.
+file pkg-link-metadata/typelisp.pkg
+(package
+  (name "pkg_link_metadata_app")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (link
+    (search-paths "vendor")))
+end-file
+file pkg-link-metadata/src/main.tl
+(extern (ffi_add7 [x : i64]) : i64 (:link-lib "ffi_add7"))
+(define (main) : i64 (ffi_add7 35))
+end-file
+sh mkdir -p "{{dir}}/pkg-link-metadata/vendor" && cp "{{dir}}/libffi_add7.a" "{{dir}}/pkg-link-metadata/vendor/"
+step pkg-link-metadata-build
+run build --manifest-path "{{dir}}/pkg-link-metadata/typelisp.pkg" --target linux-x86_64
+stderr empty
+stdout match Built[ ]
+test -x "{{dir}}/pkg-link-metadata/target/release/pkg_link_metadata_app"
+step pkg-link-metadata-output
+exec "{{dir}}/pkg-link-metadata/target/release/pkg_link_metadata_app"
+exit 42
+stdout empty
+stderr empty
+
+case selfhost-run-tool
+if-host windows
+step selfhost-run-tool-windows
+run run --direct "{{work}}/hello-status.tl" --target {{host-target}} --backend-mode scalar --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src"
+exit 7
+stderr empty
+stdout contains hello
+if-isa avx2
+step selfhost-run-tool-avx2
+run run --direct "{{work}}/hello-status.tl" --target {{host-target}} --backend-mode avx2 --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src"
+exit 7
+stderr empty
+stdout contains hello
+end-if
+else
+step selfhost-run-tool-linux
+run run --direct "{{work}}/argv-echo.tl" --target {{host-target}} --backend-mode scalar --stdlib-root "{{root}}/stdlib" -- "arg with spaces" "colon:arg"
+exit 13
+stderr empty
+stdout contains arg with spaces
+step selfhost-run-tool-avx512
+run run --direct "{{work}}/argv-echo.tl" --target {{host-target}} --backend-mode avx512 --stdlib-root "{{root}}/stdlib" -- "arg with spaces" "colon:arg"
+exit 13
+stderr empty
+stdout contains arg with spaces
+end-if
+file run cfg file.tl
+(define (main) : i64 (cfg feature 11 3))
+end-file
+step selfhost-run-tool-cfg
+run run --direct "{{dir}}/run cfg file.tl" --target {{host-target}} --backend-mode scalar --cfg feature
+exit 11
+stdout empty
+stderr empty
+step public-run-tool-cfg
+run run "{{dir}}/run cfg file.tl" --target {{host-target}} --cfg feature
+exit 11
+stdout empty
+stderr empty
+
+case selfhost-build-package
+file typelisp.pkg
+(package
+  (name "selfhost_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+end-file
+file src/main.tl
+(import math.src.lib as math)
+(define (main) : i64 (math.add-one 41))
+end-file
+file vendor/math/src/lib.tl
+(define (add-one [x : i64]) : i64 (+ x 1))
+end-file
+file vendor/math/typelisp.pkg
+(package
+  (name "math")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+sh mkdir -p "{{dir}}/src/nested/deeper"
+step selfhost-build-package
+run build --direct --manifest-path "{{dir}}/typelisp.pkg" --opt-level 0
+stderr empty
+test -x "{{dir}}/target/release/selfhost_pkg{{exe}}"
+test -f "{{dir}}/target/release/selfhost_pkg.s"
+stdout contains Built {{native-dir}}/target/release/selfhost_pkg{{exe}}
+in file {{dir}}/target/release/selfhost_pkg.s
+contains main:
+contains add_one
+exec "{{dir}}/target/release/selfhost_pkg{{exe}}"
+exit 42
+sh rm -rf "{{dir}}/target"
+step selfhost-build-package-discover
+cwd src/nested/deeper
+run build
+stderr empty
+test -x "{{dir}}/target/release/selfhost_pkg{{exe}}"
+test -f "{{dir}}/target/release/selfhost_pkg.s"
+stdout match Built[ ]
+cwd -
+step selfhost-build-package-opt-duplicate
+run build --direct --manifest-path "{{dir}}/typelisp.pkg" --opt-level 1 --opt-level 2
+exit nonzero
+stdout empty
+stderr contains build: --opt-level was provided more than once
+step selfhost-build-package-opt-invalid
+run build --direct --manifest-path "{{dir}}/typelisp.pkg" --opt-level 3
+exit nonzero
+stdout empty
+stderr contains build: unknown opt level '3'; expected 0, 1, or 2
+sh rm -rf "{{dir}}/target"
+step selfhost-build-package-mode-staged
+run build --direct --manifest-path "{{dir}}/typelisp.pkg" --backend-mode avx2
+stderr empty
+test -f "{{dir}}/target/release/selfhost_pkg.s"
+stdout contains Built {{native-dir}}/target/release/selfhost_pkg{{exe}}
+in file {{dir}}/target/release/selfhost_pkg.s
+contains vzeroupper
+
+case selfhost-build-package-lib
+file typelisp.pkg
+(package
+  (name "selfhost_lib")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file src/lib.tl
+(define (add-two [x : i64]) : i64 (+ x 2))
+end-file
+run build --direct --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+test -s "{{dir}}/target/release/{{lib-prefix}}selfhost_lib{{lib-suffix}}"
+stdout contains Built {{native-dir}}/target/release/{{lib-prefix}}selfhost_lib{{lib-suffix}}
+
+case selfhost-build-package-errors
+file typelisp.pkg
+(package
+  (name "selfhost_parse_error")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (deps "not-yet"))
+end-file
+sh mkdir -p "{{dir}}/src" "{{dir}}/vendor/math/src"
+step selfhost-build-package-parse-error
+run build --direct --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains invalid package manifest
+stderr contains unknown manifest field `deps`
+file typelisp.pkg
+(package
+  (name "selfhost_bad_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file src/main.tl
+(import math.src.lib)
+(define (main) : i64 0)
+end-file
+step selfhost-build-package-missing-alias
+run build --direct --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains compiler-load: unknown package alias 'math'
+stderr contains pkg:math/src/lib.tl
+file typelisp.pkg
+(package
+  (name "selfhost_missing_dep")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+end-file
+file vendor/math/typelisp.pkg
+(package
+  (name "math")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file vendor/math/src/lib.tl
+(define (add-one [x : i64]) : i64 (+ x 1))
+end-file
+file src/main.tl
+(import math.src.missing)
+(define (main) : i64 0)
+end-file
+# The direct planner builds (and reports) the dependency archive before it
+# resolves the entry's imports.
+step selfhost-build-package-missing-dep
+run build --direct --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stderr contains compiler-load: cannot read import
+stderr contains vendor/math/src/missing.tl
+
+# Profiles and --opt-level reach package emission: release defaults to opt2
+# (main folds to 45, or keeps calc as a lea of the two argument registers),
+# dev and --opt-level 0 keep opt0's stack multiply, and --opt-level overrides
+# the profile. Windows package emission is byte-encoded (no host assembler).
+case selfhost-build-package-opt
+file optpkg/typelisp.pkg
+(package
+  (name "selfhost_opt_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file optpkg/src/main.tl
+(define (calc [a : i64] [b : i64]) : i64
+  (let
+    [x : i64 (+ a b)]
+    [y : i64 (* x 2)]
+    (+ y x)))
+(define (main) : i64
+  (calc 10 5))
+end-file
+file worker/typelisp.pkg
+(package
+  (name "selfhost_opt_worker")
+  (version "0.1.0")
+  (kind "staticlib")
+  (entry "src/lib.tl"))
+end-file
+file worker/src/lib.tl
+(define (worker_calc [a : i64] [b : i64]) : i64
+  (let
+    [x : i64 (+ a b)]
+    [y : i64 (* x 2)]
+    (+ y x)))
+end-file
+if-host windows
+sh CCV_o2a='0x48,0xc7,0xc0,0x2d,0x00,0x00,0x00' CCV_o2b='    leaq (%rcx,%rdx), %rax' CCV_o0='    imulq 24(%rsp), %r8'
+else
+sh CCV_o2a='    movl $45, %eax' CCV_o2b='    leaq (%rdi,%rsi), %rax' CCV_o0='    imulq -24(%rsp), %r8'
+end-if
+step selfhost-build-package-opt-default
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg"
+stderr empty
+test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
+contains-any {{o2a}} || {{o2b}}
+not-contains {{o0}}
+step selfhost-build-package-worker-opt-default
+run build --package-worker --manifest-path "{{dir}}/worker/typelisp.pkg"
+stderr empty
+test -f "{{dir}}/worker/target/release/selfhost_opt_worker.s"
+in file {{dir}}/worker/target/release/selfhost_opt_worker.s
+contains-any {{o2a}} || {{o2b}}
+not-contains {{o0}}
+sh rm -rf "{{dir}}/optpkg/target"
+step selfhost-build-package-profile-dev
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile dev
+stderr empty
+test -f "{{dir}}/optpkg/target/dev/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/dev/selfhost_opt_pkg.s
+contains {{o0}}
+not-contains {{o2a}}
+not-contains {{o2b}}
+sh rm -rf "{{dir}}/optpkg/target"
+step selfhost-build-package-opt-zero
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --opt-level 0
+stderr empty
+test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
+contains {{o0}}
+not-contains {{o2a}}
+not-contains {{o2b}}
+sh rm -rf "{{dir}}/optpkg/target"
+step selfhost-build-package-opt-one
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --opt-level 1
+stderr empty
+test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
+not-contains {{o2a}}
+not-contains {{o2b}}
+sh rm -rf "{{dir}}/optpkg/target"
+step selfhost-build-package-opt-two
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --opt-level 2
+stderr empty
+test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
+contains-any {{o2a}} || {{o2b}}
+not-contains {{o0}}
+sh rm -rf "{{dir}}/optpkg/target"
+step selfhost-build-package-profile-release-opt-zero
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile release --opt-level 0
+stderr empty
+test -f "{{dir}}/optpkg/target/release/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
+contains {{o0}}
+not-contains {{o2a}}
+not-contains {{o2b}}
+sh rm -rf "{{dir}}/optpkg/target"
+step selfhost-build-package-profile-dev-opt-two
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile dev --opt-level 2
+stderr empty
+test -f "{{dir}}/optpkg/target/dev/selfhost_opt_pkg.s"
+in file {{dir}}/optpkg/target/dev/selfhost_opt_pkg.s
+contains-any {{o2a}} || {{o2b}}
+not-contains {{o0}}
+sh rm -rf "{{dir}}/worker/target"
+step selfhost-build-package-worker-opt-before-profile
+run build --package-worker --manifest-path "{{dir}}/worker/typelisp.pkg" --opt-level 2 --profile dev
+stderr empty
+test -f "{{dir}}/worker/target/dev/selfhost_opt_worker.s"
+in file {{dir}}/worker/target/dev/selfhost_opt_worker.s
+contains-any {{o2a}} || {{o2b}}
+not-contains {{o0}}
+sh rm -rf "{{dir}}/optpkg/target"
+step selfhost-build-package-profile-invalid
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile fast
+exit nonzero
+stdout empty
+stderr contains build: unknown profile 'fast'; expected dev or release
+step selfhost-build-package-profile-duplicate
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile dev --release
+exit nonzero
+stdout empty
+stderr contains build: profile was provided more than once
+step selfhost-build-package-opt-missing
+run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --opt-level
+exit nonzero
+stdout empty
+stderr contains build: --opt-level requires a value

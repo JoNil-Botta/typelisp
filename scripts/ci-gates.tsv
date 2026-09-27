@@ -7,7 +7,6 @@
 # command: shell text evaluated in the checkout root; gate_* names a function in
 # ci-verify.sh.
 id	hosts	label	needs	compiler	command
-cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-	-	scripts/check-cli-gate-coverage.sh --self-test
 x64-executable-template-registry-coverage	all	x64 executable template registry coverage	-	-	scripts/check-x64-executable-template-registry.sh
 cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-	-	scripts/verify-cross-mode-differential.sh --self-test
 linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit helper self-tests	-	-	scripts/verify-linux-memory-limit.sh

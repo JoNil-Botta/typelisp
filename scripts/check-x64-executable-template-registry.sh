@@ -16,27 +16,31 @@ count_matches() {
 }
 
 # Runtime leaf composition has one registration at every selected fragment.
-# The Linux entry prefix has two mutually exclusive construction arms, so its
-# source contains three registrations while one emitted program selects two.
-count_matches 15 'compiler-x64-template-render-assembly' src/compiler_backend_runtime_linux.tl
-count_matches 15 'compiler-x64-template-render-assembly' src/compiler_backend_runtime_windows.tl
+# Each target registers its fragments through one render helper (one catalog
+# call plus the definition and 15 registrations). The Linux entry prefix has two
+# mutually exclusive construction arms, so its source contains three
+# registrations while one emitted program selects two.
+count_matches 1 'compiler-x64-template-render-assembly' src/compiler_backend_runtime_linux.tl
+count_matches 1 'compiler-x64-template-render-assembly' src/compiler_backend_runtime_windows.tl
+count_matches 16 'compiler-backend-runtime-linux-render' src/compiler_backend_runtime_linux.tl
+count_matches 16 'compiler-backend-runtime-windows-render' src/compiler_backend_runtime_windows.tl
 count_matches 3 'compiler-x64-template-render-assembly' src/compiler_backend.tl
 
 # Pin the full-file lexical census as a construction-site tripwire. The typed
 # catalog remains authoritative; these counts make newly concatenated assembly
 # visible even if its owner forgot to add a render gate.
-count_matches 6 '\.globl' src/compiler_backend_runtime_common.tl
-count_matches 9 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
-count_matches 0 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
-count_matches 1 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
-count_matches 35 '\.globl' src/compiler_backend_runtime_linux.tl
-count_matches 53 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
-count_matches 9 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
-count_matches 24 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
-count_matches 30 '\.globl' src/compiler_backend_runtime_windows.tl
-count_matches 44 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 98 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 46 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 9 '\.globl' src/compiler_backend_runtime_common.tl
+count_matches 14 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
+count_matches 2 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
+count_matches 7 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
+count_matches 32 '\.globl' src/compiler_backend_runtime_linux.tl
+count_matches 44 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 7 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 18 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 27 '\.globl' src/compiler_backend_runtime_windows.tl
+count_matches 39 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 93 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 41 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 
 # All target-owned executable byte helpers carry closed IDs.  Windows has two
 # additional bytes-from-hex sites: the data-only UNWIND_INFO and resource tree.

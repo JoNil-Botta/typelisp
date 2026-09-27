@@ -1,0 +1,444 @@
+# The inline test command, package test discovery and test backend modes
+# (gate stage2-public-tool-surface).
+do none
+target -
+opt -
+
+file inline_test_pass.tl
+(import stdlib.test)
+
+(define (inc [x : i64]) : i64 (+ x 1))
+
+(define (main) : i64 0)
+
+(test inc-basic
+  (test.assert-i64-eq (inc 41) 42 "inc result"))
+
+(test inc-zero
+  (test.assert-i64-eq (inc 0) 1 "inc zero"))
+end-file
+
+file inline_test_fail.tl
+(import stdlib.test)
+
+(test passes-before
+  (test.assert-true true "before"))
+
+(test failing-case
+  (test.assert-i64-eq 1 2 "first inline failure")
+  (test.assert-true false "second inline failure"))
+
+(test passes-after
+  (test.assert-true true "after"))
+end-file
+
+file inline_test_metadata.tl
+(test ordinary unit)
+(test needle unit)
+(test needle-extra unit)
+(test ignored (:ignore "tracked issue") unit)
+(test slow (:slow) unit)
+(test ignored-slow (:ignore "waiting for dependency") (:slow) unit)
+(cfg replayable-test-cfg (test cfg-enabled unit))
+end-file
+
+case inline-test-check
+run test --check "{{work}}/inline_test_pass.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains TypeLisp test typecheck passed: 2 test(s)
+
+# #6190: opt0 once suppressed AddrOf, then read its uninitialized home while
+# preparing the Windows WriteFile byte-count pointer used by the final summary.
+# A multi-test native harness runs that path on both hosts.
+case inline-test-pass
+sh cp "{{work}}/inline_test_pass.tl" "{{dir}}/"
+step inline-test-pass
+run test "{{dir}}/inline_test_pass.tl" --target {{host-target}} --opt-level 0 --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains test inc-basic
+stderr contains ok inc-basic
+stderr contains test inc-zero
+stderr contains ok inc-zero
+stderr contains TypeLisp tests: 2 passed; 0 failed; 0 ignored; 0 slow-skipped; 2 total
+test ! -f "{{dir}}/inline_test_pass.tl.test.s"
+step inline-test-normal-compile
+run compile "{{dir}}/inline_test_pass.tl" --target {{host-target}} -o "{{dir}}/inline_test_pass.s" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/inline_test_pass.s
+not-contains __tl_inline_test
+
+case inline-test-fail
+sh cp "{{work}}/inline_test_fail.tl" "{{dir}}/"
+step inline-test-fail
+run test "{{dir}}/inline_test_fail.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains test passes-before
+stderr contains ok passes-before
+stderr contains test failing-case
+stderr contains first inline failure: expected 2, found 1
+stderr contains second inline failure
+stderr contains FAILED failing-case
+stderr contains inline_test_fail.tl:
+stderr contains test passes-after
+stderr contains ok passes-after
+stderr contains TypeLisp tests: 2 passed; 1 failed; 0 ignored; 0 slow-skipped; 3 total
+stderr not-contains typelisp test: test executable exited
+test ! -f "{{dir}}/inline_test_fail.tl.test.s"
+step inline-test-filter
+run test "{{dir}}/inline_test_fail.tl" --filter passes-after --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains test passes-after
+stderr contains ok passes-after
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+stderr not-contains passes-before
+stderr not-contains failing-case
+step inline-test-list
+run test --list "{{dir}}/inline_test_fail.tl" --filter failing --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match failing-case[ ]
+stdout contains inline_test_fail.tl:
+stdout contains TypeLisp tests listed: 1 test(s)
+stdout not-contains passes-before
+stdout not-contains passes-after
+
+case inline-test-metadata
+step inline-test-metadata-list
+run test --list "{{work}}/inline_test_metadata.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match ordinary[ ]
+stdout contains [run]
+stdout match ignored[ ]
+stdout contains [ignored: tracked issue]
+stdout match slow[ ]
+stdout contains [slow-skipped]
+stdout contains TypeLisp tests listed: 6 test(s)
+step inline-test-metadata-default-skip
+run test "{{work}}/inline_test_metadata.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains test ordinary
+stderr not-contains test ignored
+stderr not-contains test slow
+stderr contains TypeLisp tests: 3 passed; 0 failed; 2 ignored; 1 slow-skipped; 6 total
+step inline-test-exact
+run test --list "{{work}}/inline_test_metadata.tl" --exact needle --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match needle[ ]
+stdout not-contains needle-extra
+stdout contains TypeLisp tests listed: 1 test(s)
+step inline-test-include-metadata
+run test "{{work}}/inline_test_metadata.tl" --exact ignored-slow --include-ignored --include-slow --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains test ignored-slow
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+step inline-test-user-cfg
+run test "{{work}}/inline_test_metadata.tl" --exact cfg-enabled --cfg replayable-test-cfg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains test cfg-enabled
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+step inline-test-shuffle-seed
+run test --list "{{work}}/inline_test_metadata.tl" --shuffle --seed 42 --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains TypeLisp test shuffle seed: 42
+stdout contains TypeLisp tests listed: 6 test(s)
+
+# Option errors come before any source is loaded.
+case inline-test-option-errors
+step inline-test-conflicting-selection
+run test "{{dir}}/must-not-be-loaded.tl" --filter needle --exact needle
+exit 1
+stderr contains test: --filter and --exact are mutually exclusive and may appear only once
+stderr not-contains failed to read
+step inline-test-seed-requires-shuffle
+run test "{{dir}}/must-not-be-loaded.tl" --seed 42
+exit 1
+stderr contains test: --seed requires --shuffle
+stderr not-contains failed to read
+
+case inline-test-crash
+file inline_test_crash.tl
+(import stdlib.io)
+
+(test crashes-hard
+  (io.panic "hard inline harness crash"))
+
+(test must-not-run-after-crash
+  unit)
+end-file
+run test "{{dir}}/inline_test_crash.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stdout empty
+stderr contains test crashes-hard
+stderr contains hard inline harness crash
+stderr contains typelisp test: test executable exited
+stderr not-contains must-not-run-after-crash
+
+case inline-test-no-tests
+file inline_test_no_tests.tl
+(define (main) : i64 0)
+end-file
+step inline-test-no-tests-check
+run test --check "{{dir}}/inline_test_no_tests.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains TypeLisp test typecheck passed: 0 test(s)
+step inline-test-no-tests-run
+run test "{{dir}}/inline_test_no_tests.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains TypeLisp tests: 0 passed; 0 failed; 0 ignored; 0 slow-skipped; 0 total
+test ! -f "{{dir}}/inline_test_no_tests.tl.test.s"
+
+# Package test discovery skips formatter fixtures, target/ and nested packages.
+case package-test
+file pkg/typelisp.pkg
+(package
+  (name "package_test_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file pkg/src/lib.tl
+(test pkg-inline
+  (if (= 42 42)
+    unit
+    (let [_ : i64 (/ 1 0)] unit)))
+end-file
+file pkg/tests/basic.tl
+(import stdlib.test)
+(import package_test_root_helper)
+
+(define (main) : i64
+  (begin
+    (test.assert-i64-eq
+      package_test_root_helper.answer
+      42
+      "package tests dir second root")
+    0))
+end-file
+file second-root/package_test_root_helper.tl
+(module package_test_root_helper)
+
+(define answer : i64 42)
+end-file
+file pkg/tests/nested/more.tl
+(import stdlib.test)
+
+(define (main) : i64
+  (begin
+    (test.assert-i64-eq (* 6 7) 42 "package nested tests dir")
+    0))
+end-file
+file pkg/tests/format_golden/fixture.tl
+;; Package test discovery must not treat formatter fixtures as integration tests.
+(define fixture-value : i64 42)
+end-file
+file pkg/tests/target/ignored/fail.tl
+(define (main) : i64 9)
+end-file
+file pkg/tests/vendor/child/typelisp.pkg
+(package (name "child-tests") (version "0.1.0") (kind "lib"))
+end-file
+file pkg/tests/vendor/child/src/fail.tl
+(define (main) : i64 9)
+end-file
+cwd pkg/src
+step package-test-check
+run test --check --target {{host-target}} --manifest-path "{{dir}}/pkg/typelisp.pkg" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}/second-root"
+stderr empty
+stdout contains TypeLisp test file:
+stdout contains TypeLisp integration test file:
+stdout contains TypeLisp package test typecheck passed: 3 test(s) in 3 file(s)
+step package-test-run
+run test --target {{host-target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{dir}}/second-root"
+stdout contains TypeLisp integration test file:
+stdout contains TypeLisp package tests passed: 3 test(s) in 3 file(s)
+stderr contains test pkg-inline
+stderr contains ok pkg-inline
+
+case package-test-inline-fail-continues
+file typelisp.pkg
+(package
+  (name "package_test_inline_fail_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file src/lib.tl
+(import stdlib.test)
+
+(test package-fails
+  (test.assert-true false "package inline failure"))
+
+(test package-passes-after
+  (test.assert-true true "package inline sentinel"))
+end-file
+file tests/pass.tl
+(define (main) : i64 0)
+end-file
+run test --target {{host-target}} --manifest-path "{{dir}}/typelisp.pkg" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout contains TypeLisp integration test file:
+stdout contains TypeLisp package tests failed: 1 of 2 file(s) failed; 3 test(s)
+stderr contains FAILED package-fails
+stderr contains ok package-passes-after
+stderr contains TypeLisp tests: 1 passed; 1 failed; 0 ignored; 0 slow-skipped; 2 total
+stderr not-contains typelisp test: test executable exited
+
+case package-test-empty
+file typelisp.pkg
+(package
+  (name "package_test_empty_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file src/lib.tl
+(define lib-value : i64 42)
+end-file
+cwd .
+run test --check --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains-any TypeLisp package test typecheck passed: 0 test(s) in 0 file(s) || TypeLisp package test typecheck passed: 0 test(s) in 1 file(s)
+
+case package-test-fail
+file typelisp.pkg
+(package
+  (name "package_test_fail_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file src/lib.tl
+(define lib-value : i64 42)
+end-file
+file tests/fail.tl
+(define (main) : i64 7)
+end-file
+run test --target {{host-target}} --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stdout contains TypeLisp integration test file:
+stderr contains typelisp test: test executable exited with exit status: 7
+
+# #7057: `typelisp test --backend-mode` lowers and emits the requested mode
+# for file, batch, package inline and package integration harnesses. The
+# fixtures pin `(program-count)`, the gang width (1 scalar, 4 AVX2 i64 lanes,
+# 8 AVX-512 i64 lanes), so a silent scalar fallback fails its own assertions.
+# Accepting a mode never requires executing it: --check and --list work for
+# every spelling on every host, and the SIMD fixtures fail under scalar code
+# generation. A host without the ISA is refused by name.
+case test-backend-mode
+mode scalar avx2 avx512
+if-mode scalar
+sh CCV_width=1 CCV_first=100 CCV_tail=12 CCV_tail_word=100 CCV_last_word=100
+end-if
+if-mode avx2
+sh CCV_width=4 CCV_first=400 CCV_tail=9 CCV_tail_word=401 CCV_last_word=400
+end-if
+if-mode avx512
+sh CCV_width=8 CCV_first=800 CCV_tail=5 CCV_tail_word=805 CCV_last_word=804
+end-if
+file -x pkg/typelisp.pkg
+(package
+  (name "test_backend_mode_{{mode}}_pkg")
+  (version "0.1.0")
+  (kind "lib"))
+end-file
+file -x pkg/src/lib.tl
+(import stdlib.test)
+
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (+ (* (program-count) 100) (program-index)))))
+
+(define (lane-word [index : i64]) : i64
+  (let
+    [n : i64 13]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    (begin
+      (fill (&mut out) n)
+      (array-ref out index))))
+
+(test gang-width-{{width}}
+  (begin
+    (test.assert-i64-eq (lane-word 0) {{first}} "first lane")
+    (test.assert-i64-eq (lane-word {{tail}}) {{tail_word}} "tail lane")
+    (test.assert-i64-eq (lane-word 12) {{last_word}} "last lane")))
+end-file
+file -x pkg/tests/gang.tl
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (program-count))))
+
+(define (main) : i64
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 13)]
+    (begin
+      (fill (&mut out) 13)
+      (if (= (array-ref out 0) {{width}})
+        0
+        7))))
+end-file
+file -x batch.txt
+{{native-dir}}/pkg/src/lib.tl
+end-file
+step test-backend-mode-check-{{mode}}
+run test --check --backend-mode {{mode}} --target {{host-target}} --manifest-path "{{dir}}/pkg/typelisp.pkg" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains TypeLisp package test typecheck passed: 2 test(s) in 2 file(s)
+step test-backend-mode-list-{{mode}}
+run test --list --backend-mode {{mode}} "{{dir}}/pkg/src/lib.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains TypeLisp tests listed: 1 test(s)
+step test-backend-mode-batch-check-{{mode}}
+run test --check --backend-mode {{mode}} --batch "{{dir}}/batch.txt" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+if-mode avx2 avx512
+step test-backend-mode-{{mode}}-fixture-rejects-scalar
+run test --backend-mode scalar "{{dir}}/pkg/src/lib.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains first lane: expected
+stderr contains found 100
+stderr contains TypeLisp tests: 0 passed; 1 failed; 0 ignored; 0 slow-skipped; 1 total
+step test-backend-mode-{{mode}}-package-rejects-default
+run test --target {{host-target}} --manifest-path "{{dir}}/pkg/typelisp.pkg" --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains TypeLisp tests: 0 passed; 1 failed; 0 ignored; 0 slow-skipped; 1 total
+stderr contains typelisp test: test executable exited with exit status: 7
+end-if
+if-isa {{mode}}
+step test-backend-mode-file-{{mode}}
+run test --backend-mode {{mode}} "{{dir}}/pkg/src/lib.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains ok gang-width-{{width}}
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+step test-backend-mode-batch-{{mode}}
+run test --backend-mode {{mode}} --batch "{{dir}}/batch.txt" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stderr contains ok gang-width-{{width}}
+stdout contains TypeLisp test batch passed: 1 test(s) in 1 file(s)
+step test-backend-mode-package-{{mode}}
+run test --backend-mode {{mode}} --target {{host-target}} --manifest-path "{{dir}}/pkg/typelisp.pkg" --stdlib-root "{{root}}/stdlib"
+stderr contains ok gang-width-{{width}}
+stdout contains TypeLisp integration test file:
+stdout contains TypeLisp package tests passed: 2 test(s) in 2 file(s)
+else
+step test-backend-mode-{{mode}}-unsupported-host
+run test --backend-mode {{mode}} "{{dir}}/pkg/src/lib.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains test: backend mode {{mode}} cannot run on this host
+stderr not-contains unknown backend mode
+stderr not-contains test gang-width-{{width}}
+end-if
+
+# An unknown spelling stays a parse error, distinct from an incapable host.
+case test-unknown-backend-mode
+file lib.tl
+(define (main) : i64 0)
+end-file
+run test --backend-mode neon "{{dir}}/lib.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains test: unknown backend mode neon
+stderr not-contains cannot run on this host

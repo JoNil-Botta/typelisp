@@ -374,37 +374,6 @@
               (compiler-live-set-bit-mask value))
             0))))))
 
-;; True iff `a` and `b` share at least one element (bitset word-level AND). Used
-;; by the SplitKit phi-carried loop homing to test whether ANY member of a
-;; coalesce group is live across a region boundary edge (no single member is live
-;; on every boundary edge of a phi-carried value, so the per-var live-on-edge test
-;; is insufficient -- the group/slot is what must be loaded/stored).
-(define (compiler-live-set-intersects?
-  [a : (& a CompilerLiveI64Set)]
-  [b : (& b CompilerLiveI64Set)]) : bool
-  (let
-    [na : i64 (compiler-live-set-word-count a)]
-    [nb : i64 (compiler-live-set-word-count b)]
-    [n : i64
-      (if (< na nb)
-        na
-        nb)]
-    [i : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (< i n) (not found))
-        (begin
-          (if (not
-            (=
-              (bit-and
-                (compiler-live-set-word-at-bounded a i)
-                (compiler-live-set-word-at-bounded b i))
-              0))
-            (set! found true)
-            unit)
-          (set! i (+ i 1))))
-      found)))
-
 ;; The word read is spelled out rather than routed through the bounds-checked
 ;; `compiler-live-set-word-at` helper, for the reason P41 gave for
 ;; `compiler-live-set-contains?`: the call reloads the word array

@@ -21,7 +21,8 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-. "$ROOT/scripts/lib-benchmark-ci-cases.sh"
+. "$ROOT/scripts/lib-gate.sh"
+. "$ROOT/scripts/lib-benchmark.sh"
 
 DEFAULT_BENCHMARKS=$(benchmark_ci_case_csv "$ROOT" instruction-main)
 DEFAULT_BASELINE="$ROOT/perf/insn-exec-baseline.tsv"
@@ -757,24 +758,7 @@ if ! command -v valgrind >/dev/null 2>&1; then
     exit 0
 fi
 
-if [ -n "$SEED_ARG" ]; then
-    SEED=$SEED_ARG
-elif [ -n "${TYPELISP_BIN:-}" ]; then
-    SEED=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    SEED=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$SEED" in
-    /*) ;;
-    *) SEED="$ROOT/$SEED" ;;
-esac
-
-[ -x "$SEED" ] || {
-    echo "typelisp seed is not executable: $SEED" >&2
-    exit 1
-}
+bench_compiler "$SEED_ARG"
 
 update_command="scripts/check-instruction-counts.sh --update-baseline"
 if [ "$BASELINE" != "$DEFAULT_BASELINE" ]; then
@@ -835,13 +819,9 @@ if [ -n "$PREBUILT_COMPILER" ]; then
     CHECK_COMPILER=$PREBUILT_COMPILER
     echo "[ir-check] measure with prebuilt stage2 compiler: $CHECK_COMPILER"
 else
-    mkdir -p "$WORKDIR/compiler/stage1" "$WORKDIR/compiler/stage2"
-    STAGE1_COMPILER="$WORKDIR/compiler/stage1/typelisp"
-    CHECK_COMPILER="$WORKDIR/compiler/stage2/typelisp"
-    echo "[ir-check] build current stage1 compiler for measurement: $STAGE1_COMPILER"
-    scripts/build-stage0.sh "$SEED" "$STAGE1_COMPILER"
-    echo "[ir-check] build current stage2 compiler for measurement: $CHECK_COMPILER"
-    scripts/build-stage0.sh "$STAGE1_COMPILER" "$CHECK_COMPILER"
+    . "$ROOT/scripts/lib-stage0.sh"
+    build_selfhost_stage2 "$ROOT" "$COMPILER" "$WORKDIR/compiler" || exit 1
+    CHECK_COMPILER=$(selfhost_stage2_path "$WORKDIR/compiler")
 fi
 
 echo "[ir-check] measure instruction-count subset"

@@ -196,18 +196,6 @@
     expected-rendered-size
     expected-rendered-hash))
 
-(define (compiler-x64-template-id-name
-  [id : x64.CompilerX64ExecutableTemplateId]) : String
-  (let
-    [data : String (catalog.compiler-x64-template-catalog-data-shared-view)]
-    [row-start : i64
-      (catalog.compiler-x64-template-catalog-row-start
-        (& data)
-        (catalog.compiler-x64-template-id-index id))]
-    [row-end : i64
-      (catalog.compiler-x64-template-catalog-row-end (& data) row-start)]
-    (catalog.compiler-x64-template-catalog-field (& data) row-start row-end 1)))
-
 (define (compiler-x64-template-registry-row
   [id : x64.CompilerX64ExecutableTemplateId]) : CompilerX64ExecutableTemplate
   (let

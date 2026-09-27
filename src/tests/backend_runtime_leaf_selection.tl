@@ -160,7 +160,9 @@
       [state
         (backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active))]
-      (match (backend.compiler-backend-runtime-plan-for
+      (match (backend.compiler-backend-runtime-plan-for-with-backend-state
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))
         (ir.compiler-ir-function-seq-empty)
         (owned.compiler-owned-shared-view externs))
         [(backend.ResultBackendRuntimePlan.Ok plan)

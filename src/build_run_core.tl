@@ -103,12 +103,6 @@
       (ResultSourceToolBackendMode.Err
         (str_cat.str-cat command ": unknown backend mode " value))]))
 
-(define (source-tool-opt-level-valid? [value : String]) : bool
-  (or (string.eq value "0") (string.eq value "1") (string.eq value "2")))
-
-(define (source-tool-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
-
 (define (source-tool-args-append
   [args : process.ProcessStringList]
   [value : String]) : process.ProcessStringList
@@ -1994,15 +1988,6 @@
         (io.print-error
           (str_cat.str-cat "build: failed to create temp dir: " message))
         1)]))
-
-(define (source-tool-run-executable
-  [bin-path : String]
-  [target : backend.CompilerBackendTarget]
-  [runtime-args : process.ProcessStringList]) : process.ResultProcessOutput
-  (process.output
-    (source-tool-command-for-target
-      target
-      (process.command bin-path runtime-args))))
 
 ;: Run a user-facing executable while leaving child stdout/stderr connected to
 ;: the caller for live progress output.

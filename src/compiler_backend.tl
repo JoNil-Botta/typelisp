@@ -73008,8 +73008,8 @@
         ;; The scalar-opt2 plan and the caller-save rewrite below both need the
         ;; var-type view of `walk-func`, and each used to walk the function for
         ;; its own copy. Compute it once here, on exactly the path that takes
-        ;; both (`compiler-reg-plan-function-stack-only` and the SIMD plans do
-        ;; not need it, and the rewrites are off when scalar registers are).
+        ;; both (the stack-only and SIMD plans do not need it, and the
+        ;; rewrites are off when scalar registers are).
         [scalar-plan? : bool
           (and (compiler-backend-mode-scalar? mode) scalar-registers-enabled)]
         [walk-types : compiler_regalloc.CompilerRegVarTypes

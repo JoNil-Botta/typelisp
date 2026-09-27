@@ -196,27 +196,6 @@
             coalesce)
           counts))]))
 
-;; One-pass spill weights for the scalar-opt2 greedy: the remat walk accumulates
-;; the exact raw use/def counts the plain spill-weights walk computes (same
-;; adds, plus the def-status tracking), so the two per-function walks collapse
-;; into one. Returns the same combined array as
-;; (combine (merge (remat-discounted weights)) (merge (raw weights))).
-(define (compiler-reg-edge-copy-plan-for-region
-  [func : ir.CompilerIrFunction]
-  [region-labels : reg.CompilerRegLabelSeq]
-  [stack-var : i64]
-  [region-var : i64]
-  [ty : ast.AstType]) : reg.CompilerRegEdgeCopyPlan
-  ;; Per-var (read-only / non-phi self-loop) planning: empty member set selects
-  ;; the existing per-var liveness test in boundary-one (byte-identical).
-  (compiler-reg-edge-copy-plan-for-region-members
-    func
-    region-labels
-    stack-var
-    region-var
-    ty
-    (live.compiler-live-set-empty)))
-
 ;; Group-aware planning for the SplitKit phi-carried homing: `members` is the
 ;; coalesce group's bitset; boundary edges are tested against any-member liveness.
 (define (compiler-reg-plan-function-avx2 [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
@@ -4746,106 +4725,6 @@
         (not (reg.compiler-reg-invariant-facts-word-load? facts 6))
         (not facts.cells-clean)))))
 
-;; The recipe itself: an invariant descriptor word recomputes as the same
-;; `gep`+`load` pair the function already ran (which the backend's gep fusion
-;; cluster folds into one memory operand), and a zero index needs no address
-;; instruction at all.
-(cfg
-  test
-  (define (compiler-reg-invariant-recipe-ok?) : bool
-    (let
-      [func : ir.CompilerIrFunction
-        (compiler-reg-invariant-descriptor-function
-          (compiler-reg-invariant-return-seq))]
-      [table : reg.CompilerRegRematTable
-        (reg.compiler-reg-remat-table-build
-          (ir.compiler-ir-global-shared-view func)
-          (reg.compiler-reg-function-var-types func))]
-      (and
-        (= (array-ref table.wide 4) 1)
-        (= (array-ref table.kinds 4) (reg.compiler-reg-remat-kind-word-load))
-        (not (reg.compiler-reg-remat-zero-offset? table 4))
-        (reg.compiler-reg-remat-zero-offset? table 6)
-        (match (reg.compiler-reg-remat-address-instr
-          (reg.compiler-reg-global-shared-view table)
-          20
-          4)
-          [(ir.CompilerIrInstr.Gep dst base offset _)
-            (and
-              (= dst 20)
-              (match base
-                [(ir.CompilerIrValue.Var b) (= b 2)]
-                [_ false])
-              (match offset
-                [(ir.CompilerIrValue.I64 k) (= k 1)]
-                [_ false]))]
-          [_ false])
-        (match (reg.compiler-reg-remat-value-instr
-          (reg.compiler-reg-global-shared-view table)
-          21
-          20
-          1
-          4)
-          [(ir.CompilerIrInstr.Load dst src _)
-            (and
-              (= dst 21)
-              (match src
-                [(ir.CompilerIrValue.Var a) (= a 20)]
-                [_ false]))]
-          [_ false])
-        ;; index 0: the base IS the address, so one instruction serves
-        (match (reg.compiler-reg-remat-value-instr table 22 22 0 6)
-          [(ir.CompilerIrInstr.Load dst src _)
-            (and
-              (= dst 22)
-              (match src
-                [(ir.CompilerIrValue.Var b) (= b 2)]
-                [_ false]))]
-          [_ false])))))
-
-;; LLVM's `allUsesAvailableAt`: a recompute may only run where its base operand
-;; is still in a register and still carries that value. A spilled base fails.
-(cfg
-  test
-  (define (compiler-reg-invariant-base-availability-ok?) : bool
-    (let
-      [func : ir.CompilerIrFunction
-        (compiler-reg-invariant-descriptor-function
-          (compiler-reg-invariant-return-seq))]
-      [table : reg.CompilerRegRematTable
-        (reg.compiler-reg-remat-table-build
-          (ir.compiler-ir-global-shared-view func)
-          (reg.compiler-reg-function-var-types
-            (ir.compiler-ir-global-shared-view func)))]
-      [assignments : reg.CompilerRegAssignmentTable
-        (reg.compiler-reg-assignment-table-make 9)]
-      [liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function
-          (ir.compiler-ir-global-shared-view func))]
-      (begin
-        (reg.compiler-reg-assignment-table-insert
-          assignments
-          2
-          (reg.CompilerRegLocation.Spill 0))
-        (match (reg.compiler-reg-live-interval-selection func liveness)
-          [(reg.CompilerRegIntervalSelection.Selection _ index)
-            (and
-              ;; base spilled -> refused everywhere
-              (not
-                (reg.compiler-reg-remat-base-available?
-                  table
-                  assignments
-                  index
-                  6
-                  4))
-              ;; a value with no register operand at all is always available
-              (reg.compiler-reg-remat-base-available?
-                table
-                assignments
-                index
-                6
-                0))])))))
-
 (cfg
   test
   (define (compiler-reg-remat-classifier-ok?) : bool
@@ -5716,178 +5595,6 @@
           first-combined
           second-combined
           6)))))
-
-;; Dense instruction queries used by rewrite assertions. The old fixtures
-;; recursively unpacked compatibility cons lists; the query loop now reads the
-;; same instruction storage consumed by regalloc.
-(cfg
-  test
-  (defenum CompilerRegTestInstrQuery
-    (MovI64 i64 i64)
-    (MovVar i64 i64)
-    (MovGlobal i64 String)
-    (LoadGlobalAddr i64 String)
-    (GepGlobalI64 i64 String i64 ast.AstType)
-    (StoreVar String i64)
-    (AddrOf i64 i64)
-    (CallIndirectVar i64)
-    (ReturnVar i64)))
-
-(cfg
-  test
-  (define (compiler-reg-test-instr-matches-query?
-    [instr : ir.CompilerIrInstr]
-    [query : CompilerRegTestInstrQuery]) : bool
-    (match query
-      [(CompilerRegTestInstrQuery.MovI64 dst value)
-        (match instr
-          [(ir.CompilerIrInstr.Mov found-dst found-value _)
-            (match found-value
-              [(ir.CompilerIrValue.I64 found)
-                (and (= found-dst dst) (= found value))]
-              [_ false])]
-          [_ false])]
-      [(CompilerRegTestInstrQuery.MovVar dst src)
-        (match instr
-          [(ir.CompilerIrInstr.Mov found-dst found-value _)
-            (match found-value
-              [(ir.CompilerIrValue.Var found-src)
-                (and (= found-dst dst) (= found-src src))]
-              [_ false])]
-          [_ false])]
-      [(CompilerRegTestInstrQuery.MovGlobal dst name)
-        (match instr
-          [(ir.CompilerIrInstr.Mov found-dst found-value _)
-            (match found-value
-              [(ir.CompilerIrValue.Global found-name)
-                (and
-                  (= found-dst dst)
-                  (string.eq (ir.compiler-ir-symbol-text found-name) name))]
-              [_ false])]
-          [_ false])]
-      [(CompilerRegTestInstrQuery.LoadGlobalAddr dst name)
-        (match instr
-          [(ir.CompilerIrInstr.Load found-dst found-src _)
-            (match found-src
-              [(ir.CompilerIrValue.GlobalAddr found-name)
-                (and
-                  (= found-dst dst)
-                  (string.eq (ir.compiler-ir-symbol-text found-name) name))]
-              [_ false])]
-          [_ false])]
-      [(CompilerRegTestInstrQuery.GepGlobalI64 dst name offset ty)
-        (match instr
-          [(ir.CompilerIrInstr.Gep found-dst found-base found-offset found-ty)
-            (match found-base
-              [(ir.CompilerIrValue.GlobalAddr found-name)
-                (match found-offset
-                  [(ir.CompilerIrValue.I64 found-offset-value)
-                    (and
-                      (= found-dst dst)
-                      (and
-                        (string.eq (ir.compiler-ir-symbol-text found-name) name)
-                        (and
-                          (= found-offset-value offset)
-                          (ast.ast-type-eq? found-ty ty))))]
-                  [_ false])]
-              [_ false])]
-          [_ false])]
-      [(CompilerRegTestInstrQuery.StoreVar name src)
-        (match instr
-          [(ir.CompilerIrInstr.Store found-name found-value _)
-            (match found-value
-              [(ir.CompilerIrValue.Var found-src)
-                (and
-                  (string.eq (ir.compiler-ir-symbol-text found-name) name)
-                  (= found-src src))]
-              [_ false])]
-          [_ false])]
-      [(CompilerRegTestInstrQuery.AddrOf dst src)
-        (match instr
-          [(ir.CompilerIrInstr.AddrOf found-dst found-src)
-            (and (= found-dst dst) (= found-src src))]
-          [_ false])]
-      [(CompilerRegTestInstrQuery.CallIndirectVar callee)
-        (match instr
-          [(ir.CompilerIrInstr.CallIndirect _ found-callee _ _)
-            (match found-callee
-              [(ir.CompilerIrValue.Var found) (= found callee)]
-              [_ false])]
-          [_ false])]
-      [(CompilerRegTestInstrQuery.ReturnVar src)
-        (match instr
-          [(ir.CompilerIrInstr.Return maybe)
-            (match maybe
-              [(ir.CompilerIrMaybeValue.Some value)
-                (match value
-                  [(ir.CompilerIrValue.Var found) (= found src)]
-                  [_ false])]
-              [_ false])]
-          [_ false])])))
-
-(cfg
-  test
-  (define (compiler-reg-instr-seq-has-query?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [query : CompilerRegTestInstrQuery]) : bool
-    (let
-      [index : i64 0]
-      [found : bool false]
-      (begin
-        (while (and (< index instrs.len) (not found))
-          (begin
-            (if (compiler-reg-test-instr-matches-query?
-              (ir.compiler-ir-instr-seq-ref
-                (owned_view.compiler-owned-reference-shared-view instrs)
-                index)
-              (owned_view.compiler-owned-shared-view query))
-              (set! found true)
-              unit)
-            (set! index (+ index 1))))
-        found))))
-
-(cfg
-  test
-  (define (compiler-reg-instr-seq-has-mov-var?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [dst : i64]
-    [src : i64]) : bool
-    (compiler-reg-instr-seq-has-query?
-      instrs
-      (CompilerRegTestInstrQuery.MovVar dst src))))
-
-(cfg
-  test
-  (define (compiler-reg-block-instr-seq
-    [blocks : ir.CompilerIrBlockList]
-    [want-label : i64]) : ir.CompilerIrInstrSeq
-    (match blocks
-      [(ir.CompilerIrBlockList.Cons block rest)
-        (match block
-          [(ir.CompilerIrBlock.Block label instrs)
-            (if (= label want-label)
-              instrs
-              (compiler-reg-block-instr-seq
-                (ir.compiler-ir-block-list-box-shared-view rest)
-                want-label))])]
-      [(ir.CompilerIrBlockList.Array seq)
-        (let
-          [index : i64 0]
-          [out : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
-          [found : bool false]
-          (begin
-            (while (and (< index seq.len) (not found))
-              (begin
-                (match (ir.compiler-ir-block-seq-ref seq index)
-                  [(ir.CompilerIrBlock.Block label instrs)
-                    (if (= label want-label)
-                      (begin
-                        (set! out instrs)
-                        (set! found true))
-                      unit)])
-                (set! index (+ index 1))))
-            out))]
-      [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-instr-seq-empty)])))
 
 (cfg
   test
@@ -7106,46 +6813,6 @@
 
 (cfg
   test
-  (define (compiler-reg-edge-copy-list-has?
-    [copies : reg.CompilerRegEdgeCopySeq]
-    [from-label : i64]
-    [to-label : i64]
-    [src : i64]
-    [dst : i64]
-    [want-pred-end : bool]) : bool
-    (let
-      [slots : (__tl_dyn-array reg.CompilerRegEdgeCopy) copies.slots]
-      [count : i64 copies.len]
-      [index : i64 0]
-      [found : bool false]
-      (begin
-        (while (and (< index count) (not found))
-          (begin
-            (match (array-ref slots index)
-              [(reg.CompilerRegEdgeCopy.Copy
-                  found-from
-                  found-to
-                  found-src
-                  found-dst
-                  _
-                  _
-                  placement)
-                (if (and
-                  (= found-from from-label)
-                  (= found-to to-label)
-                  (= found-src src)
-                  (= found-dst dst)
-                  (match placement
-                    [(reg.CompilerRegEdgeCopyPlacement.PredEnd) want-pred-end]
-                    [(reg.CompilerRegEdgeCopyPlacement.SuccEntry)
-                      (not want-pred-end)]))
-                  (set! found true)
-                  unit)])
-            (set! index (+ index 1))))
-        found))))
-
-(cfg
-  test
   (define (compiler-reg-edge-copy-linear-function) : ir.CompilerIrFunction
     (irt.func
       "function @edge_copy_linear() -> i64 vars 1 {
@@ -7155,141 +6822,6 @@
        hot:
          return %0
        }")))
-
-(cfg
-  test
-  (define (compiler-reg-edge-copy-linear-ok?) : bool
-    (let
-      [func : ir.CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
-      [region : reg.CompilerRegLabelSeq
-        (reg.compiler-reg-label-seq-prepend
-          (ir.compiler-ir-label "hot")
-          (reg.compiler-reg-label-seq-empty))]
-      (match (compiler-reg-edge-copy-plan-for-region
-        (ir.compiler-ir-global-shared-view func)
-        region
-        0
-        10
-        (compiler-reg-i64-ty))
-        [(reg.CompilerRegEdgeCopyPlan.Plan copies)
-          (and
-            (= (reg.compiler-reg-edge-copy-list-count copies) 1)
-            (compiler-reg-edge-copy-list-has?
-              (reg.compiler-reg-global-shared-view copies)
-              (ir.compiler-ir-label "entry")
-              (ir.compiler-ir-label "hot")
-              0
-              10
-              true)
-            (match func
-              [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-                (match (reg.compiler-reg-edge-copy-apply blocks copies)
-                  [(reg.CompilerRegEdgeCopyRewrite.Rewrite rewritten)
-                    (let
-                      [entry-instrs : ir.CompilerIrInstrSeq
-                        (compiler-reg-block-instr-seq
-                          rewritten
-                          (ir.compiler-ir-label "entry"))]
-                      (compiler-reg-instr-seq-has-mov-var? entry-instrs 10 0))]
-                  [(reg.CompilerRegEdgeCopyRewrite.Refused _) false])]))]
-        [(reg.CompilerRegEdgeCopyPlan.Refused _) false]))))
-
-(cfg
-  test
-  (define (compiler-reg-edge-copy-backedge-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @edge_copy_backedge() -> i64 vars 1 {
-       entry:
-         %0 = mov 7 : i64
-         jump loop
-       loop:
-         branch false, body, exit
-       body:
-         store @sink, %0 : i64
-         jump loop
-       exit:
-         return %0
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-edge-copy-backedge-ok?) : bool
-    (let
-      [func : ir.CompilerIrFunction (compiler-reg-edge-copy-backedge-function)]
-      [region : reg.CompilerRegLabelSeq
-        (reg.compiler-reg-label-seq-prepend
-          (ir.compiler-ir-label "body")
-          (reg.compiler-reg-label-seq-empty))]
-      (match (compiler-reg-edge-copy-plan-for-region
-        (ir.compiler-ir-global-shared-view func)
-        region
-        0
-        10
-        (compiler-reg-i64-ty))
-        [(reg.CompilerRegEdgeCopyPlan.Plan copies)
-          (and
-            (= (reg.compiler-reg-edge-copy-list-count copies) 2)
-            (compiler-reg-edge-copy-list-has?
-              (reg.compiler-reg-global-shared-view copies)
-              (ir.compiler-ir-label "loop")
-              (ir.compiler-ir-label "body")
-              0
-              10
-              false)
-            (compiler-reg-edge-copy-list-has?
-              (reg.compiler-reg-global-shared-view copies)
-              (ir.compiler-ir-label "body")
-              (ir.compiler-ir-label "loop")
-              10
-              0
-              true)
-            (match func
-              [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-                (match (reg.compiler-reg-edge-copy-apply blocks copies)
-                  [(reg.CompilerRegEdgeCopyRewrite.Rewrite rewritten)
-                    (let
-                      [body : ir.CompilerIrInstrSeq
-                        (compiler-reg-block-instr-seq
-                          rewritten
-                          (ir.compiler-ir-label "body"))]
-                      (and
-                        (compiler-reg-instr-seq-has-mov-var? body 10 0)
-                        (compiler-reg-instr-seq-has-mov-var? body 0 10)))]
-                  [(reg.CompilerRegEdgeCopyRewrite.Refused _) false])]))]
-        [(reg.CompilerRegEdgeCopyPlan.Refused _) false]))))
-
-(cfg
-  test
-  (define (compiler-reg-edge-copy-critical-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @edge_copy_critical() -> i64 vars 1 {
-       entry:
-         %0 = mov 7 : i64
-         branch false, hot, cold
-       other:
-         jump hot
-       hot:
-         return %0
-       cold:
-         return 0
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-edge-copy-critical-refusal-ok?) : bool
-    (let
-      [region : reg.CompilerRegLabelSeq
-        (reg.compiler-reg-label-seq-prepend
-          (ir.compiler-ir-label "hot")
-          (reg.compiler-reg-label-seq-empty))]
-      (match (compiler-reg-edge-copy-plan-for-region
-        (compiler-reg-edge-copy-critical-function)
-        region
-        0
-        10
-        (compiler-reg-i64-ty))
-        [(reg.CompilerRegEdgeCopyPlan.Plan _) false]
-        [(reg.CompilerRegEdgeCopyPlan.Refused _) true]))))
 
 (cfg
   test
@@ -7309,121 +6841,6 @@
        exit:
          return 0
        }")))
-
-(cfg
-  test
-  (define (compiler-reg-loop-split-clobber-scan-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @loop_split_clobber_scan() -> i64 vars 5 {
-       loop:
-         %0 = mov 7 : i64
-         %1 = mov 3 : i64
-         %2 = shl %0, %1 : i64
-         %3 = div %0, %1 : i64
-         %4 = mul %0, %1 : i64
-         jump loop
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-loop-split-rcx-rdx-candidates-ok?) : bool
-    (let
-      [safe : reg.CompilerRegIdSeq
-        (reg.compiler-reg-loop-split-candidate-regs true true true)]
-      [unsafe : reg.CompilerRegIdSeq
-        (reg.compiler-reg-loop-split-candidate-regs true false false)]
-      [call-region : reg.CompilerRegIdSeq
-        (reg.compiler-reg-loop-split-candidate-regs false true true)]
-      (and
-        (reg.compiler-reg-id-seq-contains?
-          (reg.compiler-reg-global-shared-view safe)
-          cabi.compiler-reg-id-rcx)
-        (reg.compiler-reg-id-seq-contains? safe cabi.compiler-reg-id-rdx)
-        (not
-          (reg.compiler-reg-id-seq-contains?
-            (reg.compiler-reg-global-shared-view unsafe)
-            cabi.compiler-reg-id-rcx))
-        (not
-          (reg.compiler-reg-id-seq-contains?
-            (reg.compiler-reg-global-shared-view unsafe)
-            cabi.compiler-reg-id-rdx))
-        (reg.compiler-reg-id-seq-contains?
-          (reg.compiler-reg-global-shared-view unsafe)
-          cabi.compiler-reg-id-r8)
-        (reg.compiler-reg-id-seq-contains? unsafe cabi.compiler-reg-id-rdi)
-        (not
-          (reg.compiler-reg-id-seq-contains?
-            (reg.compiler-reg-global-shared-view call-region)
-            cabi.compiler-reg-id-r8))
-        (not
-          (reg.compiler-reg-id-seq-contains?
-            (reg.compiler-reg-global-shared-view call-region)
-            cabi.compiler-reg-id-rcx))
-        (not
-          (reg.compiler-reg-id-seq-contains?
-            call-region
-            cabi.compiler-reg-id-rdx))))))
-
-(cfg
-  test
-  (define (compiler-reg-loop-split-fixed-clobber-scan-ok?) : bool
-    (let
-      [func : ir.CompilerIrFunction
-        (compiler-reg-loop-split-clobber-scan-function)]
-      [full-window : reg.CompilerRegIdSeq
-        (reg.compiler-reg-loop-split-candidate-regs
-          true
-          (reg.compiler-reg-loop-split-region-rcx-safe?
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (ir.compiler-ir-global-shared-view func)
-            0
-            12)
-          (reg.compiler-reg-loop-split-region-rdx-safe?
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (ir.compiler-ir-global-shared-view func)
-            0
-            12))]
-      (and
-        ;; Point 4 is the variable shift; inclusive-start makes [4,6) unsafe.
-        (reg.compiler-reg-loop-split-region-crosses-kind?
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-global-shared-view func)
-          2
-          4
-          6)
-        ;; Points 6 and 8 are the div and mul %rdx fixed-use sites.
-        (reg.compiler-reg-loop-split-region-crosses-kind?
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-global-shared-view func)
-          4
-          6
-          8)
-        (reg.compiler-reg-loop-split-region-crosses-kind?
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-global-shared-view func)
-          4
-          8
-          10)
-        ;; The half-open end still excludes a clobber exactly at end.
-        (not
-          (reg.compiler-reg-loop-split-region-crosses-kind?
-            (ast.ast-node-pool-reader-type-segment-bases)
-            func
-            2
-            0
-            4))
-        (not
-          (reg.compiler-reg-id-seq-contains?
-            (reg.compiler-reg-global-shared-view full-window)
-            cabi.compiler-reg-id-rcx))
-        (not
-          (reg.compiler-reg-id-seq-contains?
-            (reg.compiler-reg-global-shared-view full-window)
-            cabi.compiler-reg-id-rdx))
-        (reg.compiler-reg-id-seq-contains?
-          (reg.compiler-reg-global-shared-view full-window)
-          cabi.compiler-reg-id-r8)
-        (reg.compiler-reg-id-seq-contains? full-window cabi.compiler-reg-id-rdi)))))
 
 (cfg
   test
@@ -7751,37 +7168,16 @@
         (profile_state.compiler-profile-state-new)]
       [metrics : profile_state.CompilerProfileMetrics
         (profile_state.compiler-profile-state-metrics profile)]
-      [region : reg.CompilerRegLabelSeq
-        (reg.compiler-reg-label-seq-prepend
-          (ir.compiler-ir-label "hot")
-          (reg.compiler-reg-label-seq-empty))]
       (begin
         (reg.compiler-reg-liveness-census-reset!
           (owned_view.compiler-owned-shared-view metrics))
         (let
-          [handle : reg.CompilerRegLivenessHandle
+          [_handle : reg.CompilerRegLivenessHandle
             (reg.compiler-reg-liveness-handle-make
               func
               true
               (owned_view.compiler-owned-shared-view metrics))]
-          [liveness : live.CompilerFunctionLiveness handle.baseline]
           (and
-            (match (reg.compiler-reg-edge-copy-plan-for-region-with-liveness
-              (live.compiler-live-shared-view liveness)
-              (reg.compiler-reg-global-shared-view region)
-              0
-              10
-              (compiler-reg-i64-ty))
-              [(reg.CompilerRegEdgeCopyPlan.Plan _) true]
-              [(reg.CompilerRegEdgeCopyPlan.Refused _) false])
-            (match (reg.compiler-reg-edge-copy-plan-for-region-with-liveness
-              liveness
-              region
-              0
-              11
-              (compiler-reg-i64-ty))
-              [(reg.CompilerRegEdgeCopyPlan.Plan _) true]
-              [(reg.CompilerRegEdgeCopyPlan.Refused _) false])
             (=
               (compiler-reg-liveness-census-baseline-count
                 (owned_view.compiler-owned-shared-view metrics))
@@ -8473,17 +7869,11 @@
 
 (cfg
   test
-  (define (compiler-reg-dense-id-label-seqs-ok?) : bool
+  (define (compiler-reg-dense-id-seqs-ok?) : bool
     (let
       [ids : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-with-capacity 4)]
       [id-snapshot : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-empty)]
       [id-prepended : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-empty)]
-      [labels : reg.CompilerRegLabelSeq
-        (reg.compiler-reg-label-seq-with-capacity 4)]
-      [label-snapshot : reg.CompilerRegLabelSeq
-        (reg.compiler-reg-label-seq-empty)]
-      [entry-label : i64 (ir.compiler-ir-label "dense_seq_entry")]
-      [body-label : i64 (ir.compiler-ir-label "dense_seq_body")]
       (begin
         (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r12))
         (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r13))
@@ -8496,10 +7886,6 @@
           (reg.compiler-reg-id-seq-prepend
             cabi.compiler-reg-id-rbx
             (reg.compiler-reg-global-shared-view id-snapshot)))
-        (set! labels (reg.compiler-reg-label-seq-push labels entry-label))
-        (set! labels (reg.compiler-reg-label-seq-push labels body-label))
-        (set! label-snapshot (clone labels))
-        (set! labels (reg.compiler-reg-label-seq-push labels entry-label))
         (and
           (= (reg.compiler-reg-id-seq-count id-snapshot) 2)
           (=
@@ -8521,21 +7907,15 @@
             cabi.compiler-reg-id-r12)
           (=
             (reg.compiler-reg-id-seq-ref id-prepended 2)
-            cabi.compiler-reg-id-r13)
-          (= (reg.compiler-reg-label-seq-count label-snapshot) 2)
-          (= (reg.compiler-reg-label-seq-ref label-snapshot 0) entry-label)
-          (= (reg.compiler-reg-label-seq-ref label-snapshot 1) body-label)
-          (= (reg.compiler-reg-label-seq-count labels) 3)
-          (= (reg.compiler-reg-label-seq-ref labels 2) entry-label)
-          (compiler-reg-label-seq-contains? labels body-label))))))
+            cabi.compiler-reg-id-r13))))))
 
 (cfg
   test
   (test
-    regalloc-dense-register-and-label-sequences
+    regalloc-dense-register-sequences
     (test.assert-true
-      (compiler-reg-dense-id-label-seqs-ok?)
-      "dense register and label sequences preserve snapshots, order, and duplicates")))
+      (compiler-reg-dense-id-seqs-ok?)
+      "dense register sequences preserve snapshots, order, and duplicates")))
 
 (cfg
   test
@@ -13703,12 +13083,18 @@
       (compiler-reg-sret-color-case true false false true))
     "sret calls reuse disjoint ranges; ordinary, derived and overlapping uses do not"))
 
+(define (compiler-reg-plan-function-stack-only [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
+  (reg.compiler-reg-plan-function-stack-only-with-representations-and-metrics
+    func
+    (ir.compiler-ir-representation-index-empty)
+    (reg.compiler-reg-profile-metrics-new)))
+
 (define (compiler-reg-stack-only-storage-branch-ok?) : bool
   (let
     [func : ir.CompilerIrFunction
       (compiler-reg-stack-only-storage-branch-function)]
     [plan : reg.CompilerRegPlan
-      (reg.compiler-reg-plan-function-stack-only (clone func))]
+      (compiler-reg-plan-function-stack-only (clone func))]
     [assignment-count : i64
       (reg.compiler-reg-assignment-count
         (reg.compiler-reg-plan-assignments
@@ -13752,7 +13138,7 @@
     [func : ir.CompilerIrFunction
       (compiler-reg-stack-only-storage-escape-function)]
     [plan : reg.CompilerRegPlan
-      (reg.compiler-reg-plan-function-stack-only (clone func))]
+      (compiler-reg-plan-function-stack-only (clone func))]
     [assignment-count : i64
       (reg.compiler-reg-assignment-count
         (reg.compiler-reg-plan-assignments
@@ -14363,113 +13749,6 @@
       (= (compiler-reg-loop-nest-span-hi rotated 2) (- 0 1))
       (= (compiler-reg-loop-nest-span-hi rotated 4) (- 0 1)))))
 
-;; entry / body / latch / header / other / exit. The rescue's motivating case
-;; under rotation: `header` is laid out BELOW the body and latch it heads, and
-;; `entry` reaches it over a CRITICAL edge (entry has two successors, header
-;; has two predecessors), which is exactly the shape that cannot receive a
-;; once-per-loop INTO copy without a dedicated preheader.
-;;
-;; The index range cannot find that header: it records a back edge only from a
-;; source at or after the target, and every edge into block 3 comes from above
-;; it, so loop-ends[3] stays -1 and block 1 is read as the header of [1..3]
-;; instead -- a block with no out-of-loop predecessor at all. Nothing is
-;; spliced and the rescue is refused. As a member set the loop is
-;; {header, body, latch}, entered only through `entry`, and the preheader goes
-;; in where it belongs.
-(define (compiler-reg-preheader-rotated-blocks) : ir.CompilerIrBlockList
-  (irt.blocks
-    "entry:
-       branch false, header, other
-     body:
-       jump latch
-     latch:
-       jump header
-     header:
-       branch false, body, exit
-     other:
-       jump exit
-     exit:
-       return"))
-
-(define (compiler-reg-preheader-label-at
-  [blocks : ir.CompilerIrBlockList]
-  [index : i64]) : i64
-  (let
-    [seq : ir.CompilerIrBlockSeq
-      (live.compiler-live-ir-block-list-to-seq blocks)]
-    (if (or (< index 0) (>= index (ir.compiler-ir-block-seq-count seq)))
-      (ir.compiler-ir-label-none)
-      (match (ir.compiler-ir-block-seq-ref seq index)
-        [(ir.CompilerIrBlock.Block label _) label]))))
-
-(define (compiler-reg-preheader-succ-has?
-  [blocks : ir.CompilerIrBlockList]
-  [index : i64]
-  [label : i64]) : bool
-  (let
-    [seq : ir.CompilerIrBlockSeq
-      (live.compiler-live-ir-block-list-to-seq blocks)]
-    (if (or (< index 0) (>= index (ir.compiler-ir-block-seq-count seq)))
-      false
-      (live.compiler-live-label-set-contains?
-        (live.compiler-live-block-successors
-          (ir.compiler-ir-block-seq-ref seq index))
-        label))))
-
-(define (compiler-reg-preheader-rotated-splice-ok?) : bool
-  (let
-    [blocks : ir.CompilerIrBlockList (compiler-reg-preheader-rotated-blocks)]
-    [spliced : ir.CompilerIrBlockList
-      (reg.compiler-reg-loop-split-splice-preheader
-        (reg.compiler-reg-global-shared-view blocks)
-        (ir.compiler-ir-label "header"))]
-    ;; Asked a second time, the splice finds the preheader it already made and
-    ;; leaves the function alone.
-    [again : ir.CompilerIrBlockList
-      (reg.compiler-reg-loop-split-splice-preheader
-        (reg.compiler-reg-global-shared-view spliced)
-        (ir.compiler-ir-label "header"))]
-    ;; And asked about the block the RANGE encoding would have called a header
-    ;; of the sunk-cold shape, there is no loop to give a preheader to.
-    [sunk : ir.CompilerIrBlockList
-      (reg.compiler-reg-loop-split-splice-preheader
-        (compiler-reg-loop-nest-sunk-cold-blocks)
-        (ir.compiler-ir-label "join"))]
-    (and
-      (= (ir.compiler-ir-block-list-count blocks) 6)
-      (=
-        (ir.compiler-ir-block-list-count
-          (reg.compiler-reg-global-shared-view spliced))
-        7)
-      ;; The new block sits immediately before the header it serves.
-      (=
-        (compiler-reg-preheader-label-at
-          (reg.compiler-reg-global-shared-view spliced)
-          3)
-        (ir.compiler-ir-label "header.preheader"))
-      (=
-        (compiler-reg-preheader-label-at
-          (reg.compiler-reg-global-shared-view spliced)
-          4)
-        (ir.compiler-ir-label "header"))
-      ;; `entry`'s critical edge now lands on the preheader, and the latch's
-      ;; back edge -- inside the loop -- is left pointing at the header.
-      (compiler-reg-preheader-succ-has?
-        (reg.compiler-reg-global-shared-view spliced)
-        0
-        (ir.compiler-ir-label "header.preheader"))
-      (not
-        (compiler-reg-preheader-succ-has?
-          (reg.compiler-reg-global-shared-view spliced)
-          0
-          (ir.compiler-ir-label "header")))
-      (compiler-reg-preheader-succ-has?
-        spliced
-        2
-        (ir.compiler-ir-label "header"))
-      (= (ir.compiler-ir-block-list-count again) 7)
-      (= (ir.compiler-ir-block-list-count sunk) 4))))
-
 ;; The span array owns no state across calls either: the same block list asked
 ;; twice gives the same spans, and another shape asked in between must not leak
 ;; a stamp generation into the second answer.
@@ -14589,7 +13868,6 @@
       (compiler-reg-loop-nest-regeneration-ok?)
       (compiler-reg-loop-nest-spans-ok?)
       (compiler-reg-loop-nest-spans-deterministic-ok?)
-      (compiler-reg-preheader-rotated-splice-ok?)
       (compiler-reg-live-in-call-ok?)
       (compiler-reg-program-maps-suppression-ok?)
       (cfg test (compiler-reg-low-bit-index32-powers-ok? 0 1) true)
@@ -14715,12 +13993,7 @@
       (cfg test (compiler-reg-evict-coalesced-victim-refused?) true)
       (cfg test (compiler-reg-evict-sole-occupant-ok?) true)
       (cfg test (compiler-reg-evict-class-mention-ok?) true)
-      (cfg test (compiler-reg-evict-rewrite-shape-ok?) true)
-      (cfg test (compiler-reg-edge-copy-linear-ok?) true)
-      (cfg test (compiler-reg-edge-copy-backedge-ok?) true)
-      (cfg test (compiler-reg-edge-copy-critical-refusal-ok?) true)
-      (cfg test (compiler-reg-loop-split-rcx-rdx-candidates-ok?) true)
-      (cfg test (compiler-reg-loop-split-fixed-clobber-scan-ok?) true))
+      (cfg test (compiler-reg-evict-rewrite-shape-ok?) true))
     true))
 
 (define (compiler-regalloc-storage-self-test?) : bool
@@ -14730,8 +14003,6 @@
       (cfg test (compiler-reg-invariant-word-load-admitted-ok?) true)
       (cfg test (compiler-reg-invariant-field-store-refused-ok?) true)
       (cfg test (compiler-reg-invariant-call-refused-ok?) true)
-      (cfg test (compiler-reg-invariant-recipe-ok?) true)
-      (cfg test (compiler-reg-invariant-base-availability-ok?) true)
       (cfg test (compiler-reg-remat-recompute-classifier-ok?) true)
       (cfg test (compiler-reg-remat-literal-assignment-ok?) true)
       (cfg test (compiler-reg-remat-frozen-global-ok?) true)
@@ -15554,8 +14825,30 @@
       (set! out (reg.compiler-reg-id-seq-push out cabi.compiler-reg-id-rdx))
       out)))
 
+(define (compiler-reg-caller-saved-integer-registers-from-abi
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [idx : i64]) : reg.CompilerRegIdSeq
+  (let
+    [count : i64 (cabi.compiler-abi-caller-saved-gp-register-count target-abi)]
+    [index : i64 idx]
+    [out : reg.CompilerRegIdSeq
+      (reg.compiler-reg-id-seq-with-capacity
+        (if (< idx count)
+          (- count idx)
+          0))]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (reg.compiler-reg-id-seq-push
+              out
+              (cabi.compiler-abi-caller-saved-gp-register-id target-abi index)))
+          (set! index (+ index 1))))
+      out)))
+
 (define (compiler-reg-sysv-caller-saved-integer-registers) : reg.CompilerRegIdSeq
-  (reg.compiler-reg-caller-saved-integer-registers-from-abi
+  (compiler-reg-caller-saved-integer-registers-from-abi
     cabi.CompilerRegTargetAbi.Linux
     0))
 
@@ -15565,7 +14858,7 @@
     0))
 
 (define (compiler-reg-win64-caller-saved-integer-registers) : reg.CompilerRegIdSeq
-  (reg.compiler-reg-caller-saved-integer-registers-from-abi
+  (compiler-reg-caller-saved-integer-registers-from-abi
     cabi.CompilerRegTargetAbi.Windows
     0))
 
@@ -16317,38 +15610,6 @@
     (begin
       (compiler-reg-foldable-rebate-blocks! (&mut rebates) blocks weights 0)
       rebates)))
-
-(define (compiler-reg-label-seq-contains?
-  [labels : reg.CompilerRegLabelSeq]
-  [want : i64]) : bool
-  (let
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and
-        (< index (reg.compiler-reg-label-seq-count labels))
-        (not found))
-        (begin
-          (if (= (reg.compiler-reg-label-seq-ref labels index) want)
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
-
-(define (compiler-reg-edge-copy-plan-for-region-members
-  [func : ir.CompilerIrFunction]
-  [region-labels : reg.CompilerRegLabelSeq]
-  [stack-var : i64]
-  [region-var : i64]
-  [ty : ast.AstType]
-  [members : live.CompilerLiveI64Set]) : reg.CompilerRegEdgeCopyPlan
-  (reg.compiler-reg-edge-copy-plan-for-region-members-with-liveness
-    (live.compiler-live-analyze-function func)
-    region-labels
-    stack-var
-    region-var
-    ty
-    members))
 
 (define (compiler-reg-cold-call-rewrite-function
   [type-segment-bases : i64]

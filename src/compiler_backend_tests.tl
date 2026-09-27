@@ -24838,42 +24838,6 @@ g:
       "    cvttss2siq %xmm2, %r12\n"
       "")))
 
-(define (compiler-backend-float-to-u64-scratch-plan-ok?) : bool
-  (let
-    [direct : regalloc.CompilerRegAssignmentTable
-      (reg-homes "%0=%xmm2 %1=%r12")]
-    [spilled : regalloc.CompilerRegAssignmentTable
-      (reg-homes "%0=spill:-8 %1=spill:-16")]
-    (and
-      (regalloc.compiler-reg-scratch-cast-xmm-needed?
-        direct
-        1
-        (ir.CompilerIrValue.Var 0)
-        (ast.AstType.F64)
-        (ast.AstType.U64))
-      (=
-        (regalloc.compiler-reg-scratch-cast-gp-count
-          direct
-          1
-          (ir.CompilerIrValue.Var 0)
-          (ast.AstType.F64)
-          (ast.AstType.U64))
-        0)
-      (regalloc.compiler-reg-scratch-cast-xmm-needed?
-        spilled
-        1
-        (ir.CompilerIrValue.Var 0)
-        (ast.AstType.F32)
-        (ast.AstType.U64))
-      (=
-        (regalloc.compiler-reg-scratch-cast-gp-count
-          spilled
-          1
-          (ir.CompilerIrValue.Var 0)
-          (ast.AstType.F32)
-          (ast.AstType.U64))
-        1))))
-
 (define (compiler-backend-float-to-u64-threshold-collection-ok?) : bool
   (let
     [f64 : backend.CompilerBackendProgramCollections
@@ -37023,7 +36987,6 @@ b_keep:
         (compiler-backend-direct-float-to-int-cast-home-ok?)
         (compiler-backend-spill-float-to-int-cast-home-ok?)
         (compiler-backend-float-to-u64-cast-homes-ok?)
-        (compiler-backend-float-to-u64-scratch-plan-ok?)
         (compiler-backend-float-to-u64-threshold-collection-ok?)
         (compiler-backend-spill-int-cast-home-ok?)
         (compiler-backend-implicit-main-ok?))

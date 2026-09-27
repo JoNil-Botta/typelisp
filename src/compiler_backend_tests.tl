@@ -7441,14 +7441,8 @@
           bases
           (owned_view.compiler-owned-shared-view memory24))
         24)
-      (backend.compiler-backend-group-type?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view group0))
-      (backend.compiler-backend-group-type?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view group2))
+      (backend.compiler-backend-group-type? bases index group0)
+      (backend.compiler-backend-group-type? bases index group2)
       (=
         (backend.compiler-backend-group-word-count
           bases
@@ -7565,18 +7559,9 @@
           (owned_view.compiler-owned-shared-view type2))
         2)
       (= (backend.compiler-backend-group-word-class-mask bases index type3) 3)
-      (backend.compiler-backend-group-word-sse?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view type1)
-        0)
+      (backend.compiler-backend-group-word-sse? bases index type1 0)
       (not (backend.compiler-backend-group-word-sse? bases index type1 1))
-      (not
-        (backend.compiler-backend-group-word-sse?
-          bases
-          index
-          (owned_view.compiler-owned-shared-view type2)
-          0))
+      (not (backend.compiler-backend-group-word-sse? bases index type2 0))
       (backend.compiler-backend-group-word-sse? bases index type2 1))))
 
 (define (compiler-backend-private-memory-transport-ok?) : bool
@@ -7854,26 +7839,10 @@
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     (and
-      (=
-        (backend.compiler-backend-type-size
-          bases
-          (owned_view.compiler-owned-shared-view ref))
-        16)
-      (=
-        (backend.compiler-backend-type-size
-          bases
-          (owned_view.compiler-owned-shared-view mut-ref))
-        16)
-      (=
-        (backend.compiler-backend-type-size
-          bases
-          (owned_view.compiler-owned-shared-view ordinary-ref))
-        8)
-      (=
-        (backend.compiler-backend-type-size
-          bases
-          (owned_view.compiler-owned-shared-view bare-slice))
-        0)
+      (= (backend.compiler-backend-type-size bases ref) 16)
+      (= (backend.compiler-backend-type-size bases mut-ref) 16)
+      (= (backend.compiler-backend-type-size bases ordinary-ref) 8)
+      (= (backend.compiler-backend-type-size bases bare-slice) 0)
       (=
         (backend.compiler-backend-group-word-count
           bases
@@ -7898,19 +7867,9 @@
           index
           (owned_view.compiler-owned-shared-view bare-slice))
         1)
-      (backend.compiler-backend-group-type?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view ref))
-      (backend.compiler-backend-group-type?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view mut-ref))
-      (not
-        (backend.compiler-backend-group-type?
-          bases
-          index
-          (owned_view.compiler-owned-shared-view ordinary-ref)))
+      (backend.compiler-backend-group-type? bases index ref)
+      (backend.compiler-backend-group-type? bases index mut-ref)
+      (not (backend.compiler-backend-group-type? bases index ordinary-ref))
       (=
         (backend.compiler-backend-group-word-class-mask
           bases
@@ -7970,16 +7929,17 @@
         (ci.intern-generated-canonical-name "arena-brand/test#1"))
       (and
         (=
-          (backend.compiler-backend-type-size
-            0
-            (ast.AstType.Struct cbi.compiler-builtin-id-arena-type))
+          (let
+            [ty (ast.AstType.Struct cbi.compiler-builtin-id-arena-type)]
+            (backend.compiler-backend-type-size 0 ty))
           8)
         (=
-          (backend.compiler-backend-type-size
-            0
-            (ast.AstType.StructArgs
-              cbi.compiler-builtin-id-arena-type
-              (box lifetimes)))
+          (let
+            [ty
+              (ast.AstType.StructArgs
+                cbi.compiler-builtin-id-arena-type
+                (box lifetimes))]
+            (backend.compiler-backend-type-size 0 ty))
           8)))))
 
 ;; Emitted-source witness for the internal borrowed-slice ABI.  A borrowed
@@ -8606,10 +8566,13 @@
           (ast.AstType.String))
         1)
       (not
-        (backend.compiler-backend-group-type?
-          (ast.ast-node-pool-reader-type-segment-bases)
-          program-index
-          (ast.AstType.String)))
+        (let
+          [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+          [ty (ast.AstType.String)]
+          (backend.compiler-backend-group-type?
+            type-segment-bases
+            program-index
+            ty)))
       (asm-ok?
         (backend.compiler-backend-emit-program-for-target
           (owned_view.compiler-owned-shared-view program)
@@ -23343,11 +23306,17 @@ g:
         false
         (begin
           ;; wrong scale: recorded scale is 8 (i64), consume with u8.
-          (backend.compiler-backend-gep-fold-next!
-            (backend.compiler-backend-state-function-state backend-state)
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (ir.CompilerIrValue.Var 1)
-            (ast.AstType.U8))
+          (let
+            [function-state
+              (backend.compiler-backend-state-function-state backend-state)]
+            [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+            [offset (ir.CompilerIrValue.Var 1)]
+            [elem-ty (ast.AstType.U8)]
+            (backend.compiler-backend-gep-fold-next!
+              function-state
+              type-segment-bases
+              offset
+              elem-ty))
           (backend.compiler-backend-gep-fold-drift?
             (backend.compiler-backend-state-function-state backend-state))))]
     (begin
@@ -38988,23 +38957,20 @@ b_keep:
               -1)
             ok)))]
     [a-drift-result : i64
-      (backend.compiler-backend-gep-fold-next!
-        function-a
-        0
-        (ir.CompilerIrValue.I64 0)
-        (ast.AstType.I64))]
+      (let
+        [offset (ir.CompilerIrValue.I64 0)]
+        [elem-ty (ast.AstType.I64)]
+        (backend.compiler-backend-gep-fold-next! function-a 0 offset elem-ty))]
     [b-folded-result : i64
-      (backend.compiler-backend-gep-fold-next!
-        function-b
-        0
-        (ir.CompilerIrValue.Var 7)
-        (ast.AstType.I64))]
+      (let
+        [offset (ir.CompilerIrValue.Var 7)]
+        [elem-ty (ast.AstType.I64)]
+        (backend.compiler-backend-gep-fold-next! function-b 0 offset elem-ty))]
     [b-unfolded-result : i64
-      (backend.compiler-backend-gep-fold-next!
-        function-b
-        0
-        (ir.CompilerIrValue.Var 8)
-        (ast.AstType.I64))]
+      (let
+        [offset (ir.CompilerIrValue.Var 8)]
+        [elem-ty (ast.AstType.I64)]
+        (backend.compiler-backend-gep-fold-next! function-b 0 offset elem-ty))]
     (and
       fallback-rax-override
       (compiler-backend-test-location-register?
@@ -40101,14 +40067,18 @@ b_keep:
           backend.compiler-backend-function-bool-addr-of-forwarding-enabled
           true))]
     [home : String
-      (backend.compiler-backend-value-register-home
-        backend-state
-        (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment
-            2
-            (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
-          (regalloc.compiler-reg-assignment-table-empty))
-        (ir.CompilerIrValue.Var 2))]
+      (let
+        [assignments
+          (regalloc.compiler-reg-assignments-prepend
+            (regalloc.CompilerRegAssignment
+              2
+              (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
+            (regalloc.compiler-reg-assignment-table-empty))]
+        [value (ir.CompilerIrValue.Var 2)]
+        (backend.compiler-backend-value-register-home
+          backend-state
+          assignments
+          value))]
     (string.eq home "")))
 
 (define (scratch-scavenge-ctx-vars

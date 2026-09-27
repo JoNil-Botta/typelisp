@@ -1544,57 +1544,81 @@
 
 ;: The var `instr` defines, or -1. Var ids are nonnegative.
 (define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(CompilerIrInstr.Mov dst _ _) dst]
-    [(CompilerIrInstr.Alloc dst _) dst]
-    [(CompilerIrInstr.AddrOf dst _) dst]
-    [(CompilerIrInstr.Gep dst _ _ _) dst]
-    [(CompilerIrInstr.Load dst _ _) dst]
+  (match instr
+    [(CompilerIrInstr.Mov dst _ _) (deref dst)]
+    [(CompilerIrInstr.Alloc dst _) (deref dst)]
+    [(CompilerIrInstr.AddrOf dst _) (deref dst)]
+    [(CompilerIrInstr.Gep dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.Load dst _ _) (deref dst)]
     [(CompilerIrInstr.StoreOwned _ _ _) -1]
     [(CompilerIrInstr.StorePtr _ _ _) -1]
     [(CompilerIrInstr.CopyBytes _ _ _) -1]
     [(CompilerIrInstr.BoundsCheck _ _ _) -1]
-    [(CompilerIrInstr.Cast dst _ _ _) dst]
-    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
-    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
-    [(CompilerIrInstr.UnOp dst _ _ _) dst]
-    [(CompilerIrInstr.LaneId dst _ _) dst]
-    [(CompilerIrInstr.Splat dst _ _ _) dst]
+    [(CompilerIrInstr.Cast dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.Bitcast dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) (deref dst)]
+    [(CompilerIrInstr.UnOp dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.LaneId dst _ _) (deref dst)]
+    [(CompilerIrInstr.Splat dst _ _ _) (deref dst)]
     [(CompilerIrInstr.VectorBinOp payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
     [(CompilerIrInstr.VectorPrefix payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ _) (deref dst)]
     [(CompilerIrInstr.VectorCompare payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
-    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
-    [(CompilerIrInstr.MaskNot dst _ _) dst]
-    [(CompilerIrInstr.MaskReduce dst _ _ _) dst]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) (deref dst)]
+    [(CompilerIrInstr.MaskNot dst _ _) (deref dst)]
+    [(CompilerIrInstr.MaskReduce dst _ _ _) (deref dst)]
     [(CompilerIrInstr.Select payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
-    [(CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _) (deref dst)]
     [(CompilerIrInstr.VectorStore _) -1]
     [(CompilerIrInstr.PredicatedStore _) -1]
     [(CompilerIrInstr.PredicatedLoad payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
     [(CompilerIrInstr.GatherLoad payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
     [(CompilerIrInstr.VectorShuffle payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
-    [(CompilerIrInstr.TailMask dst _ _ _) dst]
-    [(CompilerIrInstr.EntryArgc dst) dst]
-    [(CompilerIrInstr.EntryArgv dst) dst]
-    [(CompilerIrInstr.EntryEnvp dst) dst]
-    [(CompilerIrInstr.CpuId dst _ _ _) dst]
-    [(CompilerIrInstr.Xgetbv dst _) dst]
-    [(CompilerIrInstr.Syscall dst _) dst]
-    [(CompilerIrInstr.Call dst _ _ _) dst]
-    [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
-    [(CompilerIrInstr.CallIndirectC dst _ _ _) dst]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
+    [(CompilerIrInstr.TailMask dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.EntryArgc dst) (deref dst)]
+    [(CompilerIrInstr.EntryArgv dst) (deref dst)]
+    [(CompilerIrInstr.EntryEnvp dst) (deref dst)]
+    [(CompilerIrInstr.CpuId dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.Xgetbv dst _) (deref dst)]
+    [(CompilerIrInstr.Syscall dst _) (deref dst)]
+    [(CompilerIrInstr.Call dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.CallIndirect dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.CallIndirectC dst _ _ _) (deref dst)]
     [(CompilerIrInstr.CallCAbiStoreResult _) -1]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult _) -1]
     [(CompilerIrInstr.SpmdCall payload-box)
-      (match (compiler-ir-box-field-shared-view payload-box result)
+      (match (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box result))
         [(CompilerIrSpmdCallResult.Unit) -1]
         [(CompilerIrSpmdCallResult.Value dst _ _) dst])]
     [(CompilerIrInstr.TailCall _ _ _) -1]
@@ -1603,9 +1627,9 @@
     [(CompilerIrInstr.Branch _ _ _) -1]
     [(CompilerIrInstr.TotalEnumBranch _ _ _) -1]
     [(CompilerIrInstr.Return _) -1]
-    [(CompilerIrInstr.Phi dst _ _) dst]
-    [(CompilerIrInstr.Pack dst _ _) dst]
-    [(CompilerIrInstr.Word dst _ _ _) dst]
+    [(CompilerIrInstr.Phi dst _ _) (deref dst)]
+    [(CompilerIrInstr.Pack dst _ _) (deref dst)]
+    [(CompilerIrInstr.Word dst _ _ _) (deref dst)]
     [(CompilerIrInstr.TailCallIndirect _ _ _) -1]
     [(CompilerIrInstr.Switch _ _ _ _) -1]
     [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) -1]))

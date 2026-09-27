@@ -208,8 +208,7 @@
 ;; consumer.
 (define (compiler-live-instr-ids-match-set? [instr : ir.CompilerIrInstr]) : bool
   (let
-    [uses : live.CompilerLiveI64Set
-      (live.compiler-live-instr-uses (clone instr))]
+    [uses : live.CompilerLiveI64Set (live.compiler-live-instr-uses instr)]
     [defs : live.CompilerLiveI64Set
       (live.compiler-live-instr-defs (clone instr))]
     [def-var : i64 (ir.compiler-ir-instr-dst instr)]
@@ -835,8 +834,7 @@
           [instr : ir.CompilerIrInstr
             (ir.compiler-ir-instr-seq-ref instrs cursor)]
           [instr-uses : live.CompilerLiveI64Set
-            (live.compiler-live-instr-uses
-              (live.compiler-live-shared-view instr))]
+            (live.compiler-live-instr-uses instr)]
           [instr-defs : live.CompilerLiveI64Set
             (if (< cursor phi-end)
               (live.compiler-live-set-empty)

@@ -992,14 +992,17 @@
 
 ;; The vars `instr` reads: its uses, Pack words and phi inputs included, and
 ;; AddrOf's storage var.
-(define (compiler-live-instr-uses [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
-  (match (compiler-live-shared-view instr)
-    [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
-    [_
-      (ir.compiler-ir-instr-fold-uses
-        instr
-        (compiler-live-set-empty)
-        compiler-live-use-vars-into)]))
+(define (compiler-live-instr-uses [instr : (& instr ir.CompilerIrInstr)]) : CompilerLiveI64Set
+  (let
+    [instr : ir.CompilerIrInstr
+      (owned_view.compiler-owned-reference-shared-view instr)]
+    (match (compiler-live-shared-view instr)
+      [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
+      [_
+        (ir.compiler-ir-instr-fold-uses
+          instr
+          (compiler-live-set-empty)
+          compiler-live-use-vars-into)])))
 
 ;; ---------------------------------------------------------------------------
 ;; Direct per-instruction var-id extraction.
@@ -1655,7 +1658,7 @@
                   (if edge-precise?
                     (compiler-live-instr-uses-nophi
                       (compiler-live-shared-view instr))
-                    (compiler-live-instr-uses (compiler-live-shared-view instr)))]
+                    (compiler-live-instr-uses instr))]
                 [instr-defs : CompilerLiveI64Set
                   (if (< index phi-end)
                     (compiler-live-set-empty)
@@ -2081,7 +2084,7 @@
                   (if edge-precise?
                     (compiler-live-instr-uses-nophi
                       (compiler-live-shared-view instr))
-                    (compiler-live-instr-uses (compiler-live-shared-view instr)))]
+                    (compiler-live-instr-uses instr))]
                 [instr-defs (compiler-live-instr-defs instr)]
                 (compiler-live-scratch-step!
                   (compiler-live-shared-view words)

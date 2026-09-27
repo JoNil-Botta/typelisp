@@ -4904,7 +4904,12 @@
         (begin
           (if (and
             (>= var 0)
-            (= (ir.compiler-ir-instr-dst (array-ref slots index)) var))
+            (=
+              (let
+                [instr
+                  (compiler-reg-global-array-element-shared-view slots index)]
+                (ir.compiler-ir-instr-dst instr))
+              var))
             (set! found true)
             unit)
           (set! index (+ index 1))))
@@ -4950,7 +4955,12 @@
         (begin
           (if (and
             (>= var 0)
-            (= (ir.compiler-ir-instr-dst (array-ref slots index)) var))
+            (=
+              (let
+                [instr
+                  (compiler-reg-global-array-element-shared-view slots index)]
+                (ir.compiler-ir-instr-dst instr))
+              var))
             (set! found index)
             unit)
           (set! index (+ index 1))))
@@ -4976,9 +4986,7 @@
       (while (and (< index count) clean)
         (begin
           (if (let
-            [instr-uses
-              (live.compiler-live-instr-uses
-                (compiler-reg-global-array-element-shared-view slots index))]
+            [instr-uses (live.compiler-live-instr-uses (array-ref slots index))]
             (live.compiler-live-set-contains? instr-uses var))
             (set! clean false)
             unit)
@@ -8387,7 +8395,10 @@
         (begin
           (compiler-reg-count-def!
             counts
-            (ir.compiler-ir-instr-dst (array-ref slots index)))
+            (let
+              [instr
+                (compiler-reg-global-array-element-shared-view slots index)]
+              (ir.compiler-ir-instr-dst instr)))
           (set! index (+ index 1))))
       unit)))
 
@@ -8766,7 +8777,11 @@
       (while (< index count)
         (begin
           (let
-            [v : i64 (ir.compiler-ir-instr-dst (array-ref slots index))]
+            [v : i64
+              (let
+                [instr
+                  (compiler-reg-global-array-element-shared-view slots index)]
+                (ir.compiler-ir-instr-dst instr))]
             (if (and (>= v 0) (< v (array-length cursor)))
               (let
                 [slot : i64 (array-ref cursor v)]
@@ -12112,9 +12127,7 @@
     (if (< id-count 0)
       (begin
         (let
-          [instr-uses
-            (live.compiler-live-instr-uses
-              (compiler-reg-global-shared-view instr))]
+          [instr-uses (live.compiler-live-instr-uses instr)]
           (compiler-reg-ref-counts-add-set-weighted! counts instr-uses weight))
         (let
           [instr-defs (live.compiler-live-instr-defs instr)]
@@ -12208,8 +12221,7 @@
       (begin
         (compiler-reg-ref-mark-set-words!
           marks
-          (live.compiler-live-instr-uses
-            (compiler-reg-global-shared-view instr))
+          (live.compiler-live-instr-uses instr)
           0)
         (compiler-reg-ref-mark-set-words!
           marks
@@ -13433,9 +13445,7 @@
     (begin
       (if (< id-count 0)
         (let
-          [uses : live.CompilerLiveI64Set
-            (live.compiler-live-instr-uses
-              (compiler-reg-global-shared-view instr))]
+          [uses : live.CompilerLiveI64Set (live.compiler-live-instr-uses instr)]
           [defs : live.CompilerLiveI64Set
             (live.compiler-live-instr-defs
               (compiler-reg-global-shared-view instr))]
@@ -16688,8 +16698,7 @@
                       (if (< id-count 0)
                         (compiler-reg-call-hole-max-weight-set!
                           maxw
-                          (live.compiler-live-instr-uses
-                            (compiler-reg-global-shared-view instr))
+                          (live.compiler-live-instr-uses instr)
                           weight)
                         (compiler-reg-call-hole-max-weight-ids!
                           maxw
@@ -19042,8 +19051,7 @@
                 (begin
                   (if (< id-count 0)
                     (compiler-reg-loop-park-note-resident-set!
-                      (live.compiler-live-instr-uses
-                        (compiler-reg-global-shared-view instr))
+                      (live.compiler-live-instr-uses instr)
                       vars
                       weight
                       stamp
@@ -21106,8 +21114,7 @@
                               (begin
                                 (if (< id-count 0)
                                   (compiler-reg-call-region-note-set!
-                                    (live.compiler-live-instr-uses
-                                      (compiler-reg-global-shared-view instr))
+                                    (live.compiler-live-instr-uses instr)
                                     false
                                     cand
                                     n
@@ -21439,8 +21446,7 @@
         (begin
           (if (< id-count 0)
             (compiler-reg-call-region-loop-note-set!
-              (live.compiler-live-instr-uses
-                (compiler-reg-global-shared-view instr))
+              (live.compiler-live-instr-uses instr)
               cand
               n
               sid
@@ -22156,8 +22162,7 @@
     (begin
       (if (< id-count 0)
         (compiler-reg-call-region-evict-mark-set!
-          (live.compiler-live-instr-uses
-            (compiler-reg-global-shared-view instr))
+          (live.compiler-live-instr-uses instr)
           n
           parents
           assignments
@@ -28922,8 +28927,7 @@
       (begin
         (compiler-reg-trace-depth-set!
           out
-          (live.compiler-live-instr-uses
-            (compiler-reg-global-shared-view instr))
+          (live.compiler-live-instr-uses instr)
           depth)
         (compiler-reg-trace-depth-set!
           out

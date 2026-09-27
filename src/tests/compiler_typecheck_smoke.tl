@@ -2847,16 +2847,18 @@
         cfgs
         pools)
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
-          (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
-            (tc_core.tc-global-shared-view state-a)
-            (tc_core.tc-global-shared-view prefix-cache-a)
-            job-state-a
-            (ast.ast-program decls)
-            (ast.ast-decl-path-list-with-modules paths modules)
-            (tc_core.tc-global-shared-view roots)
-            cfgs
-            "typecheck-generated-import-state-threading"
-            pools)]
+          (tc_api.typecheck-compiler-request
+            (tc_api.TypecheckRequest
+              (tc_core.tc-global-shared-view state-a)
+              (tc_core.tc-global-shared-view prefix-cache-a)
+              job-state-a
+              (ast.ast-program decls)
+              (ast.ast-decl-path-list-with-modules paths modules)
+              (tc_core.tc-global-shared-view roots)
+              cfgs
+              "typecheck-generated-import-state-threading"
+              pools
+              (ci.intern-compat-state-capture-active)))]
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -2867,18 +2869,20 @@
         "target/tc_state_controlled_failure.tl"
         "(define broken : i64 true)")
         [(parser.ResultAstProgramDiagnostic.Ok bad-program)
-          (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
-            (tc_core.tc-global-shared-view state-a)
-            (tc_core.tc-global-shared-view prefix-cache-a)
-            job-state-a
-            bad-program
-            (ast.ast-decl-root-path-cons
-              "target/tc_state_controlled_failure.tl"
-              (ast.ast-decl-path-list-new))
-            roots
-            cfgs
-            "typecheck-controlled-failure-state-threading"
-            pools)]
+          (tc_api.typecheck-compiler-request
+            (tc_api.TypecheckRequest
+              (tc_core.tc-global-shared-view state-a)
+              (tc_core.tc-global-shared-view prefix-cache-a)
+              job-state-a
+              bad-program
+              (ast.ast-decl-root-path-cons
+                "target/tc_state_controlled_failure.tl"
+                (ast.ast-decl-path-list-new))
+              roots
+              cfgs
+              "typecheck-controlled-failure-state-threading"
+              pools
+              (ci.intern-compat-state-capture-active)))]
         [(parser.ResultAstProgramDiagnostic.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -3038,16 +3042,18 @@
         cfgs
         (ast.ast-node-pool-context-shared-view (& pools)))
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
-          (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
-            load-state
-            (tc_core.tc-global-shared-view prefix-cache)
-            job-state
-            (ast.ast-program decls)
-            (ast.ast-decl-path-list-with-modules paths modules)
-            roots
-            cfgs
-            "typecheck-macro-transitive-dependency-state"
-            pools)]
+          (tc_api.typecheck-compiler-request
+            (tc_api.TypecheckRequest
+              load-state
+              (tc_core.tc-global-shared-view prefix-cache)
+              job-state
+              (ast.ast-program decls)
+              (ast.ast-decl-path-list-with-modules paths modules)
+              roots
+              cfgs
+              "typecheck-macro-transitive-dependency-state"
+              pools
+              (ci.intern-compat-state-capture-active)))]
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]

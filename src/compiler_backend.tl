@@ -4646,12 +4646,32 @@
               instr-entries.len)
             count)))]))
 
-(define (compiler-backend-apply-instr-diagnostic
-  [diag : compiler_diagnostic.CompilerDiagnostic]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : compiler_diagnostic.CompilerDiagnostic
-  (compiler_diagnostic.compiler-diagnostic-with-message
-    instr-diag
-    (compiler_diagnostic.compiler-diagnostic-message diag)))
+;; An emission error reported at the instruction (or function) being emitted.
+(define (compiler-backend-instr-error
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [message : String]) : ResultCompilerBackend
+  (ResultCompilerBackend.Err
+    (box
+      (compiler_diagnostic.compiler-diagnostic-with-message instr-diag message))))
+
+;; A callee's emission error, restated at the instruction being emitted.
+(define (compiler-backend-instr-error-from
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [diag : (Box compiler_diagnostic.CompilerDiagnostic)]) : ResultCompilerBackend
+  (let
+    [callee : compiler_diagnostic.CompilerDiagnostic (deref diag)]
+    (compiler-backend-instr-error
+      instr-diag
+      (compiler_diagnostic.compiler-diagnostic-message callee))))
+
+;; The emitter's result, with an error restated at the instruction being emitted.
+(defmacro (compiler-backend-with-instr-diagnostic
+  [result : Expr]
+  [instr-diag : Expr]) : Expr
+  `(match ,result
+    [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+    [(ResultCompilerBackend.Err message)
+      (compiler-backend-instr-error-from ,instr-diag message)]))
 
 (define (compiler-backend-mode-prologue [mode : CompilerBackendMode]) : String
   (match mode
@@ -4710,15 +4730,13 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [elem-ty : compiler_ast_types.AstType]
   [lanes : i64]) : ResultCompilerBackend
-  (ResultCompilerBackend.Err
-    (box
-      (compiler_diagnostic.compiler-diagnostic-with-message
-        instr-diag
-        (str_cat.str-cat
-          "backend: unsupported AVX2 vector shape "
-          (string.int->string lanes)
-          " x "
-          (compiler_ir_types.compiler-ir-type-name type-segment-bases elem-ty))))))
+  (compiler-backend-instr-error
+    instr-diag
+    (str_cat.str-cat
+      "backend: unsupported AVX2 vector shape "
+      (string.int->string lanes)
+      " x "
+      (compiler_ir_types.compiler-ir-type-name type-segment-bases elem-ty))))
 
 (define compiler-backend-xmm-family-xmm : (__tl_dyn-array String)
   (__tl_make-array
@@ -5645,23 +5663,11 @@
                                   dst-reg
                                   backend-state)))))]
                       [(ResultBackendReg.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])])]
+                        (compiler-backend-instr-error instr-diag message)])])]
               [(ResultBackendVectorUse.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-byte-vector-shift-mnemonic
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -6043,23 +6049,11 @@
                                   dst-reg
                                   backend-state)))))]
                       [(ResultBackendReg.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])])]
+                        (compiler-backend-instr-error instr-diag message)])])]
               [(ResultBackendVectorUse.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 ;; x86 has no packed byte multiply. Treat every adjacent byte pair as a word:
 ;; multiply the low bytes directly, multiply the high bytes after shifting them
@@ -6170,23 +6164,11 @@
                               dst-reg
                               backend-state)))]
                       [(ResultBackendReg.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])])]
+                        (compiler-backend-instr-error instr-diag message)])])]
               [(ResultBackendVectorUse.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-avx2-vector-reduce-op-mnemonic
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
@@ -6444,17 +6426,9 @@
                       dst-reg
                       backend-state)))))]
           [(ResultCompilerBackendSimdIndexedAddress.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            (compiler-backend-instr-error-from instr-diag message)])]
       [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
+        (compiler-backend-instr-error instr-diag message)])
     (compiler-backend-mode-shape-diagnostic
       mode
       type-segment-bases
@@ -6779,17 +6753,9 @@
                   dst-reg
                   backend-state)))]
           [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            (compiler-backend-instr-error-from instr-diag message)])]
       [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
+        (compiler-backend-instr-error instr-diag message)])
     (compiler-backend-mode-shape-diagnostic
       mode
       type-segment-bases
@@ -6873,23 +6839,11 @@
                               dst-reg
                               backend-state))))]
                     [(ResultBackendReg.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler_diagnostic.compiler-diagnostic-with-message
-                            instr-diag
-                            message)))])])]
+                      (compiler-backend-instr-error instr-diag message)])])]
             [(ResultBackendVectorUse.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])])]
+              (compiler-backend-instr-error instr-diag message)])])]
     [(ResultBackendVectorUse.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-with-message
-            instr-diag
-            message)))]))
+      (compiler-backend-instr-error instr-diag message)]))
 
 (define (compiler-backend-emit-avx2-i64-vector-shr
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -6959,23 +6913,11 @@
                             dst-reg
                             backend-state)))]
                     [(ResultBackendReg.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler_diagnostic.compiler-diagnostic-with-message
-                            instr-diag
-                            message)))])])]
+                      (compiler-backend-instr-error instr-diag message)])])]
             [(ResultBackendVectorUse.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])])]
+              (compiler-backend-instr-error instr-diag message)])])]
     [(ResultBackendVectorUse.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-with-message
-            instr-diag
-            message)))]))
+      (compiler-backend-instr-error instr-diag message)]))
 
 (define (compiler-backend-emit-vector-binop
   [mode : CompilerBackendMode]
@@ -7048,11 +6990,9 @@
             instr-diag
             backend-state)]
         [(= (string.string-length mnemonic) 0)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                (compiler-backend-mode-unsupported mode "vector binary op"))))]
+          (compiler-backend-instr-error
+            instr-diag
+            (compiler-backend-mode-unsupported mode "vector binary op"))]
         [else
           (match (compiler-backend-vector-register-use
             assignments
@@ -7109,23 +7049,11 @@
                                       dst-reg
                                       backend-state))))]
                             [(ResultBackendReg.Err message)
-                              (ResultCompilerBackend.Err
-                                (box
-                                  (compiler_diagnostic.compiler-diagnostic-with-message
-                                    instr-diag
-                                    message)))])])]
+                              (compiler-backend-instr-error instr-diag message)])])]
                     [(ResultBackendVectorUse.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler_diagnostic.compiler-diagnostic-with-message
-                            instr-diag
-                            message)))])])]
+                      (compiler-backend-instr-error instr-diag message)])])]
             [(ResultBackendVectorUse.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])]))
+              (compiler-backend-instr-error instr-diag message)])]))
     (compiler-backend-mode-shape-diagnostic
       mode
       type-segment-bases
@@ -7151,11 +7079,9 @@
       [mnemonic : String
         (compiler-backend-mode-vector-binop-mnemonic mode op elem-ty)]
       (if (= (string.string-length mnemonic) 0)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              (compiler-backend-mode-unsupported mode "vector binary op"))))
+        (compiler-backend-instr-error
+          instr-diag
+          (compiler-backend-mode-unsupported mode "vector binary op"))
         (match (compiler-backend-vector-register-use
           assignments
           reg-value
@@ -7212,23 +7138,11 @@
                                   dst-reg
                                   backend-state)))))]
                       [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler-backend-apply-instr-diagnostic
-                              (deref message)
-                              instr-diag)))])]
+                        (compiler-backend-instr-error-from instr-diag message)])]
                   [(ResultBackendReg.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          message)))])])]
+                    (compiler-backend-instr-error instr-diag message)])])]
           [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))
+            (compiler-backend-instr-error instr-diag message)])))
     (compiler-backend-mode-shape-diagnostic
       mode
       type-segment-bases
@@ -7284,17 +7198,9 @@
                         ", ")
                       (str_cat.str-cat addr "\n"))))]
               [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))])])]
+                (compiler-backend-instr-error-from instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
+        (compiler-backend-instr-error instr-diag message)])
     (compiler-backend-mode-shape-diagnostic
       mode
       type-segment-bases
@@ -7323,15 +7229,13 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [elem-ty : compiler_ast_types.AstType]
   [lanes : i64]) : ResultCompilerBackend
-  (ResultCompilerBackend.Err
-    (box
-      (compiler_diagnostic.compiler-diagnostic-with-message
-        instr-diag
-        (str_cat.str-cat
-          "backend: unsupported AVX-512 vector shape "
-          (string.int->string lanes)
-          " x "
-          (compiler_ir_types.compiler-ir-type-name type-segment-bases elem-ty))))))
+  (compiler-backend-instr-error
+    instr-diag
+    (str_cat.str-cat
+      "backend: unsupported AVX-512 vector shape "
+      (string.int->string lanes)
+      " x "
+      (compiler_ir_types.compiler-ir-type-name type-segment-bases elem-ty))))
 
 (define (compiler-backend-avx512-mask-value-reg
   [backend-state : CompilerBackendState]
@@ -8165,11 +8069,7 @@
                 dst-reg
                 backend-state))))]
       [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
+        (compiler-backend-instr-error instr-diag message)])
     (if (compiler-backend-lane-id-avx2-i64-shape-ok? elem-ty lanes)
       (match (compiler-backend-vector-dst-reg
         assignments
@@ -8196,11 +8096,7 @@
                   dst-reg
                   backend-state))))]
         [(ResultBackendReg.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))])
+          (compiler-backend-instr-error instr-diag message)])
       (compiler-backend-avx512-shape-diagnostic
         type-segment-bases
         instr-diag
@@ -8227,11 +8123,9 @@
       (if (or
         (= (string.string-length mnemonic) 0)
         (= (string.string-length predicate-separator) 0))
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              "backend: unsupported AVX-512 vector compare")))
+        (compiler-backend-instr-error
+          instr-diag
+          "backend: unsupported AVX-512 vector compare")
         (match (compiler-backend-vector-register-use
           assignments
           lhs
@@ -8280,23 +8174,11 @@
                                   dst-reg
                                   backend-state)))]
                           [(ResultBackendReg.Err message)
-                            (ResultCompilerBackend.Err
-                              (box
-                                (compiler_diagnostic.compiler-diagnostic-with-message
-                                  instr-diag
-                                  message)))])])]
+                            (compiler-backend-instr-error instr-diag message)])])]
                   [(ResultBackendVectorUse.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          message)))])])]
+                    (compiler-backend-instr-error instr-diag message)])])]
           [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))
+            (compiler-backend-instr-error instr-diag message)])))
     (compiler-backend-avx512-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -8640,11 +8522,9 @@
                                 (compiler-backend-global-shared-view dst-reg)
                                 elem-ty))]
                           (if (= (string.string-length cmp-asm) 0)
-                            (ResultCompilerBackend.Err
-                              (box
-                                (compiler_diagnostic.compiler-diagnostic-with-message
-                                  instr-diag
-                                  "backend: unsupported AVX2 vector compare")))
+                            (compiler-backend-instr-error
+                              instr-diag
+                              "backend: unsupported AVX2 vector compare")
                             (ResultCompilerBackend.Ok
                               (str_cat.str-cat
                                 lhs-asm
@@ -8658,23 +8538,11 @@
                                   dst-reg
                                   backend-state)))))]
                       [(ResultBackendReg.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])])]
+                        (compiler-backend-instr-error instr-diag message)])])]
               [(ResultBackendVectorUse.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
+        (compiler-backend-instr-error instr-diag message)])
     (compiler-backend-avx2-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -9016,23 +8884,11 @@
                       [(ResultBackendGatherAdjust.Err diag)
                         (ResultCompilerBackend.Err diag)])]
                   [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (deref message)
-                          instr-diag)))]))]
+                    (compiler-backend-instr-error-from instr-diag message)]))]
             [(ResultCompilerBackendSimdIndexedAddress.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler-backend-apply-instr-diagnostic
-                    (deref message)
-                    instr-diag)))])]
+              (compiler-backend-instr-error-from instr-diag message)])]
         [(ResultBackendReg.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))]))))
+          (compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-emit-avx512-gather-load
   [type-segment-bases : i64]
@@ -9187,23 +9043,11 @@
                       [(ResultBackendGatherAdjust.Err diag)
                         (ResultCompilerBackend.Err diag)])]
                   [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (deref message)
-                          instr-diag)))]))]
+                    (compiler-backend-instr-error-from instr-diag message)]))]
             [(ResultCompilerBackendSimdIndexedAddress.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler-backend-apply-instr-diagnostic
-                    (deref message)
-                    instr-diag)))])]
+              (compiler-backend-instr-error-from instr-diag message)])]
         [(ResultBackendReg.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))]))))
+          (compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-emit-gather-load
   [type-segment-bases : i64]
@@ -9539,13 +9383,11 @@
             [(compiler_ir_types.CompilerIrMaybeValue.Some _) false]
             [(compiler_ir_types.CompilerIrMaybeValue.No) true]))
         (not (string.eq high-error "")))
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              (if (string.eq high-error "")
-                "backend: 32-bit vector shuffle is missing its high selector half"
-                high-error))))
+        (compiler-backend-instr-error
+          instr-diag
+          (if (string.eq high-error "")
+            "backend: 32-bit vector shuffle is missing its high selector half"
+            high-error))
         (match (compiler-backend-vector-register-use
           assignments
           source
@@ -9762,29 +9604,15 @@
                                       (string.int->string stack-bytes)
                                       ", %rsp\n")))]
                               [(ResultCompilerBackend.Err message)
-                                (ResultCompilerBackend.Err
-                                  (box
-                                    (compiler-backend-apply-instr-diagnostic
-                                      (deref message)
-                                      instr-diag)))])]
-                          [(ResultBackendReg.Err message)
-                            (ResultCompilerBackend.Err
-                              (box
-                                (compiler_diagnostic.compiler-diagnostic-with-message
+                                (compiler-backend-instr-error-from
                                   instr-diag
-                                  message)))])])]
+                                  message)])]
+                          [(ResultBackendReg.Err message)
+                            (compiler-backend-instr-error instr-diag message)])])]
                   [(ResultBackendVectorUse.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          message)))])])]
+                    (compiler-backend-instr-error instr-diag message)])])]
           [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))))
+            (compiler-backend-instr-error instr-diag message)])))))
 
 (define (compiler-backend-vector-binop-memory-source-supported?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
@@ -10374,11 +10202,9 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (not (compiler-backend-avx2-vector-prefix-shape-ok? op lanes elem-ty))
-    (ResultCompilerBackend.Err
-      (box
-        (compiler_diagnostic.compiler-diagnostic-with-message
-          instr-diag
-          "backend: unsupported AVX2 vector prefix shape")))
+    (compiler-backend-instr-error
+      instr-diag
+      "backend: unsupported AVX2 vector prefix shape")
     (let
       [register-ty : compiler_ast_types.AstType
         (match (compiler-backend-global-shared-view elem-ty)
@@ -10465,11 +10291,9 @@
                                   dst-reg
                                   backend-state)))]
                           [(ResultCompilerBackend.Err message)
-                            (ResultCompilerBackend.Err
-                              (box
-                                (compiler-backend-apply-instr-diagnostic
-                                  (deref message)
-                                  instr-diag)))])]
+                            (compiler-backend-instr-error-from
+                              instr-diag
+                              message)])]
                       [_
                         (match (compiler-backend-avx2-vector-prefix-numeric-carry
                           assignments
@@ -10500,23 +10324,13 @@
                                   dst-reg
                                   backend-state)))]
                           [(ResultCompilerBackend.Err message)
-                            (ResultCompilerBackend.Err
-                              (box
-                                (compiler-backend-apply-instr-diagnostic
-                                  (deref message)
-                                  instr-diag)))])]))])]
+                            (compiler-backend-instr-error-from
+                              instr-diag
+                              message)])]))])]
             [(ResultBackendVectorUse.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])]
+              (compiler-backend-instr-error instr-diag message)])]
         [(ResultBackendReg.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))]))))
+          (compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-avx512-vector-prefix-shape-ok?
   [op : compiler_ir_types.CompilerIrVectorPrefixOp]
@@ -10898,23 +10712,11 @@
                           dst-reg
                           backend-state)))]
                   [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (deref message)
-                          instr-diag)))])]
+                    (compiler-backend-instr-error-from instr-diag message)])]
               [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendMaskUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-avx512-vector-prefix-numeric
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -11013,23 +10815,11 @@
                               dst-reg
                               backend-state))))]
                     [(ResultCompilerBackend.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler-backend-apply-instr-diagnostic
-                            (deref message)
-                            instr-diag)))]))])]
+                      (compiler-backend-instr-error-from instr-diag message)]))])]
           [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])]
+            (compiler-backend-instr-error instr-diag message)])]
       [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-avx512-vector-prefix
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -11046,11 +10836,9 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (not (compiler-backend-avx512-vector-prefix-shape-ok? op lanes elem-ty))
-    (ResultCompilerBackend.Err
-      (box
-        (compiler_diagnostic.compiler-diagnostic-with-message
-          instr-diag
-          "backend: unsupported AVX-512 vector prefix shape")))
+    (compiler-backend-instr-error
+      instr-diag
+      "backend: unsupported AVX-512 vector prefix shape")
     (match (compiler-backend-global-shared-view elem-ty)
       [(compiler_ast_types.AstType.Bool)
         (compiler-backend-emit-avx512-vector-prefix-bool
@@ -11413,15 +11201,9 @@
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat index-asm end-asm body-asm)))]
           [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            (compiler-backend-instr-error-from instr-diag message)])]
       [(ResultCompilerBackend.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-backend-apply-instr-diagnostic (deref message) instr-diag)))])))
+        (compiler-backend-instr-error-from instr-diag message)])))
 
 (define (compiler-backend-emit-avx512-tail-mask
   [type-segment-bases : i64]
@@ -11515,11 +11297,7 @@
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)])])]
       [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-avx512-predicated-load
   [type-segment-bases : i64]
@@ -11596,23 +11374,11 @@
                               dst-reg
                               backend-state))))]
                     [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler-backend-apply-instr-diagnostic
-                            (deref message)
-                            instr-diag)))])]
+                      (compiler-backend-instr-error-from instr-diag message)])]
                 [(ResultBackendReg.Err message)
-                  (ResultCompilerBackend.Err
-                    (box
-                      (compiler_diagnostic.compiler-diagnostic-with-message
-                        instr-diag
-                        message)))])])]
+                  (compiler-backend-instr-error instr-diag message)])])]
         [(ResultBackendMaskUse.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))])
+          (compiler-backend-instr-error instr-diag message)])
       (compiler-backend-avx512-shape-diagnostic
         type-segment-bases
         instr-diag
@@ -11691,23 +11457,11 @@
                                 mask-reg
                                 "}\n")))]
                         [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                          (ResultCompilerBackend.Err
-                            (box
-                              (compiler-backend-apply-instr-diagnostic
-                                (deref message)
-                                instr-diag)))])])]
+                          (compiler-backend-instr-error-from instr-diag message)])])]
                 [(ResultBackendMaskUse.Err message)
-                  (ResultCompilerBackend.Err
-                    (box
-                      (compiler_diagnostic.compiler-diagnostic-with-message
-                        instr-diag
-                        message)))])])]
+                  (compiler-backend-instr-error instr-diag message)])])]
         [(ResultBackendVectorUse.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))])
+          (compiler-backend-instr-error instr-diag message)])
       (compiler-backend-avx512-shape-diagnostic
         type-segment-bases
         instr-diag
@@ -11807,35 +11561,15 @@
                                       dst-reg
                                       backend-state))))]
                             [(ResultBackendReg.Err message)
-                              (ResultCompilerBackend.Err
-                                (box
-                                  (compiler_diagnostic.compiler-diagnostic-with-message
-                                    instr-diag
-                                    message)))])]
+                              (compiler-backend-instr-error instr-diag message)])]
                         [(ResultBackendReg.Err message)
-                          (ResultCompilerBackend.Err
-                            (box
-                              (compiler_diagnostic.compiler-diagnostic-with-message
-                                instr-diag
-                                message)))]))]
+                          (compiler-backend-instr-error instr-diag message)]))]
                   [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (deref message)
-                          instr-diag)))])])]
+                    (compiler-backend-instr-error-from instr-diag message)])])]
           [(ResultBackendMaskUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])]
+            (compiler-backend-instr-error instr-diag message)])]
       [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-avx512-mask-store
   [type-segment-bases : i64]
@@ -11933,35 +11667,17 @@
                                         mask-reg
                                         "}\n")))]
                                 [(ResultBackendReg.Err message)
-                                  (ResultCompilerBackend.Err
-                                    (box
-                                      (compiler_diagnostic.compiler-diagnostic-with-message
-                                        instr-diag
-                                        message)))])]
-                            [(ResultBackendReg.Err message)
-                              (ResultCompilerBackend.Err
-                                (box
-                                  (compiler_diagnostic.compiler-diagnostic-with-message
+                                  (compiler-backend-instr-error
                                     instr-diag
-                                    message)))]))]
+                                    message)])]
+                            [(ResultBackendReg.Err message)
+                              (compiler-backend-instr-error instr-diag message)]))]
                       [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler-backend-apply-instr-diagnostic
-                              (deref message)
-                              instr-diag)))])])]
+                        (compiler-backend-instr-error-from instr-diag message)])])]
               [(ResultBackendMaskUse.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendMaskUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-mask-binop-mnemonic
   [op : compiler_ir_types.CompilerIrMaskBinOp]
@@ -12054,23 +11770,11 @@
                               dst-reg
                               backend-state)))]
                       [(ResultBackendReg.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])])]
+                        (compiler-backend-instr-error instr-diag message)])])]
               [(ResultBackendVectorUse.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-avx512-mask-binop
   [type-segment-bases : i64]
@@ -12148,23 +11852,11 @@
                         dst-reg
                         "\n")))]
                 [(ResultBackendReg.Err message)
-                  (ResultCompilerBackend.Err
-                    (box
-                      (compiler_diagnostic.compiler-diagnostic-with-message
-                        instr-diag
-                        message)))])]
+                  (compiler-backend-instr-error instr-diag message)])]
             [(ResultBackendReg.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])]
+              (compiler-backend-instr-error instr-diag message)])]
         [(ResultBackendReg.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))]))))
+          (compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-emit-avx512-mask-not-gpr
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -12216,17 +11908,9 @@
                       dst-reg
                       backend-state)))]
               [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-avx512-mask-not
   [type-segment-bases : i64]
@@ -12303,17 +11987,9 @@
                       dst-reg
                       "\n")))]
               [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])]
+                (compiler-backend-instr-error instr-diag message)])]
           [(ResultBackendReg.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))))
+            (compiler-backend-instr-error instr-diag message)])))))
 
 (define (compiler-backend-emit-avx512-mask-reduce
   [type-segment-bases : i64]
@@ -12395,11 +12071,7 @@
                 (ResultCompilerBackend.Ok
                   (str_cat.str-cat src-asm reduce-asm store-asm)))])]
         [(ResultBackendMaskUse.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))]))))
+          (compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-emit-avx512-select
   [type-segment-bases : i64]
@@ -12430,11 +12102,9 @@
           [(CompilerBackendMaybeStackOperand.Some _) true]
           [(CompilerBackendMaybeStackOperand.No) false])]
       (if (= (string.string-length move) 0)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              "backend: unsupported AVX-512 select type")))
+        (compiler-backend-instr-error
+          instr-diag
+          "backend: unsupported AVX-512 select type")
         (match (compiler-backend-vector-register-use
           assignments
           on-false
@@ -12538,11 +12208,9 @@
                                                 "}\n"
                                                 store-asm))]
                                           [(ResultBackendReg.Err message)
-                                            (ResultCompilerBackend.Err
-                                              (box
-                                                (compiler_diagnostic.compiler-diagnostic-with-message
-                                                  instr-diag
-                                                  message)))])
+                                            (compiler-backend-instr-error
+                                              instr-diag
+                                              message)])
                                         (ResultCompilerBackend.Ok
                                           (str_cat.str-cat
                                             prefix-asm
@@ -12585,29 +12253,15 @@
                                                 "}\n"))
                                             store-asm))))]
                                   [(ResultBackendReg.Err message)
-                                    (ResultCompilerBackend.Err
-                                      (box
-                                        (compiler_diagnostic.compiler-diagnostic-with-message
-                                          instr-diag
-                                          message)))])])]
+                                    (compiler-backend-instr-error
+                                      instr-diag
+                                      message)])])]
                           [(ResultBackendMaskUse.Err message)
-                            (ResultCompilerBackend.Err
-                              (box
-                                (compiler_diagnostic.compiler-diagnostic-with-message
-                                  instr-diag
-                                  message)))])])]
+                            (compiler-backend-instr-error instr-diag message)])])]
                   [(ResultBackendVectorUse.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          message)))])])]
+                    (compiler-backend-instr-error instr-diag message)])])]
           [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))
+            (compiler-backend-instr-error instr-diag message)])))
     (compiler-backend-avx512-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -12691,23 +12345,11 @@
                               dst-reg
                               backend-state)))]
                       [(ResultBackendReg.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])])]
+                        (compiler-backend-instr-error instr-diag message)])])]
               [(ResultBackendVectorUse.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-mask-binop
   [type-segment-bases : i64]
@@ -12793,17 +12435,9 @@
                       dst-reg
                       backend-state)))]
               [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-mask-not
   [type-segment-bases : i64]
@@ -12884,11 +12518,7 @@
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat src-asm reduce-asm store-asm)))])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-mask-reduce
   [type-segment-bases : i64]
@@ -12997,29 +12627,15 @@
                                       dst-reg
                                       backend-state)))]
                               [(ResultBackendReg.Err message)
-                                (ResultCompilerBackend.Err
-                                  (box
-                                    (compiler_diagnostic.compiler-diagnostic-with-message
-                                      instr-diag
-                                      message)))])])]
+                                (compiler-backend-instr-error
+                                  instr-diag
+                                  message)])])]
                       [(ResultBackendVectorUse.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])])]
+                        (compiler-backend-instr-error instr-diag message)])])]
               [(ResultBackendVectorUse.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
+        (compiler-backend-instr-error instr-diag message)])
     (compiler-backend-avx2-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -13050,11 +12666,9 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (not (compiler-backend-intlike-scalar-type? ty))
-    (ResultCompilerBackend.Err
-      (box
-        (compiler_diagnostic.compiler-diagnostic-with-message
-          instr-diag
-          "backend: unsupported scalar select type")))
+    (compiler-backend-instr-error
+      instr-diag
+      "backend: unsupported scalar select type")
     (let
       [dst-home : String
         (compiler-backend-value-scalar-register-home
@@ -13963,23 +13577,11 @@
                               dst-reg
                               backend-state)))))]
                   [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (deref message)
-                          instr-diag)))])]
+                    (compiler-backend-instr-error-from instr-diag message)])]
               [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])])]
+                (compiler-backend-instr-error instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
+        (compiler-backend-instr-error instr-diag message)])
     (compiler-backend-avx2-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -14069,11 +13671,7 @@
                                   lanes
                                   "")))])]
                       [(ResultBackendVectorUse.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])
+                        (compiler-backend-instr-error instr-diag message)])
                     (match (compiler-backend-vector-register-use
                       assignments
                       value
@@ -14129,23 +13727,11 @@
                                     addr
                                     "\n"))))])]
                       [(ResultBackendVectorUse.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])))]
+                        (compiler-backend-instr-error instr-diag message)])))]
               [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))])])]
+                (compiler-backend-instr-error-from instr-diag message)])])]
       [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
+        (compiler-backend-instr-error instr-diag message)])
     (compiler-backend-avx2-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -14348,23 +13934,11 @@
                       dst-reg
                       backend-state)))]
               [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))])]
+                (compiler-backend-instr-error-from instr-diag message)])]
           [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            (compiler-backend-instr-error-from instr-diag message)])]
       [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])))
+        (compiler-backend-instr-error instr-diag message)])))
 
 (define (compiler-backend-emit-tail-mask
   [type-segment-bases : i64]
@@ -20286,11 +19860,9 @@
               [(compiler_ir_types.CompilerIrVectorReduceOp.Min) true]
               [(compiler_ir_types.CompilerIrVectorReduceOp.Max) true]
               [_ false]))))
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              "backend: unsupported AVX2 vector reduction")))
+        (compiler-backend-instr-error
+          instr-diag
+          "backend: unsupported AVX2 vector reduction")
         (match (compiler-backend-vector-register-use
           assignments
           src
@@ -20345,12 +19917,9 @@
                         backend-state)
                       "")]
                   (if (= (string.string-length xmm) 0)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          (compiler-backend-vector-home-unavailable
-                            "reduce source"))))
+                    (compiler-backend-instr-error
+                      instr-diag
+                      (compiler-backend-vector-home-unavailable "reduce source"))
                     (ResultCompilerBackend.Ok
                       (str_cat.str-cat
                         src-asm
@@ -20370,11 +19939,7 @@
                           acc-xmm
                           backend-state)))))])]
           [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))
+            (compiler-backend-instr-error instr-diag message)])))
     (compiler-backend-avx2-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -20743,11 +20308,9 @@
       [mnemonic : String
         (compiler-backend-avx512-vector-reduce-op-mnemonic op elem-ty)]
       (if (= (string.string-length mnemonic) 0)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              "backend: unsupported AVX-512 vector reduction")))
+        (compiler-backend-instr-error
+          instr-diag
+          "backend: unsupported AVX-512 vector reduction")
         (match (compiler-backend-vector-register-use
           assignments
           src
@@ -20784,12 +20347,9 @@
                   (if (or
                     (= (string.string-length ymm) 0)
                     (= (string.string-length acc-ymm) 0))
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          (compiler-backend-vector-home-unavailable
-                            "reduce source"))))
+                    (compiler-backend-instr-error
+                      instr-diag
+                      (compiler-backend-vector-home-unavailable "reduce source"))
                     (ResultCompilerBackend.Ok
                       (str_cat.str-cat
                         src-asm
@@ -20808,11 +20368,7 @@
                           acc-xmm
                           backend-state)))))])]
           [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))
+            (compiler-backend-instr-error instr-diag message)])))
     (compiler-backend-avx512-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -21298,11 +20854,9 @@
                 instr-diag
                 backend-state)]
             [_
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    "backend: CompilerIrInstr.Pack dst is not a register-group location")))])]
+              (compiler-backend-instr-error
+                instr-diag
+                "backend: CompilerIrInstr.Pack dst is not a register-group location")])]
         [(compiler_regalloc.CompilerRegMaybeLocation.No)
           ;; stack-only: the group var lives in two stack slots.
           (match (compiler-backend-group-word-operand-with-backend-state
@@ -21332,11 +20886,9 @@
                     backend-state)]
                 [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]
             [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]))
-    (ResultCompilerBackend.Err
-      (box
-        (compiler_diagnostic.compiler-diagnostic-with-message
-          instr-diag
-          "backend: CompilerIrInstr.Pack requires exactly two words")))))
+    (compiler-backend-instr-error
+      instr-diag
+      "backend: CompilerIrInstr.Pack requires exactly two words")))
 
 ;; Extract word `index` of a register-group value into `dst`'s home.
 (define (compiler-backend-emit-word
@@ -21426,18 +20978,14 @@
             (let
               [message-view : compiler_diagnostic.CompilerDiagnostic
                 (deref message)]
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    (compiler_diagnostic.compiler-diagnostic-message
-                      (& message-view))))))]))]
+              (compiler-backend-instr-error
+                instr-diag
+                (compiler_diagnostic.compiler-diagnostic-message
+                  (& message-view))))]))]
     [_
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-with-message
-            instr-diag
-            "backend: CompilerIrInstr.Word src must be a register-group var")))]))
+      (compiler-backend-instr-error
+        instr-diag
+        "backend: CompilerIrInstr.Word src must be a register-group var")]))
 
 ;; The assembly operand (register name or memory slot) holding word `index`
 ;; of a register-group var, regardless of how the allocator homed it. Used by the
@@ -22083,17 +21631,11 @@
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)])]
             [_
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    func-diag
-                    "backend: register-group call argument requires var operand")))])]
-        [(ResultBackendReg.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
+              (compiler-backend-instr-error
                 func-diag
-                message)))]))))
+                "backend: register-group call argument requires var operand")])]
+        [(ResultBackendReg.Err message)
+          (compiler-backend-instr-error func-diag message)]))))
 
 (define (compiler-backend-emit-group-word-store
   [type-segment-bases : i64]
@@ -42363,11 +41905,7 @@
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)])]
             [(ResultBackendReg.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    func-diag
-                    message)))])]))))
+              (compiler-backend-instr-error func-diag message)])]))))
 
 ;; --- Any-arity GP argument marshalling (stack-first) -----------------------
 ;; A call whose arguments are ALL single-GP-register class can still overflow
@@ -43241,11 +42779,7 @@
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)])]
           [(ResultBackendReg.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  func-diag
-                  message)))])))))
+            (compiler-backend-instr-error func-diag message)])))))
 
 (define (compiler-backend-emit-direct-tail-call-args
   [type-segment-bases : i64]
@@ -48021,17 +47555,11 @@
           (ResultCompilerBackend.Ok
             (compiler-backend-current-arena-store target reg))]
         [(ResultBackendReg.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))])]
+          (compiler-backend-instr-error instr-diag message)])]
     [else
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-with-message
-            instr-diag
-            "backend: unknown tls current arena helper")))]))
+      (compiler-backend-instr-error
+        instr-diag
+        "backend: unknown tls current arena helper")]))
 
 (define (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
   [type-segment-bases : i64]
@@ -48109,21 +47637,11 @@
                     (compiler-backend-emit-call-space-add call-space)
                     result-store))]
               [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))])]
+                (compiler-backend-instr-error-from instr-diag message)])]
           [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            (compiler-backend-instr-error-from instr-diag message)])]
       [(ResultCompilerBackend.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-backend-apply-instr-diagnostic (deref message) instr-diag)))])))
+        (compiler-backend-instr-error-from instr-diag message)])))
 
 (define (compiler-backend-atomic-call-name? [name : (& name str)]) : bool
   (or
@@ -48388,15 +47906,9 @@
                 (compiler-backend-emit-call-space-add call-space)
                 result-store))]
           [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            (compiler-backend-instr-error-from instr-diag message)])]
       [(ResultCompilerBackend.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-backend-apply-instr-diagnostic (deref message) instr-diag)))])))
+        (compiler-backend-instr-error-from instr-diag message)])))
 
 (define (compiler-backend-emit-direct-call-with-arg-assignments
   [type-segment-bases : i64]
@@ -48623,17 +48135,9 @@
                       (ResultCompilerBackend.Ok
                         (compiler-backend-asm-buf-finish (& seq)))]
                     [(ResultCompilerBackend.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler-backend-apply-instr-diagnostic
-                            (deref message)
-                            instr-diag)))]))]
+                      (compiler-backend-instr-error-from instr-diag message)]))]
               [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))])))])))
+                (compiler-backend-instr-error-from instr-diag message)])))])))
 
 (define (compiler-backend-spmd-call-arg-at
   [args : (& args compiler_ir_types.CompilerIrSpmdCallArgSeq)]
@@ -48792,11 +48296,7 @@
                   (string.int->string offset)
                   "(%rsp)\n"))])]
         [(ResultBackendVectorUse.Err message)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                message)))]))
+          (compiler-backend-instr-error instr-diag message)]))
     (compiler-backend-avx2-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -48909,11 +48409,7 @@
                     home
                     backend-state)))]
             [(ResultBackendReg.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])))]))
+              (compiler-backend-instr-error instr-diag message)])))]))
 
 (define (compiler-backend-spmd-private-vector-args-asm
   [type-segment-bases : i64]
@@ -48936,11 +48432,9 @@
             [dst : String
               (compiler-backend-spmd-private-vector-arg-reg vector-index)]
             (if (= (string.string-length dst) 0)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    "backend: private AVX-512 SPMD call supports at most 8 varying value arguments")))
+              (compiler-backend-instr-error
+                instr-diag
+                "backend: private AVX-512 SPMD call supports at most 8 varying value arguments")
               (if (not (compiler-backend-avx512-shape-ok? ty lanes))
                 (compiler-backend-avx512-shape-diagnostic
                   type-segment-bases
@@ -48985,11 +48479,7 @@
                           [(ResultCompilerBackend.Err message)
                             (ResultCompilerBackend.Err message)])])]
                   [(ResultBackendVectorUse.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          message)))]))))
+                    (compiler-backend-instr-error instr-diag message)]))))
           (compiler-backend-spmd-private-vector-args-asm
             type-segment-bases
             assignments
@@ -49025,11 +48515,7 @@
               "(%rsp)\n"
               ""))])]
     [(ResultBackendVectorUse.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-with-message
-            instr-diag
-            message)))]))
+      (compiler-backend-instr-error instr-diag message)]))
 
 (define (compiler-backend-spmd-private-save-mask-args
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -49049,11 +48535,9 @@
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value _)
         (if (compiler-backend-spmd-class-mask? class)
           (if (>= mask-index 5)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  "backend: private AVX-512 SPMD call supports at most 5 varying bool arguments")))
+            (compiler-backend-instr-error
+              instr-diag
+              "backend: private AVX-512 SPMD call supports at most 5 varying bool arguments")
             (match (compiler-backend-spmd-private-save-mask-value
               assignments
               value
@@ -49152,11 +48636,7 @@
                     home
                     backend-state)))]
             [(ResultBackendReg.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])]
+              (compiler-backend-instr-error instr-diag message)])]
         [(compiler_ir_types.CompilerIrSpmdValueClass.Mask)
           (match (compiler-backend-avx512-mask-dst-reg
             assignments
@@ -49178,11 +48658,7 @@
                     backend-state)
                   ""))]
             [(ResultBackendReg.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])])]))
+              (compiler-backend-instr-error instr-diag message)])])]))
 
 (define (compiler-backend-emit-spmd-call-scalar
   [type-segment-bases : i64]
@@ -51298,215 +50774,155 @@
         (compiler-backend-current-instr-reserved-mask ctx.function-state))]
     (match instr
       [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
-        (match (compiler-backend-emit-class-correct-mov-with-plan
-          ctx.type-segment-bases
-          ctx.assignments
-          ctx.blocks
-          dst
-          src
-          ty
-          ctx.program-index
-          ctx.vars
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-class-correct-mov-with-plan
+            ctx.type-segment-bases
+            ctx.assignments
+            ctx.blocks
+            dst
+            src
+            ty
+            ctx.program-index
+            ctx.vars
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.Alloc _ _)
         (ResultCompilerBackend.Ok "")]
       [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
-        (match (compiler-backend-emit-addr-of
-          ctx.assignments
-          dst
-          src
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-addr-of
+            ctx.assignments
+            dst
+            src
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.Gep dst base offset elem-ty)
-        (match (compiler-backend-emit-gep
-          ctx.type-segment-bases
-          ctx.assignments
-          dst
-          base
-          (compiler-backend-global-shared-view offset)
-          (compiler-backend-global-shared-view elem-ty)
-          (compiler-backend-gep-fold-next!
-            ctx.function-state
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-gep
             ctx.type-segment-bases
-            offset
-            elem-ty)
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            ctx.assignments
+            dst
+            base
+            (compiler-backend-global-shared-view offset)
+            (compiler-backend-global-shared-view elem-ty)
+            (compiler-backend-gep-fold-next!
+              ctx.function-state
+              ctx.type-segment-bases
+              offset
+              elem-ty)
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.Load dst src ty)
-        (match (compiler-backend-emit-load-instr
-          ctx.type-segment-bases
-          ctx.assignments
-          dst
-          src
-          ty
-          ""
-          ""
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-load-instr
+            ctx.type-segment-bases
+            ctx.assignments
+            dst
+            src
+            ty
+            ""
+            ""
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.StorePtr dst src ty)
-        (match (compiler-backend-emit-store-ptr
-          ctx.type-segment-bases
-          ctx.assignments
-          dst
-          src
-          ty
-          ctx.program-index
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-store-ptr
+            ctx.type-segment-bases
+            ctx.assignments
+            dst
+            src
+            ty
+            ctx.program-index
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.StoreOwned dst src ty)
-        (match (compiler-backend-emit-store-ptr
-          ctx.type-segment-bases
-          ctx.assignments
-          dst
-          src
-          ty
-          ctx.program-index
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-store-ptr
+            ctx.type-segment-bases
+            ctx.assignments
+            dst
+            src
+            ty
+            ctx.program-index
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.CopyBytes dst src size)
-        (match (compiler-backend-emit-copy-bytes
-          ctx.type-segment-bases
-          ctx.assignments
-          dst
-          src
-          size
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-copy-bytes
+            ctx.type-segment-bases
+            ctx.assignments
+            dst
+            src
+            size
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length ok-label)
-        (match (compiler-backend-emit-bounds-check
-          ctx.target-policy.target
-          ctx.function
-          ctx.assignments
-          index
-          length
-          ok-label
-          ctx.plan
-          ctx.functions
-          ctx.externs
-          ctx.program-index)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-bounds-check
+            ctx.target-policy.target
+            ctx.function
+            ctx.assignments
+            index
+            length
+            ok-label
+            ctx.plan
+            ctx.functions
+            ctx.externs
+            ctx.program-index)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.Cast dst src from-ty to-ty)
-        (match (compiler-backend-emit-cast
-          ctx.type-segment-bases
-          ctx.function
-          ctx.current-label
-          ctx.assignments
-          dst
-          src
-          from-ty
-          to-ty
-          ctx.program-index
-          ""
-          ""
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-cast
+            ctx.type-segment-bases
+            ctx.function
+            ctx.current-label
+            ctx.assignments
+            dst
+            src
+            from-ty
+            to-ty
+            ctx.program-index
+            ""
+            ""
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-        (match (compiler-backend-emit-bitcast
-          ctx.type-segment-bases
-          ctx.assignments
-          dst
-          src
-          from-ty
-          to-ty
-          ctx.program-index
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-bitcast
+            ctx.type-segment-bases
+            ctx.assignments
+            dst
+            src
+            from-ty
+            to-ty
+            ctx.program-index
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
-        (match (compiler-backend-emit-binop-with-plan
-          ctx.type-segment-bases
-          ctx.types
-          ctx.global-types
-          ctx.assignments
-          dst
-          op
-          lhs
-          rhs
-          ty
-          ""
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-binop-with-plan
+            ctx.type-segment-bases
+            ctx.types
+            ctx.global-types
+            ctx.assignments
+            dst
+            op
+            lhs
+            rhs
+            ty
+            ""
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.UnOp dst op src ty)
-        (match (compiler-backend-emit-unop
-          ctx.assignments
-          dst
-          op
-          src
-          ty
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-unop
+            ctx.assignments
+            dst
+            op
+            src
+            ty
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.LaneId dst lanes elem-ty)
         (compiler-backend-emit-vector-lane-id
           ctx.type-segment-bases
@@ -51970,31 +51386,26 @@
             instr-diag
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.TailCall name args ty)
-        (match (compiler-backend-emit-tail-call
-          ctx.type-segment-bases
-          ctx.target-policy.target
-          ctx.source-function
-          ctx.blocks
-          name
-          args
-          ty
-          ctx.assignments
-          ctx.types
-          ctx.global-types
-          ctx.vars
-          ctx.plan
-          ctx.functions
-          ctx.externs
-          ctx.program-index
-          (compiler-backend-global-shared-view instr-diag)
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-tail-call
+            ctx.type-segment-bases
+            ctx.target-policy.target
+            ctx.source-function
+            ctx.blocks
+            name
+            args
+            ty
+            ctx.assignments
+            ctx.types
+            ctx.global-types
+            ctx.vars
+            ctx.plan
+            ctx.functions
+            ctx.externs
+            ctx.program-index
+            (compiler-backend-global-shared-view instr-diag)
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.Store name value ty)
         (let
           [symbol : String
@@ -52008,19 +51419,14 @@
             ;; IAG-1: the rebind's IR shape is unchanged -- `value` is a
             ;; pointer to the freshly built aggregate -- so the cell takes the
             ;; bytes rather than the pointer.
-            (match (compiler-backend-emit-inline-aggregate-store
-              ctx.assignments
-              symbol
-              inline-size
-              value
-              ctx.backend-state)
-              [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-              [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))])
+            (compiler-backend-with-instr-diagnostic
+              (compiler-backend-emit-inline-aggregate-store
+                ctx.assignments
+                symbol
+                inline-size
+                value
+                ctx.backend-state)
+              instr-diag)
             (if (compiler-backend-group-type?
               ctx.type-segment-bases
               ctx.program-index
@@ -52085,32 +51491,22 @@
                             (compiler-backend-global-shared-view ty)
                             1))))]
                   [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (deref message)
-                          instr-diag)))]))
+                    (compiler-backend-instr-error-from instr-diag message)]))
               (let
                 [no-exclude : (__tl_dyn-array String)
                   (__tl_make-array String 0)]
-                (match (compiler-backend-emit-store-value-to-address
-                  ctx.type-segment-bases
-                  ctx.assignments
-                  value
-                  ty
-                  addr
-                  ctx.program-index
-                  no-exclude
-                  0
-                  ctx.backend-state)
-                  [(ResultCompilerBackend.Ok store-asm)
-                    (ResultCompilerBackend.Ok store-asm)]
-                  [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (deref message)
-                          instr-diag)))])))))]
+                (compiler-backend-with-instr-diagnostic
+                  (compiler-backend-emit-store-value-to-address
+                    ctx.type-segment-bases
+                    ctx.assignments
+                    value
+                    ty
+                    addr
+                    ctx.program-index
+                    no-exclude
+                    0
+                    ctx.backend-state)
+                  instr-diag)))))]
       [(compiler_ir_types.CompilerIrInstr.Jump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
           ctx.type-segment-bases
@@ -52140,13 +51536,9 @@
                     ctx.backend-state
                     ctx.current-label
                     copies)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (compiler_diagnostic.compiler-diagnostic-at-start
-                            ""
-                            "backend: jump-forward drift on a jump-only block")
-                          instr-diag)))
+                    (compiler-backend-instr-error
+                      instr-diag
+                      "backend: jump-forward drift on a jump-only block")
                     (ResultCompilerBackend.Ok
                       (str_cat.str-cat
                         copies
@@ -52184,40 +51576,27 @@
                               "\n"
                               ""))))))]
                 [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err
-                    (box
-                      (compiler-backend-apply-instr-diagnostic
-                        (deref message)
-                        instr-diag)))])
+                  (compiler-backend-instr-error-from instr-diag message)])
               (ResultCompilerBackend.Ok direct-return))]
           [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            (compiler-backend-instr-error-from instr-diag message)])]
       [(compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label)
-        (match (compiler-backend-emit-branch-with-phi-copies-with-plan
-          ctx.type-segment-bases
-          ctx.assignments
-          ctx.function
-          (compiler-backend-global-shared-view ctx.blocks)
-          ctx.current-label
-          cond
-          true-label
-          false-label
-          fallthrough
-          ctx.program-index
-          ctx.vars
-          ""
-          "")
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-branch-with-phi-copies-with-plan
+            ctx.type-segment-bases
+            ctx.assignments
+            ctx.function
+            (compiler-backend-global-shared-view ctx.blocks)
+            ctx.current-label
+            cond
+            true-label
+            false-label
+            fallthrough
+            ctx.program-index
+            ctx.vars
+            ""
+            "")
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
           cond
           true-label
@@ -52227,22 +51606,17 @@
           fallthrough
           (compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label))]
       [(compiler_ir_types.CompilerIrInstr.Return value)
-        (match (compiler-backend-emit-return
-          ctx.type-segment-bases
-          ctx.source-function
-          ctx.blocks
-          value
-          ctx.assignments
-          ctx.vars
-          ctx.ret-ty
-          ctx.program-index)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-return
+            ctx.type-segment-bases
+            ctx.source-function
+            ctx.blocks
+            value
+            ctx.assignments
+            ctx.vars
+            ctx.ret-ty
+            ctx.program-index)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.Phi _ _ _)
         (ResultCompilerBackend.Ok "")]
       [(compiler_ir_types.CompilerIrInstr.Pack dst words ty)
@@ -52268,76 +51642,61 @@
           instr-diag
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.TailCallIndirect func args ty)
-        (match (compiler-backend-emit-tail-indirect-call
-          ctx.type-segment-bases
-          ctx.target-policy.target
-          ctx.source-function
-          ctx.blocks
-          func
-          args
-          ty
-          ctx.assignments
-          ctx.types
-          ctx.vars
-          ctx.functions
-          ctx.externs
-          ctx.program-index
-          (compiler-backend-global-shared-view instr-diag)
-          ctx.backend-state)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-tail-indirect-call
+            ctx.type-segment-bases
+            ctx.target-policy.target
+            ctx.source-function
+            ctx.blocks
+            func
+            args
+            ty
+            ctx.assignments
+            ctx.types
+            ctx.vars
+            ctx.functions
+            ctx.externs
+            ctx.program-index
+            (compiler-backend-global-shared-view instr-diag)
+            ctx.backend-state)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.Switch index base cases default-label)
-        (match (compiler-backend-emit-switch
-          ctx.type-segment-bases
-          ctx.function
-          ctx.current-label
-          index
-          base
-          cases
-          default-label
-          (compiler_ir_types.compiler-ir-label-none)
-          ctx.assignments
-          ctx.blocks
-          ctx.program-index
-          ctx.vars)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-switch
+            ctx.type-segment-bases
+            ctx.function
+            ctx.current-label
+            index
+            base
+            cases
+            default-label
+            (compiler_ir_types.compiler-ir-label-none)
+            ctx.assignments
+            ctx.blocks
+            ctx.program-index
+            ctx.vars)
+          instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
           index
           base
           cases
           default-label
           trap-label)
-        (match (compiler-backend-emit-switch
-          ctx.type-segment-bases
-          ctx.function
-          ctx.current-label
-          index
-          base
-          cases
-          default-label
-          trap-label
-          ctx.assignments
-          ctx.blocks
-          ctx.program-index
-          ctx.vars)
-          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])])))
+        (compiler-backend-with-instr-diagnostic
+          (compiler-backend-emit-switch
+            ctx.type-segment-bases
+            ctx.function
+            ctx.current-label
+            index
+            base
+            cases
+            default-label
+            trap-label
+            ctx.assignments
+            ctx.blocks
+            ctx.program-index
+            ctx.vars)
+          instr-diag)])))
 
 ;; The backend already has one complete, allocation-free instruction operand
 ;; walk for use counts. Reuse that walk when emission only needs the register
@@ -53638,16 +52997,14 @@
           index
           out))]
     [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (deref message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
-              ctx.func-diag
-              ""))))]))
+      (compiler-backend-instr-error-from
+        (compiler-backend-instr-diagnostic
+          ctx.spans
+          ctx.source-function
+          (compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
+          ctx.func-diag
+          "")
+        message)]))
 
 (define (compiler-backend-emit-fused-load-compare-branch-rest
   [ctx : CompilerBackendEmissionContext]
@@ -53686,16 +53043,14 @@
           (compiler-backend-emergency-wrap head ctx.backend-state))
         (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (deref message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.Load load-dst ptr load-ty)
-              ctx.func-diag
-              ""))))]))
+      (compiler-backend-instr-error-from
+        (compiler-backend-instr-diagnostic
+          ctx.spans
+          ctx.source-function
+          (compiler_ir_types.CompilerIrInstr.Load load-dst ptr load-ty)
+          ctx.func-diag
+          "")
+        message)]))
 
 (define (compiler-backend-emit-fused-not-branch-rest
   [ctx : CompilerBackendEmissionContext]
@@ -53732,20 +53087,18 @@
           (compiler-backend-emergency-wrap head ctx.backend-state))
         (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (deref message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.UnOp
-                dst
-                (compiler_ir_types.CompilerIrUnOp.Not)
-                src
-                ty)
-              ctx.func-diag
-              ""))))]))
+      (compiler-backend-instr-error-from
+        (compiler-backend-instr-diagnostic
+          ctx.spans
+          ctx.source-function
+          (compiler_ir_types.CompilerIrInstr.UnOp
+            dst
+            (compiler_ir_types.CompilerIrUnOp.Not)
+            src
+            ty)
+          ctx.func-diag
+          "")
+        message)]))
 
 (define (compiler-backend-emit-fused-gep-load-compare-branch-rest
   [ctx : CompilerBackendEmissionContext]
@@ -53796,20 +53149,14 @@
           (compiler-backend-emergency-wrap head ctx.backend-state))
         (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (deref message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.Gep
-                gep-dst
-                base
-                offset
-                elem-ty)
-              ctx.func-diag
-              ""))))]))
+      (compiler-backend-instr-error-from
+        (compiler-backend-instr-diagnostic
+          ctx.spans
+          ctx.source-function
+          (compiler_ir_types.CompilerIrInstr.Gep gep-dst base offset elem-ty)
+          ctx.func-diag
+          "")
+        message)]))
 
 ;; GAP8: fold a single-use fused-load result straight into the consuming ALU
 ;; op's memory operand -- `movq (b,i,8), %t; addq %t, %acc` becomes
@@ -57743,20 +57090,14 @@
           (compiler-backend-emergency-wrap head ctx.backend-state))
         (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (deref message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.Gep
-                gep-dst
-                base
-                offset
-                elem-ty)
-              ctx.func-diag
-              ""))))]))
+      (compiler-backend-instr-error-from
+        (compiler-backend-instr-diagnostic
+          ctx.spans
+          ctx.source-function
+          (compiler_ir_types.CompilerIrInstr.Gep gep-dst base offset elem-ty)
+          ctx.func-diag
+          "")
+        message)]))
 
 (define (compiler-backend-emit-fused-mov-trivial-phi-return-rest
   [ctx : CompilerBackendEmissionContext]
@@ -57835,27 +57176,23 @@
                         index
                         out))]
                   [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler-backend-apply-instr-diagnostic
-                          (deref message)
-                          (compiler-backend-instr-diagnostic
-                            (compiler-backend-global-shared-view ctx.spans)
-                            ctx.source-function
-                            (compiler_ir_types.CompilerIrInstr.Mov dst src ty)
-                            (compiler-backend-global-shared-view ctx.func-diag)
-                            ""))))]))]
+                    (compiler-backend-instr-error-from
+                      (compiler-backend-instr-diagnostic
+                        (compiler-backend-global-shared-view ctx.spans)
+                        ctx.source-function
+                        (compiler_ir_types.CompilerIrInstr.Mov dst src ty)
+                        (compiler-backend-global-shared-view ctx.func-diag)
+                        "")
+                      message)]))]
             [(ResultCompilerBackend.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler-backend-apply-instr-diagnostic
-                    (deref message)
-                    (compiler-backend-instr-diagnostic
-                      (compiler-backend-global-shared-view ctx.spans)
-                      ctx.source-function
-                      (compiler_ir_types.CompilerIrInstr.Mov dst src ty)
-                      (compiler-backend-global-shared-view ctx.func-diag)
-                      ""))))])
+              (compiler-backend-instr-error-from
+                (compiler-backend-instr-diagnostic
+                  (compiler-backend-global-shared-view ctx.spans)
+                  ctx.source-function
+                  (compiler_ir_types.CompilerIrInstr.Mov dst src ty)
+                  (compiler-backend-global-shared-view ctx.func-diag)
+                  "")
+                message)])
           (compiler-backend-emit-instrs-normal
             (compiler-backend-global-shared-view ctx)
             fallthrough
@@ -57875,16 +57212,14 @@
             index
             out)))]
     [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (deref message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.Mov dst src ty)
-              ctx.func-diag
-              ""))))]))
+      (compiler-backend-instr-error-from
+        (compiler-backend-instr-diagnostic
+          ctx.spans
+          ctx.source-function
+          (compiler_ir_types.CompilerIrInstr.Mov dst src ty)
+          ctx.func-diag
+          "")
+        message)]))
 
 (define (compiler-backend-emit-call-return
   [type-segment-bases : i64]
@@ -57968,11 +57303,7 @@
                     vars
                     blocks)))]
             [(ResultCompilerBackend.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler-backend-apply-instr-diagnostic
-                    (deref message)
-                    instr-diag)))])
+              (compiler-backend-instr-error-from instr-diag message)])
           (if (compiler-backend-inline-memory-call-name? inline-memory-name)
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
@@ -58011,9 +57342,7 @@
                       blocks))
                   "")))))]
       [(ResultCompilerBackend.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-backend-apply-instr-diagnostic (deref message) instr-diag)))])))
+        (compiler-backend-instr-error-from instr-diag message)])))
 
 (define (compiler-backend-indirect-call-param-types
   [type-segment-bases : i64]
@@ -58347,27 +57676,13 @@
                                   func-asm
                                   call-tail))))]
                         [(ResultCompilerBackend.Err message)
-                          (ResultCompilerBackend.Err
-                            (box
-                              (compiler-backend-apply-instr-diagnostic
-                                (deref message)
-                                instr-diag)))]))])]
+                          (compiler-backend-instr-error-from instr-diag message)]))])]
               [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))])]
+                (compiler-backend-instr-error-from instr-diag message)])]
           [(ResultBackendReg.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])]
+            (compiler-backend-instr-error instr-diag message)])]
       [(ResultCompilerBackend.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-backend-apply-instr-diagnostic (deref message) instr-diag)))])))
+        (compiler-backend-instr-error-from instr-diag message)])))
 
 (define (compiler-backend-emit-indirect-call
   [type-segment-bases : i64]
@@ -58516,21 +57831,11 @@
                             ""
                             "")))))]
                 [(ResultBackendReg.Err message)
-                  (ResultCompilerBackend.Err
-                    (box
-                      (compiler_diagnostic.compiler-diagnostic-with-message
-                        instr-diag
-                        message)))])]
+                  (compiler-backend-instr-error instr-diag message)])]
             [(ResultCompilerBackend.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler-backend-apply-instr-diagnostic
-                    (deref message)
-                    instr-diag)))]))]
+              (compiler-backend-instr-error-from instr-diag message)]))]
       [(ResultCompilerBackend.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-backend-apply-instr-diagnostic (deref message) instr-diag)))])))
+        (compiler-backend-instr-error-from instr-diag message)])))
 
 (define (compiler-backend-indirect-c-call-direct-home?
   [_target : CompilerBackendTarget]
@@ -58680,11 +57985,7 @@
                       ""
                       "")))]
               [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))]))
+                (compiler-backend-instr-error-from instr-diag message)]))
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
               (compiler-backend-emit-call-space-sub call-space)
@@ -58705,9 +58006,7 @@
                 ""
                 ""))))]
       [(ResultCompilerBackend.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-backend-apply-instr-diagnostic (deref message) instr-diag)))])))
+        (compiler-backend-instr-error-from instr-diag message)])))
 
 (define (compiler-backend-emit-c-abi-store-result-call
   [type-segment-bases : i64]
@@ -58799,15 +58098,9 @@
                     (compiler-backend-emit-call-space-add dip))
                   "")))]
           [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            (compiler-backend-instr-error-from instr-diag message)])]
       [(ResultCompilerBackend.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-backend-apply-instr-diagnostic (deref message) instr-diag)))])))
+        (compiler-backend-instr-error-from instr-diag message)])))
 
 (define (compiler-backend-emit-indirect-c-abi-store-result-call
   [type-segment-bases : i64]
@@ -58919,21 +58212,11 @@
                         ""
                         "")))]
                 [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err
-                    (box
-                      (compiler-backend-apply-instr-diagnostic
-                        (deref message)
-                        instr-diag)))]))]
+                  (compiler-backend-instr-error-from instr-diag message)]))]
           [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
+            (compiler-backend-instr-error-from instr-diag message)])]
       [(ResultCompilerBackend.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-backend-apply-instr-diagnostic (deref message) instr-diag)))])))
+        (compiler-backend-instr-error-from instr-diag message)])))
 
 ;; ---------------------------------------------------------------------------
 ;; Constant-divmod adjacent value forwarding.
@@ -61085,16 +60368,14 @@
                           ctx.backend-state)
                         (ResultCompilerBackend.Ok ""))]
                     [(ResultCompilerBackend.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler-backend-apply-instr-diagnostic
-                            (deref message)
-                            (compiler-backend-instr-diagnostic
-                              ctx.spans
-                              ctx.source-function
-                              instr
-                              ctx.func-diag
-                              ""))))])
+                      (compiler-backend-instr-error-from
+                        (compiler-backend-instr-diagnostic
+                          ctx.spans
+                          ctx.source-function
+                          instr
+                          ctx.func-diag
+                          "")
+                        message)])
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
@@ -75798,17 +75079,13 @@
                       ;; emitting wrong addressing.
                       (if (compiler-backend-gep-fold-audit-failed?
                         function-state)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler-backend-apply-instr-diagnostic
-                              (compiler_diagnostic.compiler-diagnostic-at-start
-                                ""
-                                (str_cat.str-cat
-                                  "backend: gep displacement ordinal drift in "
-                                  (compiler-backend-symbol-text-index
-                                    program-index
-                                    name)))
-                              func-diag)))
+                        (compiler-backend-instr-error
+                          func-diag
+                          (str_cat.str-cat
+                            "backend: gep displacement ordinal drift in "
+                            (compiler-backend-symbol-text-index
+                              program-index
+                              name)))
                         (let
                           [dynamic-frame-extra : i64
                             (+

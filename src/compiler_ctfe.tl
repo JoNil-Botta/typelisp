@@ -5280,6 +5280,260 @@
           expr
           "offset-of expects exactly one type argument and one field name")))))
 
+(define (ctfe-reflection-requires [name : String] [kind : String]) : CtfeBuilt
+  (CtfeBuilt.Err (str_cat.str-cat name " requires " kind)))
+
+(define (ctfe-reflection-type-result
+  [name : String]
+  [lookup : ResultCtfeTypeLookup]) : CtfeBuilt
+  (match lookup
+    [(ResultCtfeTypeLookup.Ok ty) (CtfeBuilt.Ok (CompilerCtfeValue.Type ty))]
+    [(ResultCtfeTypeLookup.Err message)
+      (CtfeBuilt.Err (str_cat.str-cat name " " message))]))
+
+(define (ctfe-reflect-info-cleanup [info : CtfeReflectInfo]) : CtfeReflectCleanup
+  (match info
+    [(CtfeReflectInfo.Struct _ _ _ _ cleanup _ _) cleanup]
+    [(CtfeReflectInfo.Enum _ _ _ _ cleanup _ _) cleanup]))
+
+(define (ctfe-struct-field-reflection? [name : (& name str)]) : bool
+  (or
+    (string.eq name "struct-field-count")
+    (string.eq name "struct-field-name")
+    (string.eq name "struct-field-type")))
+
+;; The reflection queries answered from a nominal type's declaration metadata.
+(define (ctfe-nominal-reflection
+  [name : String]
+  [pools : ast.AstNodePoolContext]
+  [infos : CtfeReflectInfoList]
+  [session : cis.InternStructuralSessionHandle]
+  [found : CtfeMaybeReflectInfo]
+  [index : i64]
+  [second-index : i64]) : CtfeBuilt
+  (match found
+    [(CtfeMaybeReflectInfo.None)
+      (cond
+        [(string.eq name "type-cleanup-owning?")
+          (CtfeBuilt.Ok (CompilerCtfeValue.Bool false))]
+        [(string.eq name "type-cleanup-function")
+          (ctfe-reflection-requires name "cleanup-owning type")]
+        [(or
+            (string.eq name "type-nominal-module")
+            (string.eq name "type-nominal-name"))
+          (ctfe-reflection-requires name "struct or enum type")]
+        [(ctfe-struct-field-reflection? name)
+          (ctfe-reflection-requires name "struct type")]
+        [else (ctfe-reflection-requires name "enum type")])]
+    [(CtfeMaybeReflectInfo.Some info)
+      (cond
+        [(string.eq name "type-cleanup-owning?")
+          (CtfeBuilt.Ok
+            (CompilerCtfeValue.Bool
+              (match (ctfe-reflect-info-cleanup (clone info))
+                [(CtfeReflectCleanup.No) false]
+                [(CtfeReflectCleanup.Fn _ _) true])))]
+        [(string.eq name "type-cleanup-function")
+          (match (ctfe-reflect-info-cleanup (clone info))
+            [(CtfeReflectCleanup.Fn cleanup-name cleanup-name-id)
+              (CtfeBuilt.Ok
+                (CompilerCtfeValue.String cleanup-name cleanup-name-id))]
+            [(CtfeReflectCleanup.No)
+              (ctfe-reflection-requires name "cleanup-owning type")])]
+        [(string.eq name "type-nominal-module")
+          (CtfeBuilt.Ok
+            (ctfe-name-value-for-session
+              session
+              (ctfe-reflect-info-nominal-module-id info)))]
+        [(string.eq name "type-nominal-name")
+          (CtfeBuilt.Ok
+            (ctfe-name-value-for-session
+              session
+              (ctfe-reflect-info-nominal-name-id info)))]
+        [(ctfe-struct-field-reflection? name)
+          (match info
+            [(CtfeReflectInfo.Struct _ _ _ _ _ fields _)
+              (cond
+                [(string.eq name "struct-field-count")
+                  (CtfeBuilt.Ok
+                    (CompilerCtfeValue.I64
+                      (ctfe-reflect-field-list-count fields)))]
+                [(string.eq name "struct-field-name")
+                  (match (ctfe-reflect-field-name-at fields index)
+                    [(ResultCtfeNameLookup.Ok field-name)
+                      (CtfeBuilt.Ok
+                        (ctfe-name-value-for-session session field-name))]
+                    [(ResultCtfeNameLookup.Err message)
+                      (CtfeBuilt.Err (str_cat.str-cat name " " message))])]
+                [else
+                  (ctfe-reflection-type-result
+                    name
+                    (ctfe-reflect-field-type-at fields pools infos index))])]
+            [_ (ctfe-reflection-requires name "struct type")])]
+        [else
+          (match info
+            [(CtfeReflectInfo.Enum _ _ _ _ _ variants _)
+              (cond
+                [(string.eq name "enum-variant-count")
+                  (CtfeBuilt.Ok
+                    (CompilerCtfeValue.I64
+                      (ctfe-reflect-variant-list-count variants)))]
+                [(string.eq name "enum-variant-name")
+                  (match (ctfe-reflect-variant-name-at variants index)
+                    [(ResultCtfeNameLookup.Ok variant-name)
+                      (CtfeBuilt.Ok
+                        (ctfe-name-value-for-session session variant-name))]
+                    [(ResultCtfeNameLookup.Err message)
+                      (CtfeBuilt.Err (str_cat.str-cat name " " message))])]
+                [else
+                  (match (ctfe-reflect-variant-payloads-at variants index)
+                    [(ResultCtfeTypeListLookup.Ok payloads)
+                      (if (string.eq name "enum-variant-payload-count")
+                        (CtfeBuilt.Ok
+                          (CompilerCtfeValue.I64
+                            (ctfe-type-list-count payloads)))
+                        (ctfe-reflection-type-result
+                          name
+                          (ctfe-type-list-ref-with-pools
+                            payloads
+                            pools
+                            infos
+                            second-index)))]
+                    [(ResultCtfeTypeListLookup.Err message)
+                      (CtfeBuilt.Err (str_cat.str-cat name " " message))])])]
+            [_ (ctfe-reflection-requires name "enum type")])])]))
+
+;; One type reflection query, named by its builtin, over an evaluated type and
+;; the index operands of the indexed queries (`struct-field-name` and the
+;; like; `enum-variant-payload-type` takes two).
+(define (ctfe-type-reflection
+  [name : String]
+  [pools : ast.AstNodePoolContext]
+  [infos : CtfeReflectInfoList]
+  [session : cis.InternStructuralSessionHandle]
+  [ty : ast.AstType]
+  [index : i64]
+  [second-index : i64]) : CtfeBuilt
+  (cond
+    [(string.eq name "type-info")
+      (CtfeBuilt.Ok
+        (CompilerCtfeValue.TypeInfo
+          (ctfe-reflect-resolve-type-with-pools pools infos ty)))]
+    [(string.eq name "type-kind")
+      (CtfeBuilt.Ok
+        (ctfe-generated-string-value
+          (ctfe-type-kind-with-reflections-and-pools pools infos ty)))]
+    [(string.eq name "type-key")
+      (CtfeBuilt.Ok
+        (ctfe-generated-string-value
+          (ctfe-type-key-with-reflections-and-pools pools infos ty)))]
+    [(or
+        (string.eq name "tuple-element-count")
+        (string.eq name "tuple-element-type"))
+      (match (ctfe-reflect-resolve-type-with-pools pools infos ty)
+        [(ast.AstType.Tuple elems)
+          (if (string.eq name "tuple-element-count")
+            (CtfeBuilt.Ok
+              (CompilerCtfeValue.I64 (ctfe-type-list-count (deref elems))))
+            (ctfe-reflection-type-result
+              name
+              (ctfe-type-list-ref-with-pools (deref elems) pools infos index)))]
+        [_ (ctfe-reflection-requires name "tuple type")])]
+    [(string.eq name "array-element-type")
+      (match ty
+        [(ast.AstType.Array elem _)
+          (CtfeBuilt.Ok
+            (CompilerCtfeValue.Type
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.DynArray elem)
+          (CtfeBuilt.Ok
+            (CompilerCtfeValue.Type
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.Slice elem)
+          (CtfeBuilt.Ok
+            (CompilerCtfeValue.Type
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [_ (ctfe-reflection-requires name "array type")])]
+    [(string.eq name "box-element-type")
+      (match ty
+        [(ast.AstType.Box elem)
+          (CtfeBuilt.Ok
+            (CompilerCtfeValue.Type
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [_ (ctfe-reflection-requires name "box type")])]
+    [(string.eq name "reference-element-type")
+      (match ty
+        [(ast.AstType.Ref _ elem)
+          (CtfeBuilt.Ok
+            (CompilerCtfeValue.Type
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.MutRef _ elem)
+          (CtfeBuilt.Ok
+            (CompilerCtfeValue.Type
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [_ (ctfe-reflection-requires name "reference type")])]
+    [(string.eq name "array-length")
+      (match ty
+        [(ast.AstType.Array _ count)
+          (CtfeBuilt.Ok (CompilerCtfeValue.I64 count))]
+        [_ (ctfe-reflection-requires name "fixed array type")])]
+    [(string.eq name "array-dynamic?")
+      (match ty
+        [(ast.AstType.Array _ _) (CtfeBuilt.Ok (CompilerCtfeValue.Bool false))]
+        [(ast.AstType.DynArray _) (CtfeBuilt.Ok (CompilerCtfeValue.Bool true))]
+        [_ (ctfe-reflection-requires name "array type")])]
+    [(or
+        (string.eq name "function-param-count")
+        (string.eq name "function-return-type")
+        (string.eq name "function-param-type"))
+      (match ty
+        [(ast.AstType.Func params ret)
+          (cond
+            [(string.eq name "function-param-count")
+              (CtfeBuilt.Ok
+                (CompilerCtfeValue.I64 (ctfe-type-list-count (deref params))))]
+            [(string.eq name "function-return-type")
+              (CtfeBuilt.Ok
+                (CompilerCtfeValue.Type
+                  (ast.ast-node-pool-context-type-get pools ret)))]
+            [else
+              (ctfe-reflection-type-result
+                name
+                (ctfe-type-list-ref-with-pools (deref params) pools infos index))])]
+        [_ (ctfe-reflection-requires name "function type")])]
+    [else
+      (let
+        [found : CtfeMaybeReflectInfo
+          (ctfe-reflect-info-for-type-with-pools pools infos ty)]
+        (ctfe-nominal-reflection
+          name
+          pools
+          infos
+          session
+          found
+          index
+          second-index))]))
+
+(define (ctfe-eval-type-reflection-at
+  [name : String]
+  [ty : ast.AstType]
+  [index : i64]
+  [second-index : i64]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (ctfe-built-result
+    (ctfe-type-reflection
+      name
+      (ctfe-env-pools env)
+      (ctfe-env-reflections env)
+      (ctfe-env-structural-session env)
+      ty
+      index
+      second-index)
+    expr
+    fuel))
+
 (define (ctfe-eval-one-type-reflection
   [name : String]
   [args : ast.AstExprList]
@@ -5287,698 +5541,86 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (if (= (ctfe-expr-arg-count args) 1)
-    (let
-      [type-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-      (match (ctfe-eval-type-arg type-arg expr env fuel (string.copy name))
-        [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeTypeArg.Ok ty arg-fuel)
-          (let
-            [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-            (cond
-              [(string.eq name "type-info")
-                (ResultCtfe.Ok
-                  (CompilerCtfeValue.TypeInfo
-                    (ctfe-reflect-resolve-type-with-pools
-                      (ctfe-env-pools env)
-                      infos
-                      (clone ty)))
-                  arg-fuel)]
-              [(string.eq name "type-kind")
-                (ResultCtfe.Ok
-                  (ctfe-generated-string-value
-                    (ctfe-type-kind-with-reflections-and-pools
-                      (ctfe-env-pools env)
-                      infos
-                      (clone ty)))
-                  arg-fuel)]
-              [(string.eq name "type-key")
-                (ResultCtfe.Ok
-                  (ctfe-generated-string-value
-                    (ctfe-type-key-with-reflections-and-pools
-                      (ctfe-env-pools env)
-                      infos
-                      (clone ty)))
-                  arg-fuel)]
-              [(string.eq name "type-cleanup-owning?")
-                (match (ctfe-reflect-info-for-type-with-pools
-                  (ctfe-env-pools env)
-                  infos
-                  (clone ty))
-                  [(CtfeMaybeReflectInfo.Some info)
-                    (match info
-                      [(CtfeReflectInfo.Struct _ _ _ _ cleanup _ _)
-                        (match cleanup
-                          [(CtfeReflectCleanup.No)
-                            (ResultCtfe.Ok
-                              (CompilerCtfeValue.Bool false)
-                              arg-fuel)]
-                          [(CtfeReflectCleanup.Fn _ _)
-                            (ResultCtfe.Ok
-                              (CompilerCtfeValue.Bool true)
-                              arg-fuel)])]
-                      [(CtfeReflectInfo.Enum _ _ _ _ cleanup _ _)
-                        (match cleanup
-                          [(CtfeReflectCleanup.No)
-                            (ResultCtfe.Ok
-                              (CompilerCtfeValue.Bool false)
-                              arg-fuel)]
-                          [(CtfeReflectCleanup.Fn _ _)
-                            (ResultCtfe.Ok
-                              (CompilerCtfeValue.Bool true)
-                              arg-fuel)])])]
-                  [(CtfeMaybeReflectInfo.None)
-                    (ResultCtfe.Ok (CompilerCtfeValue.Bool false) arg-fuel)])]
-              [(string.eq name "type-cleanup-function")
-                (match (ctfe-reflect-info-for-type-with-pools
-                  (ctfe-env-pools env)
-                  infos
-                  (clone ty))
-                  [(CtfeMaybeReflectInfo.Some info)
-                    (let
-                      [cleanup : CtfeReflectCleanup
-                        (match info
-                          [(CtfeReflectInfo.Struct _ _ _ _ value _ _) value]
-                          [(CtfeReflectInfo.Enum _ _ _ _ value _ _) value])]
-                      (match cleanup
-                        [(CtfeReflectCleanup.Fn cleanup-name cleanup-name-id)
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.String
-                              cleanup-name
-                              cleanup-name-id)
-                            arg-fuel)]
-                        [(CtfeReflectCleanup.No)
-                          (ResultCtfe.Err
-                            (box
-                              (ctfe-diagnostic-at-expr
-                                expr
-                                "type-cleanup-function requires cleanup-owning type")))]))]
-                  [(CtfeMaybeReflectInfo.None)
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "type-cleanup-function requires cleanup-owning type")))])]
-              [(string.eq name "type-nominal-module")
-                (match (ctfe-reflect-info-for-type-with-pools
-                  (ctfe-env-pools env)
-                  infos
-                  (clone ty))
-                  [(CtfeMaybeReflectInfo.Some info)
-                    (ResultCtfe.Ok
-                      (ctfe-name-value-for-session
-                        (ctfe-env-structural-session env)
-                        (ctfe-reflect-info-nominal-module-id info))
-                      arg-fuel)]
-                  [(CtfeMaybeReflectInfo.None)
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "type-nominal-module requires struct or enum type")))])]
-              [(string.eq name "type-nominal-name")
-                (match (ctfe-reflect-info-for-type-with-pools
-                  (ctfe-env-pools env)
-                  infos
-                  (clone ty))
-                  [(CtfeMaybeReflectInfo.Some info)
-                    (ResultCtfe.Ok
-                      (ctfe-name-value-for-session
-                        (ctfe-env-structural-session env)
-                        (ctfe-reflect-info-nominal-name-id info))
-                      arg-fuel)]
-                  [(CtfeMaybeReflectInfo.None)
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "type-nominal-name requires struct or enum type")))])]
-              [(string.eq name "struct-field-count")
-                (match (ctfe-reflect-info-for-type-with-pools
-                  (ctfe-env-pools env)
-                  infos
-                  (clone ty))
-                  [(CtfeMaybeReflectInfo.Some info)
-                    (match info
-                      [(CtfeReflectInfo.Struct _ _ _ _ _ fields _)
-                        (ResultCtfe.Ok
-                          (CompilerCtfeValue.I64
-                            (ctfe-reflect-field-list-count fields))
-                          arg-fuel)]
-                      [_
-                        (ResultCtfe.Err
-                          (box
-                            (ctfe-diagnostic-at-expr
-                              expr
-                              "struct-field-count requires struct type")))])]
-                  [(CtfeMaybeReflectInfo.None)
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "struct-field-count requires struct type")))])]
-              [(string.eq name "enum-variant-count")
-                (match (ctfe-reflect-info-for-type-with-pools
-                  (ctfe-env-pools env)
-                  infos
-                  (clone ty))
-                  [(CtfeMaybeReflectInfo.Some info)
-                    (match info
-                      [(CtfeReflectInfo.Enum _ _ _ _ _ variants _)
-                        (ResultCtfe.Ok
-                          (CompilerCtfeValue.I64
-                            (ctfe-reflect-variant-list-count variants))
-                          arg-fuel)]
-                      [_
-                        (ResultCtfe.Err
-                          (box
-                            (ctfe-diagnostic-at-expr
-                              expr
-                              "enum-variant-count requires enum type")))])]
-                  [(CtfeMaybeReflectInfo.None)
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "enum-variant-count requires enum type")))])]
-              [(string.eq name "array-element-type")
-                (match (clone ty)
-                  [(ast.AstType.Array elem _)
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
-                      arg-fuel)]
-                  [(ast.AstType.DynArray elem)
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
-                      arg-fuel)]
-                  [(ast.AstType.Slice elem)
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
-                      arg-fuel)]
-                  [_
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "array-element-type requires array type")))])]
-              [(string.eq name "box-element-type")
-                (match (clone ty)
-                  [(ast.AstType.Box elem)
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
-                      arg-fuel)]
-                  [_
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "box-element-type requires box type")))])]
-              [(string.eq name "reference-element-type")
-                (match (clone ty)
-                  [(ast.AstType.Ref _ elem)
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
-                      arg-fuel)]
-                  [(ast.AstType.MutRef _ elem)
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
-                      arg-fuel)]
-                  [_
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "reference-element-type requires reference type")))])]
-              [(string.eq name "array-length")
-                (match (clone ty)
-                  [(ast.AstType.Array _ count)
-                    (ResultCtfe.Ok (CompilerCtfeValue.I64 count) arg-fuel)]
-                  [_
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "array-length requires fixed array type")))])]
-              [(string.eq name "array-dynamic?")
-                (match (clone ty)
-                  [(ast.AstType.Array _ _)
-                    (ResultCtfe.Ok (CompilerCtfeValue.Bool false) arg-fuel)]
-                  [(ast.AstType.DynArray _)
-                    (ResultCtfe.Ok (CompilerCtfeValue.Bool true) arg-fuel)]
-                  [_
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "array-dynamic? requires array type")))])]
-              [(string.eq name "tuple-element-count")
-                (match (ctfe-reflect-resolve-type-with-pools
-                  (ctfe-env-pools env)
-                  infos
-                  (clone ty))
-                  [(ast.AstType.Tuple elems)
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.I64
-                        (ctfe-type-list-count (deref elems)))
-                      arg-fuel)]
-                  [_
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "tuple-element-count requires tuple type")))])]
-              [(string.eq name "function-param-count")
-                (match (clone ty)
-                  [(ast.AstType.Func params _)
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.I64
-                        (ctfe-type-list-count (deref params)))
-                      arg-fuel)]
-                  [_
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "function-param-count requires function type")))])]
-              [(string.eq name "function-return-type")
-                (match (clone ty)
-                  [(ast.AstType.Func _ ret)
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.Type (ctfe-ty-get env ret))
-                      arg-fuel)]
-                  [_
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "function-return-type requires function type")))])]
-              [else (ctfe-unsupported-form expr)]))]))
+    (match (ctfe-eval-type-arg
+      (ctfe-expr-arg args 0 env)
+      expr
+      env
+      fuel
+      (string.copy name))
+      [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
+      [(ResultCtfeTypeArg.Ok ty arg-fuel)
+        (ctfe-eval-type-reflection-at name ty 0 0 expr env arg-fuel)])
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
           (str_cat.str-cat name " expects exactly one type argument"))))))
 
-(define (ctfe-type-index-arity-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
-  (ResultCtfe.Err
-    (box
-      (ctfe-diagnostic-at-expr
-        expr
-        (str_cat.str-cat
-          name
-          " expects exactly one type argument and one index")))))
-
-(define (ctfe-struct-field-kind-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
-  (ResultCtfe.Err
-    (box
-      (ctfe-diagnostic-at-expr
-        expr
-        (str_cat.str-cat name " requires struct type")))))
-
-(define (ctfe-eval-struct-field-from-fields
-  [name : String]
-  [fields : CtfeReflectFieldList]
-  [pools : ast.AstNodePoolContext]
-  [session : cis.InternStructuralSessionHandle]
-  [infos : CtfeReflectInfoList]
-  [index : i64]
-  [expr : ast.AstExpr]
-  [fuel : i64]) : ResultCtfe
-  (if (string.eq name "struct-field-name")
-    (match (ctfe-reflect-field-name-at fields index)
-      [(ResultCtfeNameLookup.Ok field-name)
-        (ResultCtfe.Ok (ctfe-name-value-for-session session field-name) fuel)]
-      [(ResultCtfeNameLookup.Err message)
-        (ResultCtfe.Err
-          (box
-            (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " " message))))])
-    (match (ctfe-reflect-field-type-at fields pools infos index)
-      [(ResultCtfeTypeLookup.Ok field-ty)
-        (ResultCtfe.Ok (CompilerCtfeValue.Type field-ty) fuel)]
-      [(ResultCtfeTypeLookup.Err message)
-        (ResultCtfe.Err
-          (box
-            (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " " message))))])))
-
-(define (ctfe-eval-struct-field-from-type
-  [name : String]
-  [ty : ast.AstType]
-  [index : i64]
-  [expr : ast.AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (let
-    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-    (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
-      [(CtfeMaybeReflectInfo.Some info)
-        (match info
-          [(CtfeReflectInfo.Struct _ _ _ _ _ fields _)
-            (ctfe-eval-struct-field-from-fields
-              name
-              fields
-              (ctfe-env-pools env)
-              (ctfe-env-structural-session env)
-              infos
-              index
-              expr
-              fuel)]
-          [_ (ctfe-struct-field-kind-error name expr)])]
-      [(CtfeMaybeReflectInfo.None) (ctfe-struct-field-kind-error name expr)])))
-
-(define (ctfe-eval-struct-field-reflection
+;; The indexed queries take one i64 index after the type, and
+;; enum-variant-payload-type a variant index and a payload index.
+(define (ctfe-eval-indexed-type-reflection
   [name : String]
   [args : ast.AstExprList]
   [expr : ast.AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (if (= (ctfe-expr-arg-count args) 2)
-    (let
-      [type-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-      [index-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-type-arg type-arg expr env fuel (string.copy name))
-        [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeTypeArg.Ok ty type-fuel)
-          (match (ctfe-eval-i64-arg
-            index-arg
-            expr
-            env
-            type-fuel
-            (string.copy name))
-            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
-            [(result_ctfe_i64_arg.Ok index-arg-value)
-              (ctfe-eval-struct-field-from-type
-                name
-                ty
-                index-arg-value.value
-                expr
-                env
-                index-arg-value.fuel)])]))
-    (ctfe-type-index-arity-error name expr)))
-
-(define (ctfe-enum-variant-kind-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
-  (ResultCtfe.Err
-    (box
-      (ctfe-diagnostic-at-expr
-        expr
-        (str_cat.str-cat name " requires enum type")))))
-
-(define (ctfe-eval-enum-variant-from-variants
-  [name : String]
-  [variants : CtfeReflectVariantList]
-  [session : cis.InternStructuralSessionHandle]
-  [index : i64]
-  [expr : ast.AstExpr]
-  [fuel : i64]) : ResultCtfe
-  (if (string.eq name "enum-variant-name")
-    (match (ctfe-reflect-variant-name-at variants index)
-      [(ResultCtfeNameLookup.Ok variant-name)
-        (ResultCtfe.Ok (ctfe-name-value-for-session session variant-name) fuel)]
-      [(ResultCtfeNameLookup.Err message)
-        (ResultCtfe.Err
-          (box
-            (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " " message))))])
-    (match (ctfe-reflect-variant-payloads-at variants index)
-      [(ResultCtfeTypeListLookup.Ok payloads)
-        (ResultCtfe.Ok
-          (CompilerCtfeValue.I64 (ctfe-type-list-count payloads))
-          fuel)]
-      [(ResultCtfeTypeListLookup.Err message)
-        (ResultCtfe.Err
-          (box
-            (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " " message))))])))
-
-(define (ctfe-eval-enum-variant-from-type
-  [name : String]
-  [ty : ast.AstType]
-  [index : i64]
-  [expr : ast.AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
   (let
-    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-    (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
-      [(CtfeMaybeReflectInfo.Some info)
-        (match info
-          [(CtfeReflectInfo.Enum _ _ _ _ _ variants _)
-            (ctfe-eval-enum-variant-from-variants
-              name
-              variants
-              (ctfe-env-structural-session env)
-              index
-              expr
-              fuel)]
-          [_ (ctfe-enum-variant-kind-error name expr)])]
-      [(CtfeMaybeReflectInfo.None) (ctfe-enum-variant-kind-error name expr)])))
-
-(define (ctfe-eval-enum-variant-reflection
-  [name : String]
-  [args : ast.AstExprList]
-  [expr : ast.AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (if (= (ctfe-expr-arg-count args) 2)
-    (let
-      [type-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-      [index-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-type-arg type-arg expr env fuel (string.copy name))
+    [payload? : bool (string.eq name "enum-variant-payload-type")]
+    (if (=
+      (ctfe-expr-arg-count args)
+      (if payload?
+        3
+        2))
+      (match (ctfe-eval-type-arg
+        (ctfe-expr-arg args 0 env)
+        expr
+        env
+        fuel
+        (string.copy name))
         [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
         [(ResultCtfeTypeArg.Ok ty type-fuel)
           (match (ctfe-eval-i64-arg
-            index-arg
+            (ctfe-expr-arg args 1 env)
             expr
             env
             type-fuel
             (string.copy name))
             [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
-            [(result_ctfe_i64_arg.Ok index-arg-value)
-              (ctfe-eval-enum-variant-from-type
-                name
-                ty
-                index-arg-value.value
-                expr
-                env
-                index-arg-value.fuel)])]))
-    (ctfe-type-index-arity-error name expr)))
-
-(define (ctfe-enum-payload-type-arity-error [expr : ast.AstExpr]) : ResultCtfe
-  (ResultCtfe.Err
-    (box
-      (ctfe-diagnostic-at-expr
-        expr
-        "enum-variant-payload-type expects exactly one type argument, one variant index, and one payload index"))))
-
-(define (ctfe-enum-payload-type-kind-error [expr : ast.AstExpr]) : ResultCtfe
-  (ResultCtfe.Err
-    (box
-      (ctfe-diagnostic-at-expr
-        expr
-        "enum-variant-payload-type requires enum type"))))
-
-(define (ctfe-eval-enum-payload-type-from-variants
-  [variants : CtfeReflectVariantList]
-  [pools : ast.AstNodePoolContext]
-  [infos : CtfeReflectInfoList]
-  [variant-index : i64]
-  [payload-index : i64]
-  [expr : ast.AstExpr]
-  [fuel : i64]) : ResultCtfe
-  (match (ctfe-reflect-variant-payloads-at variants variant-index)
-    [(ResultCtfeTypeListLookup.Ok payloads)
-      (match (ctfe-type-list-ref-with-pools payloads pools infos payload-index)
-        [(ResultCtfeTypeLookup.Ok payload-ty)
-          (ResultCtfe.Ok (CompilerCtfeValue.Type payload-ty) fuel)]
-        [(ResultCtfeTypeLookup.Err message)
-          (ResultCtfe.Err
-            (box
-              (ctfe-diagnostic-at-expr
-                expr
-                (str_cat.str-cat "enum-variant-payload-type " message))))])]
-    [(ResultCtfeTypeListLookup.Err message)
+            [(result_ctfe_i64_arg.Ok first)
+              (if payload?
+                (match (ctfe-eval-i64-arg
+                  (ctfe-expr-arg args 2 env)
+                  expr
+                  env
+                  first.fuel
+                  (string.copy name))
+                  [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+                  [(result_ctfe_i64_arg.Ok second)
+                    (ctfe-eval-type-reflection-at
+                      name
+                      ty
+                      first.value
+                      second.value
+                      expr
+                      env
+                      second.fuel)])
+                (ctfe-eval-type-reflection-at
+                  name
+                  ty
+                  first.value
+                  0
+                  expr
+                  env
+                  first.fuel))])])
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (str_cat.str-cat "enum-variant-payload-type " message))))]))
-
-(define (ctfe-eval-enum-payload-type-from-type
-  [ty : ast.AstType]
-  [variant-index : i64]
-  [payload-index : i64]
-  [expr : ast.AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (let
-    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-    (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
-      [(CtfeMaybeReflectInfo.Some info)
-        (match info
-          [(CtfeReflectInfo.Enum _ _ _ _ _ variants _)
-            (ctfe-eval-enum-payload-type-from-variants
-              variants
-              (ctfe-env-pools env)
-              infos
-              variant-index
-              payload-index
-              expr
-              fuel)]
-          [_ (ctfe-enum-payload-type-kind-error expr)])]
-      [(CtfeMaybeReflectInfo.None) (ctfe-enum-payload-type-kind-error expr)])))
-
-(define (ctfe-eval-enum-payload-type-reflection
-  [args : ast.AstExprList]
-  [expr : ast.AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (if (= (ctfe-expr-arg-count args) 3)
-    (let
-      [type-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-      [variant-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      [payload-arg : ast.AstExpr (ctfe-expr-arg args 2 env)]
-      (match (ctfe-eval-type-arg
-        type-arg
-        expr
-        env
-        fuel
-        "enum-variant-payload-type")
-        [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeTypeArg.Ok ty type-fuel)
-          (match (ctfe-eval-i64-arg
-            variant-arg
-            expr
-            env
-            type-fuel
-            "enum-variant-payload-type")
-            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
-            [(result_ctfe_i64_arg.Ok variant-arg-value)
-              (match (ctfe-eval-i64-arg
-                payload-arg
-                expr
-                env
-                variant-arg-value.fuel
-                "enum-variant-payload-type")
-                [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
-                [(result_ctfe_i64_arg.Ok payload-arg-value)
-                  (ctfe-eval-enum-payload-type-from-type
-                    ty
-                    variant-arg-value.value
-                    payload-arg-value.value
-                    expr
-                    env
-                    payload-arg-value.fuel)])])]))
-    (ctfe-enum-payload-type-arity-error expr)))
-
-(define (ctfe-eval-function-param-type-reflection
-  [args : ast.AstExprList]
-  [expr : ast.AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (if (= (ctfe-expr-arg-count args) 2)
-    (let
-      [type-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-      [index-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-type-arg type-arg expr env fuel "function-param-type")
-        [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeTypeArg.Ok ty type-fuel)
-          (match (ctfe-eval-i64-arg
-            index-arg
-            expr
-            env
-            type-fuel
-            "function-param-type")
-            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
-            [(result_ctfe_i64_arg.Ok index-arg-value)
-              (match ty
-                [(ast.AstType.Func params _)
-                  (match (ctfe-type-list-ref-with-pools
-                    (deref params)
-                    (ctfe-env-pools env)
-                    (ctfe-env-reflections env)
-                    index-arg-value.value)
-                    [(ResultCtfeTypeLookup.Ok param-ty)
-                      (ResultCtfe.Ok
-                        (CompilerCtfeValue.Type param-ty)
-                        index-arg-value.fuel)]
-                    [(ResultCtfeTypeLookup.Err message)
-                      (ResultCtfe.Err
-                        (box
-                          (ctfe-diagnostic-at-expr
-                            expr
-                            (str_cat.str-cat "function-param-type " message))))])]
-                [_
-                  (ResultCtfe.Err
-                    (box
-                      (ctfe-diagnostic-at-expr
-                        expr
-                        "function-param-type requires function type")))])])]))
-    (ResultCtfe.Err
-      (box
-        (ctfe-diagnostic-at-expr
-          expr
-          "function-param-type expects exactly one type argument and one index")))))
-
-(define (ctfe-tuple-element-type-arity-error [expr : ast.AstExpr]) : ResultCtfe
-  (ResultCtfe.Err
-    (box
-      (ctfe-diagnostic-at-expr
-        expr
-        "tuple-element-type expects exactly one type argument and one index"))))
-
-(define (ctfe-tuple-element-type-kind-error [expr : ast.AstExpr]) : ResultCtfe
-  (ResultCtfe.Err
-    (box
-      (ctfe-diagnostic-at-expr expr "tuple-element-type requires tuple type"))))
-
-(define (ctfe-eval-tuple-element-type-from-type
-  [ty : ast.AstType]
-  [index : i64]
-  [expr : ast.AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (let
-    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-    (match (ctfe-reflect-resolve-type-with-pools (ctfe-env-pools env) infos ty)
-      [(ast.AstType.Tuple elems)
-        (match (ctfe-type-list-ref-with-pools
-          (deref elems)
-          (ctfe-env-pools env)
-          infos
-          index)
-          [(ResultCtfeTypeLookup.Ok element-ty)
-            (ResultCtfe.Ok (CompilerCtfeValue.Type element-ty) fuel)]
-          [(ResultCtfeTypeLookup.Err message)
-            (ResultCtfe.Err
-              (box
-                (ctfe-diagnostic-at-expr
-                  expr
-                  (str_cat.str-cat "tuple-element-type " message))))])]
-      [_ (ctfe-tuple-element-type-kind-error expr)])))
-
-(define (ctfe-eval-tuple-element-type-reflection
-  [args : ast.AstExprList]
-  [expr : ast.AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (if (= (ctfe-expr-arg-count args) 2)
-    (let
-      [type-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-      [index-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-type-arg type-arg expr env fuel "tuple-element-type")
-        [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeTypeArg.Ok ty type-fuel)
-          (match (ctfe-eval-i64-arg
-            index-arg
-            expr
-            env
-            type-fuel
-            "tuple-element-type")
-            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
-            [(result_ctfe_i64_arg.Ok index-arg-value)
-              (ctfe-eval-tuple-element-type-from-type
-                ty
-                index-arg-value.value
-                expr
-                env
-                index-arg-value.fuel)])]))
-    (ctfe-tuple-element-type-arity-error expr)))
+            (if payload?
+              "enum-variant-payload-type expects exactly one type argument, one variant index, and one payload index"
+              (str_cat.str-cat
+                name
+                " expects exactly one type argument and one index"))))))))
 
 (define (ctfe-eval-reflection-query
   [name : String]
@@ -5992,22 +5634,8 @@
     (cond
       [(ctfe-builtin-reflection-primary-id? name-id)
         (ctfe-eval-one-type-reflection name args expr env fuel)]
-      [(ctfe-builtin-id-any2?
-          name-id
-          (ctfe-builtin "struct-field-name")
-          (ctfe-builtin "struct-field-type"))
-        (ctfe-eval-struct-field-reflection name args expr env fuel)]
-      [(ctfe-builtin-id-any2?
-          name-id
-          (ctfe-builtin "enum-variant-name")
-          (ctfe-builtin "enum-variant-payload-count"))
-        (ctfe-eval-enum-variant-reflection name args expr env fuel)]
-      [(= name-id (ctfe-builtin "enum-variant-payload-type"))
-        (ctfe-eval-enum-payload-type-reflection args expr env fuel)]
-      [(= name-id (ctfe-builtin "tuple-element-type"))
-        (ctfe-eval-tuple-element-type-reflection args expr env fuel)]
-      [(= name-id (ctfe-builtin "function-param-type"))
-        (ctfe-eval-function-param-type-reflection args expr env fuel)]
+      [(ctfe-builtin-reflection-secondary-id? name-id)
+        (ctfe-eval-indexed-type-reflection name args expr env fuel)]
       [else (ctfe-unsupported-form expr)])))
 
 (define (ctfe-eval-string-eq-call
@@ -6434,22 +6062,15 @@
       [arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       (match (compiler-ctfe-eval arg env fuel)
         [(ResultCtfe.Ok value arg-fuel)
-          (match value
-            [(CompilerCtfeValue.String _ string-id)
+          (match (ctfe-value-named value)
+            [(CtfeMaybeNamed.Some _ string-id)
               (ResultCtfe.Ok
                 (ctfe-syntax-expr-push
                   env
                   (ast.AstExpr.Literal (ast.AstLiteral.String string-id))
                   (ast.AstType.String))
                 arg-fuel)]
-            [(CompilerCtfeValue.Name _ name-id)
-              (ResultCtfe.Ok
-                (ctfe-syntax-expr-push
-                  env
-                  (ast.AstExpr.Literal (ast.AstLiteral.String name-id))
-                  (ast.AstType.String))
-                arg-fuel)]
-            [_
+            [(CtfeMaybeNamed.None)
               (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr expr "expr-string expects String")))])]
@@ -9783,6 +9404,12 @@
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "expr-while expects exactly two args")))))
 
+;; `(syntax-name-fresh text)`: the generated syntax identity for a spelling.
+(define (ctfe-syntax-name-fresh [text : String]) : CompilerCtfeValue
+  (CompilerCtfeValue.Name
+    (string.copy text)
+    (ctfe-materialize-generated-name-id text)))
+
 (define (ctfe-eval-syntax-name-fresh-call
   [args : ast.AstExprList]
   [expr : ast.AstExpr]
@@ -9793,11 +9420,7 @@
       [text-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       (match (ctfe-eval-string-arg text-arg expr env fuel "syntax-name-fresh")
         [(ResultCtfeStringArg.Ok text _ next-fuel)
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.Name
-              (string.copy text)
-              (ctfe-materialize-generated-name-id text))
-            next-fuel)]
+          (ResultCtfe.Ok (ctfe-syntax-name-fresh text) next-fuel)]
         [(ResultCtfeStringArg.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box

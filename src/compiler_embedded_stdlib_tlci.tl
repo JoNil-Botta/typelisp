@@ -1221,203 +1221,68 @@
                 (__tl-project-field (__tl-box-place diag) message))
               tlci.tlci-host-callback-status-diagnostic)])))))
 
-;; Replace the type value at the top of the session stack with one reflected
-;; field/variant name. `kind` is 0 for a struct field and 1 for an enum
-;; variant. The returned `Name` preserves the declaration's intern identity,
-;; matching the interpreted reflection path rather than materializing a fresh
-;; computed String. Refs #5626.
-(define (compiler-comptime-host-reflection-name-step!
-  [kind : i64]
-  [index : i64]) : i64
+;; The session-owned structural session renders reflected names.
+(define (compiler-comptime-host-structural-session) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (compiler-comptime-host-session-source-names-value)))
+
+;; Replace the type operand by one shared reflection query's result. A failed
+;; query answers its authored diagnostic when `report?`, bad-request otherwise.
+(define (compiler-comptime-host-type-query!
+  [name : String]
+  [session : cis.InternStructuralSessionHandle]
+  [index : i64]
+  [second-index : i64]
+  [report? : bool]) : i64
   (if (< compiler-comptime-host-stack-len 1)
     tlci.tlci-host-callback-status-bad-request
     (match (compiler-comptime-host-stack-value 1)
       [(ctfe_support.CompilerCtfeValue.Type ty)
-        (match (let
-          [host-pools : ast.AstNodePoolContext
-            (compiler-comptime-host-session-pools)]
-          [host-reflections : ctfe_support.CtfeReflectInfoList
-            (compiler-comptime-host-session-reflections)]
-          (ctfe_support.ctfe-reflect-info-for-type-with-pools
-            host-pools
-            host-reflections
-            ty))
-          [(ctfe_support.CtfeMaybeReflectInfo.Some info)
-            (match info
-              [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields _)
-                (if (= kind 0)
-                  (match (ctfe_support.ctfe-reflect-field-name-at fields index)
-                    [(ctfe_support.ResultCtfeNameLookup.Ok name)
-                      (compiler-comptime-host-replace!
-                        1
-                        (ctfe_support.ctfe-name-value-for-source-names
-                          (compiler-comptime-host-session-source-names-value)
-                          name))]
-                    [(ctfe_support.ResultCtfeNameLookup.Err _)
-                      tlci.tlci-host-callback-status-bad-request])
-                  tlci.tlci-host-callback-status-bad-request)]
-              [(ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants _)
-                (if (= kind 1)
-                  (match (ctfe_support.ctfe-reflect-variant-name-at
-                    variants
-                    index)
-                    [(ctfe_support.ResultCtfeNameLookup.Ok name)
-                      (compiler-comptime-host-replace!
-                        1
-                        (ctfe_support.ctfe-name-value-for-source-names
-                          (compiler-comptime-host-session-source-names-value)
-                          name))]
-                    [(ctfe_support.ResultCtfeNameLookup.Err _)
-                      tlci.tlci-host-callback-status-bad-request])
-                  tlci.tlci-host-callback-status-bad-request)])]
-          [(ctfe_support.CtfeMaybeReflectInfo.None)
-            tlci.tlci-host-callback-status-bad-request])]
+        (match (ctfe_support.ctfe-type-reflection
+          name
+          (compiler-comptime-host-session-pools)
+          (compiler-comptime-host-session-reflections)
+          session
+          ty
+          index
+          second-index)
+          [(ctfe_support.CtfeBuilt.Ok value)
+            (compiler-comptime-host-replace! 1 value)]
+          [(ctfe_support.CtfeBuilt.Err message)
+            (if report?
+              (compiler-comptime-host-diagnostic! message)
+              tlci.tlci-host-callback-status-bad-request)])]
       [_ tlci.tlci-host-callback-status-bad-request])))
 
-;; Reflection counts return their value directly through the callback ABI, so
-;; success consumes the type stack value and failure uses the negative data-op
-;; sentinel. `kind` is struct fields, enum variants, enum variant payloads, or
-;; tuple elements (0 through 3). Refs #5626.
-(define (compiler-comptime-host-reflection-count-step!
-  [kind : i64]
-  [index : i64]) : i64
+;; Count and predicate queries answer as data: the count or 1/0 after
+;; consuming the type operand, or the negative malformed-request sentinel.
+(define (compiler-comptime-host-type-query-data [name : String] [index : i64]) : i64
   (if (< compiler-comptime-host-stack-len 1)
     -3
     (match (compiler-comptime-host-stack-value 1)
       [(ctfe_support.CompilerCtfeValue.Type ty)
-        (let
-          [pools : ast.AstNodePoolContext
-            (compiler-comptime-host-session-pools)]
-          [infos : ctfe_support.CtfeReflectInfoList
-            (compiler-comptime-host-session-reflections)]
-          [count : i64
-            (cond
-              [(= kind 0)
-                (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                  pools
-                  infos
-                  ty)
-                  [(ctfe_support.CtfeMaybeReflectInfo.Some
-                      (ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields _))
-                    (ctfe_support.ctfe-reflect-field-list-count fields)]
-                  [_ -3])]
-              [(= kind 1)
-                (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                  pools
-                  infos
-                  ty)
-                  [(ctfe_support.CtfeMaybeReflectInfo.Some
-                      (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants _))
-                    (ctfe_support.ctfe-reflect-variant-list-count variants)]
-                  [_ -3])]
-              [(= kind 2)
-                (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                  pools
-                  infos
-                  ty)
-                  [(ctfe_support.CtfeMaybeReflectInfo.Some
-                      (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants _))
-                    (match (ctfe_support.ctfe-reflect-variant-payloads-at
-                      variants
-                      index)
-                      [(ctfe_support.ResultCtfeTypeListLookup.Ok payloads)
-                        (ctfe_support.ctfe-type-list-count payloads)]
-                      [(ctfe_support.ResultCtfeTypeListLookup.Err _) -3])]
-                  [_ -3])]
-              [else
-                (match (ctfe_support.ctfe-reflect-resolve-type-with-pools
-                  pools
-                  infos
-                  ty)
-                  [(ast.AstType.Tuple elems)
-                    (ctfe_support.ctfe-type-list-count (deref elems))]
-                  [_ -3])])]
-          (if (< count 0)
-            -3
+        (match (ctfe_support.ctfe-type-reflection
+          name
+          (compiler-comptime-host-session-pools)
+          (compiler-comptime-host-session-reflections)
+          (compiler-comptime-host-structural-session)
+          ty
+          index
+          0)
+          [(ctfe_support.CtfeBuilt.Ok
+              (ctfe_support.CompilerCtfeValue.I64 count))
             (begin
               (compiler-comptime-host-drop! 1)
-              count)))]
+              count)]
+          [(ctfe_support.CtfeBuilt.Ok
+              (ctfe_support.CompilerCtfeValue.Bool flag))
+            (begin
+              (compiler-comptime-host-drop! 1)
+              (if flag
+                1
+                0))]
+          [_ -3])]
       [_ -3])))
-
-;; Replace the type stack value with one indexed reflected type. `kind` is a
-;; struct field, enum payload, or tuple element (0 through 2). Refs #5626.
-(define (compiler-comptime-host-reflection-type-step!
-  [kind : i64]
-  [first-index : i64]
-  [second-index : i64]) : i64
-  (if (< compiler-comptime-host-stack-len 1)
-    tlci.tlci-host-callback-status-bad-request
-    (match (compiler-comptime-host-stack-value 1)
-      [(ctfe_support.CompilerCtfeValue.Type ty)
-        (let
-          [pools : ast.AstNodePoolContext
-            (compiler-comptime-host-session-pools)]
-          [infos : ctfe_support.CtfeReflectInfoList
-            (compiler-comptime-host-session-reflections)]
-          (cond
-            [(= kind 0)
-              (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                pools
-                infos
-                ty)
-                [(ctfe_support.CtfeMaybeReflectInfo.Some
-                    (ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields _))
-                  (match (ctfe_support.ctfe-reflect-field-type-at
-                    fields
-                    pools
-                    infos
-                    first-index)
-                    [(ctfe_support.ResultCtfeTypeLookup.Ok field-ty)
-                      (compiler-comptime-host-replace!
-                        1
-                        (ctfe_support.CompilerCtfeValue.Type field-ty))]
-                    [(ctfe_support.ResultCtfeTypeLookup.Err _)
-                      tlci.tlci-host-callback-status-bad-request])]
-                [_ tlci.tlci-host-callback-status-bad-request])]
-            [(= kind 1)
-              (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                pools
-                infos
-                ty)
-                [(ctfe_support.CtfeMaybeReflectInfo.Some
-                    (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants _))
-                  (match (ctfe_support.ctfe-reflect-variant-payloads-at
-                    variants
-                    first-index)
-                    [(ctfe_support.ResultCtfeTypeListLookup.Ok payloads)
-                      (match (ctfe_support.ctfe-type-list-ref-with-pools
-                        payloads
-                        pools
-                        infos
-                        second-index)
-                        [(ctfe_support.ResultCtfeTypeLookup.Ok payload-ty)
-                          (compiler-comptime-host-replace!
-                            1
-                            (ctfe_support.CompilerCtfeValue.Type payload-ty))]
-                        [(ctfe_support.ResultCtfeTypeLookup.Err _)
-                          tlci.tlci-host-callback-status-bad-request])]
-                    [(ctfe_support.ResultCtfeTypeListLookup.Err _)
-                      tlci.tlci-host-callback-status-bad-request])]
-                [_ tlci.tlci-host-callback-status-bad-request])]
-            [else
-              (match (ctfe_support.ctfe-reflect-resolve-type-with-pools
-                pools
-                infos
-                ty)
-                [(ast.AstType.Tuple elems)
-                  (match (ctfe_support.ctfe-type-list-ref-with-pools
-                    (deref elems)
-                    pools
-                    infos
-                    first-index)
-                    [(ctfe_support.ResultCtfeTypeLookup.Ok element-ty)
-                      (compiler-comptime-host-replace!
-                        1
-                        (ctfe_support.CompilerCtfeValue.Type element-ty))]
-                    [(ctfe_support.ResultCtfeTypeLookup.Err _)
-                      tlci.tlci-host-callback-status-bad-request])]
-                [_ tlci.tlci-host-callback-status-bad-request])]))]
-      [_ tlci.tlci-host-callback-status-bad-request])))
 
 ;; Every named host callback takes the session cookie plus three raw i64
 ;; arguments (immediates or a caller byte range) and returns an i64. Its body
@@ -1750,15 +1615,10 @@
           tlci.tlci-host-callback-status-bad-request
           (match rest-value
             [(ctfe_support.CompilerCtfeValue.ExprList rest)
-              (let
-                [next : ast.AstExprList
-                  (ast.ast-expr-list-with-capacity (+ rest.len 1))]
-                (begin
-                  (ast.ast-expr-list-push (&mut next) head-node)
-                  (ast.ast-expr-list-append-from (&mut next) (& rest) 0)
-                  (compiler-comptime-host-replace!
-                    2
-                    (ctfe_support.CompilerCtfeValue.ExprList next))))]
+              (compiler-comptime-host-replace!
+                2
+                (ctfe_support.CompilerCtfeValue.ExprList
+                  (ast.ast-expr-cons head-node rest)))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 (define (compiler-comptime-host-callback-expr-list-append
@@ -2449,20 +2309,14 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-stack-value 1)
-        [(ctfe_support.CompilerCtfeValue.String text _)
+      (match (ctfe_support.ctfe-value-named
+        (compiler-comptime-host-stack-value 1))
+        [(ctfe_support.CtfeMaybeNamed.Some text _)
           (compiler-comptime-host-replace!
             1
-            (ctfe_support.CompilerCtfeValue.Name
-              (owned_view.compiler-owned-shared-view text)
-              (ctfe_support.ctfe-materialize-generated-name-id text)))]
-        [(ctfe_support.CompilerCtfeValue.Name text _)
-          (compiler-comptime-host-replace!
-            1
-            (ctfe_support.CompilerCtfeValue.Name
-              (owned_view.compiler-owned-shared-view text)
-              (ctfe_support.ctfe-materialize-generated-name-id text)))]
-        [_ tlci.tlci-host-callback-status-bad-request]))))
+            (ctfe_support.ctfe-syntax-name-fresh text))]
+        [(ctfe_support.CtfeMaybeNamed.None)
+          tlci.tlci-host-callback-status-bad-request]))))
 
 ;; expr-begin-unit: replace an expression-list value with a begin node whose
 ;; final expression is unit, matching the public builder used by `for`.
@@ -2881,48 +2735,25 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-stack-value 1)
-        [(ctfe_support.CompilerCtfeValue.Type ty)
-          (cond
-            [(= arg-a 0)
-              (compiler-comptime-host-replace!
-                1
-                (ctfe_support.ctfe-generated-string-value
-                  (let
-                    [host-pools : ast.AstNodePoolContext
-                      (compiler-comptime-host-session-pools)]
-                    [host-reflections : ctfe_support.CtfeReflectInfoList
-                      (compiler-comptime-host-session-reflections)]
-                    (ctfe_support.ctfe-type-key-with-reflections-and-pools
-                      host-pools
-                      host-reflections
-                      ty))))]
-            [(or (= arg-a 1) (= arg-a 2))
-              (match (let
-                [host-pools : ast.AstNodePoolContext
-                  (compiler-comptime-host-session-pools)]
-                [host-reflections : ctfe_support.CtfeReflectInfoList
-                  (compiler-comptime-host-session-reflections)]
-                (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                  host-pools
-                  host-reflections
-                  ty))
-                [(ctfe_support.CtfeMaybeReflectInfo.Some info)
-                  (compiler-comptime-host-replace!
-                    1
-                    (ctfe_support.ctfe-name-value
-                      (if (= arg-a 1)
-                        (ctfe_support.ctfe-reflect-info-nominal-module-id info)
-                        (ctfe_support.ctfe-reflect-info-nominal-name-id info))))]
-                [(ctfe_support.CtfeMaybeReflectInfo.None)
-                  (compiler-comptime-host-diagnostic!
-                    (if (= arg-a 1)
-                      "type-nominal-module requires struct or enum type"
-                      "type-nominal-name requires struct or enum type"))])]
-            [else tlci.tlci-host-callback-status-bad-request])]
-        [_ tlci.tlci-host-callback-status-bad-request]))))
+    (cond
+      [(= arg-a 0)
+        (compiler-comptime-host-type-query!
+          "type-key"
+          (compiler-comptime-host-structural-session)
+          0
+          0
+          false)]
+      [(or (= arg-a 1) (= arg-a 2))
+        (compiler-comptime-host-type-query!
+          (if (= arg-a 1)
+            "type-nominal-module"
+            "type-nominal-name")
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-capture-active-handle))
+          0
+          0
+          true)]
+      [else tlci.tlci-host-callback-status-bad-request])))
 
 ;; Indexed nominal-name reflection. The producer leaves the type value on
 ;; the stack and passes its generated i64 index in `a`.
@@ -2933,7 +2764,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-reflection-name-step! 0 arg-a)))
+    (compiler-comptime-host-type-query!
+      "struct-field-name"
+      (compiler-comptime-host-structural-session)
+      arg-a
+      0
+      false)))
 
 (define (compiler-comptime-host-callback-enum-variant-name
   [session : i64]
@@ -2942,7 +2778,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-reflection-name-step! 1 arg-a)))
+    (compiler-comptime-host-type-query!
+      "enum-variant-name"
+      (compiler-comptime-host-structural-session)
+      arg-a
+      0
+      false)))
 
 (define (compiler-comptime-host-callback-struct-field-count
   [session : i64]
@@ -2951,7 +2792,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-data-callback
     session
-    (compiler-comptime-host-reflection-count-step! 0 0)))
+    (compiler-comptime-host-type-query-data "struct-field-count" 0)))
 
 (define (compiler-comptime-host-callback-enum-variant-count
   [session : i64]
@@ -2960,7 +2801,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-data-callback
     session
-    (compiler-comptime-host-reflection-count-step! 1 0)))
+    (compiler-comptime-host-type-query-data "enum-variant-count" 0)))
 
 (define (compiler-comptime-host-callback-enum-variant-payload-count
   [session : i64]
@@ -2969,7 +2810,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-data-callback
     session
-    (compiler-comptime-host-reflection-count-step! 2 arg-a)))
+    (compiler-comptime-host-type-query-data "enum-variant-payload-count" arg-a)))
 
 (define (compiler-comptime-host-callback-tuple-element-count
   [session : i64]
@@ -2978,7 +2819,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-data-callback
     session
-    (compiler-comptime-host-reflection-count-step! 3 0)))
+    (compiler-comptime-host-type-query-data "tuple-element-count" 0)))
 
 (define (compiler-comptime-host-callback-struct-field-type
   [session : i64]
@@ -2987,7 +2828,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-reflection-type-step! 0 arg-a 0)))
+    (compiler-comptime-host-type-query!
+      "struct-field-type"
+      (compiler-comptime-host-structural-session)
+      arg-a
+      0
+      false)))
 
 (define (compiler-comptime-host-callback-enum-variant-payload-type
   [session : i64]
@@ -2996,7 +2842,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-reflection-type-step! 1 arg-a arg-b)))
+    (compiler-comptime-host-type-query!
+      "enum-variant-payload-type"
+      (compiler-comptime-host-structural-session)
+      arg-a
+      arg-b
+      false)))
 
 (define (compiler-comptime-host-callback-tuple-element-type
   [session : i64]
@@ -3005,7 +2856,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-reflection-type-step! 2 arg-a 0)))
+    (compiler-comptime-host-type-query!
+      "tuple-element-type"
+      (compiler-comptime-host-structural-session)
+      arg-a
+      0
+      false)))
 
 ;; string-append: pop the second then the first comptime String/Name value and
 ;; push the concatenation with the identity-aware dotted-name construction
@@ -4224,27 +4080,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      tlci.tlci-host-callback-status-bad-request
-      (let
-        [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (match (compiler-comptime-host-stack-value 1)
-          [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Array elem _))
-            (compiler-comptime-host-replace!
-              1
-              (ctfe_support.CompilerCtfeValue.Type
-                (ctfe_support.ctfe-ty-get env elem)))]
-          [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.DynArray elem))
-            (compiler-comptime-host-replace!
-              1
-              (ctfe_support.CompilerCtfeValue.Type
-                (ctfe_support.ctfe-ty-get env elem)))]
-          [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Slice elem))
-            (compiler-comptime-host-replace!
-              1
-              (ctfe_support.CompilerCtfeValue.Type
-                (ctfe_support.ctfe-ty-get env elem)))]
-          [_ tlci.tlci-host-callback-status-bad-request])))))
+    (compiler-comptime-host-type-query!
+      "array-element-type"
+      (compiler-comptime-host-structural-session)
+      0
+      0
+      false)))
 
 (define (compiler-comptime-host-callback-reference-element-type
   [session : i64]
@@ -4253,22 +4094,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      tlci.tlci-host-callback-status-bad-request
-      (let
-        [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (match (compiler-comptime-host-stack-value 1)
-          [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Ref _ elem))
-            (compiler-comptime-host-replace!
-              1
-              (ctfe_support.CompilerCtfeValue.Type
-                (ctfe_support.ctfe-ty-get env elem)))]
-          [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.MutRef _ elem))
-            (compiler-comptime-host-replace!
-              1
-              (ctfe_support.CompilerCtfeValue.Type
-                (ctfe_support.ctfe-ty-get env elem)))]
-          [_ tlci.tlci-host-callback-status-bad-request])))))
+    (compiler-comptime-host-type-query!
+      "reference-element-type"
+      (compiler-comptime-host-structural-session)
+      0
+      0
+      false)))
 
 ;; box-element-type: pop a box type and push its element type, preserving the
 ;; interpreted malformed-type diagnostic. Refs #6552.
@@ -4279,19 +4110,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      tlci.tlci-host-callback-status-bad-request
-      (let
-        [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (match (compiler-comptime-host-stack-value 1)
-          [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Box elem))
-            (compiler-comptime-host-replace!
-              1
-              (ctfe_support.CompilerCtfeValue.Type
-                (ctfe_support.ctfe-ty-get env elem)))]
-          [_
-            (compiler-comptime-host-diagnostic!
-              "box-element-type requires box type")])))))
+    (compiler-comptime-host-type-query!
+      "box-element-type"
+      (compiler-comptime-host-structural-session)
+      0
+      0
+      true)))
 
 ;; Function reflection used by the `for` protocol validator. Count is returned
 ;; as data; return-type replaces the function value on the session stack.
@@ -4302,14 +4126,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-data-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      -3
-      (match (compiler-comptime-host-stack-value 1)
-        [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Func params _))
-          (begin
-            (compiler-comptime-host-drop! 1)
-            (ctfe_support.ctfe-type-list-count (deref params)))]
-        [_ -3]))))
+    (compiler-comptime-host-type-query-data "function-param-count" 0)))
 
 (define (compiler-comptime-host-callback-function-return-type
   [session : i64]
@@ -4318,17 +4135,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      tlci.tlci-host-callback-status-bad-request
-      (let
-        [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (match (compiler-comptime-host-stack-value 1)
-          [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Func _ ret))
-            (compiler-comptime-host-replace!
-              1
-              (ctfe_support.CompilerCtfeValue.Type
-                (ctfe_support.ctfe-ty-get env ret)))]
-          [_ tlci.tlci-host-callback-status-bad-request])))))
+    (compiler-comptime-host-type-query!
+      "function-return-type"
+      (compiler-comptime-host-structural-session)
+      0
+      0
+      false)))
 
 ;; Cleanup ownership is a total boolean reflection query. The paired function
 ;; lookup is value-producing and retains the interpreted diagnostic on a
@@ -4340,38 +4152,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-data-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      -3
-      (match (compiler-comptime-host-stack-value 1)
-        [(ctfe_support.CompilerCtfeValue.Type ty)
-          (let
-            [owning : bool
-              (match (let
-                [host-pools : ast.AstNodePoolContext
-                  (compiler-comptime-host-session-pools)]
-                [host-reflections : ctfe_support.CtfeReflectInfoList
-                  (compiler-comptime-host-session-reflections)]
-                (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                  host-pools
-                  host-reflections
-                  ty))
-                [(ctfe_support.CtfeMaybeReflectInfo.Some info)
-                  (match info
-                    [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ cleanup _ _)
-                      (match cleanup
-                        [(ctfe_support.CtfeReflectCleanup.No) false]
-                        [(ctfe_support.CtfeReflectCleanup.Fn _ _) true])]
-                    [(ctfe_support.CtfeReflectInfo.Enum _ _ _ _ cleanup _ _)
-                      (match cleanup
-                        [(ctfe_support.CtfeReflectCleanup.No) false]
-                        [(ctfe_support.CtfeReflectCleanup.Fn _ _) true])])]
-                [(ctfe_support.CtfeMaybeReflectInfo.None) false])]
-            (begin
-              (compiler-comptime-host-drop! 1)
-              (if owning
-                1
-                0)))]
-        [_ -3]))))
+    (compiler-comptime-host-type-query-data "type-cleanup-owning?" 0)))
 
 (define (compiler-comptime-host-callback-type-cleanup-function
   [session : i64]
@@ -4380,43 +4161,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-stack-value 1)
-        [(ctfe_support.CompilerCtfeValue.Type ty)
-          (match (let
-            [host-pools : ast.AstNodePoolContext
-              (compiler-comptime-host-session-pools)]
-            [host-reflections : ctfe_support.CtfeReflectInfoList
-              (compiler-comptime-host-session-reflections)]
-            (ctfe_support.ctfe-reflect-info-for-type-with-pools
-              host-pools
-              host-reflections
-              ty))
-            [(ctfe_support.CtfeMaybeReflectInfo.Some info)
-              (let
-                [cleanup : ctfe_support.CtfeReflectCleanup
-                  (match info
-                    [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ value _ _)
-                      value]
-                    [(ctfe_support.CtfeReflectInfo.Enum _ _ _ _ value _ _)
-                      value])]
-                (match cleanup
-                  [(ctfe_support.CtfeReflectCleanup.Fn
-                      cleanup-name
-                      cleanup-name-id)
-                    (compiler-comptime-host-replace!
-                      1
-                      (ctfe_support.CompilerCtfeValue.String
-                        cleanup-name
-                        cleanup-name-id))]
-                  [(ctfe_support.CtfeReflectCleanup.No)
-                    (compiler-comptime-host-diagnostic!
-                      "type-cleanup-function requires cleanup-owning type")]))]
-            [(ctfe_support.CtfeMaybeReflectInfo.None)
-              (compiler-comptime-host-diagnostic!
-                "type-cleanup-function requires cleanup-owning type")])]
-        [_ tlci.tlci-host-callback-status-bad-request]))))
+    (compiler-comptime-host-type-query!
+      "type-cleanup-function"
+      (compiler-comptime-host-structural-session)
+      0
+      0
+      true)))
 
 ;; array-length: the fixed element count of an array type as data; a
 ;; dynamic type or non-array reports the negative sentinel.
@@ -4427,14 +4177,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-data-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      -3
-      (match (compiler-comptime-host-stack-value 1)
-        [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Array _ count))
-          (begin
-            (compiler-comptime-host-drop! 1)
-            count)]
-        [_ -3]))))
+    (compiler-comptime-host-type-query-data "array-length" 0)))
 
 ;; array-dynamic?: 1 for a dynamic array type, 0 for a fixed one, and the
 ;; negative sentinel otherwise.
@@ -4445,18 +4188,7 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-data-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      -3
-      (match (compiler-comptime-host-stack-value 1)
-        [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Array _ _))
-          (begin
-            (compiler-comptime-host-drop! 1)
-            0)]
-        [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.DynArray _))
-          (begin
-            (compiler-comptime-host-drop! 1)
-            1)]
-        [_ -3]))))
+    (compiler-comptime-host-type-query-data "array-dynamic?" 0)))
 
 ;; expr-int-from-data: push an int literal node for the value in `a`.
 ;; Expression-shape probe and accessors for a computed body matching on
@@ -5134,34 +4866,23 @@
   [_arg-a : i64]
   [_arg-b : i64]
   [_arg-c : i64]) : i64
-  (compiler-comptime-host-data-callback
+  (compiler-comptime-host-status-callback
     session
-    (let
-      [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-      [result : i64
-        (if (< compiler-comptime-host-stack-len 1)
-          tlci.tlci-host-callback-status-bad-request
-          (match (compiler-comptime-host-stack-value 1)
-            [(ctfe_support.CompilerCtfeValue.String _ string-id)
-              (compiler-comptime-host-replace!
-                1
-                (ctfe_support.ctfe-syntax-expr-push
-                  env
-                  (ast.AstExpr.Literal (ast.AstLiteral.String string-id))
-                  (ast.AstType.String)))]
-            [(ctfe_support.CompilerCtfeValue.Name _ name-id)
-              (compiler-comptime-host-replace!
-                1
-                (ctfe_support.ctfe-syntax-expr-push
-                  env
-                  (ast.AstExpr.Literal (ast.AstLiteral.String name-id))
-                  (ast.AstType.String)))]
-            [_ tlci.tlci-host-callback-status-bad-request]))]
-      (begin
-        (when
-          (not (= result tlci.tlci-host-callback-status-ok))
-          (set! compiler-comptime-host-session-status result))
-        result))))
+    (if (< compiler-comptime-host-stack-len 1)
+      tlci.tlci-host-callback-status-bad-request
+      (match (ctfe_support.ctfe-value-named
+        (compiler-comptime-host-stack-value 1))
+        [(ctfe_support.CtfeMaybeNamed.Some _ string-id)
+          (let
+            [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.ctfe-syntax-expr-push
+                env
+                (ast.AstExpr.Literal (ast.AstLiteral.String string-id))
+                (ast.AstType.String))))]
+        [(ctfe_support.CtfeMaybeNamed.None)
+          tlci.tlci-host-callback-status-bad-request]))))
 
 (define (compiler-comptime-host-callback-expr-int-from-data
   [session : i64]
@@ -5454,23 +5175,12 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (< compiler-comptime-host-stack-len 1)
-      tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-stack-value 1)
-        [(ctfe_support.CompilerCtfeValue.Type ty)
-          (compiler-comptime-host-replace!
-            1
-            (ctfe_support.ctfe-generated-string-value
-              (let
-                [host-pools : ast.AstNodePoolContext
-                  (compiler-comptime-host-session-pools)]
-                [host-reflections : ctfe_support.CtfeReflectInfoList
-                  (compiler-comptime-host-session-reflections)]
-                (ctfe_support.ctfe-type-kind-with-reflections-and-pools
-                  host-pools
-                  host-reflections
-                  ty))))]
-        [_ tlci.tlci-host-callback-status-bad-request]))))
+    (compiler-comptime-host-type-query!
+      "type-kind"
+      (compiler-comptime-host-structural-session)
+      0
+      0
+      false)))
 
 ;; Replace a fold's two terminal operands by the folded chain. Like the
 ;; interpreted fold of captured syntax, a chain whose terminals are both

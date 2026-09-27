@@ -4841,20 +4841,6 @@
 ;; Prelude source selection is physical, but its loader path is deliberately
 ;; canonical. That keeps module identity, import restoration, diagnostics, and
 ;; deduplication independent of the absolute/relative spelling of a stdlib root.
-(define (compiler-load-stdlib-prelude-source-with-roots-cfg
-  [path : String]
-  [source : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-source-with-paths-and-roots-expect-cfg
-    path
-    source
-    seen
-    stdlib-roots
-    ast.AstMaybeModuleName.No
-    cfgs))
-
 (define (compiler-load-stdlib-prelude-file-with-roots-cfg
   [path : String]
   [seen : sym_i64_env.SymI64Env]
@@ -4870,7 +4856,7 @@
           (compiler-load-note-embedded-equivalent-if-matching!
             suffix
             (string.copy source-path))
-          (compiler-load-stdlib-prelude-source-with-roots-cfg
+          (compiler-load-source-with-paths-and-roots-cfg
             (string.copy path)
             (compiler-load-read-file-text source-path)
             seen
@@ -4883,7 +4869,7 @@
             (begin
               (compiler-load-note-embedded-module! (string.copy path))
               (compiler-load-session-note-embedded-stdlib-source!)
-              (compiler-load-stdlib-prelude-source-with-roots-cfg
+              (compiler-load-source-with-paths-and-roots-cfg
                 (string.copy path)
                 source
                 seen

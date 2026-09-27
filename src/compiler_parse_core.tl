@@ -9706,7 +9706,7 @@
     [_
       (ResultAstFnExport.Err "parse: malformed define :export-symbol metadata")]))
 
-(define (parse-ast-define-fn-metadata?
+(define (parse-ast-metadata-form?
   [dispatch : sym_i64_env.SymI64Env]
   [item : reader.SpannedSexpr]) : bool
   (match (reader.sexpr-view item)
@@ -9791,7 +9791,7 @@
                   [(ResultAstExpr.Err message) (ResultAstDecl.Err message)])]
               [(ResultAstType.Err message) (ResultAstDecl.Err message)])]
           [_ (ResultAstDecl.Err "parse: malformed function definition")])
-        (if (parse-ast-define-fn-metadata?
+        (if (parse-ast-metadata-form?
           dispatch
           (compiler-parse-place-shared-view first))
           (match (reader.sexpr-view first)
@@ -11609,16 +11609,6 @@
     (ast.ast-expr-list-get (& exprs) 0 0)
     (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin exprs))))
 
-(define (parse-ast-test-metadata-form?
-  [dispatch : sym_i64_env.SymI64Env]
-  [item : reader.SpannedSexpr]) : bool
-  (match (reader.sexpr-view item)
-    [(reader.SexprView.Cons key-node _)
-      (match (reader.sexpr-view key-node)
-        [(reader.SexprView.Sym key) (compiler-parse-metadata-key? dispatch key)]
-        [_ false])]
-    [_ false]))
-
 (define (parse-ast-test-body-metadata-free?
   [dispatch : sym_i64_env.SymI64Env]
   [forms : reader.SpannedSexpr]) : bool
@@ -11626,7 +11616,7 @@
     [(reader.SpannedSexprView.Nil _) true]
     [(reader.SpannedSexprView.Cons item tail _)
       (and
-        (not (parse-ast-test-metadata-form? dispatch item))
+        (not (parse-ast-metadata-form? dispatch item))
         (parse-ast-test-body-metadata-free? dispatch tail))]
     [_ false]))
 
@@ -11643,7 +11633,7 @@
         (ast.ast-test-metadata-new ignore-reason slow)
         forms)]
     [(reader.SpannedSexprView.Cons item tail _)
-      (if (parse-ast-test-metadata-form?
+      (if (parse-ast-metadata-form?
         dispatch
         (compiler-parse-place-shared-view item))
         (match (reader.sexpr-view item)
@@ -13664,25 +13654,6 @@
                 [(reader.ResultSpannedSexpr.Err _) false])))]
         [(lexer.ResultSpannedTokens.Err _) false]))))
 
-(define (compiler-parse-reader-diagnostic-ok?
-  [path : String]
-  [src : String]
-  [want : String]
-  [line : i64]
-  [col : i64]) : bool
-  (match (parse-ast-source-diagnostic
-    (compiler-parse-place-shared-view path)
-    src)
-    [(ResultAstProgramDiagnostic.Err diag)
-      (and
-        (string.eq (cdiag.compiler-diagnostic-path (__tl-box-place diag)) path)
-        (= (cdiag.compiler-diagnostic-line (__tl-box-place diag)) line)
-        (= (cdiag.compiler-diagnostic-col (__tl-box-place diag)) col)
-        (string.eq
-          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-          want))]
-    [(ResultAstProgramDiagnostic.Ok _) false]))
-
 (define (compiler-parse-diagnostic-location-ok?
   [path : String]
   [src : String]
@@ -13755,25 +13726,25 @@
 
 (define (compiler-parse-reader-delimiter-diagnostics-ok?) : bool
   (and
-    (compiler-parse-reader-diagnostic-ok?
+    (compiler-parse-diagnostic-location-ok?
       "missing-paren.tl"
       "(define (main) : i64 0"
       "reader: unterminated list: reached end of input before ')'"
       1
       1)
-    (compiler-parse-reader-diagnostic-ok?
+    (compiler-parse-diagnostic-location-ok?
       "missing-bracket.tl"
       "["
       "reader: unterminated list: reached end of input before ']'"
       1
       1)
-    (compiler-parse-reader-diagnostic-ok?
+    (compiler-parse-diagnostic-location-ok?
       "wrong-close-list.tl"
       "(define]"
       "reader: mismatched delimiter: expected ')' but found ']' at 1:8"
       1
       8)
-    (compiler-parse-reader-diagnostic-ok?
+    (compiler-parse-diagnostic-location-ok?
       "wrong-close-bracket.tl"
       "[define)"
       "reader: mismatched delimiter: expected ']' but found ')' at 1:8"

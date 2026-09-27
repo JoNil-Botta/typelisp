@@ -56965,7 +56965,6 @@
     (cond
       [own-src? lhs-home]
       [dst-src? dst-home]
-      [(compiler-backend-divmod-src-register? "") ""]
       [else
         (compiler-backend-scavenge-divmod-src-reg
           scavenge-dst

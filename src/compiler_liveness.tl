@@ -100,25 +100,9 @@
   (seq ir.CompilerIrBlockSeq)
   (graph CompilerLiveBlockGraph))
 
-;; Per-analysis edge facts, computed once per analysis:
-;; - `pred-counts`: how many blocks name each block among their successors;
-;; - `succ-offsets` / `succ-index`: each block's successors, in the order its
-;;   label set yields them (ref 0, 1, ...), as block indices (-1 where a label
-;;   names no block);
-;; - `canon`: the index the label map resolves each block's own label to (the
-;;   first block carrying it).
-(defstruct CompilerLiveEdgeIndex
-  (pred-counts (__tl_dyn-array i64))
-  (succ-offsets (__tl_dyn-array i64))
-  (succ-index (__tl_dyn-array i64))
-  (canon (__tl_dyn-array i64)))
-
 (defenum CompilerFunctionLiveness
-  ;; label -> block index, the blocks, and their edge index.
-  (Liveness
-    live_label_map.Map
-    (__tl_dyn-array CompilerLiveBlock)
-    CompilerLiveEdgeIndex))
+  ;; label -> block index, and the blocks.
+  (Liveness live_label_map.Map (__tl_dyn-array CompilerLiveBlock)))
 
 (defenum CompilerLiveMaybeBlock
   (No)
@@ -2101,73 +2085,6 @@
             block.successors
             (CompilerLiveInstrSetVec items))))]))
 
-(define (compiler-live-edge-index-build
-  [ids : (& ids live_label_map.Map)]
-  [blocks : (__tl_dyn-array CompilerLiveBlock)]) : CompilerLiveEdgeIndex
-  (let
-    [count : i64 (array-length blocks)]
-    [pred-counts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [succ-offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [canon : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [edges : i64 0]
-    [b : i64 0]
-    (begin
-      (while (< b count)
-        (begin
-          (set! (array-ref succ-offsets b) edges)
-          (let
-            [block : CompilerLiveBlock
-              (compiler-live-array-element-shared-view blocks b)]
-            (set!
-              edges
-              (+ edges (compiler-live-label-set-count block.successors))))
-          (set! b (+ b 1))))
-      (set! (array-ref succ-offsets count) edges)
-      (let
-        [succ-index : (__tl_dyn-array i64) (__tl_make-array i64 edges)]
-        (begin
-          (set! b 0)
-          (while (< b count)
-            (let
-              [block : CompilerLiveBlock
-                (compiler-live-array-element-shared-view blocks b)]
-              [base : i64 (array-ref succ-offsets b)]
-              (begin
-                (set!
-                  (array-ref canon b)
-                  (compiler-live-label-id-map-get ids block.label))
-                (match block.successors
-                  [(CompilerLiveLabelSet.Nil) unit]
-                  [(CompilerLiveLabelSet.Dense items len)
-                    (let
-                      [k : i64 0]
-                      (while (< k len)
-                        (let
-                          [index : i64
-                            (compiler-live-label-id-map-get
-                              ids
-                              (array-ref items (- (- len 1) k)))]
-                          (begin
-                            (set! (array-ref succ-index (+ base k)) index)
-                            (when
-                              (>= index 0)
-                              (set!
-                                (array-ref pred-counts index)
-                                (+ (array-ref pred-counts index) 1)))
-                            (set! k (+ k 1))))))])
-                (set! b (+ b 1)))))
-          (CompilerLiveEdgeIndex pred-counts succ-offsets succ-index canon))))))
-
-(define (compiler-live-function-liveness
-  [ids : live_label_map.Map]
-  [blocks : (__tl_dyn-array CompilerLiveBlock)]) : CompilerFunctionLiveness
-  (let
-    [edge-index : CompilerLiveEdgeIndex
-      (compiler-live-edge-index-build
-        (& ids)
-        (compiler-live-shared-view blocks))]
-    (CompilerFunctionLiveness.Liveness ids blocks edge-index)))
-
 (define (compiler-live-analyze-function [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
@@ -2187,7 +2104,7 @@
             (compiler-live-shared-view graph.blocks)
             word-count
             false)
-          (compiler-live-function-liveness graph.ids graph.blocks)))]))
+          (CompilerFunctionLiveness.Liveness graph.ids graph.blocks)))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Edge-precise (SSA) phi liveness -- used by scalar opt2 allocation and its
@@ -2404,7 +2321,7 @@
             (compiler-live-shared-view graph.blocks)
             word-count
             true)
-          (compiler-live-function-liveness graph.ids graph.blocks))))))
+          (CompilerFunctionLiveness.Liveness graph.ids graph.blocks))))))
 
 (define (compiler-live-analyze-function-edge-precise
   [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
@@ -2416,14 +2333,14 @@
   [liveness : CompilerFunctionLiveness]
   [label : i64]) : i64
   (match liveness
-    [(CompilerFunctionLiveness.Liveness ids _ _)
+    [(CompilerFunctionLiveness.Liveness ids _)
       (compiler-live-label-id-map-get (& ids) label)]))
 
 (define (compiler-live-function-find-block
   [liveness : CompilerFunctionLiveness]
   [label : i64]) : CompilerLiveMaybeBlock
   (match liveness
-    [(CompilerFunctionLiveness.Liveness ids blocks _)
+    [(CompilerFunctionLiveness.Liveness ids blocks)
       (let
         [index : i64 (compiler-live-label-id-map-get (& ids) label)]
         (if (>= index 0)

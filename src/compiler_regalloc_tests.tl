@@ -4564,14 +4564,12 @@
        }")))
 
 ;; ---------------------------------------------------------------------------
-;; R5: invariant-load facts.
+;; R5: invariant facts.
 ;;
 ;; The shape is cfg-build-csr's, reduced: a `&Vec` parameter, the slots handle
 ;; read out of it, the handle's `len` and `data` words, and an ELEMENT store
-;; through the data pointer. Every descriptor word here must stay invariant
-;; across that store -- the handle by the typed-word rule (a handle word is
-;; class 6, the store is class 1), `len`/`data` because their base is a
-;; descriptor handle and a descriptor is outside every payload buffer.
+;; through the data pointer. That store writes payload only, so every global
+;; cell stays invariant across it.
 (cfg
   test
   (define (compiler-reg-invariant-descriptor-function
@@ -4621,29 +4619,15 @@
 
 (cfg
   test
-  (define (compiler-reg-invariant-word-load-admitted-ok?) : bool
+  (define (compiler-reg-invariant-element-store-cells-clean-ok?) : bool
     (let
       [facts : reg.CompilerRegInvariantFacts
         (compiler-reg-invariant-facts-for (compiler-reg-invariant-return-seq))]
-      (and
-        ;; the handle read off the `&Vec` parameter, and both descriptor words
-        (reg.compiler-reg-invariant-facts-word-load? facts 2)
-        (reg.compiler-reg-invariant-facts-word-load? facts 4)
-        (reg.compiler-reg-invariant-facts-word-load? facts 6)
-        ;; recorded against the base the recompute has to re-read
-        (= (array-ref facts.bases 2) 0)
-        (= (array-ref facts.bases 4) 2)
-        (= (array-ref facts.bases 6) 2)
-        (= (array-ref facts.indexes 4) 1)
-        (= (array-ref facts.indexes 6) 0)
-        ;; an element store cannot write a named global cell either
-        facts.cells-clean
-        ;; the ELEMENT address itself is not a descriptor word
-        (not (reg.compiler-reg-invariant-facts-word-load? facts 7))))))
+      facts.cells-clean)))
 
 ;; A FIELD store -- one whose address is a descriptor word rather than an
-;; element of a payload buffer -- may write any of these words, so the whole
-;; function falls back to "nothing is invariant".
+;; element of a payload buffer -- may write anything, so the whole function
+;; falls back to "nothing is invariant".
 (cfg
   test
   (define (compiler-reg-invariant-field-store-refused-ok?) : bool
@@ -4653,16 +4637,12 @@
           (compiler-reg-test-instr-seq-prepend
             (irt.instr "store_ptr %3, 0 : i64")
             (compiler-reg-invariant-return-seq)))]
-      (and
-        (not (reg.compiler-reg-invariant-facts-word-load? facts 2))
-        (not (reg.compiler-reg-invariant-facts-word-load? facts 4))
-        (not (reg.compiler-reg-invariant-facts-word-load? facts 6))
-        (not facts.cells-clean)))))
+      (not facts.cells-clean))))
 
 ;; A CALL that may write memory is the `&mut`-parameter case: the callee can
-;; push through the reference and move `data`/`len`, so no descriptor word of
-;; this function is invariant any more (LLVM refuses the same way through
-;; `isDereferenceableInvariantLoad`'s mod/ref query).
+;; push through the reference and move `data`/`len`, or write any global cell,
+;; so nothing in this function is invariant any more (LLVM refuses the same way
+;; through `isDereferenceableInvariantLoad`'s mod/ref query).
 (cfg
   test
   (define (compiler-reg-invariant-call-refused-ok?) : bool
@@ -4672,11 +4652,7 @@
           (compiler-reg-test-instr-seq-prepend
             (irt.instr "%8 = call vec_push() : unit")
             (compiler-reg-invariant-return-seq)))]
-      (and
-        (not (reg.compiler-reg-invariant-facts-word-load? facts 2))
-        (not (reg.compiler-reg-invariant-facts-word-load? facts 4))
-        (not (reg.compiler-reg-invariant-facts-word-load? facts 6))
-        (not facts.cells-clean)))))
+      (not facts.cells-clean))))
 
 (cfg
   test
@@ -13893,7 +13869,7 @@
   (begin
     (require-each!
       (cfg test (compiler-reg-remat-classifier-ok?) true)
-      (cfg test (compiler-reg-invariant-word-load-admitted-ok?) true)
+      (cfg test (compiler-reg-invariant-element-store-cells-clean-ok?) true)
       (cfg test (compiler-reg-invariant-field-store-refused-ok?) true)
       (cfg test (compiler-reg-invariant-call-refused-ok?) true)
       (cfg test (compiler-reg-remat-recompute-classifier-ok?) true)

@@ -2079,7 +2079,6 @@
       (profile.compile-wide-peak-start!)
       (ci.intern-profile-reset!
         (compiler-driver-profile-intern-metrics-address state))
-      (compiler_ctfe.ctfe-env-profile-reset!)
       (cfg
         compile-profile-summary
         (begin
@@ -2124,26 +2123,6 @@
 
 (cfg
   compile-profile
-  (define (compiler-driver-profile-intern-line [name : String] [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|intern."
-        name
-        (compiler-driver-profile-field value)
-        "|0|0|0\n"))))
-
-(cfg
-  compile-profile
-  (define (compiler-driver-profile-ctfe-env-line [name : String] [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|ctfe_env."
-        name
-        (compiler-driver-profile-field value)
-        "|0|0|0\n"))))
-
-(cfg
-  compile-profile
   (define (compiler-driver-profile-finish-total
     [state : profile_state.CompilerProfileState]) : unit
     (let
@@ -2170,161 +2149,8 @@
                 state
                 compiler-driver-profile-total-start-live-metric))
             compile-wide-peak))
-        (compiler-driver-profile-intern-line
-          "hash_words"
-          (ci.intern-profile-hash-words-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "intern_calls"
-          (ci.intern-profile-intern-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "slice_calls"
-          (ci.intern-profile-slice-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "generated_allocations"
-          (ci.intern-profile-generated-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "render_calls"
-          (ci.intern-profile-render-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "lookup_calls"
-          (ci.intern-profile-lookup-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "source_bytes"
-          (ci.intern-profile-source-bytes-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "source_symbols"
-          (ci.intern-profile-source-symbol-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "source_symbol_bytes"
-          (ci.intern-profile-source-symbol-bytes-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "slice_bytes"
-          (ci.intern-profile-slice-bytes-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "slice_hits"
-          (ci.intern-profile-slice-hit-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "slice_misses"
-          (ci.intern-profile-slice-miss-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "records.source_live"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-record-live-metric))
-        (compiler-driver-profile-intern-line
-          "records.source_capacity"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-record-capacity-metric))
-        (compiler-driver-profile-intern-line
-          "records.generated_live"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-generated-record-live-metric))
-        (compiler-driver-profile-intern-line
-          "records.generated_capacity"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-generated-record-capacity-metric))
-        (compiler-driver-profile-intern-line
-          "records.source_resizes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-record-resize-metric))
-        (compiler-driver-profile-intern-line
-          "records.generated_resizes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-generated-record-resize-metric))
-        (compiler-driver-profile-intern-line
-          "records.reserved_bytes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-record-reserved-bytes-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.live"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-live-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.capacity"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-capacity-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.probes_total"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-probe-total-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.probe_max"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-probe-max-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.resizes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-resize-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.reserved_bytes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-reserved-bytes-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.live"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-live-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.capacity"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-capacity-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.probes_total"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-probe-total-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.probe_max"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-probe-max-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.resizes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-resize-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.reserved_bytes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-reserved-bytes-metric))
-        (compiler-driver-profile-ctfe-env-line
-          "binding_appends"
-          (compiler_ctfe.ctfe-env-profile-binding-appends-value))
-        (compiler-driver-profile-ctfe-env-line
-          "value_lookups"
-          (compiler_ctfe.ctfe-env-profile-value-lookups-value))
-        (compiler-driver-profile-ctfe-env-line
-          "type_lookups"
-          (compiler_ctfe.ctfe-env-profile-type-lookups-value))
-        (compiler-driver-profile-ctfe-env-line
-          "lookup_steps"
-          (compiler_ctfe.ctfe-env-profile-lookup-steps-value))
-        (compiler-driver-profile-ctfe-env-line
-          "local_set_calls"
-          (compiler_ctfe.ctfe-env-profile-local-set-calls-value))
-        (compiler-driver-profile-ctfe-env-line
-          "local_set_steps"
-          (compiler_ctfe.ctfe-env-profile-local-set-steps-value))
-        (compiler-driver-profile-ctfe-env-line
-          "arena_roots"
-          (compiler_ctfe.ctfe-env-profile-arena-roots-value))
-        (compiler-driver-profile-ctfe-env-line
-          "arena_grows"
-          (compiler_ctfe.ctfe-env-profile-arena-grows-value))))))
+        (ci.intern-profile-activity-emit! intern-metrics-address)
+        (ci.intern-profile-storage-emit! intern-metrics-address)))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : compiler_backend.CompilerBackendTarget]

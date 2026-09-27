@@ -1962,9 +1962,6 @@
         (ci.intern-profile-note-slice left-address 7)
         (ci.intern-profile-note-lookup right-address)
         (ci.intern-profile-note-generated right-address)
-        (ci.intern-profile-note-generated-role-create
-          left-address
-          (ci.intern-generated-symbol-role-lambda))
         (ci.intern-profile-reset! right-address)
         (test.assert-i64-eq
           (ci.intern-profile-value left-address ci.intern-profile-intern-metric)
@@ -1976,15 +1973,6 @@
             ci.intern-profile-slice-bytes-metric)
           7
           "right reset does not erase left slice bytes")
-        (test.assert-i64-eq
-          (ci.intern-profile-value
-            left-address
-            (+
-              ci.intern-profile-generated-role-create-start-metric
-              (ci.intern-generated-symbol-role-index
-                (ci.intern-generated-symbol-role-lambda))))
-          1
-          "role counters use the same slot in the left owner")
         (test.assert-i64-eq
           (ci.intern-profile-value
             right-address

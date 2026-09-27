@@ -15364,7 +15364,7 @@
               [metric : i64 lower.compiler-lower-profile-name-env-binds-metric]
               [right-reset : bool true]
               (begin
-                (while (< metric lower.compiler-lower-profile-metric-end)
+                (while (< metric lower.compiler-lower-name-cache-profile-end)
                   (begin
                     (when
                       (not

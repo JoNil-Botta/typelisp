@@ -24,138 +24,6 @@
 (import stdlib.result)
 (import compiler_owned_view as owned_view)
 
-(cfg
-  compile-profile
-  (define ctfe-env-profile-binding-appends : i64
-    0))
-(cfg
-  compile-profile
-  (define ctfe-env-profile-value-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define ctfe-env-profile-type-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define ctfe-env-profile-lookup-steps : i64
-    0))
-(cfg
-  compile-profile
-  (define ctfe-env-profile-local-set-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define ctfe-env-profile-local-set-steps : i64
-    0))
-(cfg
-  compile-profile
-  (define ctfe-env-profile-arena-roots : i64
-    0))
-(cfg
-  compile-profile
-  (define ctfe-env-profile-arena-grows : i64
-    0))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-reset!) : unit
-    (begin
-      (set! ctfe-env-profile-binding-appends 0)
-      (set! ctfe-env-profile-value-lookups 0)
-      (set! ctfe-env-profile-type-lookups 0)
-      (set! ctfe-env-profile-lookup-steps 0)
-      (set! ctfe-env-profile-local-set-calls 0)
-      (set! ctfe-env-profile-local-set-steps 0)
-      (set! ctfe-env-profile-arena-roots 0)
-      (set! ctfe-env-profile-arena-grows 0))))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-note-binding-append!) : unit
-    (set!
-      ctfe-env-profile-binding-appends
-      (+ ctfe-env-profile-binding-appends 1))))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-note-value-lookup!) : unit
-    (set! ctfe-env-profile-value-lookups (+ ctfe-env-profile-value-lookups 1))))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-note-type-lookup!) : unit
-    (set! ctfe-env-profile-type-lookups (+ ctfe-env-profile-type-lookups 1))))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-note-lookup-step!) : unit
-    (set! ctfe-env-profile-lookup-steps (+ ctfe-env-profile-lookup-steps 1))))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-note-local-set!) : unit
-    (set!
-      ctfe-env-profile-local-set-calls
-      (+ ctfe-env-profile-local-set-calls 1))))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-note-local-set-step!) : unit
-    (set!
-      ctfe-env-profile-local-set-steps
-      (+ ctfe-env-profile-local-set-steps 1))))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-note-arena-root!) : unit
-    (set! ctfe-env-profile-arena-roots (+ ctfe-env-profile-arena-roots 1))))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-note-arena-grow!) : unit
-    (set! ctfe-env-profile-arena-grows (+ ctfe-env-profile-arena-grows 1))))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-binding-appends-value) : i64
-    ctfe-env-profile-binding-appends))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-value-lookups-value) : i64
-    ctfe-env-profile-value-lookups))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-type-lookups-value) : i64
-    ctfe-env-profile-type-lookups))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-lookup-steps-value) : i64
-    ctfe-env-profile-lookup-steps))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-local-set-calls-value) : i64
-    ctfe-env-profile-local-set-calls))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-local-set-steps-value) : i64
-    ctfe-env-profile-local-set-steps))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-arena-roots-value) : i64
-    ctfe-env-profile-arena-roots))
-
-(cfg
-  compile-profile
-  (define (ctfe-env-profile-arena-grows-value) : i64
-    ctfe-env-profile-arena-grows))
-
 (define (ctfe-builtin-reset!) : unit
   unit)
 
@@ -1381,7 +1249,6 @@
   [source-names : ci.InternSourceNameSessionHandle]
   [macro-state : CompilerCtfeMacroState]) : CtfeEnv
   (begin
-    (cfg compile-profile (ctfe-env-profile-note-arena-root!) unit)
     (compiler-ctfe-macro-state-bind-source-names! macro-state source-names)
     (CtfeEnv
       (ctfe-env-arena-box-new (ctfe-env-arena-new))
@@ -1473,30 +1340,28 @@
     [count : i64 store.segment-count]
     [capacity : i64 (array-length store.segments)]
     [owner : i64 store.owner-arena]
-    (begin
-      (in-arena
-        (arena.Arena owner)
-        (begin
-          (if (< count capacity)
-            unit
-            (let
-              [bigger : (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding))
-                (__tl_make-array
-                  (__tl_dyn-array CtfeEnvBinding)
-                  (if (< capacity 1)
-                    1
-                    (* capacity 2)))]
-              (begin
-                (ctfe-env-arena-segments-copy-range!
-                  (&mut bigger)
-                  (& store.segments)
-                  count)
-                (set! store.segments bigger))))
-          (set!
-            (array-ref store.segments count)
-            (__tl_make-array CtfeEnvBinding (ctfe-env-arena-segment-capacity)))
-          (set! store.segment-count (+ count 1))))
-      (cfg compile-profile (ctfe-env-profile-note-arena-grow!) unit))))
+    (in-arena
+      (arena.Arena owner)
+      (begin
+        (if (< count capacity)
+          unit
+          (let
+            [bigger : (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding))
+              (__tl_make-array
+                (__tl_dyn-array CtfeEnvBinding)
+                (if (< capacity 1)
+                  1
+                  (* capacity 2)))]
+            (begin
+              (ctfe-env-arena-segments-copy-range!
+                (&mut bigger)
+                (& store.segments)
+                count)
+              (set! store.segments bigger))))
+        (set!
+          (array-ref store.segments count)
+          (__tl_make-array CtfeEnvBinding (ctfe-env-arena-segment-capacity)))
+        (set! store.segment-count (+ count 1))))))
 
 (define (ctfe-env-arena-ensure-index!
   [store : (&mut store CtfeEnvArena)]
@@ -1559,9 +1424,7 @@
       (ctfe-env-arena-push!
         (&mut (__tl-box-place store))
         (CtfeEnvBinding name-id value ty env.head mutable-local))]
-    (begin
-      (cfg compile-profile (ctfe-env-profile-note-binding-append!) unit)
-      (CtfeEnv env.arena-store index syntax-pools env.metadata env.macro-state))))
+    (CtfeEnv env.arena-store index syntax-pools env.metadata env.macro-state)))
 
 (define (ctfe-env-extend-id
   [env : CtfeEnv]
@@ -2118,19 +1981,15 @@
       (while (and searching? (>= index 0))
         (let
           [binding : CtfeEnvBinding (ctfe-env-arena-binding-at store index)]
-          (begin
-            (cfg compile-profile (ctfe-env-profile-note-lookup-step!) unit)
-            (if (= binding.key name-id)
-              (begin
-                (set! result (CtfeMaybeValue.Some binding.value))
-                (set! searching? false))
-              (set! index binding.parent)))))
+          (if (= binding.key name-id)
+            (begin
+              (set! result (CtfeMaybeValue.Some binding.value))
+              (set! searching? false))
+            (set! index binding.parent))))
       result)))
 
 (define (ctfe-env-lookup-id [env : (& env CtfeEnv)] [name-id : i64]) : CtfeMaybeValue
-  (begin
-    (cfg compile-profile (ctfe-env-profile-note-value-lookup!) unit)
-    (ctfe-env-lookup-id-from env name-id)))
+  (ctfe-env-lookup-id-from env name-id))
 
 (define (ctfe-env-lookup-type-id-from [env : (& env CtfeEnv)] [name-id : i64]) : ast.AstMaybeType
   (let
@@ -2143,19 +2002,15 @@
       (while (and searching? (>= index 0))
         (let
           [binding : CtfeEnvBinding (ctfe-env-arena-binding-at store index)]
-          (begin
-            (cfg compile-profile (ctfe-env-profile-note-lookup-step!) unit)
-            (if (= binding.key name-id)
-              (begin
-                (set! result (ast.AstMaybeType.Some binding.ty))
-                (set! searching? false))
-              (set! index binding.parent)))))
+          (if (= binding.key name-id)
+            (begin
+              (set! result (ast.AstMaybeType.Some binding.ty))
+              (set! searching? false))
+            (set! index binding.parent))))
       result)))
 
 (define (ctfe-env-lookup-type-id [env : (& env CtfeEnv)] [name-id : i64]) : ast.AstMaybeType
-  (begin
-    (cfg compile-profile (ctfe-env-profile-note-type-lookup!) unit)
-    (ctfe-env-lookup-type-id-from env name-id)))
+  (ctfe-env-lookup-type-id-from env name-id))
 
 ;; Set the nearest CTFE-local binding. Finding an immutable binding with the
 ;; same name stops the search, matching ordinary lexical shadowing rules.
@@ -2169,26 +2024,23 @@
     [searching? : bool true]
     [updated? : bool false]
     (begin
-      (cfg compile-profile (ctfe-env-profile-note-local-set!) unit)
       (while (and searching? (>= index 0))
         (let
           [binding : CtfeEnvBinding
             (ctfe-env-arena-binding-at (__tl-box-place store) index)]
-          (begin
-            (cfg compile-profile (ctfe-env-profile-note-local-set-step!) unit)
-            (if (= binding.key name-id)
-              (begin
-                (if binding.mutable-local
-                  (begin
-                    (set! binding.value value)
-                    (ctfe-env-arena-write-index!
-                      (&mut (__tl-box-place store))
-                      index
-                      binding)
-                    (set! updated? true))
-                  unit)
-                (set! searching? false))
-              (set! index binding.parent)))))
+          (if (= binding.key name-id)
+            (begin
+              (if binding.mutable-local
+                (begin
+                  (set! binding.value value)
+                  (ctfe-env-arena-write-index!
+                    (&mut (__tl-box-place store))
+                    index
+                    binding)
+                  (set! updated? true))
+                unit)
+              (set! searching? false))
+            (set! index binding.parent))))
       updated?)))
 
 (define (ctfe-string-prefix? [text : String] [prefix : String]) : bool

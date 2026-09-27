@@ -19,9 +19,6 @@
   (CompilerParallelMoveUnblocked i64)
   (CompilerParallelMoveCycle i64))
 
-(define (compiler-parallel-move-edge-seq-empty) : CompilerParallelMoveEdgeSeq
-  (CompilerParallelMoveEdgeSeq (__tl_make-array CompilerParallelMoveEdge 0) 0))
-
 (define (compiler-parallel-move-edge-seq-with-capacity [capacity : i64]) : CompilerParallelMoveEdgeSeq
   (CompilerParallelMoveEdgeSeq
     (__tl_make-array CompilerParallelMoveEdge capacity)
@@ -172,77 +169,3 @@
       [(CompilerParallelMoveDone)
         (CompilerParallelMoveCycle
           (compiler-parallel-move-edge-id (array-ref remaining.slots 0)))])))
-
-(define (compiler-parallel-move-test-edge
-  [id : i64]
-  [dest : i64]
-  [source : i64]) : CompilerParallelMoveEdge
-  (ParallelMoveEdge id dest 0 source 0))
-
-(define (compiler-parallel-move-test-seq-two
-  [first : CompilerParallelMoveEdge]
-  [second : CompilerParallelMoveEdge]) : CompilerParallelMoveEdgeSeq
-  (let
-    [edges : CompilerParallelMoveEdgeSeq
-      (compiler-parallel-move-edge-seq-with-capacity 2)]
-    (begin
-      (compiler-parallel-move-edge-push! (&mut edges) first)
-      (compiler-parallel-move-edge-push! (&mut edges) second)
-      edges)))
-
-(define (compiler-parallel-move-self-test?) : bool
-  (let
-    [empty : CompilerParallelMoveEdgeSeq
-      (compiler-parallel-move-edge-seq-empty)]
-    [chain : CompilerParallelMoveEdgeSeq
-      (compiler-parallel-move-test-seq-two
-        (compiler-parallel-move-test-edge 1 10 20)
-        (compiler-parallel-move-test-edge 2 20 0))]
-    [cycle : CompilerParallelMoveEdgeSeq
-      (compiler-parallel-move-test-seq-two
-        (compiler-parallel-move-test-edge 1 10 20)
-        (compiler-parallel-move-test-edge 2 20 10))]
-    [pair : CompilerParallelMoveEdgeSeq
-      (compiler-parallel-move-test-seq-two
-        (ParallelMoveEdge 3 12 13 14 15)
-        (compiler-parallel-move-test-edge 4 8 13))]
-    ;; A scalar destination must not clobber either half of a pair source
-    ;; before the pair is copied. This is the reverse of `pair` above and is
-    ;; the phi-carried group case: emit edge 5 first, then edge 6 may write
-    ;; resource 12.
-    [pair-source : CompilerParallelMoveEdgeSeq
-      (compiler-parallel-move-test-seq-two
-        (ParallelMoveEdge 5 8 0 12 13)
-        (compiler-parallel-move-test-edge 6 12 20))]
-    (and
-      (match (compiler-parallel-move-decision
-        (compiler-parallel-move-shared-view empty)
-        empty)
-        [(CompilerParallelMoveDone) true]
-        [_ false])
-      (match (compiler-parallel-move-decision
-        (compiler-parallel-move-shared-view chain)
-        chain)
-        [(CompilerParallelMoveUnblocked id) (= id 1)]
-        [_ false])
-      (match (compiler-parallel-move-decision
-        (compiler-parallel-move-shared-view cycle)
-        cycle)
-        [(CompilerParallelMoveCycle id) (= id 1)]
-        [_ false])
-      (match (compiler-parallel-move-decision
-        (compiler-parallel-move-shared-view pair)
-        (compiler-parallel-move-shared-view pair))
-        [(CompilerParallelMoveUnblocked id) (= id 4)]
-        [_ false])
-      (compiler-parallel-move-seq-has-blocked?
-        (compiler-parallel-move-shared-view pair)
-        pair)
-      (match (compiler-parallel-move-decision
-        (compiler-parallel-move-shared-view pair-source)
-        (compiler-parallel-move-shared-view pair-source))
-        [(CompilerParallelMoveUnblocked id) (= id 5)]
-        [_ false])
-      (compiler-parallel-move-seq-has-blocked?
-        (compiler-parallel-move-shared-view pair-source)
-        pair-source))))

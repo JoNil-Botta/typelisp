@@ -615,9 +615,6 @@
   (owned_view.compiler-owned-reference-shared-view
     (& (array-ref sections.slots index))))
 
-(define (compiler-object-image-dense? [_image : CompilerObjectImage]) : bool
-  true)
-
 (define (compiler-object-section-list-find
   [sections : (& sections CompilerObjectSectionList)]
   [kind : CompilerObjectSectionKind]) : CompilerObjectSection
@@ -647,20 +644,6 @@
                   (set! found true))
                 (set! index (+ index 1)))])))
       result)))
-
-(define (compiler-object-section-data-count
-  [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]) : i64
-  (match (compiler-object-section-list-find sections kind)
-    [(CompilerObjectSection.Section _ data _)
-      (compiler-object-data-record-list-count data)]))
-
-(define (compiler-object-section-instr-count
-  [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]) : i64
-  (match (compiler-object-section-list-find sections kind)
-    [(CompilerObjectSection.Section _ _ instrs)
-      (compiler-object-instr-list-count instrs)]))
 
 (define (compiler-object-symbol-list-contains?
   [symbols : (& symbols CompilerObjectSymbolList)]
@@ -702,57 +685,6 @@
               (set! index (+ index 1)))]))
       found)))
 
-(define (compiler-object-data-record-list-contains-string?
-  [records : CompilerObjectDataRecordList]
-  [text : String]) : bool
-  (let
-    [count : i64 (compiler-object-data-record-list-count records)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
-          [(CompilerObjectDataRecord.String value)
-            (if (string.eq value text)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
-
-(define (compiler-object-data-record-list-contains-f64?
-  [records : CompilerObjectDataRecordList]
-  [bits : u64]) : bool
-  (let
-    [count : i64 (compiler-object-data-record-list-count records)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
-          [(CompilerObjectDataRecord.F64 value)
-            (if (= value bits)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
-
-(define (compiler-object-data-record-list-contains-f32?
-  [records : CompilerObjectDataRecordList]
-  [bits : u64]) : bool
-  (let
-    [count : i64 (compiler-object-data-record-list-count records)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
-          [(CompilerObjectDataRecord.F32 value)
-            (if (= value bits)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
-
 (define (compiler-object-data-record-list-contains-label?
   [records : CompilerObjectDataRecordList]
   [label : (& label str)]) : bool
@@ -770,95 +702,6 @@
           [_ (set! index (+ index 1))]))
       found)))
 
-(define (compiler-object-data-record-list-contains-align?
-  [records : CompilerObjectDataRecordList]
-  [align : i64]) : bool
-  (let
-    [count : i64 (compiler-object-data-record-list-count records)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
-          [(CompilerObjectDataRecord.Align value)
-            (if (= value align)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
-
-(define (compiler-object-data-record-list-contains-i64?
-  [records : CompilerObjectDataRecordList]
-  [value : i64]) : bool
-  (let
-    [count : i64 (compiler-object-data-record-list-count records)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
-          [(CompilerObjectDataRecord.I64 found-value)
-            (if (= found-value value)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
-
-(define (compiler-object-data-record-list-label-has-i64-pair?
-  [records : CompilerObjectDataRecordList]
-  [label : (& label str)]
-  [first : i64]
-  [second : i64]) : bool
-  (let
-    [count : i64 (compiler-object-data-record-list-count records)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
-          [(CompilerObjectDataRecord.Label value)
-            (if (and (string.eq value label) (< (+ index 2) count))
-              (match (compiler-object-data-record-list-ref records (+ index 1))
-                [(CompilerObjectDataRecord.I64 first-found)
-                  (if (= first-found first)
-                    (match (compiler-object-data-record-list-ref
-                      records
-                      (+ index 2))
-                      [(CompilerObjectDataRecord.I64 second-found)
-                        (if (= second-found second)
-                          (set! found true)
-                          (set! index (+ index 1)))]
-                      [_ (set! index (+ index 1))])
-                    (set! index (+ index 1)))]
-                [_ (set! index (+ index 1))])
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
-
-(define (compiler-object-section-contains-string?
-  [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]
-  [text : String]) : bool
-  (match (compiler-object-section-list-find sections kind)
-    [(CompilerObjectSection.Section _ data _)
-      (compiler-object-data-record-list-contains-string? data text)]))
-
-(define (compiler-object-section-contains-f64?
-  [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]
-  [bits : u64]) : bool
-  (match (compiler-object-section-list-find sections kind)
-    [(CompilerObjectSection.Section _ data _)
-      (compiler-object-data-record-list-contains-f64? data bits)]))
-
-(define (compiler-object-section-contains-f32?
-  [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]
-  [bits : u64]) : bool
-  (match (compiler-object-section-list-find sections kind)
-    [(CompilerObjectSection.Section _ data _)
-      (compiler-object-data-record-list-contains-f32? data bits)]))
-
 (define (compiler-object-section-contains-label?
   [sections : (& sections CompilerObjectSectionList)]
   [kind : CompilerObjectSectionKind]
@@ -866,62 +709,6 @@
   (match (compiler-object-section-list-find sections kind)
     [(CompilerObjectSection.Section _ data _)
       (compiler-object-data-record-list-contains-label? data label)]))
-
-(define (compiler-object-section-contains-align?
-  [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]
-  [align : i64]) : bool
-  (match (compiler-object-section-list-find sections kind)
-    [(CompilerObjectSection.Section _ data _)
-      (compiler-object-data-record-list-contains-align? data align)]))
-
-(define (compiler-object-section-contains-i64?
-  [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]
-  [value : i64]) : bool
-  (match (compiler-object-section-list-find sections kind)
-    [(CompilerObjectSection.Section _ data _)
-      (compiler-object-data-record-list-contains-i64? data value)]))
-
-(define (compiler-object-section-label-has-i64-pair?
-  [sections : (& sections CompilerObjectSectionList)]
-  [kind : CompilerObjectSectionKind]
-  [label : (& label str)]
-  [first : i64]
-  [second : i64]) : bool
-  (match (compiler-object-section-list-find sections kind)
-    [(CompilerObjectSection.Section _ data _)
-      (compiler-object-data-record-list-label-has-i64-pair?
-        data
-        label
-        first
-        second)]))
-
-(define (compiler-object-instr-list-contains-call?
-  [instrs : CompilerObjectX64InstrList]
-  [target : String]) : bool
-  (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-instr-list-ref instrs index)
-          [(CompilerObjectX64Instr.Call value)
-            (if (string.eq value target)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
-
-(define (compiler-object-section-contains-call?
-  [sections : (& sections CompilerObjectSectionList)]
-  [target : String]) : bool
-  (match (compiler-object-section-list-find
-    sections
-    (CompilerObjectSectionKind.Text))
-    [(CompilerObjectSection.Section _ _ instrs)
-      (compiler-object-instr-list-contains-call? instrs target)]))
 
 (define (compiler-object-string-prefix-at?
   [haystack : (& haystack str)]
@@ -977,29 +764,3 @@
     (CompilerObjectSectionKind.Text))
     [(CompilerObjectSection.Section _ _ instrs)
       (compiler-object-instr-list-contains-bytes? instrs bytes)]))
-
-(define (compiler-object-instr-list-contains-xorpd-rip?
-  [instrs : CompilerObjectX64InstrList]
-  [target : (& target str)]) : bool
-  (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-instr-list-ref instrs index)
-          [(CompilerObjectX64Instr.XorpdRip value)
-            (if (string.eq value target)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
-
-(define (compiler-object-section-contains-xorpd-rip?
-  [sections : CompilerObjectSectionList]
-  [target : (& target str)]) : bool
-  (match (compiler-object-section-list-find
-    sections
-    (CompilerObjectSectionKind.Text))
-    [(CompilerObjectSection.Section _ _ instrs)
-      (compiler-object-instr-list-contains-xorpd-rip? instrs target)]))

@@ -1,0 +1,298 @@
+# Linux integration fixtures beyond the native manifest: fatal backtraces,
+# direct backend runtime/stack-args/raw-pointer emission, and the cmp-mem fold
+# opt0/opt2 parity (gate stage2-native-integration-corpus, run by
+# scripts/verify-integration.sh; the Windows counterparts stay in that script).
+hosts linux
+do none
+target -
+opt -
+
+# The direct backend fixtures bypass the driver-owned runtime prelude, so they
+# link freestanding stand-ins for the runtime calls they can emit; the happy
+# paths must not execute them.
+file runtime_abort.s
+    .text
+    .globl tl_oom_abort
+tl_oom_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+    .globl tl_substring
+tl_substring:
+    xorl %eax, %eax
+    ret
+    .globl tl_string_concat
+tl_string_concat:
+    xorl %eax, %eax
+    ret
+end-file
+
+file raw_pointer_abort.s
+    .text
+    .globl tl_oob_abort
+tl_oob_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+    .globl tl_oob_abort_at
+tl_oob_abort_at:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+    .globl tl_oom_abort
+tl_oom_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+    .globl tl_array_fill8
+tl_array_fill8:
+    testq %rsi, %rsi
+    jle .L_tl_array_fill8_done
+.L_tl_array_fill8_loop:
+    movq %rdx, (%rdi)
+    addq $8, %rdi
+    subq $1, %rsi
+    jg .L_tl_array_fill8_loop
+.L_tl_array_fill8_done:
+    ret
+end-file
+
+# A --backtrace program under each TYPELISP_BACKTRACE mode, optimized,
+# stripped, with a corrupted map, on a worker thread, and through the CRT
+# `main` entry of a native link (no backend-installed TLS stack bounds).
+case fatal-backtrace-debug
+run compile tests/integration/fatal_backtrace.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/bt.s"
+in file {{dir}}/bt.s
+contains .section .typelisp_backtrace,"a",@progbits
+contains tl_backtrace_string_data_begin:
+contains fatal_backtrace.tl::backtrace-leaf
+contains tl_backtrace_frame_pointer:
+sh as "{{dir}}/bt.s" -o "{{dir}}/bt.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/bt.s")" "{{dir}}/bt.o" -o "{{dir}}/bt"
+step full
+exec env TYPELISP_BACKTRACE=full "{{dir}}/bt"
+exit 134
+stdout empty
+in stderr
+contains stack backtrace:
+contains fatal_backtrace.tl::backtrace-leaf at tests/integration/fatal_backtrace.tl:7:3
+contains fatal_backtrace.tl::backtrace-recurse at tests/integration/fatal_backtrace.tl:12:3
+contains [repeated 3 frames]
+contains fatal_backtrace.tl::backtrace-middle at tests/integration/fatal_backtrace.tl:17:3
+contains fatal_backtrace.tl::backtrace-outer at tests/integration/fatal_backtrace.tl:20:3
+contains fatal_backtrace.tl::backtrace-cleanup at tests/integration/fatal_backtrace.tl:23:3
+contains main at tests/integration/fatal_backtrace.tl:28:3
+match <unknown> \(0x[1-9a-f][0-9a-f]*\)
+not-contains stdlib/runtime.tl::
+step off
+exec env TYPELISP_BACKTRACE=off "{{dir}}/bt"
+exit 134
+stderr not-contains stack backtrace:
+step short
+exec env TYPELISP_BACKTRACE=short "{{dir}}/bt"
+exit 134
+stderr contains stack backtrace:
+stderr contains fatal_backtrace.tl::backtrace-leaf
+step private-cfg
+run compile tests/integration/fatal_backtrace.tl --cfg compiler-backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/spoof.s"
+in file {{dir}}/spoof.s
+not-contains tl_backtrace_map_data_begin
+not-contains tl_backtrace_map_begin:
+step path-remap
+exec env "TYPELISP_REMAP_PATH_PREFIX={{root}}=WORKSPACE" "{{compiler}}" compile "{{root}}/tests/integration/fatal_backtrace.tl" --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/remap.s"
+in file {{dir}}/remap.s
+not-contains {{root}}
+contains WORKSPACE/tests/integration/fatal_backtrace.tl
+step optimized
+run compile tests/integration/fatal_backtrace.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 2 -o "{{dir}}/opt2.s"
+sh as "{{dir}}/opt2.s" -o "{{dir}}/opt2.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/opt2.s")" "{{dir}}/opt2.o" -o "{{dir}}/opt2"
+exec env TYPELISP_BACKTRACE=full "{{dir}}/opt2"
+exit 134
+in stderr
+contains fatal_backtrace.tl::backtrace-leaf
+contains [repeated 3 frames]
+contains main at tests/integration/fatal_backtrace.tl:28:3
+not-contains fatal_backtrace.tl::backtrace-middle
+not-contains fatal_backtrace.tl::backtrace-outer
+step stripped
+sh cp "{{dir}}/bt" "{{dir}}/stripped" && strip --strip-all "{{dir}}/stripped"
+exec env TYPELISP_BACKTRACE=full "{{dir}}/stripped"
+exit 134
+stderr contains fatal_backtrace.tl::backtrace-leaf
+step corrupt-map
+sh sed '/^    \.quad _tl_fatal_backtrace_backtrace_leaf$/ { n; n; s/^    \.quad .*$/    .quad 1/; }' "{{dir}}/bt.s" > "{{dir}}/corrupt.s"
+sh as "{{dir}}/corrupt.s" -o "{{dir}}/corrupt.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/corrupt.s")" "{{dir}}/corrupt.o" -o "{{dir}}/corrupt"
+exec env TYPELISP_BACKTRACE=full "{{dir}}/corrupt"
+exit 134
+stderr match   0: <unknown> \(0x[1-9a-f][0-9a-f]*\)
+stderr contains fatal_backtrace.tl::backtrace-recurse
+step worker
+run compile tests/integration/fatal_backtrace_thread.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/thread.s"
+sh as "{{dir}}/thread.s" -o "{{dir}}/thread.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/thread.s")" "{{dir}}/thread.o" -o "{{dir}}/thread"
+exec env TYPELISP_BACKTRACE=full "{{dir}}/thread"
+exit 134
+stderr contains stack backtrace:
+stderr contains fatal_backtrace_thread.tl::backtrace-worker-leaf
+stderr contains fatal_backtrace_thread.tl::backtrace-worker
+step crt-entry
+run build tests/integration/fatal_backtrace.tl --backtrace --link-lib m --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/crt"
+exec env TYPELISP_BACKTRACE=full "{{dir}}/crt"
+exit 134
+stderr contains stack backtrace:
+stderr contains fatal_backtrace.tl::backtrace-leaf
+stderr contains main at tests/integration/fatal_backtrace.tl:28:3
+
+# Fatal values reach the --backtrace diagnostic.
+case fatal-backtrace-values
+step fatal-backtrace-bounds-values
+run compile tests/integration/red_zone_abort_trap.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/bounds.s"
+sh as "{{dir}}/bounds.s" -o "{{dir}}/bounds.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/bounds.s")" "{{dir}}/bounds.o" -o "{{dir}}/bounds"
+exec env TYPELISP_BACKTRACE=full "{{dir}}/bounds" trap
+exit 134
+stderr contains array index out of bounds: index=4 length=4
+stderr contains stack backtrace:
+step fatal-backtrace-div-values
+run compile tests/safety/division_by_zero_trap.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/div.s"
+sh as "{{dir}}/div.s" -o "{{dir}}/div.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/div.s")" "{{dir}}/div.o" -o "{{dir}}/div"
+exec env TYPELISP_BACKTRACE=full "{{dir}}/div"
+exit 135
+stderr contains integer division or remainder error: dividend=1 divisor=0
+stderr contains stack backtrace:
+step fatal-backtrace-shift-values
+run compile tests/integration/shl_count_width_trap.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/shift.s"
+sh as "{{dir}}/shift.s" -o "{{dir}}/shift.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/shift.s")" "{{dir}}/shift.o" -o "{{dir}}/shift"
+exec env TYPELISP_BACKTRACE=full "{{dir}}/shift"
+exit 129
+stderr contains shift count out of range: count=64 width=32
+stderr contains stack backtrace:
+
+# Each driver emits its fixture's assembly through the backend directly.
+case backend-runtime
+run compile src/tests/compiler_backend_runtime_fixture.tl --stdlib-root src -o "{{dir}}/driver.s"
+sh as "{{dir}}/driver.s" -o "{{dir}}/driver.o" && ld -static -e _tl_start "{{dir}}/driver.o" -o "{{dir}}/driver"
+exec "{{dir}}/driver" "{{dir}}/runtime_helpers.s"
+in file {{dir}}/runtime_helpers.s
+contains .globl tl_alloc
+contains tl_alloc:
+contains call tl_substring
+contains call tl_string_concat
+contains rep movsb
+contains tl_current_arena:
+contains tl_thread_init:
+contains tl_current_arena@tpoff
+contains .L_tl_alloc_new_arena:
+contains call .L_tl_alloc8
+count-fixed >= 1 rep movsb
+not-contains .extern tl_alloc
+not-contains .extern tl_oob_abort
+not-contains .globl tl_oob_abort
+not-contains tl_oob_abort:
+not-contains .globl tl_substring
+not-contains tl_substring:
+not-contains .extern tl_substring
+not-contains .globl tl_string_concat
+not-contains tl_string_concat:
+not-contains .extern tl_string_concat
+not-contains .extern tl_string_eq
+not-contains .globl tl_string_eq
+not-contains tl_string_eq:
+not-contains .globl tl_string_to_int
+not-contains tl_string_to_int:
+not-contains .globl tl_hash_string
+not-contains tl_hash_string:
+not-contains .extern tl_string_to_int
+not-contains .extern tl_hash_string
+not-contains tl_print_err:
+not-contains .L_tl_arg_count:
+not-contains .L_tl_arg:
+not-contains .L_tl_read_file:
+not-contains .L_tl_write_file:
+not-contains .L_tl_file_exists:
+not-contains .L_tl_file_open_status:
+not-contains .L_tl_file_close_status:
+not-contains .L_tl_file_read_chunk_status:
+not-contains .L_tl_file_write_status:
+not-contains .L_tl_file_flush_status:
+not-contains .L_tl_file_read_chunk_bytes:
+not-contains .L_tl_file_read_chunk_eof:
+not-contains .extern .L_tl_read_stdin_line
+not-contains .extern .L_tl_read_stdin_bytes
+not-contains .extern .L_tl_stdin_eof
+not-contains .extern .L_tl_flush_stdout
+not-contains .L_tl_read_stdin_line:
+not-contains .L_tl_read_stdin_bytes:
+not-contains .L_tl_stdin_eof:
+not-contains .L_tl_flush_stdout:
+not-contains tl_process_output:
+not-contains tl_process_start:
+not-contains tl_process_wait:
+not-contains .L_tl_process_read_all:
+not-contains .L_tl_process_exec_marker:
+not-contains .L_tl_substring_copy_loop:
+not-contains .L_tl_string_concat_copy_a:
+sh as "{{dir}}/runtime_helpers.s" -o "{{dir}}/runtime_helpers.o" && as "{{work}}/runtime_abort.s" -o "{{dir}}/runtime_abort.o"
+sh ld "{{dir}}/runtime_helpers.o" "{{dir}}/runtime_abort.o" -o "{{dir}}/runtime" -e "$(linux_entry_symbol_for_asm "{{dir}}/runtime_helpers.s")"
+exec "{{dir}}/runtime" < /dev/null
+exit 42
+stdout empty
+stderr empty
+
+# The outgoing stack-argument reservation is folded into the function frame
+# (subq $N, %rsp released by a matching addq; N depends on codegen).
+case backend-stack-args
+run compile src/tests/compiler_backend_stack_args_fixture.tl --stdlib-root src -o "{{dir}}/driver.s"
+sh as "{{dir}}/driver.s" -o "{{dir}}/driver.o" && ld -static -e _tl_start "{{dir}}/driver.o" -o "{{dir}}/driver"
+exec "{{dir}}/driver" "{{dir}}/stack_args.s" linux-x86_64
+in file {{dir}}/stack_args.s
+contains call _tl_add8
+contains call _tl_f10check
+contains call _tl_mixcheck
+match ^[[:space:]]+subq \$[0-9]+, %rsp$
+match ^[[:space:]]+addq \$[0-9]+, %rsp$
+match ^[[:space:]]+movq .* 0\(%rsp\)$
+match ^[[:space:]]+movq .* 8\(%rsp\)$
+match ^[[:space:]]+movsd .* [0-9]+\(%rsp\)$
+not-contains backend: too many call args
+sh as "{{dir}}/stack_args.s" -o "{{dir}}/stack_args.o" && ld "{{dir}}/stack_args.o" -o "{{dir}}/stack_args" -e "$(linux_entry_symbol_for_asm "{{dir}}/stack_args.s")"
+exec "{{dir}}/stack_args" < /dev/null
+exit 96
+stdout empty
+stderr empty
+
+case backend-raw-pointer
+run compile src/tests/compiler_backend_raw_pointer_fixture.tl --stdlib-root src -o "{{dir}}/driver.s"
+sh as "{{dir}}/driver.s" -o "{{dir}}/driver.o" && ld -static -e _tl_start "{{dir}}/driver.o" -o "{{dir}}/driver"
+exec "{{dir}}/driver" "{{dir}}/raw_pointer.s" linux-x86_64
+in file {{dir}}/raw_pointer.s
+contains _tl_write_i64:
+contains _tl_read_i64:
+contains call _tl_write_i64
+contains call _tl_read_i64
+contains call tl_alloc
+contains tl_alloc:
+match ^[[:space:]]+movq \(%r(ax|bx|cx|dx|si|di|8|9|10|11|12|13|14|15)\), %r(ax|bx|cx|dx|si|di|8|9|10|11|12|13|14|15)$
+not-contains # TODO
+sh as "{{dir}}/raw_pointer.s" -o "{{dir}}/raw_pointer.o" && as "{{work}}/raw_pointer_abort.s" -o "{{dir}}/raw_pointer_abort.o"
+sh ld "{{dir}}/raw_pointer.o" "{{dir}}/raw_pointer_abort.o" -o "{{dir}}/raw_pointer" -e "$(linux_entry_symbol_for_asm "{{dir}}/raw_pointer.s")"
+exec "{{dir}}/raw_pointer" < /dev/null
+exit 42
+stdout empty
+stderr empty
+
+# The unfused opt0 reference and the opt2 folded path agree at run time. The
+# cross-mode differential gate reuses both binaries from the integration
+# work directory.
+case backend-cmp-mem-fold-parity
+opt 0 2
+file expected.stdout
+cmp-mem fold smoke: bytes=4547
+cmp-mem fold smoke: compares=35338 words=388 indirect=280 acc=1579
+end-file
+sh CCV_fold="{{root}}/target/integration-verify/linux/backend-cmp-mem-fold-parity-opt{{opt}}" && mkdir -p "$CCV_fold" && CCV_fold="$CCV_fold/backend-cmp-mem-fold-parity-opt{{opt}}"
+run compile "{{root}}/src/tests/compiler_backend_cmp_mem_fold_smoke.tl" --stdlib-root "{{root}}/src" --opt-level {{opt}} -o "{{fold}}.s"
+sh as "{{fold}}.s" -o "{{fold}}.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{fold}}.s")" "{{fold}}.o" -o "{{fold}}"
+exec "{{fold}}"
+stderr empty
+same "{{dir}}/expected.stdout" "{{stdout}}"

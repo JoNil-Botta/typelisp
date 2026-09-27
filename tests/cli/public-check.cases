@@ -1,0 +1,410 @@
+# Public check/compile basics, clean, and doctest and inline-test typechecking
+# in normal commands (gate stage2-public-tool-surface).
+do none
+target -
+opt -
+
+file bad-doctest.tl
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
+(define (main) : i64 0)
+end-file
+
+file bad-inline.tl
+(define (main) : i64 0)
+(test bad-inline
+  (+ true 1))
+end-file
+
+case check-hello
+run check examples/hello.tl
+stderr empty
+stdout contains Type checking passed!
+
+case check-parser-recovery-diagnostics
+file main.tl
+(define)
+(define (later-a) : i64 missing-a)
+(define (later-b) : i64 missing-b)
+(define (main) : i64 0)
+end-file
+run check "{{dir}}/main.tl"
+exit nonzero
+stdout empty
+stderr contains parse: malformed define
+stderr contains typecheck: unbound name missing-a
+stderr contains typecheck: unbound name missing-b
+stderr order parse: malformed define || typecheck: unbound name missing-a || typecheck: unbound name missing-b
+
+case check-cfg
+file main.tl
+(cfg linux
+  (define platform-value : i64 40))
+(cfg windows
+  (define platform-value : i64 40))
+(cfg tooling-feature
+  (define cfg-value : i64 2))
+(define (main) : i64
+  (+ platform-value cfg-value))
+end-file
+step check-cfg-default-target
+run check "{{dir}}/main.tl" --cfg tooling-feature
+stderr empty
+stdout contains Type checking passed!
+step check-cfg-windows-target
+run check "{{dir}}/main.tl" --target windows-x86_64 --cfg tooling-feature
+stderr empty
+stdout contains Type checking passed!
+
+case compile-hello
+run compile examples/hello.tl -o "{{dir}}/hello.s"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/hello.s
+contains main:
+
+case compile-emit-ir-core-macro
+file main.tl
+(define (main) : i64
+  (if (and true true)
+    42
+    1))
+end-file
+run compile "{{dir}}/main.tl" --emit-ir --target {{host-target}} --opt-level 2 -o "{{dir}}/main.ir" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src"
+stderr empty
+stdout match Wrote[ ]
+test -s "{{dir}}/main.ir"
+in file {{dir}}/main.ir
+contains score
+
+case clean-source
+file main.tl
+(define (main) : i64 0)
+end-file
+sh for e in .s .ir .o .obj '' .exe; do : > "{{dir}}/main$e"; done
+step clean-source-dry-run
+run clean --dry-run "{{dir}}/main.tl"
+stderr empty
+stdout contains Would remove:
+stdout contains main.s
+test -f "{{dir}}/main.tl"
+test -f "{{dir}}/main.s"
+test -f "{{dir}}/main"
+step clean-source
+run clean "{{dir}}/main.tl"
+stderr empty
+stdout contains Removed:
+test -f "{{dir}}/main.tl"
+test ! -e "{{dir}}/main.s"
+test ! -e "{{dir}}/main.ir"
+test ! -e "{{dir}}/main.o"
+test ! -e "{{dir}}/main.obj"
+test ! -e "{{dir}}/main"
+test ! -e "{{dir}}/main.exe"
+step clean-source-idempotent
+run clean "{{dir}}/main.tl"
+stdout empty
+stderr empty
+
+case bad-target
+run compile examples/hello.tl --target definitely-not-a-target -o "{{dir}}/bad-target.s"
+exit nonzero
+stdout empty
+stderr contains unknown target
+
+case check-stdlib-root
+file repo-stdlib/helper.tl
+(define (helper) : i64 42)
+end-file
+file app/main.tl
+(import stdlib.helper)
+(define (main) : i64 (helper.helper))
+end-file
+run check "{{dir}}/app/main.tl" --stdlib-root "{{dir}}/repo-stdlib"
+stderr empty
+stdout contains Type checking passed!
+
+case normal-doctest
+file unexpected-pass.tl
+;# ```tl expect-error
+;# (define (bad) : i64 1)
+;# ```
+(define (main) : i64 0)
+end-file
+file run-only.tl
+;# ```tl run
+;# ;; doctest-exit: 0
+;# (define (main) : i64 7)
+;# ```
+(define (main) : i64 0)
+end-file
+step normal-doctest-check-bad
+run check "{{work}}/bad-doctest.tl"
+exit nonzero
+stdout empty
+stderr contains doc tests failed
+stderr contains {{native-work}}/bad-doctest.tl:1:
+stderr contains return type mismatch
+step normal-doctest-compile-bad
+run compile "{{work}}/bad-doctest.tl" -o "{{dir}}/bad.s"
+exit nonzero
+stdout empty
+stderr contains doc tests failed
+test ! -e "{{dir}}/bad.s"
+step normal-doctest-build-bad
+run build "{{work}}/bad-doctest.tl" -o "{{dir}}/bad{{exe}}" --target {{host-target}}
+exit nonzero
+stdout empty
+stderr contains doc tests failed
+test ! -e "{{dir}}/bad{{exe}}"
+step normal-doctest-run-bad
+run run "{{work}}/bad-doctest.tl" --target {{host-target}}
+exit nonzero
+stdout empty
+stderr contains doc tests failed
+step normal-doctest-build-unexpected-pass
+run build "{{dir}}/unexpected-pass.tl" -o "{{dir}}/unexpected-pass{{exe}}" --target {{host-target}}
+exit nonzero
+stdout empty
+stderr contains was expected to fail
+step normal-doctest-runnable-check
+run check "{{dir}}/run-only.tl"
+stderr empty
+stdout contains Type checking passed!
+step normal-doctest-runnable-compile
+run compile "{{dir}}/run-only.tl" -o "{{dir}}/run-only.s"
+stderr empty
+in file {{dir}}/run-only.s
+contains main:
+
+# A failing doctest in a module the package entry does not reach, or in the
+# stdlib, does not fail the package.
+case normal-doctest-package-orphan
+file pkg/typelisp.pkg
+(package
+  (name "doctest_orphan_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file pkg/src/main.tl
+(define (main) : i64 0)
+end-file
+file pkg/src/lib.tl
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
+(define (helper) : i64 1)
+end-file
+file bad-stdlib-docs/core_macros.tl
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
+end-file
+sh cat "{{root}}/stdlib/core_macros.tl" >> "{{dir}}/bad-stdlib-docs/core_macros.tl"
+sh cp "{{root}}/stdlib/runtime.tl" "{{dir}}/bad-stdlib-docs/runtime.tl"
+step normal-doctest-package-orphan-check
+run check --manifest-path "{{dir}}/pkg/typelisp.pkg"
+stderr empty
+stdout contains Type checking passed!
+step normal-doctest-package-orphan-build
+run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}}
+stderr empty
+step normal-doctest-package-stdlib-doc-check
+run check --manifest-path "{{dir}}/pkg/typelisp.pkg" --stdlib-root "{{dir}}/bad-stdlib-docs"
+stderr empty
+stdout contains Type checking passed!
+step normal-doctest-package-stdlib-doc-build
+run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --stdlib-root "{{dir}}/bad-stdlib-docs"
+stderr empty
+
+case normal-doctest-package-reachable
+file typelisp.pkg
+(package
+  (name "doctest_reachable_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file src/main.tl
+(import lib)
+(define (main) : i64 (lib.helper))
+end-file
+file src/lib.tl
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
+(define (helper) : i64 1)
+end-file
+step normal-doctest-package-check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains {{native-dir}}/src/lib.tl:1:
+step normal-doctest-package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit nonzero
+stdout empty
+stderr contains {{native-dir}}/src/lib.tl:1:
+
+case normal-inline
+step normal-inline-check
+run check "{{work}}/bad-inline.tl"
+exit nonzero
+stdout empty
+stderr contains {{native-work}}/bad-inline.tl:3:
+stderr contains typecheck: integer operator expects matching integer operands
+stderr contains error[E0206]
+stderr contains 3 |   (+ true 1))
+stderr contains |   ^^^^^^^^^
+step normal-inline-compile
+run compile "{{work}}/bad-inline.tl" --target {{host-target}} -o "{{dir}}/bad-inline.s"
+exit nonzero
+stdout empty
+stderr contains {{native-work}}/bad-inline.tl:3:
+stderr contains typecheck: integer operator expects matching integer operands
+stderr contains error[E0206]
+stderr contains 3 |   (+ true 1))
+stderr contains |   ^^^^^^^^^
+test ! -f "{{dir}}/bad-inline.s"
+step normal-inline-compile-batch
+sh printf '%s|%s\n' "{{native-work}}/bad-inline.tl" "{{native-dir}}/bad-inline-batch.s" > "{{dir}}/batch.txt"
+run compile --batch "{{dir}}/batch.txt" --target {{host-target}}
+exit nonzero
+stdout empty
+stderr contains {{native-work}}/bad-inline.tl:3:
+stderr contains typecheck: integer operator expects matching integer operands
+stderr contains compile: batch source failed: {{native-work}}/bad-inline.tl
+test ! -f "{{dir}}/bad-inline-batch.s"
+step normal-inline-build
+run build "{{work}}/bad-inline.tl" --target {{host-target}} -o "{{dir}}/bad-inline{{exe}}"
+exit nonzero
+stdout empty
+stderr contains {{native-work}}/bad-inline.tl:3:
+stderr contains typecheck: integer operator expects matching integer operands
+stderr contains error[E0206]
+stderr contains 3 |   (+ true 1))
+stderr contains |   ^^^^^^^^^
+test ! -f "{{dir}}/bad-inline{{exe}}"
+step normal-inline-run
+run run "{{work}}/bad-inline.tl" --target {{host-target}}
+exit nonzero
+stdout empty
+stderr contains {{native-work}}/bad-inline.tl:3:
+stderr contains typecheck: integer operator expects matching integer operands
+stderr contains error[E0206]
+stderr contains 3 |   (+ true 1))
+stderr contains |   ^^^^^^^^^
+
+# #5448: a batch entry that fails during macro expansion fails the entry and
+# exits nonzero cleanly; the driver must not segfault (exit 139).
+case normal-macro-error-compile-batch
+file clean.tl
+(define (main) : i64 42)
+end-file
+file bad.tl
+(define (main) : i64
+  (begin
+    (for [] 0)
+    0))
+end-file
+file sentinel.tl
+(define (main) : i64 7)
+end-file
+sh for n in clean bad sentinel; do printf '%s|%s\n' "{{native-dir}}/$n.tl" "{{native-dir}}/$n.s"; done > "{{dir}}/batch.txt"
+run compile --batch "{{dir}}/batch.txt" --target {{host-target}}
+exit nonzero
+test {{status}} -ne 139
+stdout match Wrote[ ]
+stdout not-contains {{native-dir}}/sentinel.s
+stderr contains macro operand expects bracket clause
+stderr contains compile: batch source failed: {{native-dir}}/bad.tl
+test ! -f "{{dir}}/sentinel.s"
+
+case normal-inline-cfg-helper-production-use
+file main.tl
+(cfg test
+  (define (inline-helper) : i64 41))
+
+(define (main) : i64
+  (inline-helper))
+
+(test helper-visible-to-tests
+  (let [_ : i64 (+ (inline-helper) 1)] unit))
+end-file
+run check "{{dir}}/main.tl"
+exit nonzero
+stdout empty
+stderr contains {{native-dir}}/main.tl:5:
+stderr contains typecheck: unbound name inline-helper
+
+# Inline tests and their cfg-test helpers never change the emitted assembly.
+# Both compiles read one path, so the module names match.
+case normal-inline-codegen
+mode scalar avx2 avx512
+opt 0 1 2
+file same-path.tl
+(define (main) : i64 42)
+
+(cfg test
+  (define (inline-helper) : i64 41))
+
+(test helper-visible
+  (let [_ : i64 (+ (inline-helper) 1)] unit))
+end-file
+step normal-inline-codegen-{{mode}}-opt{{opt}}-with-tests
+run compile "{{dir}}/same-path.tl" --target {{host-target}} --backend-mode {{mode}} --opt-level {{opt}} -o "{{dir}}/with-tests.s"
+stderr empty
+file same-path.tl
+(define (main) : i64 42)
+end-file
+step normal-inline-codegen-{{mode}}-opt{{opt}}-without-tests
+run compile "{{dir}}/same-path.tl" --target {{host-target}} --backend-mode {{mode}} --opt-level {{opt}} -o "{{dir}}/without-tests.s"
+stderr empty
+same "{{dir}}/with-tests.s" "{{dir}}/without-tests.s"
+
+case normal-inline-package
+file typelisp.pkg
+(package
+  (name "inline-owned")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file src/main.tl
+(define (main) : i64 0)
+end-file
+file src/orphan.tl
+(define (orphan) : i64 1)
+(test orphan-bad
+  (+ true 1))
+end-file
+step normal-inline-package-check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains inline-owned/src/orphan.tl:3:
+stderr contains typecheck: integer operator expects matching integer operands
+step normal-inline-package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit nonzero
+stdout empty
+stderr contains inline-owned/src/orphan.tl:3:
+stderr contains typecheck: integer operator expects matching integer operands
+
+case unsafe-import-reach-compile
+file lib.tl
+(define (unsafe-helper [x : i64]) : i64 (+ x 1))
+(unsafe
+  (define (unsafe-entry [x : i64]) : i64 (unsafe-helper x)))
+end-file
+file main.tl
+(import lib)
+(define (main) : i64 (unsafe (lib.unsafe-entry 41)))
+end-file
+run compile "{{dir}}/main.tl" --target windows-x86_64 -o "{{dir}}/main.s" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/main.s
+contains main:

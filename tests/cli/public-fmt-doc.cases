@@ -1,0 +1,318 @@
+# The formatter golden corpus, and the doc and doctest commands (gate
+# stage2-public-tool-surface).
+do none
+target -
+opt -
+
+file docs.tl
+;# Module docs.
+;# ```typelisp
+;# (define (main) : i64 42)
+;# ```
+
+;: Item docs.
+;: ```tl
+;: (define answer : i64 42)
+;: ```
+(define documented : i64 1)
+end-file
+
+file doc_source.tl
+;# Module docs.
+
+;: Item docs.
+(define answer : i64 42)
+end-file
+
+# The corpus is exactly these ten sources, each with an expected output.
+case fmt-golden-manifest
+test "$(find tests/format_golden -maxdepth 1 -type f -name '*.tl' | sed 's#.*/##; s#\.tl$##' | sort | tr '\n' ' ')" = "call_wrap char_literal comments decls flow let_bindings negative_int quote signature_colon tail_comment "
+test "$(find tests/format_golden -maxdepth 1 -type f -name '*.expected' | sed 's#.*/##; s#\.expected$##' | sort | tr '\n' ' ')" = "call_wrap char_literal comments decls flow let_bindings negative_int quote signature_colon tail_comment "
+
+# One multi-file rewrite, then per-file --check and a single-file rewrite.
+case fmt-golden
+sh (for n in call_wrap char_literal comments decls flow let_bindings negative_int quote signature_colon tail_comment; do cp "tests/format_golden/$n.tl" "{{dir}}/$n.tl" && printf '%s' "$(tr -d '\r' < "tests/format_golden/$n.expected")" > "{{dir}}/$n.expected" || exit 1; done)
+step fmt-golden
+run fmt "{{dir}}/call_wrap.tl" "{{dir}}/char_literal.tl" "{{dir}}/comments.tl" "{{dir}}/decls.tl" "{{dir}}/flow.tl" "{{dir}}/let_bindings.tl" "{{dir}}/negative_int.tl" "{{dir}}/quote.tl" "{{dir}}/signature_colon.tl" "{{dir}}/tail_comment.tl"
+stdout empty
+stderr empty
+same "{{dir}}/call_wrap.tl" "{{dir}}/call_wrap.expected"
+same "{{dir}}/char_literal.tl" "{{dir}}/char_literal.expected"
+same "{{dir}}/comments.tl" "{{dir}}/comments.expected"
+same "{{dir}}/decls.tl" "{{dir}}/decls.expected"
+same "{{dir}}/flow.tl" "{{dir}}/flow.expected"
+same "{{dir}}/let_bindings.tl" "{{dir}}/let_bindings.expected"
+same "{{dir}}/negative_int.tl" "{{dir}}/negative_int.expected"
+same "{{dir}}/quote.tl" "{{dir}}/quote.expected"
+same "{{dir}}/signature_colon.tl" "{{dir}}/signature_colon.expected"
+same "{{dir}}/tail_comment.tl" "{{dir}}/tail_comment.expected"
+
+case fmt
+each call_wrap char_literal comments decls flow let_bindings negative_int quote signature_colon tail_comment
+sh printf '%s' "$(tr -d '\r' < "tests/format_golden/{{each}}.expected")" > "{{dir}}/{{each}}.expected"
+sh cp "{{dir}}/{{each}}.expected" "{{dir}}/{{each}}.tl"
+step fmt-{{each}}-check
+run fmt --check "{{dir}}/{{each}}.tl"
+stdout empty
+stderr empty
+step fmt-{{each}}-idempotent
+run fmt "{{dir}}/{{each}}.tl"
+stdout empty
+stderr empty
+same "{{dir}}/{{each}}.tl" "{{dir}}/{{each}}.expected"
+
+# The formatter is target-independent but accepts the shared selection flags.
+case fmt-cfg-target
+file main.tl
+(cfg linux
+  (define platform-value : i64 40))
+(cfg windows
+  (define platform-value : i64 40))
+(cfg tooling-feature
+  (define cfg-value : i64 2))
+(define (main) : i64
+  (+ platform-value cfg-value))
+end-file
+run fmt "{{dir}}/main.tl" --target windows-x86_64 --cfg tooling-feature
+stdout empty
+stderr empty
+in file {{dir}}/main.tl
+contains platform-value
+contains cfg-value
+
+case doc-test
+file docs_expected_error.tl
+;# Expected error.
+;# ```typelisp expect-error
+;# (define (bad) : i64 true)
+;# ```
+end-file
+file docs_malformed.tl
+;# Bad fence.
+;# ```typelisp maybe
+;# (define (main) : i64 0)
+;# ```
+end-file
+file docs_empty.tl
+;# Docs without fenced examples.
+;: Item docs without fenced examples.
+(define documented : i64 1)
+end-file
+file docs_second.tl
+;# Second docs file.
+;# ```typelisp
+;# (define (main) : i64 42)
+;# ```
+end-file
+file repo-stdlib/docfixture.tl
+(define stdlib-answer : i64 42)
+end-file
+file docs_stdlib_root.tl
+;# Stdlib import example.
+;# ```typelisp
+;# (import stdlib.docfixture)
+;# (define (main) : i64 docfixture.stdlib-answer)
+;# ```
+end-file
+file docs_bad.tl
+;# Unexpected error.
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
+end-file
+sh cp "{{work}}/docs.tl" "{{dir}}/docs.tl"
+step doc-test-pass
+run doc --test "{{dir}}/docs.tl"
+stderr empty
+stdout contains Doc tests passed: 2 example(s)
+test ! -d "{{dir}}/.typelisp-doctest"
+step doc-test-expected-error
+run doc --test "{{dir}}/docs_expected_error.tl"
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+test ! -d "{{dir}}/.typelisp-doctest"
+step doc-test-malformed
+run doc --test "{{dir}}/docs_malformed.tl"
+exit nonzero
+stdout empty
+stderr contains unsupported TypeLisp doctest option `maybe`
+test ! -d "{{dir}}/.typelisp-doctest"
+step doc-test-empty
+run doc --test "{{dir}}/docs_empty.tl"
+stderr empty
+stdout contains Doc tests passed: 0 example(s)
+test ! -d "{{dir}}/.typelisp-doctest"
+step doc-test-multiple
+run doc --test "{{dir}}/docs.tl" "{{dir}}/docs_second.tl"
+stderr empty
+stdout contains --- {{native-dir}}/docs.tl
+stdout contains --- {{native-dir}}/docs_second.tl
+stdout contains Doc tests passed: 2 example(s)
+stdout contains Doc tests passed: 1 example(s)
+test ! -d "{{dir}}/.typelisp-doctest"
+step doc-test-stdlib-root
+run doc --test "{{dir}}/docs_stdlib_root.tl" --stdlib-root "{{dir}}/repo-stdlib"
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+test ! -d "{{dir}}/.typelisp-doctest"
+step doc-test-unexpected-error
+run doc --test "{{dir}}/docs_bad.tl"
+exit nonzero
+stdout empty
+stderr contains doc tests failed
+stderr contains was expected to pass
+stderr contains error[E0206]
+test ! -d "{{dir}}/.typelisp-doctest"
+step doc-test-manifest-input-error
+run doc --test "{{dir}}/docs.tl" --manifest-path typelisp.pkg
+exit nonzero
+stdout empty
+stderr contains doc: cannot combine input paths with --manifest-path
+
+case doc-package-default-site
+file typelisp.pkg
+(package
+  (name "public_docs")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file src/lib.tl
+;# Public package docs.
+;: Documented value.
+(define documented-value : i64 42)
+end-file
+cwd src
+run doc
+stderr empty
+stdout match Wrote[ ]
+test -s "{{dir}}/target/doc/index.html"
+test -s "{{dir}}/target/doc/typelisp-docs.css"
+test -s "{{dir}}/target/doc/typelisp-docs.js"
+test -s "{{dir}}/target/doc/typelisp-docs-search-index.js"
+in file {{dir}}/target/doc/index.html
+contains Public package docs.
+contains documented-value
+
+# Outside any package (a directory with no typelisp.pkg above it).
+case doc-test-usage-missing
+sh CCV_nopkg=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-doc-nopkg.XXXXXX")
+cwd {{nopkg}}
+run doc --test
+exit nonzero
+stdout empty
+stderr contains doc: could not find typelisp.pkg
+sh rm -rf "{{nopkg}}"
+
+case doc-generate
+step doc-generate
+run doc "{{work}}/doc_source.tl" -o "{{dir}}/doc_source.md"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/doc_source.md
+contains Module docs.
+contains answer
+step doc-generate-positional
+run doc "{{work}}/doc_source.tl" "{{dir}}/doc_source_positional.md"
+stderr empty
+stdout contains Wrote {{native-dir}}/doc_source_positional.md
+in file {{dir}}/doc_source_positional.md
+contains Module docs.
+contains answer
+file doc_custom_input.tl
+;: Single item.
+(define x : i64 1)
+end-file
+sh mkdir -p "{{dir}}/custom-doc-output"
+step doc-generate-custom
+run doc "{{dir}}/doc_custom_input.tl" -o "{{dir}}/custom-doc-output/custom.md"
+stderr empty
+stdout contains Wrote {{native-dir}}/custom-doc-output/custom.md
+in file {{dir}}/custom-doc-output/custom.md
+contains x
+step doc-generate-html
+run doc --html "{{work}}/doc_source.tl" "{{dir}}/doc_source.html"
+stdout contains Wrote {{native-dir}}/doc_source.html
+stderr empty
+in file {{dir}}/doc_source.html
+contains <!doctype html>
+contains typelisp-docs.css
+contains data-doc-identity="tl-
+contains -58-58define-58-58answer">
+not-contains id="tl-answer"
+contains <code class="language-typelisp">(<span class="tl-syn-keyword">define</span> <span class="tl-syn-definition">answer</span> : <span class="tl-syn-type">i64</span> <span class="tl-syn-number">42</span>)</code>
+
+# Module docs follow the loader's source order, each module once.
+case doc-generate-module-graph
+file local.tl
+;# Local module docs.
+
+;: Local answer docs.
+(define local-answer : i64 7)
+end-file
+file repo-stdlib/docfixture.tl
+;# Stdlib module docs.
+
+;: Stdlib answer docs.
+(define stdlib-answer : i64 35)
+end-file
+file unused.tl
+;# Unused imported module docs.
+
+;: Unused answer docs.
+(define unused-answer : i64 99)
+end-file
+file entry.tl
+;# Entry module docs.
+
+(import local)
+(import local)
+(import stdlib.docfixture)
+(import unused)
+
+;: Entry docs.
+(define (main) : i64 (+ local.local-answer docfixture.stdlib-answer))
+end-file
+sh CCV_gdir=$(cc_native_path "$(cd "{{dir}}" && pwd -P)")
+step doc-generate-module-graph
+run doc "{{dir}}/entry.tl" -o "{{dir}}/graph.md" --stdlib-root "{{dir}}/repo-stdlib"
+stderr empty
+stdout contains Wrote {{native-dir}}/graph.md
+in file {{dir}}/graph.md
+contains ## Modules
+contains - [{{gdir}}/entry.tl](#
+contains Source: `{{gdir}}/local.tl`
+contains Source: `{{gdir}}/repo-stdlib/docfixture.tl`
+contains Source: `{{gdir}}/unused.tl`
+contains Entry module docs.
+contains Local module docs.
+contains Stdlib module docs.
+contains Unused imported module docs.
+count-fixed = 1 Local module docs.
+order ## {{gdir}}/entry.tl || ## {{gdir}}/local.tl || ## {{gdir}}/repo-stdlib/docfixture.tl
+step doc-generate-explicit-module-graph
+run doc "{{dir}}/entry.tl" "{{dir}}/local.tl" "{{dir}}/repo-stdlib/docfixture.tl" "{{dir}}/explicit.md"
+stderr empty
+stdout contains Wrote {{native-dir}}/explicit.md
+in file {{dir}}/explicit.md
+contains ## Modules
+contains Entry module docs.
+contains Local module docs.
+contains Stdlib module docs.
+
+case doc-highlight-vscode-grammar
+in file tools/vs-code-extension/syntaxes/typelisp.tmLanguage.json
+contains "include": "#comments"
+contains "include": "#strings"
+contains "include": "#char-literals"
+contains "include": "#numbers"
+contains "include": "#keywords"
+contains "include": "#builtins"
+contains "include": "#operators"
+contains "include": "#constants"
+contains "include": "#types"
+contains "include": "#definition-name"
+contains "include": "#bindings"
+contains "include": "#user-types"
+contains "include": "#function-call"
+contains "name": "string.quoted.single.typelisp"

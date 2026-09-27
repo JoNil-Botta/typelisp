@@ -1,0 +1,1045 @@
+# Host-action CLI smoke of a TYPELISP_BIN-compatible compiler (gate
+# stage2-cli-host-action-smoke, via scripts/check-stage1-wrapper.sh): compile,
+# check, source and package build, run, repl, lsp, doc, test, fmt and lint, and
+# the opt2 build-invariance reference handoff.
+hosts linux
+do none
+target -
+opt -
+
+file smoke.tl
+(define (main) : i64
+  7)
+end-file
+
+file inline-test.tl
+(import stdlib.test)
+
+(define (inc [x : i64]) : i64 (+ x 1))
+
+(test inc-basic
+  (test.assert-i64-eq (inc 41) 42 "inc result"))
+end-file
+
+file lint_bad.tl
+(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))
+end-file
+
+# ---------------------------------------------------------------- compile
+
+case compile
+run compile "{{work}}/smoke.tl" -o "{{dir}}/smoke.s"
+test -f "{{dir}}/smoke.s"
+stdout contains Wrote {{dir}}/smoke.s
+# A source without `main` takes the entry-synthesis path, whose generated
+# names need no parser-token provenance.
+step synthesized-entry
+file synthesized-entry.tl
+(define SYNTHETIC-VALUE : i64 7)
+end-file
+run compile "{{dir}}/synthesized-entry.tl" -o "{{dir}}/synthesized-entry.s"
+test -f "{{dir}}/synthesized-entry.s"
+stdout contains Wrote {{dir}}/synthesized-entry.s
+step cfg
+file cfg-feature.tl
+(import stdlib.string)
+(cfg feature (define marker : String "enabled-cfg-feature"))
+(cfg (not feature) (define marker : String "disabled-cfg-feature"))
+(define (main) : i64 (string.string-length marker))
+end-file
+run compile "{{dir}}/cfg-feature.tl" -o "{{dir}}/cfg-feature.s" --cfg feature
+in file {{dir}}/cfg-feature.s
+contains enabled-cfg-feature
+not-contains disabled-cfg-feature
+step cfg-batch
+file cfg-batch-one.tl
+(import stdlib.string)
+(cfg feature (define marker : String "enabled-cfg-batch-one"))
+(cfg (not feature) (define marker : String "disabled-cfg-batch-one"))
+(define (main) : i64 (string.string-length marker))
+end-file
+file cfg-batch-two.tl
+(import stdlib.string)
+(cfg feature (define marker : String "enabled-cfg-batch-two"))
+(cfg (not feature) (define marker : String "disabled-cfg-batch-two"))
+(define (main) : i64 (string.string-length marker))
+end-file
+file -x cfg-batch.txt
+{{dir}}/cfg-batch-one.tl|{{dir}}/cfg-batch-one.s
+{{dir}}/cfg-batch-two.tl|{{dir}}/cfg-batch-two.s
+end-file
+run compile --batch "{{dir}}/cfg-batch.txt" --cfg feature
+in file {{dir}}/cfg-batch-one.s
+contains enabled-cfg-batch-one
+not-contains disabled-cfg-batch-one
+in file {{dir}}/cfg-batch-two.s
+contains enabled-cfg-batch-two
+not-contains disabled-cfg-batch-two
+step emit-ir
+sh cp "{{work}}/smoke.tl" "{{dir}}/smoke.tl"
+run compile "{{dir}}/smoke.tl" --emit-ir
+test -f "{{dir}}/smoke.ir"
+stdout contains Wrote {{dir}}/smoke.ir
+in file {{dir}}/smoke.ir
+contains typelisp-ir-summary v1
+step missing-source
+run compile
+exit nonzero
+stdout empty
+stderr contains compile: expected source path
+# An unresolved qualified name reached through an imported module graph is the
+# normal typecheck diagnostic and exit status 1 exactly: a signal exit is the
+# bug this step exists to catch.
+step unresolved-qualified-name
+file unresolved-qualified-helper.tl
+(define (helper-use) : i64
+  (owned_view.compiler-owned-shared-view 0))
+end-file
+file unresolved-qualified-suite.tl
+(import unresolved-qualified-helper)
+(define (main) : i64 0)
+end-file
+run compile "{{dir}}/unresolved-qualified-suite.tl" -o "{{dir}}/unresolved-qualified.s"
+exit 1
+stdout empty
+stderr contains error[E0200]: typecheck: unknown qualified name owned_view.compiler-owned-shared-view
+stderr contains unresolved-qualified-helper.tl
+
+case help-check
+run help
+stdout empty
+step check
+run check "{{work}}/smoke.tl"
+stderr empty
+stdout contains Type checking passed!
+step check-stdlib-root
+file check-root/repo-stdlib/helper.tl
+(define (helper) : i64 42)
+end-file
+file check-root/app/main.tl
+(import stdlib.helper)
+(define (main) : i64 (helper.helper))
+end-file
+run check "{{dir}}/check-root/app/main.tl" --stdlib-root "{{dir}}/check-root/repo-stdlib"
+stderr empty
+stdout contains Type checking passed!
+
+case build
+run build "{{work}}/smoke.tl" -o "{{dir}}/smoke-bin"
+test -x "{{dir}}/smoke-bin"
+stdout contains Built {{dir}}/smoke-bin
+
+# ---------------------------------------------------------------- packages
+
+case package
+file pkg/typelisp.pkg
+(package
+  (name "stage1_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+end-file
+file pkg/src/main.tl
+(import macros)
+(define (main) : i64 (macros.add-one-macro 41))
+end-file
+file pkg/src/macros.tl
+(import math.src.lib as math)
+(import stdlib.comptime)
+(define stage1-exported-value : i64 7)
+(defstruct Stage1Point
+  (x i64)
+  (y i64))
+(defenum Stage1Tag
+  (Stage1A)
+  (Stage1B i64))
+(defmacro (add-one-macro [value : i64]) : i64
+  `(math.add-one ,value))
+(defmacro (all-macro [items : Expr ...]) : bool
+  (comptime.expr-list-fold-if
+    items
+    (comptime.expr-bool true)
+    (comptime.expr-bool false)
+    true))
+(defmacro (unsupported-macro [value : Expr]) : Expr
+  (match value [(comptime.Expr.If c t e) c] [_ value]))
+end-file
+file pkg/vendor/math/typelisp.pkg
+(package
+  (name "stage1_math")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file pkg/vendor/math/src/lib.tl
+(define (add-one [x : i64]) : i64 (+ x 1))
+end-file
+file pkg/target/ignored.tl
+(define (ignored) : i64 true)
+end-file
+file pkg/vendor/math/src/non_entry_bad.tl
+(define (nested-package-source) : i64 true)
+end-file
+sh mkdir -p "{{dir}}/pkg/src/nested/deeper"
+step check-package
+run check --manifest-path "{{dir}}/pkg/typelisp.pkg"
+stderr empty
+stdout contains Type checking passed!
+step check-package-discover
+cwd {{dir}}/pkg/src/nested/deeper
+run check
+stderr empty
+stdout contains Type checking passed!
+cwd -
+# A bad source outside the entry's import graph does not fail the package
+# check; checked alone it fails, naming the file once.
+step check-package-orphan-bad
+file pkg/src/non_entry_bad.tl
+(define (package-non-entry) : i64 true)
+end-file
+run check --manifest-path "{{dir}}/pkg/typelisp.pkg"
+stderr empty
+stdout contains Type checking passed!
+step check-file-bad
+run check "{{dir}}/pkg/src/non_entry_bad.tl"
+exit nonzero
+stdout empty
+stderr contains non_entry_bad.tl
+stderr not-contains {{dir}}/pkg/src/non_entry_bad.tl{{dir}}/pkg/src/non_entry_bad.tl
+sh rm "{{dir}}/pkg/src/non_entry_bad.tl"
+step check-file-manifest
+run check "{{work}}/smoke.tl" --manifest-path "{{dir}}/pkg/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains cannot combine input path with --manifest-path
+step build-package
+run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
+test -x "{{dir}}/pkg/target/release/stage1_pkg"
+test -f "{{dir}}/pkg/target/release/stage1_pkg.s"
+test -s "{{dir}}/pkg/vendor/math/target/release/libstage1_math.a"
+test -s "{{dir}}/pkg/target/release/stage1_pkg.tlci"
+test -s "{{dir}}/pkg/vendor/math/target/release/stage1_math.tlci"
+stdout contains Built {{dir}}/pkg/vendor/math/target/release/libstage1_math.a
+stdout contains Built {{dir}}/pkg/target/release/stage1_pkg
+stdout contains Built {{dir}}/pkg/vendor/math/target/release/stage1_math.tlci
+stdout contains Built {{dir}}/pkg/target/release/stage1_pkg.tlci
+in file {{dir}}/pkg/target/release/stage1_pkg.s
+contains main:
+contains .extern _tl_stage1_math_src_lib_add_one
+not-contains _tl_stage1_math_src_lib_add_one:
+step producer-identity
+run --producer-identity
+stdout capture producer ^([0-9a-f]{40})$
+step inspect-package-tlci
+run inspect "{{dir}}/pkg/target/release/stage1_pkg.tlci"
+stderr empty
+stdout contains tlci image
+stdout contains package-name: stage1_pkg
+stdout contains producer-compiler-identity: {{producer}}
+stdout contains source-set-binding-schema: 1
+stdout not-contains source-set-digest: unavailable
+stdout contains code: offset=
+stdout not-contains code: offset=0 bytes=0
+stdout not-contains   (none)
+# The only end-to-end proof that a package's emitted .tlci dispatches its
+# macros natively. Building the verifier builds a large slice of the compiler
+# (the native producer, tlci loader, embedded stdlib image and CTFE): this step
+# is most of the gate's cost, and that cost is inherent.
+step package-tlci-native-verify
+run run "{{root}}/src/tests/compiler_tlci_native_producer_smoke.tl" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src" -- "{{dir}}/pkg/target/release/stage1_pkg.tlci" macros/add-one-macro math.add-one macros/all-macro macros/unsupported-macro
+stdout empty
+stderr empty
+step build-package-repeat
+sh cp "{{dir}}/pkg/target/release/stage1_pkg.tlci" "{{dir}}/stage1_pkg.first.tlci"
+run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
+same "{{dir}}/stage1_pkg.first.tlci" "{{dir}}/pkg/target/release/stage1_pkg.tlci"
+step inspect-bad-tlci
+file -n bad.tlci
+bad
+end-file
+run inspect "{{dir}}/bad.tlci"
+exit nonzero
+stdout empty
+stderr contains inspect: {{dir}}/bad.tlci: tlci: truncated header
+step build-package-bin
+exec "{{dir}}/pkg/target/release/stage1_pkg"
+exit 42
+step build-package-dev
+sh rm -rf "{{dir}}/pkg/target"
+run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --profile dev
+test -x "{{dir}}/pkg/target/dev/stage1_pkg"
+test -f "{{dir}}/pkg/target/dev/stage1_pkg.s"
+test -s "{{dir}}/pkg/vendor/math/target/dev/libstage1_math.a"
+test -s "{{dir}}/pkg/target/dev/stage1_pkg.tlci"
+test -s "{{dir}}/pkg/vendor/math/target/dev/stage1_math.tlci"
+stdout contains Built {{dir}}/pkg/vendor/math/target/dev/libstage1_math.a
+stdout contains Built {{dir}}/pkg/target/dev/stage1_pkg
+stdout contains Built {{dir}}/pkg/vendor/math/target/dev/stage1_math.tlci
+stdout contains Built {{dir}}/pkg/target/dev/stage1_pkg.tlci
+step build-package-discover
+sh rm -rf "{{dir}}/pkg/target"
+cwd {{dir}}/pkg/src/nested/deeper
+run build
+cwd -
+test -x "{{dir}}/pkg/target/release/stage1_pkg"
+test -f "{{dir}}/pkg/target/release/stage1_pkg.s"
+stdout contains Built ../../../target/release/stage1_pkg
+
+case package-lib
+file libpkg/typelisp.pkg
+(package
+  (name "stage1_lib")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file libpkg/src/lib.tl
+(define (add-two [x : i64]) : i64 (+ x 2))
+end-file
+run build --manifest-path "{{dir}}/libpkg/typelisp.pkg"
+test -s "{{dir}}/libpkg/target/release/libstage1_lib.a"
+test -s "{{dir}}/libpkg/target/release/stage1_lib.tlci"
+stdout contains Built {{dir}}/libpkg/target/release/libstage1_lib.a
+stdout contains Built {{dir}}/libpkg/target/release/stage1_lib.tlci
+
+case package-missing
+each build check
+run {{each}} --manifest-path "{{dir}}/missing.pkg"
+exit nonzero
+stdout empty
+stderr contains cannot read package manifest
+
+# ---------------------------------------------------------------- run, repl, lsp
+
+case run
+run run "{{work}}/smoke.tl"
+exit 7
+stdout empty
+stderr empty
+step run-cfg
+file run-cfg.tl
+(define (main) : i64 (cfg feature 11 3))
+end-file
+run run "{{dir}}/run-cfg.tl" --cfg feature
+exit 11
+stdout empty
+stderr empty
+
+case repl
+sh : > "{{dir}}/repl-empty.in"
+run repl < "{{dir}}/repl-empty.in"
+stdout contains TypeLisp REPL. Type .help for commands.
+stdout match tl>[ ]
+stderr empty
+step repl-session
+file repl-session.in
+.help
+.type true
+(+ 1 2)
+.exit
+end-file
+run repl < "{{dir}}/repl-session.in"
+stdout contains TypeLisp REPL commands:
+stdout contains .type <expr>
+stdout contains bool
+stdout contains tl> 3
+stderr empty
+step repl-args
+run repl unexpected
+exit nonzero
+stdout empty
+stderr contains Error: repl does not accept arguments
+
+case lsp
+sh b='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" > "{{dir}}/init.in"
+sh b='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/init.in"
+run lsp < "{{dir}}/init.in"
+stderr empty
+stdout contains "id":1
+stdout contains "textDocumentSync"
+stdout contains "id":2
+step lsp-missing-length
+sh printf 'X-Test: 1\r\n\r\n' > "{{dir}}/missing-length.in"
+run lsp < "{{dir}}/missing-length.in"
+exit nonzero
+stdout contains "code":-32700
+stderr contains lsp: missing Content-Length
+step lsp-diagnostics
+sh mkdir -p "{{dir}}/lsp-project"
+sh b='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" > "{{dir}}/diagnostics.in"
+sh b='{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"{{dir}}"'/lsp-project/main.tl","languageId":"typelisp","version":1,"text":"(define (main) : i64 true)"}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/diagnostics.in"
+sh b='{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file://'"{{dir}}"'/lsp-project/main.tl","version":2},"contentChanges":[{"text":"(define (main) : i64 0)"}]}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/diagnostics.in"
+sh b='{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file://'"{{dir}}"'/lsp-project/main.tl"}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/diagnostics.in"
+run lsp < "{{dir}}/diagnostics.in"
+stderr empty
+stdout contains "code":"E0206"
+stdout contains typecheck: return type mismatch
+stdout contains "diagnostics":[]
+
+# ---------------------------------------------------------------- doc
+
+case doc
+file doc/local.tl
+;# Local module docs.
+
+;: Local answer docs.
+(define local-answer : i64 7)
+end-file
+file doc/stdlib/docfixture.tl
+;# Stdlib module docs.
+
+;: Stdlib answer docs.
+(define stdlib-answer : i64 35)
+end-file
+file doc/entry.tl
+;# Entry module docs.
+;# ```typelisp
+;# (import stdlib.docfixture)
+;# (define (main) : i64 docfixture.stdlib-answer)
+;# ```
+
+(import local)
+(import stdlib.docfixture)
+
+;: Entry docs.
+(define (main) : i64 (+ local.local-answer docfixture.stdlib-answer))
+end-file
+run doc "{{dir}}/doc/entry.tl" -o "{{dir}}/doc/entry.md" --stdlib-root "{{dir}}/doc/stdlib"
+stderr empty
+stdout contains Wrote {{dir}}/doc/entry.md
+in file {{dir}}/doc/entry.md
+contains Entry module docs.
+contains Local module docs.
+contains Stdlib module docs.
+step doc-test
+run doc --test "{{dir}}/doc/entry.tl" --stdlib-root "{{dir}}/doc/stdlib"
+stderr empty
+stdout contains Doc tests passed: 1 example(s)
+
+# ---------------------------------------------------------------- test
+
+case test
+run test --check "{{work}}/inline-test.tl" --target linux-x86_64 --opt-level 2 --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains TypeLisp test typecheck passed: 1 test(s)
+step test-check-batch
+file inline-test-batch.tl
+(import stdlib.test)
+
+(test batch-one
+  (test.assert-i64-eq (+ 20 22) 42 "batch one"))
+
+(test batch-two
+  (test.assert-i64-eq (* 6 7) 42 "batch two"))
+end-file
+file -x inline-test-batch.txt
+{{work}}/inline-test.tl
+{{dir}}/inline-test-batch.tl
+end-file
+run test --check --batch "{{dir}}/inline-test-batch.txt" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains TypeLisp test file: {{work}}/inline-test.tl (1 test(s))
+stdout contains TypeLisp test typecheck passed: 1 test(s)
+stdout contains TypeLisp test file: {{dir}}/inline-test-batch.tl (2 test(s))
+stdout contains TypeLisp test typecheck passed: 2 test(s)
+stdout contains TypeLisp test batch typecheck passed: 3 test(s) in 2 file(s)
+step test-check-batch-with-file
+run test --check --batch "{{dir}}/inline-test-batch.txt" "{{work}}/inline-test.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stderr contains test: cannot combine input paths with --batch
+step test-run-batch
+run test --batch "{{dir}}/inline-test-batch.txt" --target linux-x86_64 --opt-level 2 --stdlib-root "{{root}}/stdlib"
+stdout contains TypeLisp test file: {{work}}/inline-test.tl (1 test(s))
+stdout contains TypeLisp test file: {{dir}}/inline-test-batch.tl (2 test(s))
+stdout contains TypeLisp test batch passed: 3 test(s) in 2 file(s)
+stderr contains test inc-basic
+stderr contains ok inc-basic
+stderr contains test batch-one
+stderr contains ok batch-two
+# One success summary per source.
+stderr count = 2 ^TypeLisp tests: .* passed; 0 failed; .* ignored; .* slow-skipped; .* total$
+# A failing file does not stop the batch; the later file still runs.
+step test-run-batch-failure
+file inline-test-batch-fail.tl
+(import stdlib.test)
+
+(test intentional-batch-failure
+  (test.assert-i64-eq 1 2 "intentional batch failure"))
+end-file
+file inline-test-batch-sentinel.tl
+(import stdlib.test)
+
+(test runs-after-failed-file
+  (test.assert-i64-eq 42 42 "isolation sentinel"))
+end-file
+file -x inline-test-batch-fail.txt
+{{work}}/inline-test.tl
+{{dir}}/inline-test-batch-fail.tl
+{{dir}}/inline-test-batch-sentinel.tl
+end-file
+run test --batch "{{dir}}/inline-test-batch-fail.txt" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stderr contains intentional batch failure
+stderr contains FAILED intentional-batch-failure
+stderr contains ok runs-after-failed-file
+stderr not-contains test: batch source failed: {{dir}}/inline-test-batch-fail.tl
+stdout contains TypeLisp test batch failed: 1 of 3 file(s) failed; 3 test(s)
+step test-run-batch-sentinel-fresh
+run test "{{dir}}/inline-test-batch-sentinel.tl" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+stderr contains ok runs-after-failed-file
+# A file that fails to compile stops the batch.
+step test-run-batch-compile-error
+file inline-test-batch-bad.tl
+(test batch-compile-error
+  (missing-inline-test-name))
+end-file
+file -x inline-test-batch-bad.txt
+{{dir}}/inline-test-batch-bad.tl
+{{dir}}/inline-test-batch-sentinel.tl
+end-file
+run test --batch "{{dir}}/inline-test-batch-bad.txt" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stderr contains unbound name missing-inline-test-name
+stderr contains test: batch source failed: {{dir}}/inline-test-batch-bad.tl
+stderr not-contains runs-after-failed-file
+step test-run-batch-lower-error
+file inline-test-batch-lower-bad.tl
+(test batch-lower-error
+  (begin
+    '(+ 1 2)
+    unit))
+end-file
+file -x inline-test-batch-lower-bad.txt
+{{dir}}/inline-test-batch-lower-bad.tl
+{{dir}}/inline-test-batch-sentinel.tl
+end-file
+run test --batch "{{dir}}/inline-test-batch-lower-bad.txt" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stderr contains Expr value is compile-time only
+stderr contains test: batch source failed: {{dir}}/inline-test-batch-lower-bad.tl
+stderr not-contains runs-after-failed-file
+step test-run
+run test "{{work}}/inline-test.tl" --opt-level 1 --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains test inc-basic
+stderr contains ok inc-basic
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+test ! -f "{{work}}/inline-test.tl.test.s"
+step test-no-tests-check
+file no-tests.tl
+(define (main) : i64 0)
+end-file
+run test --check "{{dir}}/no-tests.tl"
+stderr empty
+stdout contains TypeLisp test typecheck passed: 0 test(s)
+step test-no-tests-run
+run test "{{dir}}/no-tests.tl"
+stdout empty
+stderr contains TypeLisp tests: 0 passed; 0 failed; 0 ignored; 0 slow-skipped; 0 total
+step test-run-batch-zero
+file -x inline-test-batch-zero.txt
+{{dir}}/no-tests.tl
+{{work}}/inline-test.tl
+end-file
+run test --batch "{{dir}}/inline-test-batch-zero.txt" --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+stdout contains TypeLisp test file: {{dir}}/no-tests.tl (0 test(s))
+stdout contains TypeLisp test batch passed: 1 test(s) in 2 file(s)
+stderr contains TypeLisp tests: 0 passed; 0 failed; 0 ignored; 0 slow-skipped; 0 total
+test ! -f "{{dir}}/no-tests.tl.test.s"
+
+# Package discovery from a nested source directory: inline tests under src/,
+# integration tests under tests/; target/, nested packages and formatter
+# fixtures are not tests.
+case test-package
+file pkg/typelisp.pkg
+(package
+  (name "inline_test_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file pkg/src/lib.tl
+(import stdlib.test)
+
+(define (inc [x : i64]) : i64 (+ x 1))
+
+(test pkg-entry
+  (if (= (inc 41) 42)
+    unit
+    (let [_ : i64 (/ 1 0)] unit)))
+end-file
+file pkg/src/nested/more.tl
+(test pkg-nested
+  (if (= (+ 20 22) 42)
+    unit
+    (let [_ : i64 (/ 1 0)] unit)))
+end-file
+file pkg/src/no-tests.tl
+(define package-no-test-value : i64 42)
+end-file
+sh _n=0; while [ "$_n" -lt 2500 ]; do printf '(define package-large-no-inline-%s : i64 %s)\n' "$_n" "$_n"; _n=$((_n + 1)); done > "{{dir}}/pkg/src/large-no-inline.tl"
+file pkg/target/ignored/fail.tl
+(test ignored-target
+  (panic "target directory inline test should be ignored"))
+end-file
+file pkg/vendor/child/typelisp.pkg
+(package (name "child") (version "0.1.0") (kind "lib"))
+end-file
+file pkg/vendor/child/src/fail.tl
+(test ignored-nested-package
+  (panic "nested package inline test should be ignored"))
+end-file
+file pkg/tests/basic.tl
+(import stdlib.test)
+
+(define (main) : i64
+  (begin
+    (test.assert-i64-eq (+ 21 21) 42 "package tests dir basic")
+    0))
+end-file
+file pkg/tests/nested/more.tl
+(import stdlib.test)
+
+(define (main) : i64
+  (begin
+    (test.assert-i64-eq (* 6 7) 42 "package nested tests dir")
+    0))
+end-file
+file pkg/tests/format_golden/fixture.tl
+;; Package test discovery must not treat formatter fixtures as integration tests.
+(define fixture-value : i64 42)
+end-file
+file pkg/tests/target/ignored/fail.tl
+(define (main) : i64 9)
+end-file
+file pkg/tests/vendor/child/typelisp.pkg
+(package (name "child-tests") (version "0.1.0") (kind "lib"))
+end-file
+file pkg/tests/vendor/child/src/fail.tl
+(define (main) : i64 9)
+end-file
+cwd {{dir}}/pkg/src/nested
+run test --check --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains TypeLisp test file:
+stdout contains TypeLisp integration test file:
+stdout contains-any TypeLisp package test typecheck passed: 4 test(s) in 4 file(s) || TypeLisp package test typecheck passed: 4 test(s) in 12 file(s)
+step test-package-run
+run test --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+stdout contains TypeLisp integration test file:
+stdout contains-any TypeLisp package tests passed: 4 test(s) in 4 file(s) || TypeLisp package tests passed: 4 test(s) in 12 file(s)
+stderr contains test pkg-entry
+stderr contains ok pkg-entry
+stderr contains test pkg-nested
+stderr contains ok pkg-nested
+step test-package-no-tests
+file empty-pkg/typelisp.pkg
+(package
+  (name "inline_test_empty_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file empty-pkg/src/main.tl
+(define (main) : i64 0)
+end-file
+cwd {{dir}}/empty-pkg
+run test --check --target linux-x86_64 --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains-any TypeLisp package test typecheck passed: 0 test(s) in 0 file(s) || TypeLisp package test typecheck passed: 0 test(s) in 1 file(s)
+
+case test-failures
+file inline-test-fail.tl
+(import stdlib.test)
+
+(test failing-case
+  (test.assert-i64-eq 1 2 "inline failure message"))
+end-file
+run test "{{dir}}/inline-test-fail.tl" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains test failing-case
+stderr contains inline failure message
+stderr contains FAILED failing-case
+stderr contains TypeLisp tests: 0 passed; 1 failed; 0 ignored; 0 slow-skipped; 1 total
+stderr not-contains typelisp test: test executable exited
+test ! -f "{{dir}}/inline-test-fail.tl.test.s"
+step test-package-integration-fail
+file fail-pkg/typelisp.pkg
+(package
+  (name "integration_test_fail_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file fail-pkg/src/lib.tl
+(define lib-value : i64 42)
+end-file
+file fail-pkg/tests/fail.tl
+(define (main) : i64 7)
+end-file
+run test --target linux-x86_64 --manifest-path "{{dir}}/fail-pkg/typelisp.pkg"
+exit 1
+stdout contains TypeLisp integration test file:
+stderr contains typelisp test: test executable exited with exit status: 7
+step test-package-integration-lower-diagnostic
+file diag-pkg/typelisp.pkg
+(package
+  (name "integration_lower_diagnostic_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file diag-pkg/src/lib.tl
+(define lib-value : i64 42)
+end-file
+file diag-pkg/tests/quote_runtime_value.tl
+(define (main) : i64
+  (begin
+    '(+ 1 2)
+    0))
+end-file
+run test --target linux-x86_64 --manifest-path "{{dir}}/diag-pkg/typelisp.pkg"
+exit 1
+stdout contains TypeLisp integration test file:
+stderr contains error: Expr value is compile-time only
+stderr contains quote_runtime_value.tl:3:5
+stderr contains '(+ 1 2)
+stderr contains |     ^
+step test-bad
+file inline-test-bad.tl
+(test compile-error
+  (missing-inline-test-name))
+end-file
+run test --check "{{dir}}/inline-test-bad.tl"
+exit nonzero
+stdout empty
+stderr contains typecheck: unbound name missing-inline-test-name
+step test-missing-opt
+run test "{{work}}/inline-test.tl" --opt-level
+exit nonzero
+stdout empty
+stderr contains test: --opt-level requires a value
+step test-invalid-opt
+run test "{{work}}/inline-test.tl" --opt-level 3
+exit nonzero
+stdout empty
+stderr contains test: invalid --opt-level 3; expected 0, 1, or 2
+step test-bad-target
+run test --check "{{work}}/inline-test.tl" --target nope
+exit nonzero
+stdout empty
+stderr contains test: unknown target nope
+
+# ---------------------------------------------------------------- fmt and lint
+
+case fmt
+file fmt-changed.tl
+(define (main) : i64
+  (let ([x : i64 42])
+    x))
+end-file
+sh cp "{{dir}}/fmt-changed.tl" "{{dir}}/fmt-changed.expected"
+run fmt --check "{{dir}}/fmt-changed.tl"
+exit nonzero
+stdout empty
+stderr contains fmt: would reformat
+same "{{dir}}/fmt-changed.tl" "{{dir}}/fmt-changed.expected"
+step fmt-missing
+run fmt "{{dir}}/missing.tl"
+exit nonzero
+stdout empty
+stderr not-empty
+step fmt-parse-error
+file -n fmt-parse-error.tl
+(define (
+end-file
+run fmt "{{dir}}/fmt-parse-error.tl"
+exit nonzero
+stdout empty
+stderr not-empty
+stderr contains fmt-parse-error.tl:1:10: format cst: unclosed delimiter
+
+case lint
+run lint --help
+stdout empty
+stderr contains Usage:
+stderr contains typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
+stderr contains Summary:
+step lint-missing
+sh CCV_nopkg=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")
+cwd {{nopkg}}
+run lint
+exit nonzero
+stdout empty
+stderr contains could not find typelisp.pkg
+cwd -
+sh rm -rf "{{nopkg}}"
+step lint-clean
+run lint "{{work}}/smoke.tl"
+stderr empty
+stdout contains lint: 0 finding(s)
+step lint-clean-check
+run lint "{{work}}/smoke.tl" --check
+stderr empty
+stdout contains lint: 0 finding(s)
+step lint-dotted-compat
+file lint_dotted_compat.tl
+(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    (set! p.x y)
+    (__tl-project-field p x)))
+end-file
+run lint "{{dir}}/lint_dotted_compat.tl" --prefer-dotted-field
+stderr empty
+stdout contains lint: 0 finding(s)
+step lint-dotted-compat-check
+run lint "{{dir}}/lint_dotted_compat.tl" --prefer-dotted-field --check
+stderr empty
+stdout contains lint: 0 finding(s)
+step lint-nested-let
+run lint "{{work}}/lint_bad.tl"
+stderr empty
+stdout contains lint_bad.tl:
+stdout contains nested let
+stdout contains merge bindings
+stdout contains lint: 1 finding(s)
+step lint-nested-let-check
+run lint "{{work}}/lint_bad.tl" --check
+exit nonzero
+stderr empty
+stdout contains lint_bad.tl:
+stdout contains nested let
+stdout contains lint: 1 finding(s)
+# Several files report in input-path order.
+step lint-multi
+run lint "{{work}}/smoke.tl" "{{work}}/lint_bad.tl"
+stderr empty
+stdout contains --- {{work}}/smoke.tl
+stdout contains --- {{work}}/lint_bad.tl
+stdout contains lint_bad.tl:
+stdout contains lint: 0 finding(s)
+stdout contains lint: 1 finding(s)
+stdout order --- {{work}}/smoke.tl || --- {{work}}/lint_bad.tl
+step lint-missing-file
+run lint "{{dir}}/missing-lint.tl"
+exit nonzero
+stdout empty
+stderr not-empty
+step lint-parse-error
+file -n lint-parse-error.tl
+(define (
+end-file
+run lint "{{dir}}/lint-parse-error.tl"
+exit nonzero
+stdout empty
+stderr not-empty
+step lint-parse-error-check
+run lint "{{dir}}/lint-parse-error.tl" --check
+exit nonzero
+stdout empty
+stderr not-empty
+
+case fmt-lint-package
+file pkg/typelisp.pkg
+(package
+  (name "stage1_fmtlint")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file pkg/src/main.tl
+(define (main) : i64 0)
+end-file
+file pkg/src/needs_fmt.tl
+(define (needs-format) : i64
+(+ 1 2))
+end-file
+sh mkdir -p "{{dir}}/pkg/src/nested/deeper" && cp "{{work}}/lint_bad.tl" "{{dir}}/pkg/src/lint_bad.tl"
+run fmt --manifest-path "{{dir}}/pkg/typelisp.pkg" --check
+exit nonzero
+stdout empty
+stderr contains needs_fmt.tl
+step fmt-package-rewrite
+run fmt --manifest-path "{{dir}}/pkg/typelisp.pkg"
+stdout empty
+stderr empty
+in file {{dir}}/pkg/src/needs_fmt.tl
+contains   (+ 1 2)
+step fmt-package-discover
+cwd {{dir}}/pkg/src/nested/deeper
+run fmt --check
+stdout empty
+stderr empty
+cwd -
+step fmt-file-manifest
+run fmt "{{work}}/smoke.tl" --manifest-path "{{dir}}/pkg/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains cannot combine input paths with --manifest-path
+step fmt-no-manifest
+sh CCV_nopkg=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-fmt-nopkg.XXXXXX")
+cwd {{nopkg}}
+run fmt --check
+exit nonzero
+stdout empty
+stderr contains could not find typelisp.pkg
+cwd -
+sh rm -rf "{{nopkg}}"
+step lint-package-check
+run lint --manifest-path "{{dir}}/pkg/typelisp.pkg" --check
+exit nonzero
+stderr empty
+stdout contains lint_bad.tl:
+stdout contains lint: 1 finding(s)
+step lint-package-discover
+cwd {{dir}}/pkg/src/nested/deeper
+run lint
+stderr empty
+stdout contains lint_bad.tl:
+cwd -
+step lint-file-manifest
+run lint "{{work}}/smoke.tl" --manifest-path "{{dir}}/pkg/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains cannot combine input paths with --manifest-path
+step lint-files-manifest
+run lint "{{work}}/smoke.tl" "{{work}}/lint_bad.tl" --manifest-path "{{dir}}/pkg/typelisp.pkg"
+exit nonzero
+stdout empty
+stderr contains cannot combine input paths with --manifest-path
+
+# ---------------------------------------------------------------- opt2 handoff
+
+# Linux CI runs build-invariance before the opt2 regression gate, which reuses
+# its validated opt1 reference. check-opt2-cli-regression.sh runs in a copy of
+# its scripts against a fake seed and generated compiler that log their calls.
+case opt2-handoff
+in file scripts/ci-verify.sh
+contains TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE
+contains TYPELISP_OPT2_CLI_REFERENCE_ASM
+test "$(awk -F '\t' '$1 == "stage2-opt1-opt2-build-invariance" { print NR; exit }' scripts/ci-gates.tsv)" -lt "$(awk -F '\t' '$1 == "stage2-opt2-built-cli-compile-cross-fixpoint-regression" { print NR; exit }' scripts/ci-gates.tsv)"
+sh mkdir -p "{{dir}}/repo/scripts" && cp scripts/check-opt2-cli-regression.sh scripts/lib-native-link.sh scripts/lib-gate.sh scripts/lib-linux-entry.sh "{{dir}}/repo/scripts/"
+sh printf '.text\nvalidated opt1 reference\n' > "{{dir}}/repo/validated-opt1.s"
+file repo/fake-seed
+#!/usr/bin/env sh
+set -eu
+
+printf 'seed' >> "$OPT2_HANDOFF_TEST_LOG"
+for arg in "$@"; do
+    printf '|%s' "$arg" >> "$OPT2_HANDOFF_TEST_LOG"
+done
+printf '\n' >> "$OPT2_HANDOFF_TEST_LOG"
+
+command=${1:-}
+case "$command" in
+    test)
+        exit 0
+        ;;
+    build)
+        if [ "${OPT2_HANDOFF_TEST_SKIP_GENERATED:-0}" -eq 0 ]; then
+            mkdir -p target/release
+            cp "$OPT2_HANDOFF_TEST_GENERATED" target/release/typelisp
+            chmod +x target/release/typelisp
+        fi
+        ;;
+    compile)
+        out=""
+        shift
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = -o ]; then
+                shift
+                out=$1
+            fi
+            shift
+        done
+        [ -n "$out" ] || exit 1
+        cp "$OPT2_HANDOFF_TEST_REFERENCE" "$out"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+end-file
+file repo/fake-generated
+#!/usr/bin/env sh
+set -eu
+
+printf 'generated' >> "$OPT2_HANDOFF_TEST_LOG"
+for arg in "$@"; do
+    printf '|%s' "$arg" >> "$OPT2_HANDOFF_TEST_LOG"
+done
+printf '\n' >> "$OPT2_HANDOFF_TEST_LOG"
+
+[ "${1:-}" = compile ] || exit 1
+out=""
+opt_level=""
+shift
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o)
+            shift
+            out=$1
+            ;;
+        --opt-level)
+            shift
+            opt_level=$1
+            ;;
+    esac
+    shift
+done
+[ -n "$out" ] || exit 1
+if [ "$opt_level" = 1 ] && [ "${OPT2_HANDOFF_TEST_CROSS_MISMATCH:-0}" -eq 1 ]; then
+    printf '.text\ncross mismatch\n' > "$out"
+else
+    cp "$OPT2_HANDOFF_TEST_REFERENCE" "$out"
+fi
+end-file
+sh chmod +x "{{dir}}/repo/fake-seed" "{{dir}}/repo/fake-generated" "{{dir}}/repo/scripts/check-opt2-cli-regression.sh"
+file -x repo/check
+#!/usr/bin/env sh
+export OPT2_HANDOFF_TEST_LOG="{{dir}}/repo/invocations.log"
+export OPT2_HANDOFF_TEST_GENERATED="{{dir}}/repo/fake-generated"
+export OPT2_HANDOFF_TEST_REFERENCE="{{dir}}/repo/validated-opt1.s"
+export TYPELISP_BIN="{{dir}}/repo/fake-seed"
+exec "{{dir}}/repo/scripts/check-opt2-cli-regression.sh"
+end-file
+step opt2-handoff-supplied
+sh : > "{{dir}}/repo/invocations.log"
+exec env TYPELISP_OPT2_CLI_REFERENCE_ASM="{{dir}}/repo/validated-opt1.s" sh "{{dir}}/repo/check"
+stdout contains reference: reuse validated build-invariance stage4 src/main @ opt1 assembly
+stdout contains cross-fixpoint holds
+in file {{dir}}/repo/invocations.log
+contains seed|build|--manifest-path|typelisp.pkg|--profile|release|--opt-level|2
+contains generated|compile|src/main.tl|-o|{{dir}}/repo/target/opt2-cli-regression/cli-opt2.s
+contains generated|compile|src/main.tl|-o|{{dir}}/repo/target/opt2-cli-regression/cli-opt2built-opt1.s
+not-contains seed|compile|src/main.tl
+step opt2-handoff-standalone
+sh : > "{{dir}}/repo/invocations.log"
+exec env -u TYPELISP_OPT2_CLI_REFERENCE_ASM sh "{{dir}}/repo/check"
+stdout contains reference: converged compiler compiles src/main.tl at opt1
+stdout contains cross-fixpoint holds
+in file {{dir}}/repo/invocations.log
+contains seed|compile|src/main.tl|-o|{{dir}}/repo/target/opt2-cli-regression/cli-opt1-ref.s
+step opt2-handoff-empty-reference
+exec env TYPELISP_OPT2_CLI_REFERENCE_ASM= sh "{{dir}}/repo/check"
+exit nonzero
+stderr contains supplied opt1 reference path is empty
+step opt2-handoff-missing-release
+exec env TYPELISP_OPT2_CLI_REFERENCE_ASM="{{dir}}/repo/validated-opt1.s" OPT2_HANDOFF_TEST_SKIP_GENERATED=1 sh "{{dir}}/repo/check"
+exit nonzero
+stderr contains generated compiler is missing or empty
+step opt2-handoff-cross-mismatch
+exec env TYPELISP_OPT2_CLI_REFERENCE_ASM="{{dir}}/repo/validated-opt1.s" OPT2_HANDOFF_TEST_CROSS_MISMATCH=1 sh "{{dir}}/repo/check"
+exit nonzero
+stderr contains CROSS-FIXPOINT MISMATCH

@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-codegen-cases.sh - table-driven compile / run / assembly-shape runner.
+# verify-codegen-cases.sh - table-driven compile / run / assembly-shape and CLI
+# transcript runner.
 #
 # usage: scripts/verify-codegen-cases.sh [--list] [--only CASE-GLOB] FILE.cases...
 #
@@ -10,17 +11,19 @@ set -eu
 # with POSIX sh, grep, sed and awk. Work files go to
 # ${CODEGEN_CASES_WORKDIR:-target/codegen-cases}/<file-name>/.
 #
-# Case file format (see tests/codegen/*.cases). One directive per line; blank
-# lines and lines starting with `#` are ignored; leading whitespace is ignored.
-# A directive's text argument is everything after the single space that follows
-# its fixed fields, so text and regular expressions may contain spaces.
-# Directives before the first `case` are defaults for every case in the file.
+# Case file format (see tests/codegen/*.cases, tests/cli/*.cases). One directive
+# per line; blank lines and lines starting with `#` are ignored; leading
+# whitespace is ignored. A directive's text argument is everything after the
+# single space that follows its fixed fields, so text and regular expressions
+# may contain spaces. Directives before the first `case` are defaults for every
+# case in the file.
 #
 #   case ID                 start a case (IDs are unique per file)
 #   source PATH             program, relative to the repo root (or {{work}}/...)
 #   target T...             --target values, `-` omits the flag (default linux-x86_64)
 #   opt N...                --opt-level values, `-` omits the flag (default 2)
 #   mode M...               --backend-mode values, `-` omits the flag (default -)
+#   each V...               values of {{each}}, a plain variant axis (default -)
 #   args ARGS...            extra compiler arguments (word-split)
 #   do ACTION               compile (default): `typelisp compile` to assembly;
 #                           build: `typelisp build` must produce an executable;
@@ -28,29 +31,53 @@ set -eu
 #                           link-run: compile, assemble and link with as/ld,
 #                             then run (on Windows: compile, then `typelisp run`);
 #                           tl-run: `typelisp run`; check: `typelisp check`;
-#                           none: no compiler invocation (file checks only)
+#                           none: no compiler invocation (file checks and steps)
 #   hosts H...              only run on these hosts (linux, windows)
 #   assemble                assemble the assembly (as for Linux, clang for Windows)
 #   repeatable              a second compile must produce identical assembly
 #   setup PLUGIN ARGS...    run plugin_PLUGIN before the action
-#   file NAME ... end-file  (file level) write the lines between to {{work}}/NAME
+#   file PATH ... end-file  write the lines between to PATH: before the first
+#                           case, once, relative to {{work}}; inside a case, when
+#                           the row is reached, relative to {{dir}}.
+#                           `file -n PATH` drops the final newline; `file -x
+#                           PATH` expands placeholders in the lines.
 #
-# Every case runs once per target x opt x mode variant. SIMD modes that the host
+# Every case runs once per target x opt x mode x each variant. SIMD modes that the host
 # cannot execute (scripts/detect-simd-isa.sh) still compile; their run step and
 # the run-output rows (exit, in stdout, in stderr) are skipped.
+#
+# Transcript steps run after the case's action, in order. SHELL is shell text
+# evaluated by this runner (globbing off); {{name}} placeholders in it become
+# variable references, so quote them with double quotes, not single quotes.
+#
+#   run SHELL               run `typelisp SHELL` (e.g. `run check "{{dir}}/a.tl"`,
+#                           `run repl < "{{dir}}/in"`); its stdout, stderr and
+#                           exit status become the step's output ({{stdout}} and
+#                           {{stderr}} name the files, {{status}} is the status)
+#   exec SHELL              run the command SHELL the same way
+#   step ID                 name the following steps in failure messages
+#   cwd PATH | -            working directory of the following steps
+#   sh SHELL                a setup statement; failing is a failure
+#
+# A step without an `exit` row before the next step, `step` row, if-block
+# boundary or the end of its case must exit 0.
 #
 # Expectations are evaluated in order against the current subject:
 #
 #   in asm | stdout | stderr        whole assembly, or the last step's output
 #   in fn LABEL                     LABEL: up to the next column-0 .globl or a .size
 #   in fn-globl LABEL               LABEL: up to the next (indented or not) .globl
-#   in file PATH                    a repository file
+#   in file PATH                    a file (relative to the repository root)
+#   stdout ROW / stderr ROW         `in stdout` / `in stderr`, then ROW
 #   narrow WINDOW[:ARG]             replace the subject by an analyzer window
 #                                   (scripts/codegen-cases-analyzers.awk); an empty
 #                                   window fails
 #   exit N | nonzero | MODE=N...    exit status of the last step (default: 0);
 #                                   MODE=N words pick by backend mode
 #   contains TEXT / not-contains TEXT
+#   is TEXT                         the subject is exactly the line TEXT
+#   contains-any TEXT || TEXT...    at least one TEXT
+#   order TEXT || TEXT...           each TEXT's first line is after the previous one's
 #   match ERE / not-match ERE / match-i ERE / not-match-i ERE
 #   count OP N ERE / count-fixed OP N TEXT     OP is =, >= or <=
 #   after ERE + next-line ERE       the line after the first ERE match matches
@@ -58,14 +85,21 @@ set -eu
 #   metric NAME[:ARG] OP VALUE      analyzer result; OP = compares text
 #   capture VAR ERE                 {{VAR}} := group 1 of the first line that the
 #                                   whole-line ERE matches (none fails)
+#   test SHELL                      `[ SHELL ]` holds (e.g. `test -x "{{dir}}/app"`)
+#   same SHELL                      the two files SHELL names are byte-identical
 #   check PLUGIN ARGS...            plugin_PLUGIN (scripts/codegen-cases-plugins.sh);
 #                                   a plugin returning 2 was skipped (optional tool)
-#   if-fn LABEL | if-no-fn LABEL | if-mode M... ... [else ...] end-if
+#   if-fn LABEL | if-no-fn LABEL | if-mode M... | if-host H | if-isa ISA
+#                                   ... [else ...] end-if
 #
-# Text arguments expand {{root}}, {{work}}, {{target}}, {{opt}}, {{mode}} and
-# captured {{VAR}}s. The first failing row of a variant is reported with its
-# file:line, the remaining rows of that variant are still evaluated, and the
-# runner exits 1 if any row failed.
+# Text arguments expand {{root}}, {{work}}, {{dir}} (the variant's directory),
+# {{target}}, {{opt}}, {{mode}}, {{each}}, {{host}} (linux or windows), {{host-target}},
+# {{exe}} (.exe on Windows), {{lib-prefix}}/{{lib-suffix}} (static library
+# names), {{native-root}}/{{native-work}}/{{native-dir}} (the compiler's
+# spelling of those paths: cygpath -m on Windows), {{compiler}} and captured
+# {{VAR}}s. The first failing row of a variant is reported with its file:line,
+# the remaining rows of that variant are still evaluated, and the runner exits 1
+# if any row failed.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -93,29 +127,42 @@ done
 CC_ANALYZERS="$ROOT/scripts/codegen-cases-analyzers.awk"
 . "$ROOT/scripts/codegen-cases-plugins.sh"
 . "$ROOT/scripts/lib-linux-entry.sh"
+. "$ROOT/scripts/lib-ci-timing.sh"
+. "$ROOT/scripts/lib-gate.sh"
 
 CC_HOST=linux
+CCV_exe=
+CCV_lib_prefix=lib
+CCV_lib_suffix=.a
 case "$(uname -s)" in
     Linux*) CC_HOST=linux ;;
-    MINGW* | MSYS* | CYGWIN*) CC_HOST=windows ;;
+    MINGW* | MSYS* | CYGWIN*)
+        CC_HOST=windows
+        CCV_exe=.exe
+        CCV_lib_prefix=
+        CCV_lib_suffix=.lib
+        ;;
     *) CC_HOST=unknown ;;
 esac
+CCV_host=$CC_HOST
+CCV_host_target=$CC_HOST-x86_64
+CCV_root=$ROOT
+
+# The compiler's spelling of a host path (cygpath -m on Windows).
+cc_native_path() {
+    if [ "$CC_HOST" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+CCV_native_root=$(cc_native_path "$ROOT")
 
 if [ "$CC_LIST" -eq 0 ]; then
-    if [ -n "${TYPELISP_BIN:-}" ]; then
-        COMPILER=$TYPELISP_BIN
-    else
-        . "$ROOT/scripts/lib-stage0.sh"
-        COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-    fi
-    case "$COMPILER" in
-        /* | [A-Za-z]:[\\/]*) ;;
-        *) COMPILER="$ROOT/$COMPILER" ;;
-    esac
-    [ -x "$COMPILER" ] || {
-        echo "typelisp compiler is not executable: $COMPILER" >&2
-        exit 1
-    }
+    gate_compiler
+    gate_compiler_absolute
+    gate_require_compiler
+    CCV_compiler=$COMPILER
     CC_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
 fi
 
@@ -150,28 +197,21 @@ cc_expand() {
         _cx_name=${_cx_in%%"$CC_CLOSE"*}
         _cx_in=${_cx_in#*"$CC_CLOSE"}
         case "$_cx_name" in
-            root) _cx_out=$_cx_out$ROOT ;;
-            work) _cx_out=$_cx_out$CC_WORK ;;
-            target) _cx_out=$_cx_out$CV_TARGET ;;
-            opt) _cx_out=$_cx_out$CV_OPT ;;
-            mode) _cx_out=$_cx_out$CV_MODE ;;
-            *)
-                case "$_cx_name" in
-                    *[!A-Za-z0-9_]* | '') _cx_val='' ;;
-                    *) eval "_cx_val=\${CC_VAR_$_cx_name-}" ;;
-                esac
-                _cx_out=$_cx_out$_cx_val
-                ;;
+            *[!A-Za-z0-9_-]* | '') _cx_val='' ;;
+            *) eval "_cx_val=\${CCV_$(printf '%s' "$_cx_name" | tr - _)-}" ;;
         esac
+        _cx_out=$_cx_out$_cx_val
     done
     printf '%s' "$_cx_out$_cx_in"
 }
 
+# cc_resolve_path PATH [BASE]: expand PATH; a relative one is under BASE
+# (default: the repository root).
 cc_resolve_path() {
     _rp=$(cc_expand "$1")
     case "$_rp" in
         /* | [A-Za-z]:[\\/]*) printf '%s' "$_rp" ;;
-        *) printf '%s' "$ROOT/$_rp" ;;
+        *) printf '%s' "${2:-$ROOT}/$_rp" ;;
     esac
 }
 
@@ -180,6 +220,7 @@ cc_variant_name() {
     [ "$CV_TARGET" = - ] || _vn=$CV_TARGET
     [ "$CV_OPT" = - ] || _vn="${_vn:+$_vn-}o$CV_OPT"
     [ "$CV_MODE" = - ] || _vn="${_vn:+$_vn-}$CV_MODE"
+    [ "$CV_EACH" = - ] || _vn="${_vn:+$_vn-}$CV_EACH"
     printf '%s' "${_vn:-default}"
 }
 
@@ -187,7 +228,8 @@ cc_variant_name() {
 cc_fail() {
     CC_FAILURES=$((CC_FAILURES + 1))
     CV_FAILED=1
-    printf 'FAIL %s:%s %s [%s]: %s\n' "$CC_FILE" "$1" "$CC_CASE" "$(cc_variant_name)" "$2" >&2
+    printf 'FAIL %s:%s %s [%s]%s: %s\n' "$CC_FILE" "$1" "$CC_CASE" "$(cc_variant_name)" \
+        "${CV_STEP_ID:+ $CV_STEP_ID}" "$2" >&2
 }
 
 cc_skip() {
@@ -370,6 +412,64 @@ cc_do_action() {
     return 0
 }
 
+# ---------------------------------------------------------------- steps
+
+# cc_run LINE COMMAND...: one transcript step; its output becomes the subject
+# of the rows that follow.
+cc_run() {
+    CV_STEP_N=$((CV_STEP_N + 1))
+    shift
+    CV_OUT="$CV_DIR/step$CV_STEP_N.stdout"
+    CV_ERR="$CV_DIR/step$CV_STEP_N.stderr"
+    CV_SUBJECT=
+    CV_BAD_SUBJECT=0
+    CV_RAN=1
+    set +e
+    if [ -n "$CV_CWD" ]; then
+        (cd "$CV_CWD" && ci_timing_run "$CC_CASE" step "$@") > "$CV_OUT" 2> "$CV_ERR"
+    else
+        ci_timing_run "$CC_CASE" step "$@" > "$CV_OUT" 2> "$CV_ERR"
+    fi
+    CV_EXIT=$?
+    set -e
+    CCV_stdout=$CV_OUT
+    CCV_stderr=$CV_ERR
+    CCV_status=$CV_EXIT
+}
+
+# cc_file LINE PATH FLAGS [BASE] < CONTENT: write a fixture; a relative PATH
+# is under BASE (default: the variant's directory). FLAGS: n drops the final
+# newline, x expands placeholders.
+cc_file() {
+    _cf_path=$(cc_resolve_path "$2" "${4:-$CV_DIR}")
+    mkdir -p "$(dirname -- "$_cf_path")"
+    case "$3" in
+        *x*) while IFS= read -r _cf_line; do cc_expand "$_cf_line"; echo; done ;;
+        *) cat ;;
+    esac > "$_cf_path"
+    case "$3" in
+        *n*)
+            _cf_text=$(cat "$_cf_path")
+            printf '%s' "$_cf_text" > "$_cf_path"
+            ;;
+    esac
+}
+
+cc_cwd() {
+    if [ "$2" = - ]; then
+        CV_CWD=
+    else
+        CV_CWD=$(cc_resolve_path "$2" "$CV_DIR")
+    fi
+}
+
+cc_same() {
+    CC_ROWS=$((CC_ROWS + 1))
+    cmp -s "$2" "$3" && return 0
+    cc_fail "$1" "files differ: $2 $3"
+    diff -u "$2" "$3" 2>/dev/null | sed -n '1,40p' >&2 || :
+}
+
 # ---------------------------------------------------------------- cases
 
 # cc_case LINE ID DO SOURCE ARGS HOSTS ASSEMBLE REPEATABLE HAS_EXIT
@@ -397,15 +497,25 @@ cc_case() {
     esac
 }
 
-# cc_variant FUNCTION TARGET OPT MODE
+# cc_variant FUNCTION TARGET OPT MODE EACH
 cc_variant() {
     [ "$CC_ACTIVE" -eq 1 ] || return 0
     CV_TARGET=$2
     CV_OPT=$3
     CV_MODE=$4
+    CV_EACH=$5
     CV_DIR="$CC_WORK/$CC_CASE/$(cc_variant_name)"
     rm -rf "$CV_DIR"
     mkdir -p "$CV_DIR"
+    CCV_target=$CV_TARGET
+    CCV_opt=$CV_OPT
+    CCV_mode=$CV_MODE
+    CCV_each=$CV_EACH
+    CCV_dir=$CV_DIR
+    CCV_native_dir=$(cc_native_path "$CV_DIR")
+    CV_CWD=
+    CV_STEP_ID=
+    CV_STEP_N=0
     CV_FAILED=0
     CV_SUBJECT=
     CV_BAD_SUBJECT=0
@@ -589,6 +699,16 @@ a_contains() {
     grep -F -- "$_ac" "$CV_SUBJECT" >/dev/null 2>&1 || cc_fail "$1" "missing text: $_ac"
 }
 
+a_is() {
+    cc_row || return 0
+    cc_need_subject "$1" || return 0
+    _ai=$(cc_expand "$2")
+    printf '%s\n' "$_ai" | cmp -s - "$CV_SUBJECT" || {
+        cc_fail "$1" "expected exactly: $_ai"
+        cc_quote_lines "$CV_SUBJECT"
+    }
+}
+
 a_not_contains() {
     cc_row || return 0
     cc_need_subject "$1" || return 0
@@ -596,6 +716,37 @@ a_not_contains() {
     if grep -F -- "$_ac" "$CV_SUBJECT" >/dev/null 2>&1; then
         cc_fail "$1" "contains forbidden text: $_ac"
     fi
+}
+
+# a_contains_any LINE TEXT...
+a_contains_any() {
+    cc_row || return 0
+    cc_need_subject "$1" || return 0
+    _aa_line=$1
+    shift
+    for _aa_text do
+        grep -F -- "$(cc_expand "$_aa_text")" "$CV_SUBJECT" >/dev/null 2>&1 && return 0
+    done
+    cc_fail "$_aa_line" "missing all of: $*"
+    cc_quote_lines "$CV_SUBJECT"
+}
+
+# a_order LINE TEXT...: the first lines holding each TEXT are in this order.
+a_order() {
+    cc_row || return 0
+    cc_need_subject "$1" || return 0
+    _ao_line=$1
+    shift
+    _ao_prev=0
+    for _ao_text do
+        _ao_text=$(cc_expand "$_ao_text")
+        _ao_at=$(grep -n -F -- "$_ao_text" "$CV_SUBJECT" 2>/dev/null | sed -n '1s/:.*//p')
+        if [ -z "$_ao_at" ] || [ "$_ao_at" -le "$_ao_prev" ]; then
+            cc_fail "$_ao_line" "out of order or missing: $_ao_text"
+            return 0
+        fi
+        _ao_prev=$_ao_at
+    done
 }
 
 a_match() {
@@ -681,7 +832,7 @@ a_capture() {
     _cp_sep=$(printf '\001')
     _cp_val=$(grep -E -- "$_cp_re" "$CV_SUBJECT" 2>/dev/null |
         sed -n -E "1s$_cp_sep$_cp_re$_cp_sep\\1${_cp_sep}p" || true)
-    eval "CC_VAR_$2=\$_cp_val"
+    eval "CCV_$2=\$_cp_val"
     [ -n "$_cp_val" ] || cc_fail "$1" "capture $2: no line matches $_cp_re"
 }
 
@@ -721,6 +872,13 @@ cc_mode_is() {
     return 1
 }
 
+cc_host_is() {
+    case " $1 " in
+        *" $CC_HOST "*) return 0 ;;
+    esac
+    return 1
+}
+
 # ---------------------------------------------------------------- front end
 
 # Translate one case file to shell. Rows become calls of the a_* functions
@@ -731,6 +889,28 @@ cc_translate() {
     function die(msg) { printf "%s:%d: %s\n", file, NR, msg > "/dev/stderr"; bad = 1; exit 1 }
     function words(s, arr) { return split(s, arr, /[ \t]+/) }
     function set_default(key, value) { if (ncase == 0) dflt[key] = value; else cfg[key] = value }
+    # {{name}} -> ${CCV_name} in shell text.
+    function shellify(s,   out, i, j, name) {
+        out = ""
+        while ((i = index(s, "{{")) > 0) {
+            j = index(substr(s, i + 2), "}}")
+            if (j == 0) break
+            name = substr(s, i + 2, j - 1)
+            if (name ~ /^[A-Za-z0-9_-]+$/) {
+                gsub(/-/, "_", name)
+                out = out substr(s, 1, i - 1) "${CCV_" name "}"
+            } else out = out substr(s, 1, i + j + 2)
+            s = substr(s, i + j + 3)
+        }
+        return out s
+    }
+    # " || "-separated texts as quoted words.
+    function alts(s,   n, P, i, out) {
+        n = split(s, P, / \|\| /)
+        out = ""
+        for (i = 1; i <= n; i++) out = out " " sq(P[i])
+        return out
+    }
     function start_case(id) {
         if (ncase > 0) finish_case()
         if (id in seen) die("duplicate case " id)
@@ -743,12 +923,28 @@ cc_translate() {
         nbody = 0
         depth = 0
         has_exit = 0
+        step_open = 0
         pending_after = ""
     }
     function body(s) { nbody++; bodyl[nbody] = s }
-    function finish_case(   i, nt, no, nm, t, o, m, T, O, M, setup) {
+    # A step with no exit row must exit 0.
+    function close_step() {
+        if (step_open && !step_exit) body("a_exit " step_line " 0")
+        step_open = 0
+    }
+    function open_step(s) {
+        close_step()
+        body(s)
+        step_open = 1
+        step_exit = 0
+        step_line = NR
+        step_depth = depth
+    }
+    function close_block_step() { if (step_open && step_depth >= depth) close_step() }
+    function finish_case(   i, nt, no, nm, ne, t, o, m, e, T, O, M, E, setup) {
         if (pending_after != "") die("after without next-line")
-        if (depth != 0) die("unclosed if-fn in case " cfg["id"])
+        if (depth != 0) die("unclosed if-block in case " cfg["id"])
+        close_step()
         fn = "cc_case_" ncase
         print fn "() {"
         print ":"
@@ -761,61 +957,45 @@ cc_translate() {
         nt = words(cfg["target"], T)
         no = words(cfg["opt"], O)
         nm = words(cfg["mode"], M)
+        ne = words(cfg["each"], E)
         for (t = 1; t <= nt; t++)
             for (o = 1; o <= no; o++)
                 for (m = 1; m <= nm; m++)
-                    print "cc_variant " fn " " sq(T[t]) " " sq(O[o]) " " sq(M[m])
+                    for (e = 1; e <= ne; e++)
+                        print "cc_variant " fn " " sq(T[t]) " " sq(O[o]) " " sq(M[m]) " " sq(E[e])
     }
-    BEGIN {
-        dflt["target"] = "linux-x86_64"; dflt["opt"] = "2"; dflt["mode"] = "-"
-        dflt["do"] = "compile"; dflt["hosts"] = "all"; dflt["args"] = ""; dflt["source"] = ""
-        ncase = 0; infile = 0; nfile = 0
-    }
-    {
-        raw = $0
-        sub(/\r$/, "", raw)
-        if (infile) {
-            if (raw ~ /^[ \t]*end-file[ \t]*$/) { infile = 0; print "CC_EOF_FILE_" nfile; next }
-            print raw
-            next
-        }
-        line = raw
-        sub(/^[ \t]+/, "", line)
-        if (line == "" || line ~ /^#/) next
-        sp = index(line, " ")
-        if (sp) { kw = substr(line, 1, sp - 1); rest = substr(line, sp + 1) } else { kw = line; rest = "" }
-        if (kw == "file") {
-            if (ncase > 0) die("file must come before the first case")
-            nfile++
-            print "cat > \"$CC_WORK/" rest "\" <<\047CC_EOF_FILE_" nfile "\047"
-            infile = 1
-            next
-        }
-        if (kw == "case") { start_case(rest); next }
-        if (kw == "source" || kw == "target" || kw == "opt" || kw == "mode" || kw == "args" || kw == "do" || kw == "hosts") {
-            set_default(kw, rest); next
-        }
-        if (kw == "assemble" || kw == "repeatable") { set_default(kw, 1); next }
-        if (kw == "setup") {
-            n = words(rest, W)
-            s = W[1]
-            gsub(/-/, "_", s)
-            s = "plugin_" s
-            for (i = 2; i <= n; i++) s = s " \"$(cc_expand " sq(W[i]) ")\""
-            if (ncase == 0) dflt["setup"] = (("setup" in dflt) ? dflt["setup"] " && " : "") s
-            else cfg["setup"] = (("setup" in cfg) ? cfg["setup"] " && " : "") s
-            next
-        }
-        if (ncase == 0) die("expectation before the first case: " kw)
+    function row(kw, rest,   sp, op, n, text, var, s, i, W, P) {
         if (pending_after != "" && kw != "next-line") die("after must be followed by next-line")
-        if (kw == "in") {
+        if (kw == "run") open_step("cc_run " NR " \"$COMPILER\" " shellify(rest))
+        else if (kw == "exec") open_step("cc_run " NR " " shellify(rest))
+        else if (kw == "sh") {
+            body("if ! { " shellify(rest))
+            body("}; then cc_fail " NR " " sq("sh failed: " rest) "; fi")
+        } else if (kw == "cwd") body("cc_cwd " NR " " sq(rest))
+        else if (kw == "step") {
+            close_step()
+            body("CV_STEP_ID=$(cc_expand " sq(rest) ")")
+        }
+        else if (kw == "test") body("CC_ROWS=$((CC_ROWS + 1)); [ " shellify(rest) " ] || cc_fail " NR " " sq("test failed: " rest))
+        else if (kw == "same") body("cc_same " NR " " shellify(rest))
+        else if ((kw == "stdout" || kw == "stderr") && rest != "") {
+            body("a_in " NR " " kw)
+            sp = index(rest, " ")
+            if (sp) row(substr(rest, 1, sp - 1), substr(rest, sp + 1))
+            else row(rest, "")
+        } else if (kw == "in") {
             sp = index(rest, " ")
             if (sp) body("a_in " NR " " sq(substr(rest, 1, sp - 1)) " " sq(substr(rest, sp + 1)))
             else body("a_in " NR " " sq(rest))
         } else if (kw == "narrow") body("a_narrow " NR " " sq(rest))
-        else if (kw == "exit") { has_exit = 1; body("a_exit " NR " " sq(rest)) }
-        else if (kw == "contains") body("a_contains " NR " " sq(rest))
+        else if (kw == "exit") {
+            if (step_open) step_exit = 1; else has_exit = 1
+            body("a_exit " NR " " sq(rest))
+        } else if (kw == "contains") body("a_contains " NR " " sq(rest))
+        else if (kw == "is") body("a_is " NR " " sq(rest))
         else if (kw == "not-contains") body("a_not_contains " NR " " sq(rest))
+        else if (kw == "contains-any") body("a_contains_any " NR alts(rest))
+        else if (kw == "order") body("a_order " NR alts(rest))
         else if (kw == "match") body("a_match " NR " \"\" " sq(rest))
         else if (kw == "match-i") body("a_match " NR " -i " sq(rest))
         else if (kw == "not-match") body("a_not_match " NR " \"\" " sq(rest))
@@ -849,19 +1029,74 @@ cc_translate() {
             for (i = 1; i <= n; i++) s = s " " sq(W[i])
             body(s)
         } else if (kw == "if-fn" || kw == "if-no-fn") {
+            close_step()
             depth++
             body("if " (kw == "if-no-fn" ? "! " : "") "cc_fn_exists " sq(rest) "; then :")
-        } else if (kw == "if-mode") {
+        } else if (kw == "if-mode" || kw == "if-host" || kw == "if-isa") {
+            close_step()
             depth++
-            body("if cc_mode_is " sq(rest) "; then :")
+            s = (kw == "if-mode" ? "cc_mode_is" : kw == "if-host" ? "cc_host_is" : "cc_isa_runnable")
+            body("if " s " \"$(cc_expand " sq(rest) ")\"; then :")
         } else if (kw == "else") {
             if (depth == 0) die("else without if")
+            close_block_step()
             body("else :")
         } else if (kw == "end-if") {
             if (depth == 0) die("end-if without if")
+            close_block_step()
             depth--
             body("fi")
         } else die("unknown directive " kw)
+    }
+    BEGIN {
+        dflt["target"] = "linux-x86_64"; dflt["opt"] = "2"; dflt["mode"] = "-"; dflt["each"] = "-"
+        dflt["do"] = "compile"; dflt["hosts"] = "all"; dflt["args"] = ""; dflt["source"] = ""
+        ncase = 0; infile = 0; nfile = 0
+    }
+    {
+        raw = $0
+        sub(/\r$/, "", raw)
+        if (infile) {
+            if (raw ~ /^[ \t]*end-file[ \t]*$/) {
+                infile = 0
+                if (ncase > 0) body("CC_EOF_FILE_" nfile); else print "CC_EOF_FILE_" nfile
+                next
+            }
+            if (ncase > 0) body(raw); else print raw
+            next
+        }
+        line = raw
+        sub(/^[ \t]+/, "", line)
+        if (line == "" || line ~ /^#/) next
+        sp = index(line, " ")
+        if (sp) { kw = substr(line, 1, sp - 1); rest = substr(line, sp + 1) } else { kw = line; rest = "" }
+        if (kw == "file") {
+            nfile++
+            flags = "-"
+            if (rest ~ /^-[nx]+ /) { flags = substr(rest, 2, index(rest, " ") - 2); rest = substr(rest, index(rest, " ") + 1) }
+            s = "cc_file " NR " " sq(rest) " " flags
+            s = s (ncase > 0 ? "" : " \"$CC_WORK\"") " <<\047CC_EOF_FILE_" nfile "\047"
+            if (ncase > 0) body(s); else print s
+            infile = 1
+            next
+        }
+        if (kw == "case") { start_case(rest); next }
+        if (kw == "source" || kw == "target" || kw == "opt" || kw == "mode" || kw == "each" || kw == "args" || kw == "do" || kw == "hosts") {
+            set_default(kw, rest); next
+        }
+        if (kw == "assemble" || kw == "repeatable") { set_default(kw, 1); next }
+        if (kw == "setup") {
+            n = words(rest, W)
+            s = W[1]
+            gsub(/-/, "_", s)
+            s = "plugin_" s
+            for (i = 2; i <= n; i++) s = s " \"$(cc_expand " sq(W[i]) ")\""
+            if (ncase == 0) dflt["setup"] = (("setup" in dflt) ? dflt["setup"] " && " : "") s
+            else cfg["setup"] = (("setup" in cfg) ? cfg["setup"] " && " : "") s
+            next
+        }
+        if (ncase == 0) die("expectation before the first case: " kw)
+        row(kw, rest)
     }
     END {
         if (bad) exit 1
@@ -882,13 +1117,15 @@ for CC_FILE do
     }
     CC_NAME=$(basename "$CC_FILE" .cases)
     CC_WORK="$CC_WORK_ROOT/$CC_NAME"
+    CCV_work=$CC_WORK
+    CCV_native_work=$(cc_native_path "$CC_WORK")
     rm -rf "$CC_WORK"
     mkdir -p "$CC_WORK"
     cc_translate "$CC_FILE" > "$CC_WORK/plan.sh" || exit 2
     if [ "$CC_LIST" -eq 1 ]; then
         awk -v file="$CC_FILE" '
             /^cc_case / { id = $3; gsub(/\047/, "", id); next }
-            /^cc_variant / { v = $3 " " $4 " " $5; gsub(/\047/, "", v); printf "%s %s [%s]\n", file, id, v }
+            /^cc_variant / { v = $3 " " $4 " " $5 ($6 == "\047-\047" ? "" : " " $6); gsub(/\047/, "", v); printf "%s %s [%s]\n", file, id, v }
         ' "$CC_WORK/plan.sh"
         continue
     fi

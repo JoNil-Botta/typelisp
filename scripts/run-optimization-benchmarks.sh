@@ -176,6 +176,7 @@ fi
 
 GATE_FAIL_PREFIX='FAIL: '
 . "$ROOT/scripts/lib-gate.sh"
+. "$ROOT/scripts/lib-benchmark.sh"
 gate_compiler
 gate_require_compiler
 
@@ -217,7 +218,6 @@ if [ "$CORRECTNESS" -eq 1 ]; then
 fi
 
 WORKDIR="$ROOT/target/optimization-bench"
-CR=$(printf '\r')
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
@@ -263,37 +263,15 @@ file_bytes() {
 }
 
 read_optimization_metadata() {
-    _metadata=$1
-    _case_name=$2
-    _line=
-
-    while IFS= read -r _candidate || [ -n "$_candidate" ]; do
-        case "$_candidate" in
-            *"$CR") _candidate=${_candidate%"$CR"} ;;
-        esac
-        case "$_candidate" in
-            "" | \#*) continue ;;
-        esac
-        if [ -n "$_line" ]; then
-            fail "multiple metadata rows in $_metadata"
-        fi
-        _line=$_candidate
-    done < "$_metadata"
-
-    [ -n "$_line" ] || fail "missing metadata row in $_metadata"
-    _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
-    [ "$_fields" -eq 2 ] || fail "metadata line must have 2 fields: $_metadata: $_line"
-
-    IFS='|' read -r CASE_CATEGORY CASE_ARGS <<EOF
-$_line
-EOF
-
+    bench_metadata "$1"
+    CASE_CATEGORY=$BENCH_CATEGORY
+    CASE_ARGS=$BENCH_ARGS
     case "$CASE_CATEGORY" in
         "" | *[!A-Za-z0-9_-]*)
-            fail "invalid category for $_case_name: $CASE_CATEGORY"
+            fail "invalid category for $2: $CASE_CATEGORY"
             ;;
     esac
-    [ -n "$CASE_ARGS" ] || fail "missing args for $_case_name"
+    [ -n "$CASE_ARGS" ] || fail "missing args for $2"
 }
 
 case_matches_filter() {

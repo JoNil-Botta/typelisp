@@ -174,7 +174,7 @@
       (= (lower.lower-array-var-set-max-offset merged) 4))))
 
 (define (lower-skip-runtime-until-next-module [decls : ast.AstDeclList]) : ast.AstDeclList
-  (match (ast.ast-decl-list-step (owned_view.compiler-owned-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) (ast.ast-decl-list-new)]
     [(ast.AstDeclListStep.Cons decl rest)
       (let
@@ -845,8 +845,10 @@
         (lower.lower-compiler-source "(define (main) : i64 0)")]
       [generation-after : i64 (ci.intern-generation)]
       [_restore : unit
-        (load.compiler-load-session-state-use!
-          (load.compiler-load-session-state-shared-view (& previous-state)))]
+        (let
+          [state
+            (load.compiler-load-session-state-shared-view (& previous-state))]
+          (load.compiler-load-session-state-use! state))]
       (and
         (load.compiler-load-session-state-standalone-reset-safe? previous-state)
         (= generation-before generation-after)
@@ -3091,10 +3093,7 @@
     [_ false]))
 
 (define (lower-test-pack-values-shape? [values : ir.CompilerIrValueSeq]) : bool
-  (if (=
-    (ir.compiler-ir-value-seq-count
-      (owned_view.compiler-owned-shared-view values))
-    2)
+  (if (= (ir.compiler-ir-value-seq-count values) 2)
     (match (ir.compiler-ir-value-seq-ref values 1)
       [(ir.CompilerIrValue.I64 length) (= length 3)]
       [_ false])
@@ -4787,18 +4786,19 @@
   [index : i64]) : bool
   (if (>= index globals.len)
     false
-    (match (ir.compiler-ir-global-seq-ref
-      (owned_view.compiler-owned-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global global-name _ _)
         (if (string.eq (ir.compiler-ir-symbol-text global-name) name)
           true
           (lower-test-global-seq-has-name-at? globals name (+ index 1)))])))
 
 (define (lower-test-global-list-has-name?
-  [globals : ir.CompilerIrGlobalSeq]
+  [globals : (& globals ir.CompilerIrGlobalSeq)]
   [name : String]) : bool
-  (lower-test-global-seq-has-name-at? globals name 0))
+  (let
+    [globals : ir.CompilerIrGlobalSeq
+      (owned_view.compiler-owned-reference-shared-view globals)]
+    (lower-test-global-seq-has-name-at? globals name 0)))
 
 (define (lower-test-global-function-initializer-at?
   [globals : ir.CompilerIrGlobalSeq]
@@ -4807,9 +4807,7 @@
   [index : i64]) : bool
   (if (>= index globals.len)
     false
-    (match (ir.compiler-ir-global-seq-ref
-      (owned_view.compiler-owned-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global name _ initial)
         (if (string.eq (ir.compiler-ir-symbol-text name) global-name)
           (match initial
@@ -4838,9 +4836,7 @@
   [index : i64]) : bool
   (if (>= index globals.len)
     false
-    (match (ir.compiler-ir-global-seq-ref
-      (owned_view.compiler-owned-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global global-name ty initial)
         (if (string.eq (ir.compiler-ir-symbol-text global-name) name)
           (match ty
@@ -5138,9 +5134,7 @@
       (match lowered
         [(ir.CompilerIrProgram.Program globals functions _)
           (and
-            (lower-test-global-list-has-name?
-              (owned_view.compiler-owned-shared-view globals)
-              "left/same")
+            (lower-test-global-list-has-name? globals "left/same")
             (lower-test-global-list-has-name? globals "right/same")
             (> (lower-test-functions-call-count functions "left/get") 0)
             (> (lower-test-functions-call-count functions "right/get") 0)
@@ -5833,12 +5827,8 @@
           (and
             (= globals.len 3)
             (= externs.len 1)
-            (lower-test-global-list-has-name?
-              (owned_view.compiler-owned-shared-view globals)
-              "answer")
-            (lower-test-global-list-has-name?
-              (owned_view.compiler-owned-shared-view globals)
-              "flag")
+            (lower-test-global-list-has-name? globals "answer")
+            (lower-test-global-list-has-name? globals "flag")
             (lower-test-global-list-has-name? globals "widened")
             (= (ir.compiler-ir-extern-seq-count externs) 1)
             (>
@@ -6842,9 +6832,7 @@
   [index : i64]) : String
   (if (>= index globals.len)
     "missing"
-    (match (ir.compiler-ir-global-seq-ref
-      (owned_view.compiler-owned-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global name _ initial)
         (if (string.eq (ir.compiler-ir-symbol-text name) global-name)
           (match initial
@@ -6861,9 +6849,12 @@
             (+ index 1)))])))
 
 (define (lower-test-global-initializer-kind
-  [globals : ir.CompilerIrGlobalSeq]
+  [globals : (& globals ir.CompilerIrGlobalSeq)]
   [global-name : String]) : String
-  (lower-test-global-initializer-kind-at globals global-name 0))
+  (let
+    [globals : ir.CompilerIrGlobalSeq
+      (owned_view.compiler-owned-reference-shared-view globals)]
+    (lower-test-global-initializer-kind-at globals global-name 0)))
 
 (define (compiler-lower-global-reference-initializer-mode-shape-ok?
   [mode : lower.CompilerLowerMode]) : bool
@@ -6875,29 +6866,19 @@
         [(ir.CompilerIrProgram.Program globals _ _)
           (and
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "base")
+              (lower-test-global-initializer-kind globals "base")
               "i64")
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "copy")
+              (lower-test-global-initializer-kind globals "copy")
               "runtime")
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "widened")
+              (lower-test-global-initializer-kind globals "widened")
               "runtime")
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "color")
+              (lower-test-global-initializer-kind globals "color")
               "runtime")
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "callback")
+              (lower-test-global-initializer-kind globals "callback")
               "function:inc")
             (string.eq
               (lower-test-global-initializer-kind globals "callback-copy")
@@ -6919,10 +6900,7 @@
       (let
         [lambda-name : String "__tl_lambda_get-fn_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-function-return-function-count
               functions
@@ -6939,10 +6917,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count
               functions
@@ -6965,10 +6940,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count functions "main" (LowerTestInstr.IndirectUnit))
             1)
@@ -6994,10 +6966,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count
               functions
@@ -7017,10 +6986,7 @@
       (let
         [capturing-name : String "__tl_lambda_main_1"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            3)
+          (= (ir.compiler-ir-function-seq-count functions) 3)
           (=
             (lower-test-count
               functions
@@ -7046,10 +7012,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count
               functions
@@ -7068,10 +7031,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count
               functions
@@ -7089,10 +7049,7 @@
       (compiler-lower-capturing-lambda-structural-return-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (=
-          (ir.compiler-ir-function-seq-count
-            (ir.compiler-ir-global-shared-view functions))
-          2)
+        (= (ir.compiler-ir-function-seq-count functions) 2)
         (= (lower-test-count functions "main" (LowerTestInstr.IndirectCall)) 1)
         (>=
           (lower-test-count
@@ -7108,10 +7065,7 @@
       (compiler-lower-capturing-lambda-structural-sret-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (=
-          (ir.compiler-ir-function-seq-count
-            (ir.compiler-ir-global-shared-view functions))
-          2)
+        (= (ir.compiler-ir-function-seq-count functions) 2)
         (string.eq
           (lower-test-function-param-name functions "__tl_lambda_main_0" 0)
           "__tl_env")
@@ -7126,14 +7080,8 @@
       (compiler-lower-capturing-lambda-shadow-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (=
-          (ir.compiler-ir-function-seq-count
-            (ir.compiler-ir-global-shared-view functions))
-          2)
-        (=
-          (ir.compiler-ir-function-seq-count
-            (ir.compiler-ir-global-shared-view functions))
-          2)
+        (= (ir.compiler-ir-function-seq-count functions) 2)
+        (= (ir.compiler-ir-function-seq-count functions) 2)
         (=
           (lower-test-count functions "main" (LowerTestInstr.IndirectTailCall))
           1))]
@@ -7147,10 +7095,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count functions "main" (LowerTestInstr.IndirectCall))
             1)
@@ -7165,10 +7110,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count functions "main" (LowerTestInstr.IndirectCall))
             1)
@@ -9518,8 +9460,7 @@
     [decoy-exprs-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
     [ok : bool false]
     (begin
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-decoy))
+      (ci.intern-compat-state-install! intern-decoy)
       (ast.ast-node-pool-context-install! pools-b)
       (let
         [stripped-a : i64
@@ -9690,7 +9631,7 @@
           "v"
           0
           (ast.AstType.I64)
-          (owned_view.compiler-owned-shared-view origin))
+          origin)
           [(lower.ResultLowerImportedSpmdSpecialization.Ok selected)
             (and
               (string.eq
@@ -9713,7 +9654,7 @@
           "v"
           0
           (ast.AstType.I64)
-          (owned_view.compiler-owned-shared-view origin))
+          origin)
           [(lower.ResultLowerImportedSpmdSpecialization.Ok _) false]
           [(lower.ResultLowerImportedSpmdSpecialization.Err diag)
             (let
@@ -9732,7 +9673,7 @@
             "v"
             0
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           signature-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select
@@ -9746,7 +9687,7 @@
             "v"
             0
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           specialization-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select
@@ -9760,7 +9701,7 @@
             "v"
             -1
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           specialization-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select
@@ -9774,7 +9715,7 @@
             "v"
             0
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           abi-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select
@@ -9788,7 +9729,7 @@
             "v"
             0
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           duplicate-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select
@@ -10908,7 +10849,7 @@
     (compiler-lower-cpu-builtin-shape-ok?)
     (compiler-lower-fs-status-shape-ok?)))
 
-(define (lower-test-decl-list-count [decls : ast.AstDeclList]) : i64
+(define (lower-test-decl-list-count [decls : (& decls ast.AstDeclList)]) : i64
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) 0]
     [(ast.AstDeclListStep.Cons _ rest)
@@ -10917,7 +10858,7 @@
         (+ 1 (lower-test-decl-list-count rest)))]))
 
 (define (lower-test-decl-list-defines?
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [name : String]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
@@ -10948,9 +10889,11 @@
           [(ast.AstDecl.Unsafe inner-box)
             (let
               [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
-              (if (lower-test-decl-list-defines?
-                (ast.ast-decl-cons inner (ast.ast-decl-list-new))
-                (owned_view.compiler-owned-shared-view name))
+              (if (let
+                [arg (ast.ast-decl-cons inner (ast.ast-decl-list-new))]
+                (lower-test-decl-list-defines?
+                  arg
+                  (owned_view.compiler-owned-shared-view name)))
                 true
                 (lower-test-decl-list-defines? rest name)))]
           [_ (lower-test-decl-list-defines? rest name)]))]))
@@ -11129,16 +11072,9 @@
               (ast.ast-decl-list-new)))))]
     [kept : ast.AstDeclList (lower-skip-runtime-until-next-module decls)]
     (and
-      (=
-        (lower-test-decl-list-count
-          (owned_view.compiler-owned-shared-view kept))
-        3)
-      (lower-test-decl-list-defines?
-        (owned_view.compiler-owned-shared-view kept)
-        "ExprClauseList")
-      (lower-test-decl-list-defines?
-        (owned_view.compiler-owned-shared-view kept)
-        "main")
+      (= (lower-test-decl-list-count kept) 3)
+      (lower-test-decl-list-defines? kept "ExprClauseList")
+      (lower-test-decl-list-defines? kept "main")
       (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper")))))
 
 (define (compiler-lower-stdlib-comptime-type-prune-keeps-types-ok?) : bool
@@ -11196,12 +11132,8 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "ExprClauseList")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
+                (lower-test-decl-list-defines? kept "ExprClauseList")
+                (lower-test-decl-list-defines? kept "main")
                 (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper"))))])])))
 
 (define (compiler-lower-stdlib-comptime-nullary-enum-runtime-skip-ok?) : bool
@@ -11628,19 +11560,10 @@
                         [no-main-kept : ast.AstDeclList
                           (ast.ast-decl-list-box-shared-view no-main-kept-box)]
                         (and
-                          (=
-                            (lower-test-decl-list-count
-                              (owned_view.compiler-owned-shared-view kept))
-                            4)
-                          (lower-test-decl-list-defines?
-                            (owned_view.compiler-owned-shared-view kept)
-                            "main")
-                          (lower-test-decl-list-defines?
-                            (owned_view.compiler-owned-shared-view kept)
-                            "helper")
-                          (lower-test-decl-list-defines?
-                            (owned_view.compiler-owned-shared-view kept)
-                            "callback-target")
+                          (= (lower-test-decl-list-count kept) 4)
+                          (lower-test-decl-list-defines? kept "main")
+                          (lower-test-decl-list-defines? kept "helper")
+                          (lower-test-decl-list-defines? kept "callback-target")
                           (not (lower-test-decl-list-defines? kept "dead"))
                           (= (lower-test-decl-list-count no-main-kept) 2)))]))])])])))
 
@@ -11669,23 +11592,11 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (=
-                  (lower-test-decl-list-count
-                    (owned_view.compiler-owned-shared-view kept))
-                  3)
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "UsedBox")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "UsedEnum")
-                (not
-                  (lower-test-decl-list-defines?
-                    (owned_view.compiler-owned-shared-view kept)
-                    "DeadBox"))
+                (= (lower-test-decl-list-count kept) 3)
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "UsedBox")
+                (lower-test-decl-list-defines? kept "UsedEnum")
+                (not (lower-test-decl-list-defines? kept "DeadBox"))
                 (not (lower-test-decl-list-defines? kept "DeadEnum"))))])])))
 
 (define (compiler-lower-type-decl-dce-qualified-base-ok?) : bool
@@ -11715,16 +11626,9 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (=
-                  (lower-test-decl-list-count
-                    (owned_view.compiler-owned-shared-view kept))
-                  2)
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "io.ResultIoString")
+                (= (lower-test-decl-list-count kept) 2)
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "io.ResultIoString")
                 (not (lower-test-decl-list-defines? kept "io.DeadResult"))))])])))
 
 (define (compiler-lower-type-decl-dce-arena-support-ok?) : bool
@@ -11754,18 +11658,10 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "ThreadBox")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "Arena")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "ArenaMark")
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "ThreadBox")
+                (lower-test-decl-list-defines? kept "Arena")
+                (lower-test-decl-list-defines? kept "ArenaMark")
                 (not (lower-test-decl-list-defines? kept "DeadArenaPeer"))))])])))
 
 (define (compiler-lower-type-decl-dce-test-body-ok?) : bool
@@ -11793,16 +11689,9 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (=
-                  (lower-test-decl-list-count
-                    (owned_view.compiler-owned-shared-view kept))
-                  3)
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "ImportedMark")
+                (= (lower-test-decl-list-count kept) 3)
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "ImportedMark")
                 (not (lower-test-decl-list-defines? kept "DeadMark"))))])])))
 
 (define (compiler-lower-type-decl-dce-body-pattern-ok?) : bool
@@ -11832,12 +11721,8 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "QPoint")
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "QPoint")
                 (not (lower-test-decl-list-defines? kept "DeadGeom"))))])])))
 
 (define (compiler-lower-macro-body-dce-ok?) : bool
@@ -11868,13 +11753,8 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (=
-                  (lower-test-decl-list-count
-                    (owned_view.compiler-owned-shared-view kept))
-                  2)
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
+                (= (lower-test-decl-list-count kept) 2)
+                (lower-test-decl-list-defines? kept "main")
                 (not (lower-test-decl-list-defines? kept "macro-only-helper"))))])])))
 
 (define (compiler-lower-stdlib-comptime-runtime-dce-ok?) : bool
@@ -11886,32 +11766,18 @@
       (match lowered
         [(ir.CompilerIrProgram.Program _ functions externs)
           (and
-            (=
-              (ir.compiler-ir-function-seq-count
-                (ir.compiler-ir-global-shared-view functions))
-              1)
+            (= (ir.compiler-ir-function-seq-count functions) 1)
             (= (ir.compiler-ir-extern-seq-count externs) 0)
             (lower-test-function-defined? functions "main"))])]
     [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok? [kept : ast.AstDeclList]) : bool
   (and
-    (=
-      (lower-test-decl-list-count (owned_view.compiler-owned-shared-view kept))
-      3)
-    (lower-test-decl-list-defines?
-      (owned_view.compiler-owned-shared-view kept)
-      "main")
-    (lower-test-decl-list-defines?
-      (owned_view.compiler-owned-shared-view kept)
-      "unsafe-helper")
-    (lower-test-decl-list-defines?
-      (owned_view.compiler-owned-shared-view kept)
-      "unsafe-entry")
-    (not
-      (lower-test-decl-list-defines?
-        (owned_view.compiler-owned-shared-view kept)
-        "dead-helper"))
+    (= (lower-test-decl-list-count kept) 3)
+    (lower-test-decl-list-defines? kept "main")
+    (lower-test-decl-list-defines? kept "unsafe-helper")
+    (lower-test-decl-list-defines? kept "unsafe-entry")
+    (not (lower-test-decl-list-defines? kept "dead-helper"))
     (not (lower-test-decl-list-defines? kept "dead-unsafe"))))
 
 (define (compiler-lower-unsafe-ast-dce-ok?) : bool
@@ -12052,26 +11918,13 @@
         (ci.intern-generated-canonical-name "dense-overlay-module"))]
     [ok : bool
       (and
-        (= (lower.lower-name-env-count (lower.lower-global-shared-view base)) 1)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view child))
-          2)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view sibling))
-          2)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view grown))
-          18)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view copied))
-          2)
-        (=
-          (lower.lower-name-env-count
-            (lower.lower-global-shared-view copy-branch))
-          3)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view appended))
-          3)
+        (= (lower.lower-name-env-count base) 1)
+        (= (lower.lower-name-env-count child) 2)
+        (= (lower.lower-name-env-count sibling) 2)
+        (= (lower.lower-name-env-count grown) 18)
+        (= (lower.lower-name-env-count copied) 2)
+        (= (lower.lower-name-env-count copy-branch) 3)
+        (= (lower.lower-name-env-count appended) 3)
         (=
           (lower.lower-name-env-lookup-symbol-id base source-id -1)
           base-symbol-id)
@@ -12848,8 +12701,7 @@
       [expr-b-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
       [ok : bool false]
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view intern-b))
+        (ci.intern-compat-state-install! intern-b)
         (ast.ast-node-pool-context-install! pools-b)
         (let
           [_active-generated-b : i64
@@ -13031,8 +12883,7 @@
         (lower.compiler-lower-state-observe lower-a)]
       [ok : bool false]
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view intern-decoy))
+        (ci.intern-compat-state-install! intern-decoy)
         (cbi.state-install! builtins-decoy)
         (lower.lower-comptime-error-ids-ensure! lower-a builtins-a)
         (lower.lower-comptime-error-ids-ensure! lower-b builtins-b)
@@ -13181,10 +13032,7 @@
         (lower.LowerCAbiSlot.Slot (ast.AstType.I64) 0)
         (lower.LowerCAbiSlot.Slot (ast.AstType.F64) 8))]
     (and
-      (=
-        (lower.lower-name-env-count
-          (owned_view.compiler-owned-shared-view names))
-        2)
+      (= (lower.lower-name-env-count names) 2)
       (string.eq
         (lower-name-env-resolve-with-id names "source-b" source-b-id)
         "logical-b")
@@ -13196,9 +13044,7 @@
       (lower-cleanup-stack-entry? cleanups 0 201 301)
       (lower-cleanup-stack-entry? cleanups 1 202 302)
       (= (lower.lower-c-abi-slot-list-count slots) 2)
-      (match (lower.lower-c-abi-slot-list-ref
-        (lower.lower-global-shared-view slots)
-        0)
+      (match (lower.lower-c-abi-slot-list-ref slots 0)
         [(lower.LowerCAbiSlot.Slot ty offset)
           (and (= offset 0) (tc_core.tc-type-eq ty (ast.AstType.I64)))])
       (match (lower.lower-c-abi-slot-list-ref slots 1)
@@ -13734,16 +13580,8 @@
       (set!
         ok
         (and
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view ref))
-            16)
-          (=
-            (lower.lower-type-align
-              ctx
-              (owned_view.compiler-owned-shared-view ref))
-            8)
+          (= (lower.lower-type-size ctx ref) 16)
+          (= (lower.lower-type-align ctx ref) 8)
           (lower.lower-type-register-resident?
             ctx
             (owned_view.compiler-owned-shared-view ref))
@@ -13753,27 +13591,13 @@
               (owned_view.compiler-owned-shared-view ref))
             2)
           (tc_core.tc-type-eq
-            (lower.lower-register-word-type
-              ctx
-              (owned_view.compiler-owned-shared-view ref)
-              0)
+            (lower.lower-register-word-type ctx ref 0)
             (ast.AstType.U64))
           (tc_core.tc-type-eq
-            (lower.lower-register-word-type
-              ctx
-              (owned_view.compiler-owned-shared-view ref)
-              1)
+            (lower.lower-register-word-type ctx ref 1)
             (ast.AstType.I64))
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view mut-ref))
-            16)
-          (=
-            (lower.lower-type-align
-              ctx
-              (owned_view.compiler-owned-shared-view mut-ref))
-            8)
+          (= (lower.lower-type-size ctx mut-ref) 16)
+          (= (lower.lower-type-align ctx mut-ref) 8)
           (lower.lower-type-register-resident?
             ctx
             (owned_view.compiler-owned-shared-view mut-ref))
@@ -13782,11 +13606,7 @@
               ctx
               (owned_view.compiler-owned-shared-view mut-ref))
             2)
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view ordinary-ref))
-            8)
+          (= (lower.lower-type-size ctx ordinary-ref) 8)
           (not
             (lower.lower-type-register-resident?
               ctx
@@ -13796,22 +13616,14 @@
               ctx
               (owned_view.compiler-owned-shared-view ordinary-ref))
             0)
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view pointer-ref))
-            8)
+          (= (lower.lower-type-size ctx pointer-ref) 8)
           (not
             (lower.lower-type-register-resident?
               ctx
               (owned_view.compiler-owned-shared-view pointer-ref)))
           (lower.lower-supported-reference-type? ctx pointer-ref)
           (lower.lower-supported-reference-type? ctx mutable-pointer-ref)
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view bare-slice))
-            0)
+          (= (lower.lower-type-size ctx bare-slice) 0)
           (not
             (lower.lower-type-register-resident?
               ctx
@@ -14002,60 +13814,26 @@
       (set!
         ok
         (and
-          (= (lower.lower-type-size ctx (ast.ast-global-shared-view empty)) 0)
-          (= (lower.lower-type-align ctx (ast.ast-global-shared-view empty)) 1)
-          (=
-            (lower.lower-type-size ctx (ast.ast-global-shared-view u8-tuple))
-            1)
-          (=
-            (lower.lower-type-align ctx (ast.ast-global-shared-view u8-tuple))
-            1)
-          (= (lower.lower-type-size ctx (ast.ast-global-shared-view u8-u64)) 16)
-          (= (lower.lower-type-align ctx (ast.ast-global-shared-view u8-u64)) 8)
-          (= (lower.lower-type-size ctx (ast.ast-global-shared-view f32-f32)) 8)
-          (=
-            (lower.lower-type-align ctx (ast.ast-global-shared-view f32-f32))
-            4)
-          (= (lower.lower-type-size ctx (ast.ast-global-shared-view nested)) 24)
+          (= (lower.lower-type-size ctx empty) 0)
+          (= (lower.lower-type-align ctx empty) 1)
+          (= (lower.lower-type-size ctx u8-tuple) 1)
+          (= (lower.lower-type-align ctx u8-tuple) 1)
+          (= (lower.lower-type-size ctx u8-u64) 16)
+          (= (lower.lower-type-align ctx u8-u64) 8)
+          (= (lower.lower-type-size ctx f32-f32) 8)
+          (= (lower.lower-type-align ctx f32-f32) 4)
+          (= (lower.lower-type-size ctx nested) 24)
           (= (lower.lower-type-align ctx nested) 8)
-          (=
-            (lower.lower-type-size ctx (ast.ast-global-shared-view array-u8))
-            3)
-          (=
-            (lower.lower-type-align ctx (ast.ast-global-shared-view array-u8))
-            1)
-          (=
-            (lower.lower-type-size
-              ctx
-              (ast.ast-global-shared-view array-nested))
-            32)
-          (=
-            (lower.lower-type-align
-              ctx
-              (ast.ast-global-shared-view array-nested))
-            8)
-          (=
-            (lower.lower-type-size ctx (ast.ast-global-shared-view tuple-array))
-            16)
+          (= (lower.lower-type-size ctx array-u8) 3)
+          (= (lower.lower-type-align ctx array-u8) 1)
+          (= (lower.lower-type-size ctx array-nested) 32)
+          (= (lower.lower-type-align ctx array-nested) 8)
+          (= (lower.lower-type-size ctx tuple-array) 16)
           (= (lower.lower-type-align ctx tuple-array) 8)
-          (=
-            (lower.lower-type-size
-              ctx
-              (ast.ast-global-shared-view tuple-string))
-            8)
-          (=
-            (lower.lower-type-size
-              ctx
-              (ast.ast-global-shared-view array-string))
-            16)
-          (=
-            (lower.lower-type-size
-              ctx
-              (ast.ast-global-shared-view slice-ref-tuple))
-            16)
-          (lower.lower-type-inline-storage?
-            ctx
-            (ast.ast-global-shared-view u8-u64))
+          (= (lower.lower-type-size ctx tuple-string) 8)
+          (= (lower.lower-type-size ctx array-string) 16)
+          (= (lower.lower-type-size ctx slice-ref-tuple) 16)
+          (lower.lower-type-inline-storage? ctx u8-u64)
           (not
             (lower.lower-type-register-resident?
               ctx
@@ -14091,9 +13869,7 @@
               (and
                 (= size 16)
                 (= (lower.lower-c-abi-slot-list-count slots) 2)
-                (match (lower.lower-c-abi-slot-list-ref
-                  (lower.lower-global-shared-view slots)
-                  0)
+                (match (lower.lower-c-abi-slot-list-ref slots 0)
                   [(lower.LowerCAbiSlot.Slot ty _)
                     (tc_core.tc-type-eq ty (ast.AstType.U64))])
                 (match (lower.lower-c-abi-slot-list-ref slots 1)
@@ -14120,9 +13896,7 @@
               (and
                 (= size 16)
                 (= (lower.lower-c-abi-slot-list-count slots) 2)
-                (match (lower.lower-c-abi-slot-list-ref
-                  (lower.lower-global-shared-view slots)
-                  0)
+                (match (lower.lower-c-abi-slot-list-ref slots 0)
                   [(lower.LowerCAbiSlot.Slot ty _)
                     (tc_core.tc-type-eq ty (ast.AstType.U64))])
                 (match (lower.lower-c-abi-slot-list-ref slots 1)
@@ -14168,9 +13942,7 @@
               (and
                 (= size 16)
                 (= (lower.lower-c-abi-slot-list-count slots) 2)
-                (match (lower.lower-c-abi-slot-list-ref
-                  (lower.lower-global-shared-view slots)
-                  0)
+                (match (lower.lower-c-abi-slot-list-ref slots 0)
                   [(lower.LowerCAbiSlot.Slot ty _)
                     (tc_core.tc-type-eq ty (ast.AstType.U64))])
                 (match (lower.lower-c-abi-slot-list-ref slots 1)
@@ -14881,14 +14653,6 @@
     state
     cdiag.CompilerAdvisorySink
     lower.advisory-sink-owner))
-
-(define (compiler-lower-state-add-advisory!
-  [state : lower.CompilerLowerState]
-  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
-  (cdiag.compiler-advisory-sink-push!
-    (compiler-lower-state-advisory-sink state)
-    cdiag.CompilerAdvisoryPhase.Lowering
-    diagnostic))
 
 (defenum LowerPrunedProgram
   (Program ast.AstProgram ast.AstDeclPathList))

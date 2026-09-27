@@ -40,7 +40,7 @@
           ;; refresh for session B would move the global mark past mark-a.
           (ci.intern "driver-state-a/name.one.five")
           (load.compiler-load-session-state-use-with-intern-state!
-            (owned_view.compiler-owned-shared-view session-b)
+            session-b
             (owned_view.compiler-owned-shared-view b))
           ;; Full module/dotted metadata leaves B at 14 entries. Its owner-local
           ;; floor must observe that value without reading the installed table.
@@ -67,9 +67,7 @@
     [session-a : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
     (begin
-      (load.compiler-load-session-state-use-with-intern-state!
-        (owned_view.compiler-owned-shared-view session-a)
-        a)
+      (load.compiler-load-session-state-use-with-intern-state! session-a a)
       (ci.intern "driver-state-a/name.three")
       (load.compiler-load-session-state-note-persistent-interns!
         (owned_view.compiler-owned-shared-view session-a))
@@ -241,8 +239,7 @@
             b-structural-id
             "decoy/structural-sentinel")]
         (begin
-          (ci.intern-compat-state-install!
-            (owned_view.compiler-owned-shared-view state-a))
+          (ci.intern-compat-state-install! state-a)
           (ast.ast-node-pool-context-install! serial-pools)
           (match (driver-state-specialize-parse-program incompatible?)
             [(parser.ResultAstProgram.Ok serial-program)
@@ -271,8 +268,7 @@
                             decoy-pools
                             (ast.AstType.I64))]
                         (begin
-                          (ci.intern-compat-state-install!
-                            (owned_view.compiler-owned-shared-view state-b))
+                          (ci.intern-compat-state-install! state-b)
                           (ast.ast-node-pool-context-install! decoy-pools)
                           (let
                             [before-expr-len : i64
@@ -447,8 +443,7 @@
       [a : ci.InternCompatState (ci.intern-compat-state-new)]
       [b : ci.InternCompatState (ci.intern-compat-state-new)]
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view a))
+        (ci.intern-compat-state-install! a)
         (if (and
           (driver-state-smoke-non-installed-ok? a b)
           (driver-state-smoke-installed-ok? a)

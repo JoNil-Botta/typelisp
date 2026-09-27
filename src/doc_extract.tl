@@ -96,10 +96,10 @@
 (define (doc-item-fallback) : DocItem
   (DocItem.Item (DocItemKind.Define) "" "" "" 0))
 
-(define (doc-item-list-count [items : doc_item_vec.Vec]) : i64
+(define (doc-item-list-count [items : (& items doc_item_vec.Vec)]) : i64
   (doc_item_vec.len (& items)))
 
-(define (doc-item-list-ref [items : doc_item_vec.Vec] [index : i64]) : DocItem
+(define (doc-item-list-ref [items : (& items doc_item_vec.Vec)] [index : i64]) : DocItem
   (doc_item_vec.get (& items) index (doc-item-fallback)))
 
 (define (doc-item-array-copy-to-list

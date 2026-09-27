@@ -583,9 +583,7 @@
     (str_cat.str-cat
       (doc-html-item-nav-entry
         (owned_view.compiler-owned-shared-view path)
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          index))
+        (doc_extract.doc-item-list-ref items index))
       (doc-html-item-nav-entries-from path items (+ index 1) count))))
 
 (define (doc-html-item-nav-entries [path : String] [items : doc_item_vec.Vec]) : String
@@ -596,10 +594,7 @@
     (doc_extract.doc-item-list-count items)))
 
 (define (doc-html-item-nav [path : String] [items : doc_item_vec.Vec]) : String
-  (if (=
-    (doc_extract.doc-item-list-count
-      (owned_view.compiler-owned-shared-view items))
-    0)
+  (if (= (doc_extract.doc-item-list-count items) 0)
     ""
     (str_cat.str-cat
       "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
@@ -673,9 +668,7 @@
       (doc-html-item
         (owned_view.compiler-owned-shared-view path)
         source-url
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          index))
+        (doc_extract.doc-item-list-ref items index))
       (doc-html-item-list-from path source-url items (+ index 1) count))))
 
 (define (doc-html-item-list
@@ -693,10 +686,7 @@
   [path : String]
   [source-url : String]
   [items : doc_item_vec.Vec]) : String
-  (if (=
-    (doc_extract.doc-item-list-count
-      (owned_view.compiler-owned-shared-view items))
-    0)
+  (if (= (doc_extract.doc-item-list-count items) 0)
     "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"
     (doc-html-item-list path source-url items)))
 
@@ -802,9 +792,7 @@
       (doc-html-search-item-record
         (owned_view.compiler-owned-shared-view page)
         (owned_view.compiler-owned-shared-view path)
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          index))
+        (doc_extract.doc-item-list-ref items index))
       (doc-html-search-item-records-from page path items (+ index 1) count))))
 
 ;; Emit one module record followed by its declarations. The caller supplies
@@ -820,9 +808,7 @@
     [items : doc_item_vec.Vec
       (doc_extract.doc-extraction-items
         (owned_view.compiler-owned-shared-view docs))]
-    [item-count : i64
-      (doc_extract.doc-item-list-count
-        (owned_view.compiler-owned-shared-view items))]
+    [item-count : i64 (doc_extract.doc-item-list-count items)]
     (str_cat.str-cat
       (doc-html-search-record
         (doc_render.doc-render-anchor path)

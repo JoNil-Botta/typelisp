@@ -428,11 +428,11 @@
     0))
 
 (define (compiler-load-surface-summary-list-count
-  [summaries : CompilerLoadSurfaceSummaryList]) : i64
+  [summaries : (& summaries CompilerLoadSurfaceSummaryList)]) : i64
   summaries.len)
 
 (define (compiler-load-surface-summary-list-at
-  [summaries : CompilerLoadSurfaceSummaryList]
+  [summaries : (& summaries CompilerLoadSurfaceSummaryList)]
   [index : i64]) : CompilerLoadSurfaceSummary
   (compiler-load-global-array-element-shared-view
     summaries.slots
@@ -1458,7 +1458,7 @@
               "selected catalog is no longer executable"))]))))
 
 (define (compiler-load-dependency-catalog-admitted-image
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [slot : i64]) : CompilerLoadDependencyCatalogAdmittedImage
   (let
     [items : CompilerLoadDependencyCatalogList
@@ -1827,8 +1827,10 @@
           (compiler-load-dependency-surfaces-build-cache! state configuration))))))
 
 (define (compiler-load-dependency-catalog-observe
-  [state : CompilerLoadSessionState]) : CompilerLoadDependencyCatalogObservation
+  [state : (& state CompilerLoadSessionState)]) : CompilerLoadDependencyCatalogObservation
   (let
+    [state : CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
     [registry : CompilerLoadDependencyCatalogRegistry
       (compiler-load-session-state-dependency-catalog
         (owned_view.compiler-owned-shared-view state))]
@@ -1845,9 +1847,7 @@
     (begin
       (while (< index items.len)
         (begin
-          (match (compiler-load-dependency-catalog-admitted-image
-            (owned_view.compiler-owned-shared-view state)
-            index)
+          (match (compiler-load-dependency-catalog-admitted-image state index)
             [(CompilerLoadDependencyCatalogAdmittedImage.NoCatalog) unit]
             [(CompilerLoadDependencyCatalogAdmittedImage.Unavailable _)
               (set! unavailable (+ unavailable 1))]
@@ -2420,10 +2420,14 @@
     ty-floor
     intern-floor))
 
-(define (compiler-load-session-state-use! [state : CompilerLoadSessionState]) : unit
-  (begin
-    (set! (array-ref state.intern-state-ready 0) false)
-    (set! compiler-load-active-session-state state)))
+(define (compiler-load-session-state-use!
+  [state : (& state CompilerLoadSessionState)]) : unit
+  (let
+    [state : CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (begin
+      (set! (array-ref state.intern-state-ready 0) false)
+      (set! compiler-load-active-session-state state))))
 
 ;; Reinstall a displaced session exactly as it was saved, without touching its
 ;; intern-state flags. Only this module may write the active-session global.
@@ -2432,18 +2436,22 @@
   (set! compiler-load-active-session-state state))
 
 (define (compiler-load-session-state-use-with-intern-state!
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [intern-state : ci.InternCompatState]) : unit
-  (begin
-    (set! (array-ref state.intern-state 0) intern-state)
-    (set! (array-ref state.intern-state-ready 0) true)
-    (set! compiler-load-active-session-state state)))
+  (let
+    [state : CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (begin
+      (set! (array-ref state.intern-state 0) intern-state)
+      (set! (array-ref state.intern-state-ready 0) true)
+      (set! compiler-load-active-session-state state))))
 
 ;; Read the interner that defines this session's id domain. Production driver
 ;; sessions bind an explicit owner before load starts; the active-table capture
 ;; is retained only for standalone/test sessions created through the legacy
 ;; `compiler-load-session-state-use!` adapter.
-(define (compiler-load-session-state-interns [state : CompilerLoadSessionState]) : ci.InternCompatState
+(define (compiler-load-session-state-interns
+  [state : (& state CompilerLoadSessionState)]) : ci.InternCompatState
   (if (array-ref state.intern-state-ready 0)
     (owned_view.compiler-owned-array-element-shared-view state.intern-state 0)
     (ci.intern-compat-state-capture-active)))
@@ -2633,9 +2641,11 @@
           unit)))))
 
 (define (compiler-load-session-state-note-embedded-module!
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [path : String]) : unit
   (let
+    [state : CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
     [id : i64
       (compiler-load-session-state-intern
         (owned_view.compiler-owned-shared-view state)
@@ -2653,9 +2663,9 @@
           1)))))
 
 (define (compiler-load-note-embedded-module! [path : String]) : unit
-  (compiler-load-session-state-note-embedded-module!
-    (compiler-load-active-session-state-shared-view)
-    path))
+  (let
+    [state (compiler-load-active-session-state-shared-view)]
+    (compiler-load-session-state-note-embedded-module! state path)))
 
 ;: A stdlib module resolved from a root (or the working directory) whose
 ;: source is byte-identical to the embedded payload's copy carries embedded
@@ -2707,7 +2717,7 @@
           (if (= outcome 1)
             (begin
               (compiler-load-session-state-note-embedded-module!
-                (owned_view.compiler-owned-shared-view state)
+                state
                 (str_cat.str-cat "stdlib/" suffix))
               (set! (array-ref state.embedded-stdlib-provenance.noted 0) true))
             unit))))))
@@ -3193,11 +3203,6 @@
   [state : CompilerLoadSessionState]
   [enabled : bool]) : unit
   (set! (array-ref state.cache-enabled 2) enabled))
-
-(define (compiler-load-session-lazy-import-mode-set-enabled! [enabled : bool]) : unit
-  (compiler-load-session-state-lazy-import-mode-set-enabled!
-    (compiler-load-active-session-state-shared-view)
-    enabled))
 
 (define (compiler-load-session-state-lazy-imports-enabled?
   [state : CompilerLoadSessionState]) : bool
@@ -4801,7 +4806,7 @@
               source)
             (begin
               (compiler-load-session-state-note-embedded-module!
-                (owned_view.compiler-owned-shared-view load-state)
+                load-state
                 (string.copy path))
               (compiler-load-session-state-note-embedded-stdlib-source!
                 (owned_view.compiler-owned-shared-view load-state))
@@ -5849,15 +5854,10 @@
   (let
     [index : i64 0]
     (begin
-      (while (<
-        index
-        (compiler-load-surface-summary-list-count
-          (ast.ast-place-shared-view summaries)))
+      (while (< index (compiler-load-surface-summary-list-count summaries))
         (if (=
           (__tl-project-field
-            (compiler-load-surface-summary-list-at
-              (ast.ast-place-shared-view summaries)
-              index)
+            (compiler-load-surface-summary-list-at summaries index)
             source-path-id)
           source-path-id)
           (return true)
@@ -5868,9 +5868,7 @@
   [summaries : CompilerLoadSurfaceSummaryList]
   [summary : CompilerLoadSurfaceSummary]) : CompilerLoadSurfaceSummaryList
   (let
-    [len : i64
-      (compiler-load-surface-summary-list-count
-        (ast.ast-place-shared-view summaries))]
+    [len : i64 (compiler-load-surface-summary-list-count summaries)]
     [slots : (__tl_dyn-array CompilerLoadSurfaceSummary) summaries.slots]
     (begin
       (if (< len (array-length slots))
@@ -5933,15 +5931,10 @@
   (let
     [index : i64 0]
     (begin
-      (while (<
-        index
-        (compiler-load-surface-summary-list-count
-          (ast.ast-place-shared-view summaries)))
+      (while (< index (compiler-load-surface-summary-list-count summaries))
         (let
           [summary : CompilerLoadSurfaceSummary
-            (compiler-load-surface-summary-list-at
-              (ast.ast-place-shared-view summaries)
-              index)]
+            (compiler-load-surface-summary-list-at summaries index)]
           (if (= summary.source-path-id source-path-id)
             (return (CompilerLoadSomeSurfaceSummary summary))
             (set! index (+ index 1)))))
@@ -5960,15 +5953,10 @@
   (let
     [index : i64 0]
     (begin
-      (while (<
-        index
-        (compiler-load-surface-summary-list-count
-          (ast.ast-place-shared-view summaries)))
+      (while (< index (compiler-load-surface-summary-list-count summaries))
         (let
           [summary : CompilerLoadSurfaceSummary
-            (compiler-load-surface-summary-list-at
-              (ast.ast-place-shared-view summaries)
-              index)]
+            (compiler-load-surface-summary-list-at summaries index)]
           (if (= summary.module-id module-id)
             (return (CompilerLoadSomeSurfaceSummary summary))
             (set! index (+ index 1)))))
@@ -6101,9 +6089,7 @@
   [summaries : CompilerLoadSurfaceSummaryList]
   [source-path-id : i64]) : CompilerLoadSurfaceSummaryList
   (let
-    [len : i64
-      (compiler-load-surface-summary-list-count
-        (ast.ast-place-shared-view summaries))]
+    [len : i64 (compiler-load-surface-summary-list-count summaries)]
     [kept : i64 0]
     [physical-index : i64 0]
     (begin
@@ -8145,12 +8131,12 @@
   [alias : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (if (ast.ast-decl-comptime-only? (clone decl))
+  (if (ast.ast-decl-comptime-only? decl)
     (if (compiler-load-session-state-lazy-qualified-observer-exhaustive? state)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-generated-meta-demand
           (owned_view.compiler-owned-shared-view state)
-          (ast.ast-decl-generated-meta (clone decl))
+          (ast.ast-decl-generated-meta decl)
           alias
           summary
           locals)
@@ -9448,7 +9434,7 @@
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
         (ast.ast-decl-list-new)
@@ -11475,7 +11461,7 @@
                   source)
                 (match (begin
                   (compiler-load-session-state-note-embedded-module!
-                    (owned_view.compiler-owned-shared-view load-state)
+                    load-state
                     (string.copy path))
                   (if cache-current
                     (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
@@ -11717,18 +11703,6 @@
     (str_cat.str-cat
       (compiler-load-package-module-id-normalized entry-path decl-path)
       "::"
-      source-name)))
-
-(define (compiler-load-package-module-logical-name
-  [entry-path : String]
-  [decl-path : String]
-  [source-name : String]) : String
-  (let
-    [entry-path : String (compiler-load-normalize-path entry-path)]
-    [decl-path : String (compiler-load-normalize-path decl-path)]
-    (compiler-load-package-module-logical-name-normalized
-      entry-path
-      decl-path
       source-name)))
 
 (define (compiler-load-package-entry-main-normalized?
@@ -12179,7 +12153,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view decl-cursor))
+        (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (let
@@ -12252,7 +12226,7 @@
   [module : String]
   [module-id : i64]
   [spmd-interface : CompilerLoadPackageSpmdInterface]) : ResultCompilerLoadWithPaths
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
         (ast.ast-decl-list-new)
@@ -12496,8 +12470,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -12818,7 +12791,7 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
         (ast.ast-decl-list-new)

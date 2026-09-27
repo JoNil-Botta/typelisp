@@ -582,7 +582,7 @@
   [handle : i64]) : unit
   (compiler-symbol-map-put! map name-id handle))
 
-(define (compiler-decl-list-index-count [decls : ast.AstDeclList]) : i64
+(define (compiler-decl-list-index-count [decls : (& decls ast.AstDeclList)]) : i64
   (let
     [count : i64 0]
     [index : i64 0]
@@ -1677,7 +1677,7 @@
   [index : i64]) : ResultCompilerSymbols
   (let
     [generated-meta : ast.AstGeneratedDeclMeta
-      (ast.ast-decl-generated-meta (compiler-symbols-decl-shared-view decl))]
+      (ast.ast-decl-generated-meta decl)]
     (match (compiler-symbols-add-decl-in-module-inner
       symbols
       module-id
@@ -2546,8 +2546,7 @@
       [(ast.AstDecl.ModuleBody _ body-box)
         (let
           [body : ast.AstDeclList (deref body-box)]
-          [body-count : i64
-            (compiler-decl-list-index-count (ast.ast-place-shared-view body))]
+          [body-count : i64 (compiler-decl-list-index-count body)]
           (if (< target (+ index body-count))
             (compiler-symbol-path-at-index
               (ast.ast-place-shared-view body)
@@ -2905,9 +2904,7 @@
           [(ast.AstDecl.ModuleBody name body-box)
             (let
               [body : ast.AstDeclList (deref body-box)]
-              [body-count : i64
-                (compiler-decl-list-index-count
-                  (ast.ast-place-shared-view body))]
+              [body-count : i64 (compiler-decl-list-index-count body)]
               (match (build-compiler-symbol-list-in-module
                 (ast.ast-place-shared-view all-decls)
                 body
@@ -2983,7 +2980,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cur-decls))
+        (match (ast.ast-decl-list-step cur-decls)
           [(ast.AstDeclListStep.Nil)
             (return (ResultCompilerSymbols.Ok cur-symbols))]
           [(ast.AstDeclListStep.Cons decl rest)
@@ -3041,9 +3038,7 @@
                 [(ast.AstDecl.ModuleBody name body-box)
                   (let
                     [body : ast.AstDeclList (deref body-box)]
-                    [body-count : i64
-                      (compiler-decl-list-index-count
-                        (ast.ast-place-shared-view body))]
+                    [body-count : i64 (compiler-decl-list-index-count body)]
                     [body-paths : ast.AstDeclPathList
                       (compiler-symbol-path-list-repeat-with-provenance
                         body
@@ -3114,10 +3109,7 @@
                               ;; Source nominal declarations loaded through a
                               ;; legacy path retain their flat lookup aliases but
                               ;; share the dotted import's canonical owner.
-                              (not
-                                (ast.ast-decl-comptime-only?
-                                  (compiler-symbols-decl-shared-view
-                                    decl-master)))
+                              (not (ast.ast-decl-comptime-only? decl-master))
                               (match (compiler-symbols-decl-shared-view
                                 decl-master)
                                 [(ast.AstDecl.DefEnum decl-meta _ _ _) true]
@@ -3179,7 +3171,7 @@
         (match (build-compiler-symbol-list
           (ast.ast-place-shared-view decls)
           (compiler-symbols-empty-with-decls
-            (compiler-decl-list-index-count (ast.ast-place-shared-view decls)))
+            (compiler-decl-list-index-count decls))
           0)
           [(ResultCompilerSymbols.Ok symbols)
             (let
@@ -3207,8 +3199,7 @@
         [decls : ast.AstDeclList (deref decls-box)]
         [module-sets : CompilerSymbolsModuleSets
           (compiler-symbols-module-sets (ast.ast-place-shared-view decls))]
-        [decl-count : i64
-          (compiler-decl-list-index-count (ast.ast-place-shared-view decls))]
+        [decl-count : i64 (compiler-decl-list-index-count decls)]
         (match (build-compiler-symbol-list-with-paths-in-module
           (ast.ast-place-shared-view decls)
           (ast.ast-place-shared-view paths)
@@ -3379,8 +3370,7 @@
   [module-id : i64]) : ResultCompilerSymbols
   (let
     [old-count : i64 (compiler-symbols-decl-count symbols)]
-    [added-count : i64
-      (compiler-decl-list-index-count (ast.ast-place-shared-view decls))]
+    [added-count : i64 (compiler-decl-list-index-count decls)]
     [grown : CompilerSymbols
       (compiler-symbols-ensure-decl-capacity symbols (+ old-count added-count))]
     (match (build-compiler-symbol-list-in-module
@@ -3959,9 +3949,7 @@
               [(ast.AstDecl.ModuleBody name body-box)
                 (let
                   [body : ast.AstDeclList (deref body-box)]
-                  [body-count : i64
-                    (compiler-decl-list-index-count
-                      (ast.ast-place-shared-view body))]
+                  [body-count : i64 (compiler-decl-list-index-count body)]
                   [body-paths : ast.AstDeclPathList
                     (compiler-symbol-path-list-repeat
                       body

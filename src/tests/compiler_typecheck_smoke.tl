@@ -24,7 +24,7 @@
 (import sym_i64_env)
 
 (define (compiler-typecheck-smoke-write-text
-  [path : String]
+  [path : (& path str)]
   [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
@@ -220,8 +220,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+          (diagnostic.compiler-diagnostic-list-first (deref diag))]
         [message : String (diagnostic.compiler-diagnostic-message first)]
         (and
           (string.contains (& message) (& want-message-fragment))
@@ -526,8 +525,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+          (diagnostic.compiler-diagnostic-list-first (deref diag))]
         (and
           (string.eq
             (diagnostic.compiler-diagnostic-message first)
@@ -551,8 +549,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+          (diagnostic.compiler-diagnostic-list-first (deref diag))]
         (and
           (string.eq
             (diagnostic.compiler-diagnostic-message first)
@@ -1571,8 +1568,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [value : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+          (diagnostic.compiler-diagnostic-list-first (deref diag))]
         [notes : diagnostic.CompilerDiagnosticNoteList
           (diagnostic.compiler-diagnostic-notes value)]
         (and
@@ -2014,7 +2010,7 @@
     (module generated.macro_kind.family)
     (define (answer) : i64 41)))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(defstruct Ball (x i64))
 (import tc_macro_kind_provider as provider)
 (provider.emit Ball)
@@ -2042,11 +2038,11 @@
         "(module tc_prefix_local_dep)
 (define (value [x : i64]) : i64 (+ x 1))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry-a)
+        entry-a
         "(import tc_prefix_local_dep as dep)
 (define (main) : i64 (dep.value 1))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry-b)
+        entry-b
         "(import tc_prefix_local_dep as dep)
 (define (main) : i64 (dep.value 2))")
       (load.compiler-load-session-cache-enable!)
@@ -2105,11 +2101,11 @@
         dep
         "(define (flat-helper [x : i64]) : i64 (+ x 1))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry-a)
+        entry-a
         "(import tc_prefix_flat_dep)
 (define (main) : i64 (tc_prefix_flat_dep.flat-helper 1))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry-b)
+        entry-b
         "(import tc_prefix_flat_dep)
 (define (main) : i64 (tc_prefix_flat_dep.flat-helper 2))")
       (load.compiler-load-session-cache-enable!)
@@ -2172,14 +2168,14 @@
 (define (named-score) : i64
   (option_i64.value-or (option_i64.some 2) 0))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view root-then-named)
+        root-then-named
         "(import tc_4004_root_provider)
 (import tc_4004_named_provider)
 
 (define (main) : i64
   (+ (tc_4004_root_provider.root-score) (tc_4004_named_provider.named-score)))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view named-then-root)
+        named-then-root
         "(import tc_4004_named_provider)
 (import tc_4004_root_provider)
 
@@ -2434,8 +2430,7 @@
   [key : String]) : ast.AstDecl
   (match (parser.parse-ast-source-diagnostic "target/tc_state_entry.tl" source)
     [(parser.ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step
-        (ast.ast-decl-list-box-shared-view decls-box))
+      (match (ast.ast-decl-list-step (deref decls-box))
         [(ast.AstDeclListStep.Cons decl _)
           (ast.ast-decl-comptime-decl-with-meta
             (tc_core.macro-generated-meta "state-isolation" "import" key)
@@ -2443,9 +2438,7 @@
         [(ast.AstDeclListStep.Nil)
           (io.panic "typecheck: generated import fixture parsed no declaration")])]
     [(parser.ResultAstProgramDiagnostic.Err diag)
-      (io.panic
-        (diagnostic.compiler-diagnostic-render
-          (diagnostic.compiler-diagnostic-box-shared-view diag)))]))
+      (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))]))
 
 ;; A load failure keeps its dependency primary and one actionable import site.
 (define (compiler-typecheck-smoke-generated-import-location-ok?
@@ -2506,7 +2499,7 @@
 (defmacro (emit-imports) : Decls
   `(import tc_generated_import_left.missing as unused))")))
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         (if (= mode 3)
           "(import tc_generated_import_provider as provider)
 
@@ -2544,8 +2537,7 @@
               (let
                 [first : diagnostic.CompilerDiagnostic
                   (diagnostic.compiler-diagnostic-list-first
-                    (diagnostic.compiler-diagnostic-list-box-shared-view
-                      diagnostics))]
+                    (deref diagnostics))]
                 (if (not (= mode 0))
                   (let
                     [span : diagnostic.CompilerDiagnosticSpan
@@ -2592,7 +2584,7 @@
       (tc_api.typecheck-compiler-source-language-cfgs)]
     [empty-seen : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     (match (core_tests.macro-materialize-generated-import
-      (tc_core.tc-global-shared-view state)
+      state
       (tc_core.tc-global-shared-view generated-import)
       (tc_core.tc-global-shared-view entry)
       owner-id
@@ -2607,7 +2599,7 @@
         ;; program/surface caches. The selected compatibility session is
         ;; intentionally irrelevant to both traversals.
         (match (core_tests.macro-materialize-generated-import
-          (tc_core.tc-global-shared-view state)
+          state
           (tc_core.tc-global-shared-view generated-import)
           (tc_core.tc-global-shared-view entry)
           owner-id
@@ -2619,7 +2611,7 @@
           pools)
           [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
             (match (core_tests.macro-materialize-generated-import
-              (tc_core.tc-global-shared-view state)
+              state
               generated-import
               (tc_core.tc-global-shared-view entry)
               owner-id
@@ -2631,7 +2623,7 @@
               pools)
               [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
                 (match (core_tests.macro-materialize-generated-import
-                  (tc_core.tc-global-shared-view state)
+                  state
                   missing-import
                   entry
                   owner-id
@@ -2674,17 +2666,11 @@
                     (io.panic
                       "typecheck: generated missing import unexpectedly loaded")])]
               [(tc_core.ResultMacroMaterializeImport.Err diag)
-                (io.panic
-                  (diagnostic.compiler-diagnostic-render
-                    (diagnostic.compiler-diagnostic-box-shared-view diag)))])]
+                (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))])]
           [(tc_core.ResultMacroMaterializeImport.Err diag)
-            (io.panic
-              (diagnostic.compiler-diagnostic-render
-                (diagnostic.compiler-diagnostic-box-shared-view diag)))])]
+            (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))])]
       [(tc_core.ResultMacroMaterializeImport.Err diag)
-        (io.panic
-          (diagnostic.compiler-diagnostic-render
-            (diagnostic.compiler-diagnostic-box-shared-view diag)))])))
+        (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))])))
 
 (define (compiler-typecheck-smoke-generated-import-state-isolation-ok?) : bool
   (let
@@ -2697,11 +2683,9 @@
     [state-b : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
     [_enable-baseline : unit
-      (load_tests.compiler-load-session-state-cache-enable!
-        (tc_core.tc-global-shared-view baseline-state))]
+      (load_tests.compiler-load-session-state-cache-enable! baseline-state)]
     [_enable-a : unit
-      (load_tests.compiler-load-session-state-cache-enable!
-        (tc_core.tc-global-shared-view state-a))]
+      (load_tests.compiler-load-session-state-cache-enable! state-a)]
     [_seed-b : unit (set! (array-ref state-b.program-cache-hit-count 0) 17)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [_fixtures : unit
@@ -2724,17 +2708,14 @@
         "(import tc_state_missing as missing)"
         "state-missing")]
     [_select-baseline : unit
-      (load.compiler-load-session-state-use!
-        (tc_core.tc-global-shared-view baseline-state))]
+      (load.compiler-load-session-state-use! baseline-state)]
     [baseline : CompilerTypecheckGeneratedImportStateSnapshot
       (compiler-typecheck-smoke-generated-import-state-run
         baseline-state
         (tc_core.tc-global-shared-view generated-import)
         (tc_core.tc-global-shared-view missing-import)
         pools)]
-    [_select-b : unit
-      (load.compiler-load-session-state-use!
-        (tc_core.tc-global-shared-view state-b))]
+    [_select-b : unit (load.compiler-load-session-state-use! state-b)]
     [interleaved : CompilerTypecheckGeneratedImportStateSnapshot
       (compiler-typecheck-smoke-generated-import-state-run
         state-a
@@ -2815,8 +2796,7 @@
       (tc_core.tc-prefix-snapshot-cache-state-new)]
     [job-state-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
     [_enable-a : unit
-      (load_tests.compiler-load-session-state-cache-enable!
-        (tc_core.tc-global-shared-view state-a))]
+      (load_tests.compiler-load-session-state-cache-enable! state-a)]
     [_seed-b : unit
       (begin
         (set! (array-ref state-b.program-cache-hit-count 0) 23)
@@ -2835,9 +2815,7 @@
       (tc_api.typecheck-compiler-source-language-cfgs)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [_reset-typecheck : unit (tc_core.compiler-typecheck-reset-file-state!)]
-    [_select-b : unit
-      (load.compiler-load-session-state-use!
-        (tc_core.tc-global-shared-view state-b))]
+    [_select-b : unit (load.compiler-load-session-state-use! state-b)]
     [result : tc_core.ResultCompilerTypecheck
       (match (load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
         (tc_core.tc-global-shared-view state-a)
@@ -2894,9 +2872,10 @@
           [(tc_core.ResultCompilerTypecheck.Ok _) true]
           [(tc_core.ResultCompilerTypecheck.Err diag)
             (io.panic
-              (diagnostic.compiler-diagnostic-render
-                (diagnostic.compiler-diagnostic-list-first
-                  (diagnostic.compiler-diagnostic-list-box-shared-view diag))))])
+              (let
+                [diag-arg
+                  (diagnostic.compiler-diagnostic-list-first (deref diag))]
+                (diagnostic.compiler-diagnostic-render diag-arg)))])
         (match controlled-failure
           [(tc_core.ResultCompilerTypecheck.Err _) true]
           [(tc_core.ResultCompilerTypecheck.Ok _) false])
@@ -2967,7 +2946,7 @@
       (load.compiler-load-test-mkdir stdlib-root)
       (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(import stdlib.some_name)
 (define (main) : i64 some_name.value)")
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -2988,11 +2967,9 @@
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     (begin
       (load.compiler-load-test-mkdir dir)
+      (compiler-typecheck-smoke-write-text dep "(define imported : i64 true)")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view dep)
-        "(define imported : i64 true)")
-      (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(define (id [comptime T : type] [value : T]) : T value)
 (import dep)
 (define (main) : i64 0)")
@@ -3014,8 +2991,7 @@
             [(tc_core.ResultCompilerTypecheck.Err diag)
               (let
                 [first : diagnostic.CompilerDiagnostic
-                  (diagnostic.compiler-diagnostic-list-first
-                    (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+                  (diagnostic.compiler-diagnostic-list-first (deref diag))]
                 (and
                   (string.eq (diagnostic.compiler-diagnostic-path first) dep)
                   (string.eq
@@ -3081,7 +3057,7 @@
 (import tc_macro_missing_helper as helper)
 (defmacro (bumped [value : Expr]) : Expr `(helper.bump ,value))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(import tc_macro_missing_provider as provider)
 (define (main) : i64 (provider.bumped 41))")
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -3122,7 +3098,7 @@
 (defmacro (bumped [value : Expr]) : Expr
   `(helper.bump i64 ,value))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(import tc_macro_context_provider as provider)
 (define (main) : i64 (provider.bumped 41))")
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -3163,7 +3139,7 @@
 (defmacro (hook [value : i64]) : i64 `(+ ,value 1))
 (defmacro (last) : Expr `42)")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(import tc_surface_macro_provider as provider)
 (define (main) : i64 0)")
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -4079,428 +4055,6 @@
           qualified-id))
       (not (tc_core.tc-constructor-non-root-bare-name-id? session "" bare-id)))))
 
-;; A user-defined Module macro exercises the same catalog path as stdlib.result.
-;; `Choice` is a nominal/type/pattern-only surface; `make` and `score` are
-;; independent helpers so the expanded body shows whether demand closure stays
-;; narrow and grows when a later alias needs another member.
-(define (compiler-typecheck-smoke-generic-catalog-type-only-source) : String
-  "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_catalog)
-    (defenum Choice
-      (Empty)
-      (Full i64))
-    (define (make [value : i64]) : Choice
-      (Full value))
-    (define (score [value : Choice]) : i64
-      (match value
-        [(Full inner) inner]
-        [(Empty) 0]))))
-(import (catalog) as api)
-(define (read [value : api.Choice]) : i64
-  (match value
-    [(api.Full inner) inner]
-    [(api.Empty) 0]))
-(define (main) : i64 (read (api.Full 42)))")
-
-(define (compiler-typecheck-smoke-generic-catalog-later-helper-source) : String
-  "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_catalog)
-    (defenum Choice
-      (Empty)
-      (Full i64))
-    (define (make [value : i64]) : Choice
-      (Full value))
-    (define (score [value : Choice]) : i64
-      (match value
-        [(Full inner) inner]
-        [(Empty) 0]))))
-(import (catalog) as type-api)
-(import (catalog) as value-api)
-(import (catalog) as unused-api)
-(define (read [value : type-api.Choice]) : i64
-  (match value
-    [(type-api.Full inner) inner]
-    [(type-api.Empty) 0]))
-(define (main) : i64
-  (+ (read (type-api.Full 1)) (read (value-api.make 41))))")
-
-(define (compiler-typecheck-smoke-generic-catalog-closure-source) : String
-  "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_catalog_closure)
-    (define (score [value : i64]) : i64
-      (+ value (bonus)))
-    (define (bonus) : i64 1)
-    (define (unused) : i64 0)))
-(import (catalog) as api)
-(define (main) : i64 (api.score 41))")
-
-(define (compiler-typecheck-smoke-generic-catalog-cycle-source) : String
-  "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_catalog_cycle)
-    (define (even [value : i64]) : bool
-      (if (= value 0) true (odd (- value 1))))
-    (define (odd [value : i64]) : bool
-      (if (= value 0) false (even (- value 1))))
-    (define (unused) : i64 0)))
-(import (catalog) as api)
-(define (main) : i64 (if (api.even 42) 42 0))")
-
-;; The canonical target spelling is observable after a first alias has caused
-;; the catalog to exist. Its member demand must union with alias demand without
-;; re-evaluating the Module macro.
-(define (compiler-typecheck-smoke-generic-catalog-canonical-source) : String
-  "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_catalog_canonical)
-    (defenum Choice
-      (Empty)
-      (Full i64))
-    (define (make [value : i64]) : Choice
-      (Full value))
-    (define (score [value : Choice]) : i64
-      (match value
-        [(Full inner) inner]
-        [(Empty) 0]))))
-(import (catalog) as api)
-(define (read [value : api.Choice]) : i64
-  (match value
-    [(api.Full inner) inner]
-    [(api.Empty) 0]))
-(define (main) : i64
-  (+ (read (api.Full 1))
-    (read (generated.generic_catalog_canonical.make 41))))")
-
-(define (compiler-typecheck-smoke-generic-catalog-unused-source) : String
-  "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_catalog)
-    (defenum Choice
-      (Empty)
-      (Full i64))
-    (define (make [value : i64]) : Choice
-      (Full value))))
-(import (catalog) as unused-api)
-(define (main) : i64 42)")
-
-;; A lexical binding with the same spelling as an import alias is not a direct
-;; catalog use. The demand observer keeps just these root bindings while it
-;; avoids allocating environments for every unrelated local.
-(define (compiler-typecheck-smoke-generic-catalog-shadowed-alias-source) : String
-  "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_catalog_shadow)
-    (define (helper) : i64 42)))
-(import (catalog) as api)
-(define (shadow [api : i64]) : i64 api)
-(define (main) : i64 (shadow 42))")
-
-(define (compiler-typecheck-smoke-generic-catalog-full-source) : String
-  "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_catalog)
-    (defenum Choice
-      (Empty)
-      (Full i64))
-    (define (make [value : i64]) : Choice
-      (Full value))
-    (define (score [value : Choice]) : i64
-      (match value
-        [(Full inner) inner]
-        [(Empty) 0]))))
-(import (catalog) as api)
-(define (main) : i64 (api.score (api.make 42)))")
-
-(define (compiler-typecheck-smoke-generic-catalog-unqualified-source) : String
-  "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_catalog)
-    (defenum Choice
-      (Empty)
-      (Full i64))
-    (define (make [value : i64]) : Choice
-      (Full value))
-    (define (score [value : Choice]) : i64
-      (match value
-        [(Full inner) inner]
-        [(Empty) 0]))))
-(import (catalog))
-(define (main) : i64 (score (make 42)))")
-
-;; This spelling used to select the compiler-owned Result materializer, which
-;; skipped transformer evaluation and accepted the malformed unused helper.
-(define (compiler-typecheck-smoke-result-catalog-invalid-source) : String
-  "(module stdlib.result)
-(defmacro (result [T : type] [E : type]) : Module
-  `(begin
-    (module stdlib.result.generated.invalid)
-    (defenum Result (Ok ,T) (Err ,E))
-    (define broken : i64 true)))
-(import (result.result i64 String) as unused-result)
-(define (main) : i64 0)")
-
-(define (compiler-typecheck-smoke-generated-catalog-body-has-name?
-  [body : ast.AstDeclList]
-  [name : String]) : bool
-  (match (ast.ast-decl-list-step body)
-    [(ast.AstDeclListStep.Nil) false]
-    [(ast.AstDeclListStep.Cons decl rest)
-      (or
-        (match (tc_core.macro-generated-visible-name decl)
-          [(SpecMaybeString.Some candidate) (string.eq candidate name)]
-          [(SpecMaybeString.None) false])
-        (compiler-typecheck-smoke-generated-catalog-body-has-name? rest name))]))
-
-(define (compiler-typecheck-smoke-generic-catalog-expanded-name?
-  [source : String]
-  [module-name : String]
-  [name : String]) : bool
-  (let
-    [ok : bool
-      (match (parser.parse-ast-source-diagnostic "" source)
-        [(parser.ResultAstProgramDiagnostic.Ok program)
-          (match (tc_core.macro-expand-program program)
-            [(tc_core.ResultMacroExpand.Ok expanded _)
-              (match expanded
-                [(ast.AstProgram.Program decls-box)
-                  (let
-                    [decls : ast.AstDeclList
-                      (ast.ast-decl-list-box-shared-view decls-box)]
-                    (if (tc_core.macro-module-exists?
-                      (tc_core.tc-global-shared-view decls)
-                      (tc_core.tc-global-shared-view module-name))
-                      (compiler-typecheck-smoke-generated-catalog-body-has-name?
-                        (tc_core.macro-collect-module-body-decls
-                          decls
-                          module-name
-                          "")
-                        name)
-                      false))])]
-            [(tc_core.ResultMacroExpand.Err _) false])]
-        [(parser.ResultAstProgramDiagnostic.Err _) false])]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      ok)))
-
-(define (compiler-typecheck-smoke-generic-catalog-expanded-module?
-  [source : String]
-  [module-name : String]) : bool
-  (let
-    [ok : bool
-      (match (parser.parse-ast-source-diagnostic "" source)
-        [(parser.ResultAstProgramDiagnostic.Ok program)
-          (match (tc_core.macro-expand-program program)
-            [(tc_core.ResultMacroExpand.Ok expanded _)
-              (match expanded
-                [(ast.AstProgram.Program decls-box)
-                  (tc_core.macro-module-exists?
-                    (ast.ast-decl-list-box-shared-view decls-box)
-                    module-name)])]
-            [(tc_core.ResultMacroExpand.Err _) false])]
-        [(parser.ResultAstProgramDiagnostic.Err _) false])]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      ok)))
-
-(define (compiler-typecheck-smoke-generic-catalog-ok?) : bool
-  (begin
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-type-only-source))
-      "generic catalog type-only typecheck")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-type-only-source)
-        "generated.generic_catalog"
-        "Choice")
-      "generic catalog type-only missing Choice")
-    (compiler-typecheck-smoke-require
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-type-only-source)
-          "generated.generic_catalog"
-          "make"))
-      "generic catalog type-only retained make")
-    (compiler-typecheck-smoke-require
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-type-only-source)
-          "generated.generic_catalog"
-          "score"))
-      "generic catalog type-only retained score")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-later-helper-source))
-      "generic catalog later-helper typecheck")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-later-helper-source)
-        "generated.generic_catalog"
-        "Choice")
-      "generic catalog later-helper missing Choice")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-later-helper-source)
-        "generated.generic_catalog"
-        "make")
-      "generic catalog later-helper missing make")
-    (compiler-typecheck-smoke-require
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-later-helper-source)
-          "generated.generic_catalog"
-          "score"))
-      "generic catalog later-helper retained score")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-closure-source))
-      "generic catalog closure typecheck")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-closure-source)
-        "generated.generic_catalog_closure"
-        "score")
-      "generic catalog closure missing score")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-closure-source)
-        "generated.generic_catalog_closure"
-        "bonus")
-      "generic catalog closure missing bonus")
-    (compiler-typecheck-smoke-require
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-closure-source)
-          "generated.generic_catalog_closure"
-          "unused"))
-      "generic catalog closure retained unused")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-cycle-source))
-      "generic catalog cyclic closure typecheck")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-cycle-source)
-        "generated.generic_catalog_cycle"
-        "even")
-      "generic catalog cyclic closure missing even")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-cycle-source)
-        "generated.generic_catalog_cycle"
-        "odd")
-      "generic catalog cyclic closure missing odd")
-    (compiler-typecheck-smoke-require
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-cycle-source)
-          "generated.generic_catalog_cycle"
-          "unused"))
-      "generic catalog cyclic closure retained unused")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-canonical-source))
-      "generic catalog canonical typecheck")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-canonical-source)
-        "generated.generic_catalog_canonical"
-        "Choice")
-      "generic catalog canonical missing Choice")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-canonical-source)
-        "generated.generic_catalog_canonical"
-        "make")
-      "generic catalog canonical missing make")
-    (compiler-typecheck-smoke-require
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-canonical-source)
-          "generated.generic_catalog_canonical"
-          "score"))
-      "generic catalog canonical retained score")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-unused-source))
-      "generic catalog unused typecheck")
-    (compiler-typecheck-smoke-require
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-module?
-          (compiler-typecheck-smoke-generic-catalog-unused-source)
-          "generated.generic_catalog"))
-      "generic catalog unused materialized module")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-shadowed-alias-source))
-      "generic catalog shadowed alias typecheck")
-    (compiler-typecheck-smoke-require
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-module?
-          (compiler-typecheck-smoke-generic-catalog-shadowed-alias-source)
-          "generated.generic_catalog_shadow"))
-      "generic catalog shadowed alias materialized module")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-full-source))
-      "generic catalog full typecheck")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-full-source)
-        "generated.generic_catalog"
-        "score")
-      "generic catalog full missing score")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-unqualified-source))
-      "generic catalog unqualified typecheck")
-    (compiler-typecheck-smoke-require
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-unqualified-source)
-        "generated.generic_catalog"
-        "score")
-      "generic catalog unqualified missing score")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_macro_catalog)
-    (defmacro (one) : i64 `1)
-    (define (helper) : i64 42)))
-(import (catalog) as api)
-(define (main) : i64 (api.one))")
-      "generic catalog qualified macro typecheck")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-ok?
-        "(defmacro (catalog) : Module
-  `(begin
-    (module generated.generic_macro_catalog)
-    (defmacro (one) : i64 `1)
-    (define (helper) : i64 42)))
-(import (catalog))
-(define (main) : i64 (one))")
-      "generic catalog direct macro typecheck")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-error-ok?
-        "(defmacro (invalid-catalog) : Module
-  `(begin
-    (module generated.invalid_catalog)
-    (defenum Choice (Empty) (Full i64))
-    (define broken : i64 true)))
-(import (invalid-catalog) as unused-api)
-(define (main) : i64 0)"
-        "typecheck: value definition type mismatch: expected i64, found bool")
-      "generic catalog invalid helper accepted or changed diagnostic")
-    (compiler-typecheck-smoke-require
-      (tc_tests.compiler-typecheck-error-ok?
-        (compiler-typecheck-smoke-result-catalog-invalid-source)
-        "typecheck: value definition type mismatch: expected i64, found bool")
-      "Result-spelled catalog invalid helper accepted or changed diagnostic")
-    true))
-
 (define (compiler-typecheck-smoke-lazy-import-explicit-alias-no-fanout-ok?) : bool
   (let
     [ok : bool
@@ -4688,9 +4242,7 @@
                 [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                   (let
                     [first : diagnostic.CompilerDiagnostic
-                      (diagnostic.compiler-diagnostic-list-first
-                        (diagnostic.compiler-diagnostic-list-box-shared-view
-                          diag))]
+                      (diagnostic.compiler-diagnostic-list-first (deref diag))]
                     [message : String
                       (diagnostic.compiler-diagnostic-message first)]
                     (begin
@@ -4730,8 +4282,7 @@
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [first : diagnostic.CompilerDiagnostic
-                    (diagnostic.compiler-diagnostic-list-first
-                      (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+                    (diagnostic.compiler-diagnostic-list-first (deref diag))]
                   [message : String
                     (diagnostic.compiler-diagnostic-message first)]
                   (begin
@@ -4774,8 +4325,7 @@
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [first : diagnostic.CompilerDiagnostic
-                    (diagnostic.compiler-diagnostic-list-first
-                      (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+                    (diagnostic.compiler-diagnostic-list-first (deref diag))]
                   [message : String
                     (diagnostic.compiler-diagnostic-message first)]
                   (begin
@@ -4865,8 +4415,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : diagnostic.CompilerDiagnostic
-              (diagnostic.compiler-diagnostic-list-first
-                (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+              (diagnostic.compiler-diagnostic-list-first (deref diag))]
             (and
               (string.eq (diagnostic.compiler-diagnostic-message value) message)
               (string.eq (diagnostic.compiler-diagnostic-path value) path)
@@ -5315,7 +4864,7 @@
 
 (define (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
   [decls : ast.AstDeclList]) : bool
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
       (let
@@ -5454,7 +5003,7 @@
         cbi.compiler-builtin-id-fix-empty
         (ast.ast-node-pool-context-capture-active)
         (tc_core.tc-macro-state-source-names macro-a)
-        (tc_core.tc-global-shared-view body-a))]
+        body-a)]
     [hygiene-a : tc_core.MacroHygieneEnv
       (tc_core.macro-hygiene-env-empty macro-a (tc_core.tc-context-pools ctx-a))]
     [macro-a-handle : ci.InternSourceNameSessionHandle
@@ -5497,7 +5046,7 @@
     (begin
       ;; Keep B installed while macro expansion and ordinary typecheck views
       ;; owned by A canonicalize, grow, and decode A's structural records.
-      (ci.intern-compat-state-install! (tc_core.tc-global-shared-view intern-b))
+      (ci.intern-compat-state-install! intern-b)
       (let
         [a-pair : cis.InternStructuralKey
           (cis.intern-structural-session-composite-pair-key session-a 71 81)]
@@ -5776,10 +5325,7 @@
       (match failed
         [(tc_core.ResultCompilerTypecheck.Ok _) false]
         [(tc_core.ResultCompilerTypecheck.Err diagnostics)
-          (=
-            (diagnostic.compiler-diagnostic-list-count
-              (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))
-            1)])]
+          (= (diagnostic.compiler-diagnostic-list-count (deref diagnostics)) 1)])]
     [reused : tc_core.ResultCompilerTypecheck
       (tc_api.typecheck-compiler-source
         "(define (checked-after-reset) : i64 42)")]

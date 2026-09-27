@@ -10,8 +10,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diagnostics)
       (let
         [first : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))]
+          (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
         (string.contains
           (diagnostic.compiler-diagnostic-message first)
           "raw C function pointer"))]

@@ -21,6 +21,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_tests as intern_tests)
 (import compiler_intern_state as cis)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-typecheck-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
@@ -151,8 +152,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (string.eq (cdiag.compiler-diagnostic-message first) want))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -182,8 +182,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [value : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (and
           (string.eq (cdiag.compiler-diagnostic-message value) want)
           (= (cdiag.compiler-diagnostic-line value) want-line)
@@ -198,8 +197,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (match (cdiag.compiler-diagnostic-code first)
           [(CompilerDiagnosticSomeString code)
             (if (string.eq code want-code)
@@ -230,8 +228,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (and
           (string.eq (cdiag.compiler-diagnostic-message first) want)
           (= (cdiag.compiler-diagnostic-line first) want-line)
@@ -250,8 +247,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (string.eq (cdiag.compiler-diagnostic-message first) want))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -433,8 +429,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (string.eq
         (cdiag.compiler-diagnostic-render-source
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))
+          (cdiag.compiler-diagnostic-list-first (deref diag))
           src)
         want)]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
@@ -939,48 +934,61 @@
     v.x))")
 
 (define (compiler-typecheck-fixture-nominal-id
-  [program : ast.AstProgram]
+  [program : (& program ast.AstProgram)]
   [name : String]) : i64
-  (match program
-    [(ast.AstProgram.Program decls-box)
-      (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        [index : i64 0]
-        [name-id : i64 -1]
-        (begin
-          (while (and (< name-id 0) (< index decls.len))
-            (let
-              [decl : ast.AstDecl
-                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-              (begin
-                (match decl
-                  [(ast.AstDecl.DefStruct decl-meta candidate _ _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [(ast.AstDecl.DefStructLifetimes decl-meta candidate _ _ _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [(ast.AstDecl.DefEnum decl-meta candidate _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [(ast.AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [_ unit])
-                (set! index (+ index 1)))))
-          name-id))]))
+  (let
+    [program : ast.AstProgram
+      (owned_view.compiler-owned-reference-shared-view program)]
+    (match program
+      [(ast.AstProgram.Program decls-box)
+        (let
+          [decls : ast.AstDeclList
+            (ast.ast-decl-list-box-shared-view decls-box)]
+          [index : i64 0]
+          [name-id : i64 -1]
+          (begin
+            (while (and (< name-id 0) (< index decls.len))
+              (let
+                [decl : ast.AstDecl
+                  (ast.ast-decl-list-get
+                    (& decls)
+                    index
+                    (ast.ast-decl-fallback))]
+                (begin
+                  (match decl
+                    [(ast.AstDecl.DefStruct decl-meta candidate _ _ _)
+                      (if (string.eq
+                        (tc_core.tc-env-key-name-text candidate)
+                        name)
+                        (set! name-id candidate)
+                        unit)]
+                    [(ast.AstDecl.DefStructLifetimes
+                        decl-meta
+                        candidate
+                        _
+                        _
+                        _
+                        _)
+                      (if (string.eq
+                        (tc_core.tc-env-key-name-text candidate)
+                        name)
+                        (set! name-id candidate)
+                        unit)]
+                    [(ast.AstDecl.DefEnum decl-meta candidate _ _)
+                      (if (string.eq
+                        (tc_core.tc-env-key-name-text candidate)
+                        name)
+                        (set! name-id candidate)
+                        unit)]
+                    [(ast.AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
+                      (if (string.eq
+                        (tc_core.tc-env-key-name-text candidate)
+                        name)
+                        (set! name-id candidate)
+                        unit)]
+                    [_ unit])
+                  (set! index (+ index 1)))))
+            name-id))])))
 
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
   (begin
@@ -1003,16 +1011,12 @@
                   (match (tc_core.tc-repr-c-struct-layout-id
                     ctx
                     "Packet"
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      "Packet"))
+                    (compiler-typecheck-fixture-nominal-id program "Packet"))
                     [(tc_core.ResultTcReprCLayout.Ok packet)
                       (match (tc_core.tc-repr-c-struct-layout-id
                         ctx
                         "Outer"
-                        (compiler-typecheck-fixture-nominal-id
-                          (ast.ast-global-shared-view program)
-                          "Outer"))
+                        (compiler-typecheck-fixture-nominal-id program "Outer"))
                         [(tc_core.ResultTcReprCLayout.Ok outer)
                           (match (tc_core.tc-repr-c-struct-layout-id
                             ctx
@@ -1676,7 +1680,7 @@
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
+                      program
                       "InlinePacket"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (let
@@ -1731,7 +1735,7 @@
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
+                      program
                       "InlineChoice"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (let
@@ -1778,21 +1782,21 @@
                             (set! ok false))
                           (if (=
                             (core_tests.tc-inline-aggregate-layout-variant-size-id
-                              (tc_core.tc-global-shared-view layout)
+                              layout
                               empty-id)
                             8)
                             unit
                             (set! ok false))
                           (if (=
                             (core_tests.tc-inline-aggregate-layout-variant-size-id
-                              (tc_core.tc-global-shared-view layout)
+                              layout
                               byte-id)
                             16)
                             unit
                             (set! ok false))
                           (if (=
                             (core_tests.tc-inline-aggregate-layout-variant-size-id
-                              (tc_core.tc-global-shared-view layout)
+                              layout
                               wide-id)
                             24)
                             unit
@@ -1825,9 +1829,7 @@
                       (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      "WidePacket"))
+                    (compiler-typecheck-fixture-nominal-id program "WidePacket"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (match (tc_core.tc-global-shared-view layout)
                         [(tc_core.TcInlineAggregateLayout.Struct
@@ -1877,9 +1879,7 @@
                       (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      "WideChoice"))
+                    (compiler-typecheck-fixture-nominal-id program "WideChoice"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (match layout
                         [(tc_core.TcInlineAggregateLayout.Enum
@@ -3033,21 +3033,13 @@
   (let
     [program : ast.AstProgram (tc_api.compiler-typecheck-context-program ctx)]
     [input-result-id : i64
-      (compiler-typecheck-fixture-nominal-id
-        (ast.ast-global-shared-view program)
-        "InputResult")]
+      (compiler-typecheck-fixture-nominal-id program "InputResult")]
     [outer-result-id : i64
-      (compiler-typecheck-fixture-nominal-id
-        (ast.ast-global-shared-view program)
-        "OuterResult")]
+      (compiler-typecheck-fixture-nominal-id program "OuterResult")]
     [other-result-id : i64
-      (compiler-typecheck-fixture-nominal-id
-        (ast.ast-global-shared-view program)
-        "OtherResult")]
+      (compiler-typecheck-fixture-nominal-id program "OtherResult")]
     [input-option-id : i64
-      (compiler-typecheck-fixture-nominal-id
-        (ast.ast-global-shared-view program)
-        "InputOption")]
+      (compiler-typecheck-fixture-nominal-id program "InputOption")]
     [outer-option-id : i64
       (compiler-typecheck-fixture-nominal-id program "OuterOption")]
     (begin
@@ -4619,8 +4611,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (if (= (cdiag.compiler-diagnostic-line first) 2)
           (if (> (cdiag.compiler-diagnostic-col first) 0)
             (string.eq
@@ -4649,8 +4640,7 @@
       [(tc_core.ResultCompilerTypecheck.Err diag)
         (let
           [first : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first
-              (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+            (cdiag.compiler-diagnostic-list-first (deref diag))]
           (and
             (string.eq
               (cdiag.compiler-diagnostic-message first)
@@ -6818,80 +6808,50 @@
         [empty : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-empty macro-state pools)]
         [parent : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw
-            (tc_core.tc-global-shared-view empty)
-            7
-            70)]
+          (tc_core.macro-hygiene-env-bind-raw empty 7 70)]
         [left : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw
-            (tc_core.tc-global-shared-view parent)
-            8
-            80)]
+          (tc_core.macro-hygiene-env-bind-raw parent 8 80)]
         [right : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw
-            (tc_core.tc-global-shared-view parent)
-            9
-            90)]
+          (tc_core.macro-hygiene-env-bind-raw parent 9 90)]
         [shadow-one : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw
-            (tc_core.tc-global-shared-view parent)
-            7
-            71)]
+          (tc_core.macro-hygiene-env-bind-raw parent 7 71)]
         [shadow-two : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-raw shadow-one 7 72)]
         [pattern : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-pattern-name-raw
-            (tc_core.tc-global-shared-view empty)
-            10
-            100)]
+          (tc_core.macro-hygiene-env-bind-pattern-name-raw empty 10 100)]
         [pattern-with-bind : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-raw pattern 10 101)]
         [pattern-shadow : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-pattern-name-raw
-            (tc_core.tc-global-shared-view pattern-with-bind)
+            pattern-with-bind
             10
             102)]
         ;; Force two capacity growths while retaining earlier sibling heads.
         [deep : tc_core.MacroHygieneEnv
-          (compiler-typecheck-macro-hygiene-env-extend
-            (tc_core.tc-global-shared-view parent)
-            0
-            80)]
+          (compiler-typecheck-macro-hygiene-env-extend parent 0 80)]
         (and
           (compiler-typecheck-hygiene-name-missing?
             (tc_core.macro-hygiene-env-lookup empty 7))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view parent)
-              7)
+            (tc_core.macro-hygiene-env-lookup parent 7)
             70)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view left)
-              8)
+            (tc_core.macro-hygiene-env-lookup left 8)
             80)
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view left)
-              9))
+            (tc_core.macro-hygiene-env-lookup left 9))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view right)
-              9)
+            (tc_core.macro-hygiene-env-lookup right 9)
             90)
           (compiler-typecheck-hygiene-name-missing?
             (tc_core.macro-hygiene-env-lookup right 8))
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view parent)
-              8))
+            (tc_core.macro-hygiene-env-lookup parent 8))
           (compiler-typecheck-hygiene-name-is?
             (tc_core.macro-hygiene-env-lookup shadow-two 7)
             72)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view pattern-with-bind)
-              10)
+            (tc_core.macro-hygiene-env-lookup pattern-with-bind 10)
             101)
           (compiler-typecheck-hygiene-name-is?
             (tc_core.macro-hygiene-env-lookup-pattern-name pattern-with-bind 10)
@@ -7784,8 +7744,7 @@
       [(tc_core.ResultCompilerTypecheck.Err diag)
         (let
           [first : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first
-              (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+            (cdiag.compiler-diagnostic-list-first (deref diag))]
           (io.panic (cdiag.compiler-diagnostic-message first)))])
     unit))
 
@@ -8369,13 +8328,9 @@
     [dupe : tc_core.TcMovedSet
       (tc_core.tc-moved-add (tc_core.tc-moved-clone one) alpha-id)]
     [two : tc_core.TcMovedSet
-      (tc_core.tc-moved-add
-        (tc_core.tc-moved-clone (tc_core.tc-global-shared-view dupe))
-        beta-id)]
+      (tc_core.tc-moved-add (tc_core.tc-moved-clone dupe) beta-id)]
     [removed : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove
-        (tc_core.tc-moved-clone (tc_core.tc-global-shared-view two))
-        alpha-id)]
+      (tc_core.tc-moved-remove (tc_core.tc-moved-clone two) alpha-id)]
     [origin-whole : tc_core.TcMovedSet
       (tc_core.tc-moved-add-origin
         (tc_core.tc-moved-empty)
@@ -8439,7 +8394,7 @@
         items0)]
     [partial-clear : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-exact-path
-        (tc_core.tc-moved-clone (tc_core.tc-global-shared-view partial-one))
+        (tc_core.tc-moved-clone partial-one)
         items-id
         items1)]
     [partial-keeps-sibling : bool
@@ -8496,19 +8451,19 @@
     [retained-parent-isolated : bool
       (and
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view retained-parent)
+          retained-parent
           items0
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view retained-parent)
+          retained-parent
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view retained-parent)
+          retained-parent
           growth63
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
@@ -8516,32 +8471,32 @@
     [successors-isolated : bool
       (and
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view growth-successor)
+          growth-successor
           items0
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ origin-id)
             (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view growth-successor)
+          growth-successor
           growth63
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view growth-successor)
+          growth-successor
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view sibling-successor)
+          sibling-successor
           items0
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view sibling-successor)
+          sibling-successor
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
@@ -8572,9 +8527,7 @@
         2
         origin-b)]
     [cross-store-union : tc_core.TcMovedSet
-      (tc_core.tc-moved-union
-        (tc_core.tc-global-shared-view retained-parent)
-        separate-store)]
+      (tc_core.tc-moved-union retained-parent separate-store)]
     [cross-store-facts : tc_core.TcMovedPathFacts
       (tc_core.tc-moved-paths (tc_core.tc-global-shared-view cross-store-union))]
     [cross-store-destination-ok : bool
@@ -8644,9 +8597,13 @@
         [(tc_core.TcMoveConflict.Some _ origin-id) (= origin-id 101)]
         [tc_core.TcMoveConflict.No false])]
     (and
-      (= (tc_core.tc-moved-len (tc_core.tc-moved-empty)) 0)
+      (=
+        (let
+          [set (tc_core.tc-moved-empty)]
+          (tc_core.tc-moved-len set))
+        0)
       (= (tc_core.tc-moved-len dupe) 1)
-      (= (tc_core.tc-moved-len (tc_core.tc-global-shared-view two)) 2)
+      (= (tc_core.tc-moved-len two) 2)
       (>= (core_tests.tc-moved-capacity two) 8)
       (not (tc_core.tc-moved-contains? removed alpha-id))
       origin-whole-ok
@@ -9571,8 +9528,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
-              (cdiag.compiler-diagnostic-list-first
-                (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+              (cdiag.compiler-diagnostic-list-first (deref diag))]
             [message : String (cdiag.compiler-diagnostic-message value)]
             [duplicate-needle : String "symbols: duplicate value declaration f"]
             [main-path : String "src/main.tl"]
@@ -9593,8 +9549,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
-              (cdiag.compiler-diagnostic-list-first
-                (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+              (cdiag.compiler-diagnostic-list-first (deref diag))]
             (and
               (string.contains
                 (cdiag.compiler-diagnostic-message value)
@@ -9614,8 +9569,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
-              (cdiag.compiler-diagnostic-list-first
-                (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+              (cdiag.compiler-diagnostic-list-first (deref diag))]
             (and
               (string.contains
                 (cdiag.compiler-diagnostic-message value)
@@ -9665,9 +9619,7 @@
                     [(tc_core.ResultCompilerTypecheck.Err diag)
                       (let
                         [value : cdiag.CompilerDiagnostic
-                          (cdiag.compiler-diagnostic-list-first
-                            (cdiag.compiler-diagnostic-list-box-shared-view
-                              diag))]
+                          (cdiag.compiler-diagnostic-list-first (deref diag))]
                         (and
                           (string.eq
                             (cdiag.compiler-diagnostic-message value)
@@ -9699,8 +9651,7 @@
           [(tc_core.ResultCompilerTypecheck.Err diag)
             (let
               [value : cdiag.CompilerDiagnostic
-                (cdiag.compiler-diagnostic-list-first
-                  (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+                (cdiag.compiler-diagnostic-list-first (deref diag))]
               (and
                 (string.eq
                   (cdiag.compiler-diagnostic-message value)

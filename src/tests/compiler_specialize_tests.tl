@@ -38,16 +38,12 @@
       [right : profile_state.CompilerProfileState
         (profile_state.compiler-profile-state-new)]
       [left-metrics : profile_state.CompilerProfileMetrics
-        (profile_state.compiler-profile-state-metrics
-          (profile_state.compiler-profile-state-shared-view left))]
+        (profile_state.compiler-profile-state-metrics left)]
       [right-metrics : profile_state.CompilerProfileMetrics
-        (profile_state.compiler-profile-state-metrics
-          (profile_state.compiler-profile-state-shared-view right))]
+        (profile_state.compiler-profile-state-metrics right)]
       (begin
-        (spec.spec-profile-reset!
-          (profile_state.compiler-profile-state-shared-view left))
-        (spec.spec-profile-reset!
-          (profile_state.compiler-profile-state-shared-view right))
+        (spec.spec-profile-reset! left)
+        (spec.spec-profile-reset! right)
         (spec.spec-profile-note-structural-key
           (profile_state.compiler-profile-state-shared-view left-metrics)
           true)
@@ -59,35 +55,34 @@
           true)
         (spec.spec-profile-note-name-render right-metrics false)
         (spec.spec-profile-note-generated-text-materialized left-metrics)
-        (spec.spec-profile-reset!
-          (profile_state.compiler-profile-state-shared-view right))
+        (spec.spec-profile-reset! right)
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (profile_state.compiler-profile-state-shared-view left)
+            left
             spec.spec-profile-structural-key-created-metric)
           1
           "left job retains structural-key creation")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (profile_state.compiler-profile-state-shared-view left)
+            left
             spec.spec-profile-structural-key-reused-metric)
           0
           "left job does not inherit right structural-key reuse")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (profile_state.compiler-profile-state-shared-view left)
+            left
             spec.spec-profile-name-render-calls-metric)
           1
           "left job retains render calls")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (profile_state.compiler-profile-state-shared-view left)
+            left
             spec.spec-profile-name-render-cache-hits-metric)
           1
           "left job retains render cache hits")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (profile_state.compiler-profile-state-shared-view left)
+            left
             spec.spec-profile-name-render-cache-misses-metric)
           0
           "left job does not inherit right render cache misses")
@@ -99,7 +94,7 @@
           "left job retains generated text materialization")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (profile_state.compiler-profile-state-shared-view right)
+            right
             spec.spec-profile-structural-key-created-metric)
           0
           "right reset is isolated from left")
@@ -142,7 +137,7 @@
       "_"
       (spec-lifetime-list-key-at lifetimes (+ index 1)))))
 
-(define (spec-lifetime-list-key [lifetimes : ast.AstLifetimeList]) : String
+(define (spec-lifetime-list-key [lifetimes : (& lifetimes ast.AstLifetimeList)]) : String
   (spec-lifetime-list-key-at (& lifetimes) 0))
 
 (define (spec-type-key [ty : ast.AstType]) : String
@@ -223,8 +218,7 @@
         "enumargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
-        (spec-lifetime-list-key
-          (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+        (spec-lifetime-list-key (deref lifetimes)))]
     [(ast.AstType.Struct name)
       (str_cat.str-cat "struct_" (ast.ast-nominal-name-id-display name))]
     [(ast.AstType.StructArgs name lifetimes)
@@ -232,16 +226,14 @@
         "structargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
-        (spec-lifetime-list-key
-          (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+        (spec-lifetime-list-key (deref lifetimes)))]
     [(ast.AstType.Var name) (str_cat.str-cat "var_" (spec_ci.intern-str name))]
     [(ast.AstType.VarArgs name lifetimes)
       (str_cat.str-cat
         "varargs_"
         (spec_ci.intern-str name)
         "_"
-        (spec-lifetime-list-key
-          (ast.ast-lifetime-list-box-shared-view lifetimes)))]))
+        (spec-lifetime-list-key (deref lifetimes)))]))
 
 (define (spec-value-key [value : ctfe.CompilerCtfeValue]) : String
   (match value
@@ -330,13 +322,10 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools
-        (spec.spec-place-shared-view intern-state))]
+      (spec.spec-owner-context-new pools intern-state)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec.spec-place-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [result : ast.AstType
           (spec.spec-substitute-type-with-owner owner ty subs)]
@@ -359,13 +348,10 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools
-        (spec_ci.intern-global-shared-view intern-state))]
+      (spec.spec-owner-context-new pools intern-state)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [result : spec.ResultSpecSubExpr
           (spec.spec-substitute-values-expr-with-owner owner expr subs)]
@@ -411,9 +397,7 @@
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 (and
                   (not
-                    (spec.compiler-specialize-decl-list-defines?
-                      (ast.ast-place-shared-view decls)
-                      "alloc"))
+                    (spec.compiler-specialize-decl-list-defines? decls "alloc"))
                   (spec.compiler-specialize-decl-list-defines?
                     decls
                     "__tl_specialized_alloc_type_i64_none")))])]
@@ -454,9 +438,7 @@
                 [decls : ast.AstDeclList
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 [original : bool
-                  (spec.compiler-specialize-decl-list-defines?
-                    (ast.ast-place-shared-view decls)
-                    "scale")]
+                  (spec.compiler-specialize-decl-list-defines? decls "scale")]
                 [generated : bool
                   (spec.compiler-specialize-decl-list-defines?
                     decls
@@ -810,9 +792,7 @@
     [intern-a : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [intern-b : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner-a : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools-a
-        (spec_ci.intern-global-shared-view intern-a))]
+      (spec.spec-owner-context-new pools-a intern-a)]
     [owner-b : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools-b intern-b)]
     [array-a : ast.AstType
@@ -1001,9 +981,7 @@
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 (and
                   (not
-                    (spec.compiler-specialize-decl-list-defines?
-                      (ast.ast-place-shared-view decls)
-                      "alloc"))
+                    (spec.compiler-specialize-decl-list-defines? decls "alloc"))
                   (=
                     (compiler-specialize-decl-list-count-defs
                       decls
@@ -1349,7 +1327,7 @@
               (ast.ast-decl-list-box-shared-view decls-box)]
             [equal? : bool
               (spec.gen-decl-eq?
-                (ast.ast-decl-list-ref (ast.ast-place-shared-view decls) 0)
+                (ast.ast-decl-list-ref decls 0)
                 (ast.ast-decl-list-ref decls 1))]
             (and
               (= equal? reuse?)
@@ -1365,8 +1343,10 @@
                           (and
                             (= (ast.ast-decl-list-len (& normalized-decls)) 1)
                             (=
-                              (ast.ast-decl-must-use?
-                                (ast.ast-decl-list-ref normalized-decls 0))
+                              (let
+                                [decl
+                                  (ast.ast-decl-list-ref normalized-decls 0)]
+                                (ast.ast-decl-must-use? decl))
                               marked?)))]))]
                 [(spec.ResultSpecProgram.Err diag)
                   (let
@@ -1514,12 +1494,10 @@
         [(spec.ResultSpecProgram.Ok normalized)
           (match normalized
             [(ast.AstProgram.Program decls-box)
-              (match (ast.ast-decl-list-step
-                (ast.ast-decl-list-box-shared-view decls-box))
+              (match (ast.ast-decl-list-step (deref decls-box))
                 [(ast.AstDeclListStep.Cons decl _)
                   (and
-                    (match (ast.ast-decl-generated-meta
-                      (ast.ast-place-shared-view decl))
+                    (match (ast.ast-decl-generated-meta decl)
                       [(ast.AstGeneratedDeclMeta.Some generator item _ key)
                         (and
                           (string.eq generator "sample-family")
@@ -1654,9 +1632,7 @@
       (ast.ast-node-pool-context-new-with-capacities 32 32)]
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools
-        (spec_ci.intern-global-shared-view intern-state))]
+      (spec.spec-owner-context-new pools intern-state)]
     [handles : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
@@ -1821,7 +1797,7 @@
             (match specialized
               [(ast.AstProgram.Program decls)
                 (spec.compiler-specialize-decl-list-defines?
-                  (ast.ast-decl-list-box-shared-view decls)
+                  (deref decls)
                   "__tl_specialized_pick_i64_7_none")])]
           [_ false])]
       [_ false])))

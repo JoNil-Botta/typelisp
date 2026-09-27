@@ -2,9 +2,6 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 
-(define (format-width) : i64
-  80)
-
 (define (spaces [count : i64]) : String
   (let
     [i : i64 0]

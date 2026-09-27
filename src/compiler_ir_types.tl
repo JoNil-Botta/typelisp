@@ -1540,58 +1540,82 @@
     [(CompilerIrSpmdValueClass.Mask) (CompilerIrOperandRole.Mask)]))
 
 ;: The var `instr` defines, or -1. Var ids are nonnegative.
-(define (compiler-ir-instr-dst [instr : CompilerIrInstr]) : i64
+(define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
   (match instr
-    [(CompilerIrInstr.Mov dst _ _) dst]
-    [(CompilerIrInstr.Alloc dst _) dst]
-    [(CompilerIrInstr.AddrOf dst _) dst]
-    [(CompilerIrInstr.Gep dst _ _ _) dst]
-    [(CompilerIrInstr.Load dst _ _) dst]
+    [(CompilerIrInstr.Mov dst _ _) (deref dst)]
+    [(CompilerIrInstr.Alloc dst _) (deref dst)]
+    [(CompilerIrInstr.AddrOf dst _) (deref dst)]
+    [(CompilerIrInstr.Gep dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.Load dst _ _) (deref dst)]
     [(CompilerIrInstr.StoreOwned _ _ _) -1]
     [(CompilerIrInstr.StorePtr _ _ _) -1]
     [(CompilerIrInstr.CopyBytes _ _ _) -1]
     [(CompilerIrInstr.BoundsCheck _ _ _) -1]
-    [(CompilerIrInstr.Cast dst _ _ _) dst]
-    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
-    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
-    [(CompilerIrInstr.UnOp dst _ _ _) dst]
-    [(CompilerIrInstr.LaneId dst _ _) dst]
-    [(CompilerIrInstr.Splat dst _ _ _) dst]
+    [(CompilerIrInstr.Cast dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.Bitcast dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) (deref dst)]
+    [(CompilerIrInstr.UnOp dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.LaneId dst _ _) (deref dst)]
+    [(CompilerIrInstr.Splat dst _ _ _) (deref dst)]
     [(CompilerIrInstr.VectorBinOp payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
     [(CompilerIrInstr.VectorPrefix payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ _) (deref dst)]
     [(CompilerIrInstr.VectorCompare payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
-    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
-    [(CompilerIrInstr.MaskNot dst _ _) dst]
-    [(CompilerIrInstr.MaskReduce dst _ _ _) dst]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) (deref dst)]
+    [(CompilerIrInstr.MaskNot dst _ _) (deref dst)]
+    [(CompilerIrInstr.MaskReduce dst _ _ _) (deref dst)]
     [(CompilerIrInstr.Select payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
-    [(CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _) (deref dst)]
     [(CompilerIrInstr.VectorStore _) -1]
     [(CompilerIrInstr.PredicatedStore _) -1]
     [(CompilerIrInstr.PredicatedLoad payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
     [(CompilerIrInstr.GatherLoad payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
     [(CompilerIrInstr.VectorShuffle payload-box)
-      (compiler-ir-box-field-shared-view payload-box dst)]
-    [(CompilerIrInstr.TailMask dst _ _ _) dst]
-    [(CompilerIrInstr.EntryArgc dst) dst]
-    [(CompilerIrInstr.EntryArgv dst) dst]
-    [(CompilerIrInstr.EntryEnvp dst) dst]
-    [(CompilerIrInstr.CpuId dst _ _ _) dst]
-    [(CompilerIrInstr.Xgetbv dst _) dst]
-    [(CompilerIrInstr.Syscall dst _) dst]
-    [(CompilerIrInstr.Call dst _ _ _) dst]
-    [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
-    [(CompilerIrInstr.CallIndirectC dst _ _ _) dst]
+      (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box dst))]
+    [(CompilerIrInstr.TailMask dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.EntryArgc dst) (deref dst)]
+    [(CompilerIrInstr.EntryArgv dst) (deref dst)]
+    [(CompilerIrInstr.EntryEnvp dst) (deref dst)]
+    [(CompilerIrInstr.CpuId dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.Xgetbv dst _) (deref dst)]
+    [(CompilerIrInstr.Syscall dst _) (deref dst)]
+    [(CompilerIrInstr.Call dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.CallIndirect dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.CallIndirectC dst _ _ _) (deref dst)]
     [(CompilerIrInstr.CallCAbiStoreResult _) -1]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult _) -1]
     [(CompilerIrInstr.SpmdCall payload-box)
-      (match (compiler-ir-box-field-shared-view payload-box result)
+      (match (let
+        [payload-box
+          (owned_view.compiler-owned-reference-shared-view payload-box)]
+        (compiler-ir-box-field-shared-view payload-box result))
         [(CompilerIrSpmdCallResult.Unit) -1]
         [(CompilerIrSpmdCallResult.Value dst _ _) dst])]
     [(CompilerIrInstr.TailCall _ _ _) -1]
@@ -1600,9 +1624,9 @@
     [(CompilerIrInstr.Branch _ _ _) -1]
     [(CompilerIrInstr.TotalEnumBranch _ _ _) -1]
     [(CompilerIrInstr.Return _) -1]
-    [(CompilerIrInstr.Phi dst _ _) dst]
-    [(CompilerIrInstr.Pack dst _ _) dst]
-    [(CompilerIrInstr.Word dst _ _ _) dst]
+    [(CompilerIrInstr.Phi dst _ _) (deref dst)]
+    [(CompilerIrInstr.Pack dst _ _) (deref dst)]
+    [(CompilerIrInstr.Word dst _ _ _) (deref dst)]
     [(CompilerIrInstr.TailCallIndirect _ _ _) -1]
     [(CompilerIrInstr.Switch _ _ _ _) -1]
     [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) -1]))
@@ -3127,14 +3151,8 @@
             (begin
               (while (and same (< index a-inputs.len))
                 (let
-                  [a-input
-                    (compiler-ir-phi-input-seq-ref
-                      (compiler-ir-global-shared-view a-inputs)
-                      index)]
-                  [b-input
-                    (compiler-ir-phi-input-seq-ref
-                      (compiler-ir-global-shared-view b-inputs)
-                      index)]
+                  [a-input (compiler-ir-phi-input-seq-ref a-inputs index)]
+                  [b-input (compiler-ir-phi-input-seq-ref b-inputs index)]
                   (begin
                     (set!
                       same
@@ -4494,9 +4512,7 @@
               (= (string.string-length problem) 0)
               (< index params.len))
               (begin
-                (match (compiler-ir-param-seq-ref
-                  (compiler-ir-global-shared-view params)
-                  index)
+                (match (compiler-ir-param-seq-ref params index)
                   [(CompilerIrParam.Param _ param-ty _)
                     (match (compiler-ir-spmd-private-param-seq-ref
                       abi.params
@@ -5213,10 +5229,12 @@
       (set! (array-ref slots 3) d)
       (CompilerIrValueSeq slots 4))))
 
-(define (compiler-ir-value-seq-count [values : CompilerIrValueSeq]) : i64
+(define (compiler-ir-value-seq-count [values : (& values CompilerIrValueSeq)]) : i64
   values.len)
 
-(define (compiler-ir-value-seq-ref [values : CompilerIrValueSeq] [index : i64]) : CompilerIrValue
+(define (compiler-ir-value-seq-ref
+  [values : (& values CompilerIrValueSeq)]
+  [index : i64]) : CompilerIrValue
   (compiler-ir-array-shared-view values.slots index))
 
 (define (compiler-ir-phi-input-seq-empty) : CompilerIrPhiInputSeq
@@ -5237,17 +5255,16 @@
         (begin
           (set!
             (array-ref slots (+ index 1))
-            (compiler-ir-phi-input-seq-ref
-              (compiler-ir-global-shared-view rest)
-              index))
+            (compiler-ir-phi-input-seq-ref rest index))
           (set! index (+ index 1))))
       (CompilerIrPhiInputSeq slots 0 count))))
 
-(define (compiler-ir-phi-input-seq-count [inputs : CompilerIrPhiInputSeq]) : i64
+(define (compiler-ir-phi-input-seq-count
+  [inputs : (& inputs CompilerIrPhiInputSeq)]) : i64
   inputs.len)
 
 (define (compiler-ir-phi-input-seq-ref
-  [inputs : CompilerIrPhiInputSeq]
+  [inputs : (& inputs CompilerIrPhiInputSeq)]
   [index : i64]) : CompilerIrPhiInput
   (compiler-ir-array-shared-view inputs.slots (+ inputs.start index)))
 
@@ -5267,9 +5284,7 @@
         (while (< index inputs.len)
           (let
             [input : CompilerIrPhiInput
-              (compiler-ir-phi-input-seq-ref
-                (compiler-ir-global-shared-view inputs)
-                index)]
+              (compiler-ir-phi-input-seq-ref inputs index)]
             (begin
               (set!
                 (array-ref slots index)
@@ -5452,13 +5467,15 @@
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ false]))
 
-(define (compiler-ir-instr-seq-phi? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
+(define (compiler-ir-instr-seq-phi?
+  [instrs : (& instrs CompilerIrInstrSeq)]
+  [index : i64]) : bool
   (match (& (array-ref instrs.slots index))
     [(CompilerIrInstr.Phi _ _ _) true]
     [_ false]))
 
 (define (compiler-ir-instr-seq-bounds-check?
-  [instrs : CompilerIrInstrSeq]
+  [instrs : (& instrs CompilerIrInstrSeq)]
   [index : i64]) : bool
   (match (& (array-ref instrs.slots index))
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
@@ -5485,7 +5502,7 @@
     [_ (CompilerIrInstrScalarFact.Other)]))
 
 (define (compiler-ir-instr-seq-set!
-  [instrs : CompilerIrInstrSeq]
+  [instrs : (&mut instrs CompilerIrInstrSeq)]
   [index : i64]
   [instr : CompilerIrInstr]) : unit
   (set! (array-ref instrs.slots index) instr))
@@ -5666,23 +5683,26 @@
       (set! (array-ref slots params.len) param)
       (CompilerIrParamSeq slots count))))
 
-(define (compiler-ir-param-seq-count [params : CompilerIrParamSeq]) : i64
+(define (compiler-ir-param-seq-count [params : (& params CompilerIrParamSeq)]) : i64
   params.len)
 
 ;; Keep the checked aggregate-array path used by the other dense IR families.
-(define (compiler-ir-param-seq-ref [params : CompilerIrParamSeq] [index : i64]) : CompilerIrParam
+(define (compiler-ir-param-seq-ref
+  [params : (& params CompilerIrParamSeq)]
+  [index : i64]) : CompilerIrParam
   (compiler-ir-array-shared-view params.slots index))
 
 (define (compiler-ir-function-seq-empty) : CompilerIrFunctionSeq
   (CompilerIrFunctionSeq (__tl_make-array CompilerIrFunction 0) 0))
 
-(define (compiler-ir-function-seq-count [functions : CompilerIrFunctionSeq]) : i64
+(define (compiler-ir-function-seq-count
+  [functions : (& functions CompilerIrFunctionSeq)]) : i64
   functions.len)
 
 ;; Keep the checked array-ref path; aggregate enum array elements need the array macro,
 ;; as with instruction and block sequences.
 (define (compiler-ir-function-seq-ref
-  [functions : CompilerIrFunctionSeq]
+  [functions : (& functions CompilerIrFunctionSeq)]
   [index : i64]) : CompilerIrFunction
   (compiler-ir-array-shared-view functions.slots index))
 
@@ -5740,9 +5760,7 @@
       (begin
         (compiler-ir-value-builder-push!
           builder
-          (compiler-ir-value-seq-ref
-            (compiler-ir-global-shared-view values)
-            index))
+          (compiler-ir-value-seq-ref values index))
         (set! index (+ index 1))))))
 
 (define (compiler-ir-value-seq-prepend
@@ -5795,9 +5813,7 @@
       (begin
         (compiler-ir-phi-input-builder-push!
           builder
-          (compiler-ir-phi-input-seq-ref
-            (compiler-ir-global-shared-view inputs)
-            index))
+          (compiler-ir-phi-input-seq-ref inputs index))
         (set! index (+ index 1))))))
 
 (compiler-ir-dense-builder
@@ -5817,7 +5833,7 @@
 
 (define (compiler-ir-instr-builder-append-seq-range!
   [builder : (&mut builder CompilerIrInstrBuilder)]
-  [instrs : CompilerIrInstrSeq]
+  [instrs : (& instrs CompilerIrInstrSeq)]
   [start : i64]
   [end : i64]) : unit
   (let
@@ -5982,11 +5998,12 @@
       (set! (array-ref slots 3) d)
       (CompilerIrExternSeq slots 4))))
 
-(define (compiler-ir-global-seq-count [globals : CompilerIrGlobalSeq]) : i64
+(define (compiler-ir-global-seq-count
+  [globals : (& globals CompilerIrGlobalSeq)]) : i64
   globals.len)
 
 (define (compiler-ir-global-seq-ref
-  [globals : CompilerIrGlobalSeq]
+  [globals : (& globals CompilerIrGlobalSeq)]
   [index : i64]) : CompilerIrGlobal
   (compiler-ir-array-shared-view globals.slots index))
 
@@ -6010,11 +6027,12 @@
       (set! builder.len externs.len)
       builder)))
 
-(define (compiler-ir-extern-seq-count [externs : CompilerIrExternSeq]) : i64
+(define (compiler-ir-extern-seq-count
+  [externs : (& externs CompilerIrExternSeq)]) : i64
   externs.len)
 
 (define (compiler-ir-extern-seq-ref
-  [externs : CompilerIrExternSeq]
+  [externs : (& externs CompilerIrExternSeq)]
   [index : i64]) : CompilerIrExtern
   (compiler-ir-array-shared-view externs.slots index))
 
@@ -6127,9 +6145,7 @@
         (begin
           (compiler-ir-phi-input-builder-push!
             (&mut builder)
-            (compiler-ir-phi-input-seq-ref
-              (compiler-ir-global-shared-view inputs)
-              index))
+            (compiler-ir-phi-input-seq-ref inputs index))
           (set! index (- index 1))))
       (compiler-ir-phi-input-builder-append-seq! (&mut builder) acc)
       (compiler-ir-phi-input-builder-to-seq builder))))
@@ -6417,9 +6433,7 @@
             (&mut builder)
             (compiler-ir-clone-param
               pools
-              (compiler-ir-param-seq-ref
-                (compiler-ir-global-shared-view params)
-                index)))
+              (compiler-ir-param-seq-ref params index)))
           (set! index (+ index 1))))
       (compiler-ir-param-builder-to-seq builder))))
 
@@ -6479,9 +6493,7 @@
             (array-ref slots index)
             (compiler-ir-clone-global
               pools
-              (compiler-ir-global-seq-ref
-                (compiler-ir-global-shared-view globals)
-                index)))
+              (compiler-ir-global-seq-ref globals index)))
           (set! index (+ index 1))))
       (CompilerIrGlobalSeq slots globals.len))))
 
@@ -6522,9 +6534,7 @@
             (array-ref slots index)
             (compiler-ir-clone-extern
               pools
-              (compiler-ir-extern-seq-ref
-                (compiler-ir-global-shared-view externs)
-                index)))
+              (compiler-ir-extern-seq-ref externs index)))
           (set! index (+ index 1))))
       (CompilerIrExternSeq slots externs.len))))
 
@@ -6832,10 +6842,7 @@
       (if (= index 0)
         ""
         ", ")
-      (compiler-ir-value-render
-        (compiler-ir-value-seq-ref
-          (compiler-ir-global-shared-view values)
-          index))
+      (compiler-ir-value-render (compiler-ir-value-seq-ref values index))
       (compiler-ir-value-seq-render-from values (+ index 1)))))
 
 (define (compiler-ir-value-seq-render [values : CompilerIrValueSeq]) : String
@@ -6882,7 +6889,7 @@
       (CompilerIrCallArgs.One (compiler-ir-value-seq-ref values 0))]
     [(= values.len 2)
       (CompilerIrCallArgs.Two
-        (compiler-ir-value-seq-ref (compiler-ir-global-shared-view values) 0)
+        (compiler-ir-value-seq-ref values 0)
         (compiler-ir-value-seq-ref values 1))]
     [else (compiler-ir-call-args-array values)]))
 
@@ -7165,10 +7172,7 @@
   (if (>= index inputs.len)
     ""
     (let
-      [input : CompilerIrPhiInput
-        (compiler-ir-phi-input-seq-ref
-          (compiler-ir-global-shared-view inputs)
-          index)]
+      [input : CompilerIrPhiInput (compiler-ir-phi-input-seq-ref inputs index)]
       (str_cat.str-cat
         (if (= index 0)
           ""
@@ -7925,10 +7929,7 @@
   (if (>= index params.len)
     ""
     (let
-      [param : CompilerIrParam
-        (compiler-ir-param-seq-ref
-          (compiler-ir-global-shared-view params)
-          index)]
+      [param : CompilerIrParam (compiler-ir-param-seq-ref params index)]
       (str_cat.str-cat
         (compiler-ir-param-render structural-session type-segment-bases param)
         (if (= (+ index 1) params.len)
@@ -8055,9 +8056,7 @@
               (compiler-ir-global-render
                 structural-session
                 type-segment-bases
-                (compiler-ir-global-seq-ref
-                  (compiler-ir-global-shared-view globals)
-                  index))))
+                (compiler-ir-global-seq-ref globals index))))
           (set! index (+ index 1))))
       out)))
 
@@ -8114,9 +8113,7 @@
               (compiler-ir-extern-render
                 structural-session
                 type-segment-bases
-                (compiler-ir-extern-seq-ref
-                  (compiler-ir-global-shared-view externs)
-                  index))))
+                (compiler-ir-extern-seq-ref externs index))))
           (set! index (+ index 1))))
       out)))
 
@@ -9152,11 +9149,11 @@
 (define (compiler-ir-instr-seq-phi-input-count [instrs : CompilerIrInstrSeq]) : i64
   (compiler-ir-instr-seq-phi-input-count-from instrs.slots 0 instrs.len 0))
 
-(define (compiler-ir-block-list-count [blocks : CompilerIrBlockList]) : i64
+(define (compiler-ir-block-list-count [blocks : (& blocks CompilerIrBlockList)]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons _ rest)
-      (+ 1 (compiler-ir-block-list-count (deref rest)))]
+      (+ 1 (compiler-ir-block-list-count (deref (deref rest))))]
     [(CompilerIrBlockList.Array seq) seq.len]))
 
 (define (compiler-ir-block-list-empty-count [blocks : CompilerIrBlockList]) : i64
@@ -9434,8 +9431,7 @@
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrSummary.Summary
         (compiler-ir-global-seq-count globals)
-        (compiler-ir-function-seq-count
-          (compiler-ir-global-shared-view functions))
+        (compiler-ir-function-seq-count functions)
         (compiler-ir-extern-seq-count externs)
         (compiler-ir-function-seq-block-count functions)
         (compiler-ir-function-seq-instruction-count
@@ -9778,9 +9774,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (compiler-ir-param-seq-ref
-          (compiler-ir-global-shared-view params)
-          position)
+        (match (compiler-ir-param-seq-ref params position)
           [(CompilerIrParam.Param _ ty var)
             (compiler-ir-representation-var-type-set! types var ty)])
         (set! position (+ position 1))))))
@@ -9930,9 +9924,7 @@
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position params.len)
     index
-    (match (compiler-ir-param-seq-ref
-      (compiler-ir-global-shared-view params)
-      position)
+    (match (compiler-ir-param-seq-ref params position)
       [(CompilerIrParam.Param _ ty _)
         (compiler-ir-representation-collect-signature-params-from
           type-segment-bases
@@ -9969,7 +9961,7 @@
             type-segment-bases
             index
             ty
-            (compiler-ir-value-seq-count (compiler-ir-global-shared-view words))
+            (compiler-ir-value-seq-count words)
             (compiler-ir-representation-pack-class-mask
               (compiler-ir-global-shared-view types)
               words
@@ -10072,9 +10064,7 @@
   [index : CompilerIrRepresentationIndex]
   [functions : CompilerIrFunctionSeq]
   [position : i64]) : CompilerIrRepresentationIndex
-  (if (>=
-    position
-    (compiler-ir-function-seq-count (compiler-ir-global-shared-view functions)))
+  (if (>= position (compiler-ir-function-seq-count functions))
     index
     (compiler-ir-representation-collect-group-function-seq-from
       type-segment-bases
@@ -10204,9 +10194,7 @@
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position params.len)
     index
-    (match (compiler-ir-param-seq-ref
-      (compiler-ir-global-shared-view params)
-      position)
+    (match (compiler-ir-param-seq-ref params position)
       [(CompilerIrParam.Param _ ty _)
         (compiler-ir-representation-collect-one-param-seq-from
           type-segment-bases
@@ -10379,9 +10367,7 @@
   [index : CompilerIrRepresentationIndex]
   [functions : CompilerIrFunctionSeq]
   [position : i64]) : CompilerIrRepresentationIndex
-  (if (>=
-    position
-    (compiler-ir-function-seq-count (compiler-ir-global-shared-view functions)))
+  (if (>= position (compiler-ir-function-seq-count functions))
     index
     (compiler-ir-representation-collect-one-function-seq-from
       type-segment-bases
@@ -10407,13 +10393,9 @@
   [index : CompilerIrRepresentationIndex]
   [globals : CompilerIrGlobalSeq]
   [position : i64]) : CompilerIrRepresentationIndex
-  (if (>=
-    position
-    (compiler-ir-global-seq-count (compiler-ir-global-shared-view globals)))
+  (if (>= position (compiler-ir-global-seq-count globals))
     index
-    (match (compiler-ir-global-seq-ref
-      (compiler-ir-global-shared-view globals)
-      position)
+    (match (compiler-ir-global-seq-ref globals position)
       [(CompilerIrGlobal.Global _ ty _)
         (compiler-ir-representation-collect-one-globals-from
           type-segment-bases
@@ -10441,9 +10423,7 @@
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position externs.len)
     index
-    (match (compiler-ir-extern-seq-ref
-      (compiler-ir-global-shared-view externs)
-      position)
+    (match (compiler-ir-extern-seq-ref externs position)
       [(CompilerIrExtern.Extern _ _ _ ty _ _ _ _)
         (compiler-ir-representation-collect-one-externs-from
           type-segment-bases
@@ -10522,9 +10502,7 @@
     (begin
       (while (< index functions.len)
         (begin
-          (match (compiler-ir-function-seq-ref
-            (compiler-ir-global-shared-view functions)
-            index)
+          (match (compiler-ir-function-seq-ref functions index)
             [(CompilerIrFunction.Function _ _ _ _ _ function-abi)
               (match function-abi
                 [(CompilerIrFunctionAbi.Ordinary) unit]

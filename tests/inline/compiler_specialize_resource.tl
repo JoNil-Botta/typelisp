@@ -6,7 +6,6 @@
 (import compiler_parse_core as parser)
 (import compiler_ctfe as ctfe)
 (import compiler_diagnostic as diagnostic)
-(import compiler_owned_view as view)
 (import stdlib.string)
 (import stdlib.test)
 
@@ -83,9 +82,9 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 32 32)]
     [owner : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools
-        (ci.intern-compat-state-capture-active))]
+      (let
+        [intern-state (ci.intern-compat-state-capture-active)]
+        (spec.spec-owner-context-new pools intern-state))]
     [expr : ast.AstExpr (resource-with-owner (& owner))]
     [types : spec.SpecTypeSubst
       (spec.spec-type-subst-cons
@@ -134,7 +133,7 @@
     (match (parser.parse-ast-source-with-cfg-and-pools
       source
       (parser.compiler-cfg-empty)
-      (view.compiler-owned-shared-view pools))
+      pools)
       [(parser.ResultAstProgram.Ok program)
         (let
           [ambient-count : i64 (ast.ast-node-pool-len)]
@@ -152,24 +151,24 @@
                       (begin
                         (test.assert-true
                           (spec.compiler-specialize-decl-list-defines?
-                            (view.compiler-owned-shared-view decls)
+                            decls
                             "__tl_specialized_pick_i64_1_none")
                           "own initializer sees template")
                         (test.assert-true
                           (spec.compiler-specialize-decl-list-defines?
-                            (view.compiler-owned-shared-view decls)
+                            decls
                             "__tl_specialized_pick_i64_2_none")
                           "own cleanup sees template")
                         (test.assert-true
                           (not
                             (spec.compiler-specialize-decl-list-defines?
-                              (view.compiler-owned-shared-view decls)
+                              decls
                               "__tl_specialized_pick_i64_3_none"))
                           "later initializer sees resource")
                         (test.assert-true
                           (not
                             (spec.compiler-specialize-decl-list-defines?
-                              (view.compiler-owned-shared-view decls)
+                              decls
                               "__tl_specialized_pick_i64_4_none"))
                           "body sees resource")
                         (test.assert-true

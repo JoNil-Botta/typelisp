@@ -171,7 +171,7 @@
   [src : String]
   [line : i64]
   [col : i64]
-  [expected : String]) : bool
+  [expected : (& expected str)]) : bool
   (match (fcst.parse-format-source-result src)
     [(fcst.ResultFormatCst.Ok _) false]
     [(fcst.ResultFormatCst.Err err)
@@ -190,46 +190,14 @@
   (let
     [message : String "format lexer: malformed number literal"]
     (and
-      (fe-format-cst-malformed-number-at?
-        "1e"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e+"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1.5e"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e2foo"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1.e2"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1_0e2"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e2.3"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e2_3"
-        1
-        1
-        (lx.global-shared-view message))
+      (fe-format-cst-malformed-number-at? "1e" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e+" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1.5e" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e2foo" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1.e2" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1_0e2" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e2.3" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e2_3" 1 1 message)
       (fe-format-cst-malformed-number-at? "\n  1.5e-" 2 3 message))))
 
 (define (fe-format-rules-source) : String
@@ -310,34 +278,24 @@
     (begin
       (fe-assert
         (and
-          (=
-            (format_tests.format-token-tag-count
-              (lx.global-shared-view stream)
-              (ft.fmt-tag-int))
-            5)
+          (= (format_tests.format-token-tag-count stream (ft.fmt-tag-int)) 5)
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 1))
+            (ft.format-token-text (ft.format-token-at stream 1))
             "1.5e-9")
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 2))
+            (ft.format-token-text (ft.format-token-at stream 2))
             "1e10")
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 3))
+            (ft.format-token-text (ft.format-token-at stream 3))
             "2.5E+3")
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 4))
+            (ft.format-token-text (ft.format-token-at stream 4))
             "-1e-5")
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 5))
+            (ft.format-token-text (ft.format-token-at stream 5))
             "0x1e5")
           (=
-            (ft.format-token-tag
-              (ft.format-token-at (lx.global-shared-view stream) 7))
+            (ft.format-token-tag (ft.format-token-at stream 7))
             (ft.fmt-tag-end)))
         "formatter exponent atoms changed")
       (fe-assert

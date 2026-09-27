@@ -144,17 +144,13 @@
 (define (selfhost-check-report-diagnostics
   [diagnostics : cdiag.CompilerDiagnosticList]) : unit
   (let
-    [count : i64
-      (cdiag.compiler-diagnostic-list-count
-        (owned_view.compiler-owned-shared-view diagnostics))]
+    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [index : i64 0]
     (while (< index count)
       (begin
         (io.print-error
           (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (cdiag.compiler-diagnostic-list-get
-              (owned_view.compiler-owned-shared-view diagnostics)
-              index)))
+            (cdiag.compiler-diagnostic-list-get diagnostics index)))
         (set! index (+ index 1))))))
 
 (define (selfhost-check-file

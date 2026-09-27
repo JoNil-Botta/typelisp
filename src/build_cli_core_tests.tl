@@ -522,9 +522,7 @@
               paths
               (process.args-single
                 (build-package-graph-node-tlci-path
-                  (build.build-package-graph-node-vec-at
-                    (owned_view.compiler-owned-shared-view nodes)
-                    index)
+                  (build.build-package-graph-node-vec-at nodes index)
                   profile))))
           (set! index (+ index 1))))
       paths)))
@@ -564,14 +562,22 @@
       (build.BuildProfile.Release)
       target)))
 
-(define (build-package-graph-test-link-arg [node : build.BuildPackageGraphNode]) : process.ProcessStringList
-  (build-package-graph-test-link-arg-target
-    node
-    (backend.CompilerBackendTarget.Linux)))
+(define (build-package-graph-test-link-arg
+  [node : (& node build.BuildPackageGraphNode)]) : process.ProcessStringList
+  (let
+    [node : build.BuildPackageGraphNode
+      (owned_view.compiler-owned-reference-shared-view node)]
+    (build-package-graph-test-link-arg-target
+      node
+      (backend.CompilerBackendTarget.Linux))))
 
-(define (build-package-graph-test-tlci-arg [node : build.BuildPackageGraphNode]) : process.ProcessStringList
-  (process.args-single
-    (build-package-graph-node-tlci-path node (build.BuildProfile.Release))))
+(define (build-package-graph-test-tlci-arg
+  [node : (& node build.BuildPackageGraphNode)]) : process.ProcessStringList
+  (let
+    [node : build.BuildPackageGraphNode
+      (owned_view.compiler-owned-reference-shared-view node)]
+    (process.args-single
+      (build-package-graph-node-tlci-path node (build.BuildProfile.Release)))))
 
 (cfg
   test
@@ -670,21 +676,15 @@
         [expected : process.ProcessStringList
           (process.args-append
             (process.args-append
-              (build-package-graph-test-link-arg
-                (owned_view.compiler-owned-shared-view third))
-              (build-package-graph-test-link-arg
-                (owned_view.compiler-owned-shared-view second)))
-            (build-package-graph-test-link-arg
-              (owned_view.compiler-owned-shared-view first)))]
+              (build-package-graph-test-link-arg third)
+              (build-package-graph-test-link-arg second))
+            (build-package-graph-test-link-arg first))]
         [expected-tlcis : process.ProcessStringList
           (process.args-append
             (process.args-append
-              (build-package-graph-test-tlci-arg
-                (owned_view.compiler-owned-shared-view first))
-              (build-package-graph-test-tlci-arg
-                (owned_view.compiler-owned-shared-view second)))
-            (build-package-graph-test-tlci-arg
-              (owned_view.compiler-owned-shared-view third)))]
+              (build-package-graph-test-tlci-arg first)
+              (build-package-graph-test-tlci-arg second))
+            (build-package-graph-test-tlci-arg third))]
         [expected-windows : process.ProcessStringList
           (process.args-append
             (process.args-append
@@ -1231,10 +1231,10 @@
               (owned_view.compiler-owned-shared-view stage.dir))]
           (begin
             (build.build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
+              stage
               (owned_view.compiler-owned-shared-view rollback))
             (build.build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
+              stage
               (owned_view.compiler-owned-shared-view rollback))
             (let
               [primary-needle : String "primary commit error"]
@@ -1302,7 +1302,7 @@
             (build.build-package-commit-plan-rollback plan 1 1)]
           (begin
             (build.build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
+              stage
               (owned_view.compiler-owned-shared-view rollback))
             (let
               [ok : bool
@@ -1344,28 +1344,27 @@
           (build.build-package-commit-plan-new)
           (owned_view.compiler-owned-shared-view final)
           (owned_view.compiler-owned-shared-view stage.asm))]
-      (let
-        [rollback : build.BuildPackageRollbackDisposition
-          (build.build-package-commit-plan-rollback plan 1 0)]
-        (begin
-          (build.build-package-clean-stage-after-rollback
-            (owned_view.compiler-owned-shared-view stage)
-            (owned_view.compiler-owned-shared-view rollback))
-          (let
-            [needle : String
-              "rollback failed to remove installed package artifact"]
-            [invalid-needle : String "io: invalid path"]
-            [ok : bool
-              (and
-                (= rollback.len 0)
-                (> (string.string-length rollback.errors) 0)
-                (string.contains (& rollback.errors) (& needle))
-                (string.contains (& rollback.errors) (& invalid-needle))
-                (not (build.build-package-rollback-recovery-required? rollback))
-                (not (build-package-rollback-test-path-exists? stage.dir)))]
-            (begin
-              (build-package-rollback-test-clean root stage final unused)
-              ok)))))))
+      [rollback : build.BuildPackageRollbackDisposition
+        (build.build-package-commit-plan-rollback plan 1 0)]
+      (begin
+        (build.build-package-clean-stage-after-rollback
+          stage
+          (owned_view.compiler-owned-shared-view rollback))
+        (let
+          [needle : String
+            "rollback failed to remove installed package artifact"]
+          [invalid-needle : String "io: invalid path"]
+          [ok : bool
+            (and
+              (= rollback.len 0)
+              (> (string.string-length rollback.errors) 0)
+              (string.contains (& rollback.errors) (& needle))
+              (string.contains (& rollback.errors) (& invalid-needle))
+              (not (build.build-package-rollback-recovery-required? rollback))
+              (not (build-package-rollback-test-path-exists? stage.dir)))]
+          (begin
+            (build-package-rollback-test-clean root stage final unused)
+            ok))))))
 
 (cfg
   test
@@ -1390,7 +1389,7 @@
         [(build.ResultBuildPackageCommit.Err message rollback)
           (begin
             (build.build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
+              stage
               (owned_view.compiler-owned-shared-view rollback))
             (let
               [needle : String
@@ -1430,9 +1429,7 @@
         (match (build.build-package-commit-plan-run plan)
           [(build.ResultBuildPackageCommit.Err _ rollback)
             (begin
-              (build.build-package-clean-stage-after-rollback
-                (owned_view.compiler-owned-shared-view stage)
-                rollback)
+              (build.build-package-clean-stage-after-rollback stage rollback)
               (build-package-rollback-test-clean root stage final unused)
               false)]
           [(build.ResultBuildPackageCommit.Ok)

@@ -247,24 +247,29 @@
 (define (compiler-backend-test-emit-program-with-state
   [backend-state : backend.CompilerBackendState]
   [target : backend.CompilerBackendTarget]
-  [program : ir.CompilerIrProgram]
-  [spans : ir.CompilerSourceSpans]
+  [program : (& program ir.CompilerIrProgram)]
+  [spans : (& spans ir.CompilerSourceSpans)]
   [emit-entry : bool]) : backend.ResultCompilerBackend
-  (match (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    backend-state
-    (ast.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    (backend.CompilerBackendMode.Scalar)
-    spans
-    emit-entry
-    false
-    false
-    (profile_state.compiler-profile-state-new))
-    [(backend.ResultCompilerBackendBuffer.Ok buf)
-      (backend.ResultCompilerBackend.Ok (text_buf.render buf))]
-    [(backend.ResultCompilerBackendBuffer.Err message)
-      (backend.ResultCompilerBackend.Err message)]))
+  (let
+    [program : ir.CompilerIrProgram
+      (owned_view.compiler-owned-reference-shared-view program)]
+    [spans : ir.CompilerSourceSpans
+      (owned_view.compiler-owned-reference-shared-view spans)]
+    (match (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+      backend-state
+      (ast.ast-node-pool-reader-type-segment-bases)
+      program
+      target
+      (backend.CompilerBackendMode.Scalar)
+      spans
+      emit-entry
+      false
+      false
+      (profile_state.compiler-profile-state-new))
+      [(backend.ResultCompilerBackendBuffer.Ok buf)
+        (backend.ResultCompilerBackend.Ok (text_buf.render buf))]
+      [(backend.ResultCompilerBackendBuffer.Err message)
+        (backend.ResultCompilerBackend.Err message)])))
 
 ;; String-returning shim for the outgoing stack-argument emitter: it appends
 ;; into a caller-owned buffer, so its Ok payload is not the emitted text.
@@ -311,7 +316,7 @@
       (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
       (ir.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
-        (ir.compiler-ir-global-shared-view rest)
+        rest
         0
         rest.len)
       (ir.compiler-ir-instr-builder-to-seq builder))))
@@ -2428,13 +2433,13 @@
         5)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_empty"
           0)
         1)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_empty"
           0)
         1)
@@ -2446,13 +2451,13 @@
         1)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_string"
           0)
         8)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_string"
           0)
         8)
@@ -2464,13 +2469,13 @@
         8)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_fixup"
           0)
         16)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_fixup"
           0)
         16)
@@ -5128,22 +5133,22 @@
       (compiler-backend-test-emit-program-with-state
         state-a
         (backend.CompilerBackendTarget.Linux)
-        (owned_view.compiler-owned-shared-view program)
-        (owned_view.compiler-owned-shared-view spans)
+        program
+        spans
         true)]
     [b1-result : backend.ResultCompilerBackend
       (compiler-backend-test-emit-program-with-state
         state-b
         (backend.CompilerBackendTarget.Linux)
-        (owned_view.compiler-owned-shared-view program)
-        (owned_view.compiler-owned-shared-view spans)
+        program
+        spans
         true)]
     [a2-result : backend.ResultCompilerBackend
       (compiler-backend-test-emit-program-with-state
         state-a
         (backend.CompilerBackendTarget.Linux)
-        (owned_view.compiler-owned-shared-view program)
-        (owned_view.compiler-owned-shared-view spans)
+        program
+        spans
         true)]
     [b2-result : backend.ResultCompilerBackend
       (compiler-backend-test-emit-program-with-state
@@ -7437,14 +7442,8 @@
           bases
           (owned_view.compiler-owned-shared-view memory24))
         24)
-      (backend.compiler-backend-group-type?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view group0))
-      (backend.compiler-backend-group-type?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view group2))
+      (backend.compiler-backend-group-type? bases index group0)
+      (backend.compiler-backend-group-type? bases index group2)
       (=
         (backend.compiler-backend-group-word-count
           bases
@@ -7561,18 +7560,9 @@
           (owned_view.compiler-owned-shared-view type2))
         2)
       (= (backend.compiler-backend-group-word-class-mask bases index type3) 3)
-      (backend.compiler-backend-group-word-sse?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view type1)
-        0)
+      (backend.compiler-backend-group-word-sse? bases index type1 0)
       (not (backend.compiler-backend-group-word-sse? bases index type1 1))
-      (not
-        (backend.compiler-backend-group-word-sse?
-          bases
-          index
-          (owned_view.compiler-owned-shared-view type2)
-          0))
+      (not (backend.compiler-backend-group-word-sse? bases index type2 0))
       (backend.compiler-backend-group-word-sse? bases index type2 1))))
 
 (define (compiler-backend-private-memory-transport-ok?) : bool
@@ -7678,7 +7668,7 @@
         0
         0
         0
-        (owned_view.compiler-owned-shared-view diag)
+        diag
         index
         1
         index.backend-state)]
@@ -7712,7 +7702,7 @@
         0
         0
         0
-        (owned_view.compiler-owned-shared-view diag)
+        diag
         index
         1
         index.backend-state)]
@@ -7850,26 +7840,10 @@
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     (and
-      (=
-        (backend.compiler-backend-type-size
-          bases
-          (owned_view.compiler-owned-shared-view ref))
-        16)
-      (=
-        (backend.compiler-backend-type-size
-          bases
-          (owned_view.compiler-owned-shared-view mut-ref))
-        16)
-      (=
-        (backend.compiler-backend-type-size
-          bases
-          (owned_view.compiler-owned-shared-view ordinary-ref))
-        8)
-      (=
-        (backend.compiler-backend-type-size
-          bases
-          (owned_view.compiler-owned-shared-view bare-slice))
-        0)
+      (= (backend.compiler-backend-type-size bases ref) 16)
+      (= (backend.compiler-backend-type-size bases mut-ref) 16)
+      (= (backend.compiler-backend-type-size bases ordinary-ref) 8)
+      (= (backend.compiler-backend-type-size bases bare-slice) 0)
       (=
         (backend.compiler-backend-group-word-count
           bases
@@ -7894,19 +7868,9 @@
           index
           (owned_view.compiler-owned-shared-view bare-slice))
         1)
-      (backend.compiler-backend-group-type?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view ref))
-      (backend.compiler-backend-group-type?
-        bases
-        index
-        (owned_view.compiler-owned-shared-view mut-ref))
-      (not
-        (backend.compiler-backend-group-type?
-          bases
-          index
-          (owned_view.compiler-owned-shared-view ordinary-ref)))
+      (backend.compiler-backend-group-type? bases index ref)
+      (backend.compiler-backend-group-type? bases index mut-ref)
+      (not (backend.compiler-backend-group-type? bases index ordinary-ref))
       (=
         (backend.compiler-backend-group-word-class-mask
           bases
@@ -7966,16 +7930,17 @@
         (ci.intern-generated-canonical-name "arena-brand/test#1"))
       (and
         (=
-          (backend.compiler-backend-type-size
-            0
-            (ast.AstType.Struct cbi.compiler-builtin-id-arena-type))
+          (let
+            [ty (ast.AstType.Struct cbi.compiler-builtin-id-arena-type)]
+            (backend.compiler-backend-type-size 0 ty))
           8)
         (=
-          (backend.compiler-backend-type-size
-            0
-            (ast.AstType.StructArgs
-              cbi.compiler-builtin-id-arena-type
-              (box lifetimes)))
+          (let
+            [ty
+              (ast.AstType.StructArgs
+                cbi.compiler-builtin-id-arena-type
+                (box lifetimes))]
+            (backend.compiler-backend-type-size 0 ty))
           8)))))
 
 ;; Emitted-source witness for the internal borrowed-slice ABI.  A borrowed
@@ -8170,22 +8135,29 @@
     [ty : ast.AstType (compiler-backend-register-group-test-type)]
     [index : backend.CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
-    (match (backend.compiler-backend-emit-call-args
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (backend.CompilerBackendTarget.Linux)
-      (regalloc.compiler-reg-assignment-table-empty)
-      (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 7))
-      (ast.ast-type-cons ty (ast.ast-type-list-new))
-      false
-      0
-      0
-      0
-      0
-      0
-      (cdiag.compiler-diagnostic-at-start "" "")
-      index
-      4
-      index.backend-state)
+    (match (let
+      [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+      [target (backend.CompilerBackendTarget.Linux)]
+      [assignments (regalloc.compiler-reg-assignment-table-empty)]
+      [args (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 7))]
+      [types (ast.ast-type-cons ty (ast.ast-type-list-new))]
+      [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+      (backend.compiler-backend-emit-call-args
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        false
+        0
+        0
+        0
+        0
+        0
+        func-diag
+        index
+        4
+        index.backend-state))
       [(backend.ResultCompilerBackend.Err diag)
         (string.eq
           (cdiag.compiler-diagnostic-message (__tl-box-place diag))
@@ -8595,10 +8567,13 @@
           (ast.AstType.String))
         1)
       (not
-        (backend.compiler-backend-group-type?
-          (ast.ast-node-pool-reader-type-segment-bases)
-          program-index
-          (ast.AstType.String)))
+        (let
+          [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+          [ty (ast.AstType.String)]
+          (backend.compiler-backend-group-type?
+            type-segment-bases
+            program-index
+            ty)))
       (asm-ok?
         (backend.compiler-backend-emit-program-for-target
           (owned_view.compiler-owned-shared-view program)
@@ -14254,26 +14229,31 @@ g:
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1))]
     (asm-ok?
-      (backend.compiler-backend-emit-call-args
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.CompilerBackendTarget.Linux)
-        assignments
-        args
-        (compiler-backend-i64-type-list8)
-        false
-        0
-        1
-        0
-        1
-        0
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (compiler-backend-program-index-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-function-seq-empty)
-          (ir.compiler-ir-extern-seq-empty))
-        2
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [target (backend.CompilerBackendTarget.Linux)]
+        [types (compiler-backend-i64-type-list8)]
+        [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+        (backend.compiler-backend-emit-call-args
+          type-segment-bases
+          target
+          assignments
+          args
+          types
+          false
+          0
+          1
+          0
+          1
+          0
+          func-diag
+          (compiler-backend-program-index-build
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (ir.compiler-ir-function-seq-empty)
+            (ir.compiler-ir-extern-seq-empty))
+          2
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active))))
       (has ", %rsi\n" ", %rdx\n")
       (lacks "%rdi"))))
 
@@ -14286,26 +14266,31 @@ g:
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1))]
     (asm-ok?
-      (backend.compiler-backend-emit-call-args
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.CompilerBackendTarget.Linux)
-        assignments
-        args
-        (compiler-backend-i64-type-list8)
-        false
-        0
-        1
-        0
-        1
-        0
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (compiler-backend-program-index-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-function-seq-empty)
-          (ir.compiler-ir-extern-seq-empty))
-        2
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [target (backend.CompilerBackendTarget.Linux)]
+        [types (compiler-backend-i64-type-list8)]
+        [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+        (backend.compiler-backend-emit-call-args
+          type-segment-bases
+          target
+          assignments
+          args
+          types
+          false
+          0
+          1
+          0
+          1
+          0
+          func-diag
+          (compiler-backend-program-index-build
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (ir.compiler-ir-function-seq-empty)
+            (ir.compiler-ir-extern-seq-empty))
+          2
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active))))
       (has "    movq %rsi, %rdx\n    movq %rdi, %rsi\n"))))
 
 (define (compiler-backend-c-abi-arg-cycle-ok?) : bool
@@ -14317,26 +14302,31 @@ g:
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1))]
     (asm-ok?
-      (backend.compiler-backend-emit-call-args
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.CompilerBackendTarget.Linux)
-        assignments
-        args
-        (compiler-backend-i64-type-list8)
-        true
-        0
-        0
-        0
-        0
-        0
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (compiler-backend-program-index-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-function-seq-empty)
-          (ir.compiler-ir-extern-seq-empty))
-        2
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [target (backend.CompilerBackendTarget.Linux)]
+        [types (compiler-backend-i64-type-list8)]
+        [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+        (backend.compiler-backend-emit-call-args
+          type-segment-bases
+          target
+          assignments
+          args
+          types
+          true
+          0
+          0
+          0
+          0
+          0
+          func-diag
+          (compiler-backend-program-index-build
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (ir.compiler-ir-function-seq-empty)
+            (ir.compiler-ir-extern-seq-empty))
+          2
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active))))
       (has ", %rdi\n" ", %rsi\n")
       (lacks "    movq %rsi, %rdi\n    movq %rdi, %rsi\n"))))
 
@@ -15183,10 +15173,13 @@ g:
     [(backend.ResultCompilerBackendBuffer.Err _) false]))
 
 (define (compiler-backend-explicit-state-buffer-result-text
-  [result : backend.ResultCompilerBackendBuffer]) : String
-  (match result
-    [(backend.ResultCompilerBackendBuffer.Ok buf) (text_buf.render buf)]
-    [(backend.ResultCompilerBackendBuffer.Err _) ""]))
+  [result : (& result backend.ResultCompilerBackendBuffer)]) : String
+  (let
+    [result : backend.ResultCompilerBackendBuffer
+      (owned_view.compiler-owned-reference-shared-view result)]
+    (match result
+      [(backend.ResultCompilerBackendBuffer.Ok buf) (text_buf.render buf)]
+      [(backend.ResultCompilerBackendBuffer.Err _) ""])))
 
 (define (compiler-backend-explicit-state-object-result-text
   [result : backend.ResultCompilerBackendObject]) : String
@@ -15198,13 +15191,16 @@ g:
     [(backend.ResultCompilerBackendObject.Err _) ""]))
 
 (define (compiler-backend-explicit-state-object-result-ok?
-  [result : backend.ResultCompilerBackendObject]) : bool
-  (match result
-    [(backend.ResultCompilerBackendObject.Ok image)
-      (match (elf.compiler-object-elf-render image)
-        [(elf.ResultCompilerObjectElf.Ok _) true]
-        [(elf.ResultCompilerObjectElf.Err _) false])]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
+  [result : (& result backend.ResultCompilerBackendObject)]) : bool
+  (let
+    [result : backend.ResultCompilerBackendObject
+      (owned_view.compiler-owned-reference-shared-view result)]
+    (match result
+      [(backend.ResultCompilerBackendObject.Ok image)
+        (match (elf.compiler-object-elf-render image)
+          [(elf.ResultCompilerObjectElf.Ok _) true]
+          [(elf.ResultCompilerObjectElf.Err _) false])]
+      [(backend.ResultCompilerBackendObject.Err _) false])))
 
 (define (compiler-backend-explicit-state-pic-result-ok?
   [result : (& result backend.ResultCompilerBackendPic)]) : bool
@@ -15226,7 +15222,7 @@ g:
   (and (asm-has? text own) (asm-lacks? text other)))
 
 (define (compiler-backend-explicit-state-install!
-  [intern-state : ci.InternCompatState]
+  [intern-state : (& intern-state ci.InternCompatState)]
   [builtin-state : (& builtin-state cbi.CompilerBuiltinIdsState)]) : unit
   (begin
     (ci.intern-compat-state-install! intern-state)
@@ -15242,8 +15238,7 @@ g:
       (ci.intern-compat-state-capture-active)]
     [builtin-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_install-a : unit
-      (ci.intern-compat-state-install! (ci.intern-global-shared-view intern-a))]
+    [_install-a : unit (ci.intern-compat-state-install! intern-a)]
     [_reset-a : unit (cbi.compiler-builtin-reset!)]
     [_init-a : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [_capture-a : unit
@@ -15251,8 +15246,7 @@ g:
     [name-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "route_a")]
     [builtin-a : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_install-b : unit
-      (ci.intern-compat-state-install! (ci.intern-global-shared-view intern-b))]
+    [_install-b : unit (ci.intern-compat-state-install! intern-b)]
     [_reset-b : unit (cbi.compiler-builtin-reset!)]
     [_init-b : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [_capture-b : unit
@@ -15274,9 +15268,7 @@ g:
     [symbol-b : String "_tl_route_b"]
     [normal-a1 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15290,9 +15282,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [normal-b1 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15306,9 +15296,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [normal-a2 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15322,9 +15310,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [normal-b2 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15338,9 +15324,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [final-a1 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15353,9 +15337,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [final-b1 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15368,9 +15350,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [final-a2 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15383,9 +15363,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [final-b2 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15398,9 +15376,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [object-a1 : backend.ResultCompilerBackendObject
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15413,9 +15389,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [object-b1 : backend.ResultCompilerBackendObject
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15428,9 +15402,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [object-a2 : backend.ResultCompilerBackendObject
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15443,9 +15415,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [object-b2 : backend.ResultCompilerBackendObject
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15458,9 +15428,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [pic-a1 : backend.ResultCompilerBackendPic
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15473,9 +15441,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [pic-b1 : backend.ResultCompilerBackendPic
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15520,13 +15486,11 @@ g:
         (compiler-backend-explicit-state-buffer-result-ok? normal-a2)
         (compiler-backend-explicit-state-buffer-result-ok? normal-b2)
         (compiler-backend-explicit-state-own-symbols-ok?
-          (compiler-backend-explicit-state-buffer-result-text
-            (owned_view.compiler-owned-shared-view normal-a1))
+          (compiler-backend-explicit-state-buffer-result-text normal-a1)
           symbol-a
           symbol-b)
         (compiler-backend-explicit-state-own-symbols-ok?
-          (compiler-backend-explicit-state-buffer-result-text
-            (owned_view.compiler-owned-shared-view normal-b1))
+          (compiler-backend-explicit-state-buffer-result-text normal-b1)
           symbol-b
           symbol-a)
         (string.eq
@@ -15540,13 +15504,11 @@ g:
         (compiler-backend-explicit-state-buffer-result-ok? final-a2)
         (compiler-backend-explicit-state-buffer-result-ok? final-b2)
         (compiler-backend-explicit-state-own-symbols-ok?
-          (compiler-backend-explicit-state-buffer-result-text
-            (owned_view.compiler-owned-shared-view final-a1))
+          (compiler-backend-explicit-state-buffer-result-text final-a1)
           symbol-a
           symbol-b)
         (compiler-backend-explicit-state-own-symbols-ok?
-          (compiler-backend-explicit-state-buffer-result-text
-            (owned_view.compiler-owned-shared-view final-b1))
+          (compiler-backend-explicit-state-buffer-result-text final-b1)
           symbol-b
           symbol-a)
         (string.eq
@@ -15555,14 +15517,10 @@ g:
         (string.eq
           (compiler-backend-explicit-state-buffer-result-text final-b1)
           (compiler-backend-explicit-state-buffer-result-text final-b2))
-        (compiler-backend-explicit-state-object-result-ok?
-          (owned_view.compiler-owned-shared-view object-a1))
-        (compiler-backend-explicit-state-object-result-ok?
-          (owned_view.compiler-owned-shared-view object-b1))
-        (compiler-backend-explicit-state-object-result-ok?
-          (owned_view.compiler-owned-shared-view object-a2))
-        (compiler-backend-explicit-state-object-result-ok?
-          (owned_view.compiler-owned-shared-view object-b2))
+        (compiler-backend-explicit-state-object-result-ok? object-a1)
+        (compiler-backend-explicit-state-object-result-ok? object-b1)
+        (compiler-backend-explicit-state-object-result-ok? object-a2)
+        (compiler-backend-explicit-state-object-result-ok? object-b2)
         (compiler-backend-explicit-state-own-symbols-ok?
           (compiler-backend-explicit-state-object-result-text
             (owned_view.compiler-owned-shared-view object-a1))
@@ -15700,9 +15658,7 @@ g:
       (ci.intern-compat-state-capture-active)]
     [builtin-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_install-state : unit
-      (ci.intern-compat-state-install!
-        (ci.intern-global-shared-view intern-state))]
+    [_install-state : unit (ci.intern-compat-state-install! intern-state)]
     [_reset-state : unit (cbi.compiler-builtin-reset!)]
     [_init-state : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [_capture-state : unit
@@ -15711,8 +15667,7 @@ g:
       (ci.intern-compat-state-intern (&mut intern-state) "dup_abort")]
     [_restore-active : unit
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view active-before))
+        (ci.intern-compat-state-install! active-before)
         (cbi.state-install! builtin-before))]
     [failure-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new intern-state)]
@@ -23345,11 +23300,17 @@ g:
         false
         (begin
           ;; wrong scale: recorded scale is 8 (i64), consume with u8.
-          (backend.compiler-backend-gep-fold-next!
-            (backend.compiler-backend-state-function-state backend-state)
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (ir.CompilerIrValue.Var 1)
-            (ast.AstType.U8))
+          (let
+            [function-state
+              (backend.compiler-backend-state-function-state backend-state)]
+            [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+            [offset (ir.CompilerIrValue.Var 1)]
+            [elem-ty (ast.AstType.U8)]
+            (backend.compiler-backend-gep-fold-next!
+              function-state
+              type-segment-bases
+              offset
+              elem-ty))
           (backend.compiler-backend-gep-fold-drift?
             (backend.compiler-backend-state-function-state backend-state))))]
     (begin
@@ -29106,26 +29067,33 @@ g:
 
 (define (compiler-backend-immediate-stack-call-args-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-call-args
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (backend.CompilerBackendTarget.Linux)
-      (regalloc.compiler-reg-assignment-table-empty)
-      (compiler-backend-i64-immediate-call-args8)
-      (compiler-backend-i64-type-list8)
-      false
-      0
-      0
-      0
-      0
-      0
-      (cdiag.compiler-diagnostic-at-start "" "")
-      (compiler-backend-program-index-build
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-seq-empty))
-      0
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+    (let
+      [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+      [target (backend.CompilerBackendTarget.Linux)]
+      [assignments (regalloc.compiler-reg-assignment-table-empty)]
+      [args (compiler-backend-i64-immediate-call-args8)]
+      [types (compiler-backend-i64-type-list8)]
+      [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+      (backend.compiler-backend-emit-call-args
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        false
+        0
+        0
+        0
+        0
+        0
+        func-diag
+        (compiler-backend-program-index-build
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty))
+        0
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))))
     (has "    movq $7, 0(%rsp)\n" "    movq $8, 8(%rsp)\n")
     (lacks "    movq %r11, 0(%rsp)\n")))
 
@@ -29377,7 +29345,7 @@ g:
         0
         0
         0
-        (owned_view.compiler-owned-shared-view diag)
+        diag
         index
         1
         index.backend-state)]
@@ -29455,7 +29423,7 @@ g:
         0
         0
         0
-        (owned_view.compiler-owned-shared-view diag)
+        diag
         index
         1
         index.backend-state)]
@@ -31943,13 +31911,11 @@ g:
         (owned_view.compiler-owned-shared-view intern-b))]
     [symbol-a1 : String
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view intern-b))
+        (ci.intern-compat-state-install! intern-b)
         (backend.compiler-backend-state-user-symbol-id state-a id-a))]
     [symbol-b1 : String
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view intern-a))
+        (ci.intern-compat-state-install! intern-a)
         (backend.compiler-backend-state-user-symbol-id state-b id-b))]
     [symbol-a2 : String
       (begin
@@ -32109,7 +32075,7 @@ g:
     [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [id-a : i64
       (begin
-        (ci.intern-compat-state-install! (ci.intern-global-shared-view state-a))
+        (ci.intern-compat-state-install! state-a)
         (ci.intern-reset!)
         (ci.intern "first-state-name"))]
     [symbol-a : String
@@ -32121,7 +32087,7 @@ g:
           id-a))]
     [id-b : i64
       (begin
-        (ci.intern-compat-state-install! (ci.intern-global-shared-view state-b))
+        (ci.intern-compat-state-install! state-b)
         (ci.intern-reset!)
         (ci.intern "second-state-name"))]
     [symbol-b : String
@@ -38982,23 +38948,20 @@ b_keep:
               -1)
             ok)))]
     [a-drift-result : i64
-      (backend.compiler-backend-gep-fold-next!
-        function-a
-        0
-        (ir.CompilerIrValue.I64 0)
-        (ast.AstType.I64))]
+      (let
+        [offset (ir.CompilerIrValue.I64 0)]
+        [elem-ty (ast.AstType.I64)]
+        (backend.compiler-backend-gep-fold-next! function-a 0 offset elem-ty))]
     [b-folded-result : i64
-      (backend.compiler-backend-gep-fold-next!
-        function-b
-        0
-        (ir.CompilerIrValue.Var 7)
-        (ast.AstType.I64))]
+      (let
+        [offset (ir.CompilerIrValue.Var 7)]
+        [elem-ty (ast.AstType.I64)]
+        (backend.compiler-backend-gep-fold-next! function-b 0 offset elem-ty))]
     [b-unfolded-result : i64
-      (backend.compiler-backend-gep-fold-next!
-        function-b
-        0
-        (ir.CompilerIrValue.Var 8)
-        (ast.AstType.I64))]
+      (let
+        [offset (ir.CompilerIrValue.Var 8)]
+        [elem-ty (ast.AstType.I64)]
+        (backend.compiler-backend-gep-fold-next! function-b 0 offset elem-ty))]
     (and
       fallback-rax-override
       (compiler-backend-test-location-register?
@@ -40095,14 +40058,18 @@ b_keep:
           backend.compiler-backend-function-bool-addr-of-forwarding-enabled
           true))]
     [home : String
-      (backend.compiler-backend-value-register-home
-        backend-state
-        (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment
-            2
-            (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
-          (regalloc.compiler-reg-assignment-table-empty))
-        (ir.CompilerIrValue.Var 2))]
+      (let
+        [assignments
+          (regalloc.compiler-reg-assignments-prepend
+            (regalloc.CompilerRegAssignment
+              2
+              (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
+            (regalloc.compiler-reg-assignment-table-empty))]
+        [value (ir.CompilerIrValue.Var 2)]
+        (backend.compiler-backend-value-register-home
+          backend-state
+          assignments
+          value))]
     (string.eq home "")))
 
 (define (scratch-scavenge-ctx-vars
@@ -40214,32 +40181,22 @@ b_keep:
         (ParallelMoveEdge 5 8 0 12 13)
         (compiler-parallel-move-test-edge 6 12 20))]
     (and
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view empty)
-        empty)
+      (match (pmove.compiler-parallel-move-decision empty empty)
         [(CompilerParallelMoveDone) true]
         [_ false])
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view chain)
-        chain)
+      (match (pmove.compiler-parallel-move-decision chain chain)
         [(CompilerParallelMoveUnblocked id) (= id 1)]
         [_ false])
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view cycle)
-        cycle)
+      (match (pmove.compiler-parallel-move-decision cycle cycle)
         [(CompilerParallelMoveCycle id) (= id 1)]
         [_ false])
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view pair)
-        (pmove.compiler-parallel-move-shared-view pair))
+      (match (pmove.compiler-parallel-move-decision pair pair)
         [(CompilerParallelMoveUnblocked id) (= id 4)]
         [_ false])
       (pmove.compiler-parallel-move-seq-has-blocked?
         (pmove.compiler-parallel-move-shared-view pair)
         pair)
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view pair-source)
-        (pmove.compiler-parallel-move-shared-view pair-source))
+      (match (pmove.compiler-parallel-move-decision pair-source pair-source)
         [(CompilerParallelMoveUnblocked id) (= id 5)]
         [_ false])
       (pmove.compiler-parallel-move-seq-has-blocked?

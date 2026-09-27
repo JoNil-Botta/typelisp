@@ -377,9 +377,7 @@
                   (diagnostic.compiler-diagnostic-box-shared-view diag-box)]
                 [labels : diagnostic.CompilerDiagnosticLabelList
                   (diagnostic.compiler-diagnostic-secondary-spans diag)]
-                [rendered : String
-                  (diagnostic.compiler-diagnostic-render
-                    (diagnostic.compiler-diagnostic-place-shared-view diag))]
+                [rendered : String (diagnostic.compiler-diagnostic-render diag)]
                 (and
                   (string.eq (diagnostic.compiler-diagnostic-path diag) leaf)
                   (= (diagnostic.compiler-diagnostic-line diag) 5)

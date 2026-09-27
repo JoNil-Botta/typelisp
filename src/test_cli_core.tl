@@ -671,8 +671,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view cur))
+        (match (ast.ast-decl-list-step cur)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons _ rest)
             (begin
@@ -816,22 +815,19 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view cur-decls))
+        (match (ast.ast-decl-list-step cur-decls)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (let
               [rest-decls : ast.AstDeclList rest]
               [decl-path : String
-                (match (ast.ast-decl-path-list-step
-                  (owned_view.compiler-owned-shared-view cur-paths))
+                (match (ast.ast-decl-path-list-step cur-paths)
                   [(ast.AstDeclPathListStep.Cons path _) path]
                   [(ast.AstDeclPathListStep.Nil) ""])]
               [decl-owner-id : i64
                 (ast.ast-decl-path-list-owner-id (& cur-paths) 0 current-module)]
               [rest-paths : ast.AstDeclPathList
-                (match (ast.ast-decl-path-list-step
-                  (owned_view.compiler-owned-shared-view cur-paths))
+                (match (ast.ast-decl-path-list-step cur-paths)
                   [(ast.AstDeclPathListStep.Cons _ path-rest)
                     (let
                       [path-rest : ast.AstDeclPathList path-rest]
@@ -1771,8 +1767,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view cur))
+        (match (ast.ast-decl-list-step cur)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -1938,8 +1933,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view cur))
+        (match (ast.ast-decl-list-step cur)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -2034,12 +2028,10 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view cur-decls))
+        (match (ast.ast-decl-list-step cur-decls)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
-            (match (ast.ast-decl-path-list-step
-              (owned_view.compiler-owned-shared-view cur-paths))
+            (match (ast.ast-decl-path-list-step cur-paths)
               [(ast.AstDeclPathListStep.Nil)
                 (begin
                   (set! cur-decls rest)
@@ -2472,8 +2464,7 @@
         (begin
           (io.print-error
             (driver.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-list-first
-                (cdiag.compiler-diagnostic-list-box-shared-view diag))))
+              (cdiag.compiler-diagnostic-list-first (deref diag))))
           1)])))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
@@ -3236,8 +3227,7 @@
     (begin
       (compiler_load.compiler-load-default-session-state-set!
         (owned_view.compiler-owned-shared-view entry-load))
-      (compiler_load.compiler-load-session-state-use!
-        (owned_view.compiler-owned-shared-view entry-load))
+      (compiler_load.compiler-load-session-state-use! entry-load)
       (compiler_load.compiler-load-session-cache-enable!)
       (compiler_load.compiler-load-session-program-cache-disable!)
       (tc_core.tc-serial-job-state-set!
@@ -3267,7 +3257,7 @@
       entry.parent-default)
     (if (array-ref entry.parent-load.intern-state-ready 0)
       (compiler_load.compiler-load-session-state-use-with-intern-state!
-        (owned_view.compiler-owned-shared-view entry.parent-load)
+        entry.parent-load
         (owned_view.compiler-owned-array-element-shared-view
           entry.parent-load.intern-state
           0))

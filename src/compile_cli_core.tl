@@ -586,8 +586,7 @@
     (if (> (string.string-length message) 0)
       (compile-cli-reject-buffer-result-on-ir-verification result message)
       (compiler_driver_core.compiler-driver-write-buffer-result
-        (compiler_driver_core.compiler-driver-state-profile
-          (owned_view.compiler-owned-shared-view state))
+        (compiler_driver_core.compiler-driver-state-profile state)
         (compiler_driver_core.compiler-driver-state-typecheck state)
         result
         output-path))))
@@ -634,10 +633,8 @@
         (compiler_driver_core.compiler-driver-state-owned-interns-mut
           (owned_view.compiler-owned-shared-view state)))
       unit)
-    (compiler_driver_core.compiler-driver-state-install-pools!
-      (owned_view.compiler-owned-shared-view state))
-    (compiler_driver_core.compiler-driver-state-install-interns!
-      (owned_view.compiler-owned-shared-view state))
+    (compiler_driver_core.compiler-driver-state-install-pools! state)
+    (compiler_driver_core.compiler-driver-state-install-interns! state)
     (cfg
       compile-startup-profile
       (startup_profile.compiler-startup-profile-mark-preflight-begin!)
@@ -794,8 +791,7 @@
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
-                  (compiler_driver_core.compiler-driver-state-profile
-                    (owned_view.compiler-owned-shared-view _state))))
+                  (compiler_driver_core.compiler-driver-state-profile _state)))
               (match (io.try-write-file
                 (& object-path)
                 (byte_buf.str-as-bytes (& object)))
@@ -814,12 +810,10 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (compiler_driver_core.compiler-driver-state-profile
-                  (owned_view.compiler-owned-shared-view _state))
+                (compiler_driver_core.compiler-driver-state-profile _state)
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-              (compiler_driver_core.compiler-driver-state-typecheck
-                (owned_view.compiler-owned-shared-view _state))
+              (compiler_driver_core.compiler-driver-state-typecheck _state)
               "write")
             (cfg
               compile-profile
@@ -850,8 +844,7 @@
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
-                  (compiler_driver_core.compiler-driver-state-profile
-                    (owned_view.compiler-owned-shared-view _state))))
+                  (compiler_driver_core.compiler-driver-state-profile _state)))
               (compiler_driver_core.compiler-driver-write-text-buf
                 (owned_view.compiler-owned-shared-view assembly-path)
                 asm))]
@@ -859,12 +852,10 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (compiler_driver_core.compiler-driver-state-profile
-                  (owned_view.compiler-owned-shared-view _state))
+                (compiler_driver_core.compiler-driver-state-profile _state)
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-              (compiler_driver_core.compiler-driver-state-typecheck
-                (owned_view.compiler-owned-shared-view _state))
+              (compiler_driver_core.compiler-driver-state-typecheck _state)
               "write")
             (cfg
               compile-profile
@@ -889,8 +880,7 @@
         (begin
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-            (compiler_driver_core.compiler-driver-state-typecheck
-              (owned_view.compiler-owned-shared-view _state))
+            (compiler_driver_core.compiler-driver-state-typecheck _state)
             "write-error")
           (cfg
             compile-profile
@@ -922,10 +912,8 @@
         (compiler_driver_core.compiler-driver-state-owned-interns-mut
           (owned_view.compiler-owned-shared-view state)))
       unit)
-    (compiler_driver_core.compiler-driver-state-install-pools!
-      (owned_view.compiler-owned-shared-view state))
-    (compiler_driver_core.compiler-driver-state-install-interns!
-      (owned_view.compiler-owned-shared-view state))
+    (compiler_driver_core.compiler-driver-state-install-pools! state)
+    (compiler_driver_core.compiler-driver-state-install-interns! state)
     (cfg
       compile-startup-profile
       (startup_profile.compiler-startup-profile-mark-preflight-begin!)
@@ -1317,8 +1305,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-start-entry!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -1354,8 +1341,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "emit-complete")
           unit)]
@@ -1399,10 +1385,8 @@
         ;; still observe compatibility globals between batch entries. Install
         ;; the already-reset job context at that explicit boundary, after the
         ;; entry scratch owner has been destroyed.
-        (compiler_driver_core.compiler-driver-state-install-pools!
-          (owned_view.compiler-owned-shared-view state))
-        (compiler_driver_core.compiler-driver-state-install-interns!
-          (owned_view.compiler-owned-shared-view state))
+        (compiler_driver_core.compiler-driver-state-install-pools! state)
+        (compiler_driver_core.compiler-driver-state-install-interns! state)
         ;; The reset above has republished every compatibility aggregate into
         ;; `compat`; only now is the preceding entry's owner unreachable.
         (if (= previous-compat-arena 0)
@@ -1410,8 +1394,7 @@
           (unsafe
             (arena.tl_arena_destroy previous-compat-arena)))
         (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-          (compiler_driver_core.compiler-driver-state-typecheck
-            (owned_view.compiler-owned-shared-view state))
+          (compiler_driver_core.compiler-driver-state-typecheck state)
           "batch-steady")
         (allocation_profile.compiler-allocation-profile-control!
           2
@@ -1421,8 +1404,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "scratch-destroy-steady")
           unit)
@@ -1456,11 +1438,9 @@
   [state : compiler_driver_core.CompilerDriverState]) : unit
   (let
     [backend-state : backend.CompilerBackendState
-      (compiler_driver_core.compiler-driver-state-backend
-        (owned_view.compiler-owned-shared-view state))]
+      (compiler_driver_core.compiler-driver-state-backend state)]
     [typecheck-state : tc_core.TcJobState
-      (compiler_driver_core.compiler-driver-state-typecheck
-        (owned_view.compiler-owned-shared-view state))]
+      (compiler_driver_core.compiler-driver-state-typecheck state)]
     (begin
       (backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
         backend-state
@@ -1527,8 +1507,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-start-entry!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -1557,8 +1536,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "emit-complete")
           unit)]
@@ -1612,17 +1590,14 @@
             (arena.raw-handle home))
           (unsafe
             (arena.tl_arena_destroy scratch-end)))
-        (compiler_driver_core.compiler-driver-state-install-pools!
-          (owned_view.compiler-owned-shared-view state))
-        (compiler_driver_core.compiler-driver-state-install-interns!
-          (owned_view.compiler-owned-shared-view state))
+        (compiler_driver_core.compiler-driver-state-install-pools! state)
+        (compiler_driver_core.compiler-driver-state-install-interns! state)
         (if (= previous-compat-arena 0)
           unit
           (unsafe
             (arena.tl_arena_destroy previous-compat-arena)))
         (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-          (compiler_driver_core.compiler-driver-state-typecheck
-            (owned_view.compiler-owned-shared-view state))
+          (compiler_driver_core.compiler-driver-state-typecheck state)
           "batch-steady")
         (allocation_profile.compiler-allocation-profile-control!
           2
@@ -1632,8 +1607,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile
-              (owned_view.compiler-owned-shared-view state))
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "scratch-destroy-steady")
           unit)
@@ -1753,10 +1727,8 @@
             ;; first entry reset can destroy that residency. Leaving the
             ;; process-default owners installed retains the largest later
             ;; preflight source beside every subsequent compile.
-            (compiler_driver_core.compiler-driver-state-install-pools!
-              (owned_view.compiler-owned-shared-view state))
-            (compiler_driver_core.compiler-driver-state-install-interns!
-              (owned_view.compiler-owned-shared-view state)))]
+            (compiler_driver_core.compiler-driver-state-install-pools! state)
+            (compiler_driver_core.compiler-driver-state-install-interns! state))]
         [inline-test-status : i64
           (compile-cli-run-batch-inline-tests
             entries
@@ -1796,10 +1768,8 @@
       (let
         [_install-preflight-state : unit
           (begin
-            (compiler_driver_core.compiler-driver-state-install-pools!
-              (owned_view.compiler-owned-shared-view state))
-            (compiler_driver_core.compiler-driver-state-install-interns!
-              (owned_view.compiler-owned-shared-view state)))]
+            (compiler_driver_core.compiler-driver-state-install-pools! state)
+            (compiler_driver_core.compiler-driver-state-install-interns! state))]
         [inline-test-status : i64
           (compile-cli-run-windows-batch-inline-tests
             entries

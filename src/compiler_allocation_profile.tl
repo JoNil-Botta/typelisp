@@ -81,7 +81,7 @@
 
 (define (compiler-allocation-profile-control!
   [action : i64]
-  [phase : String]
+  [phase : (& phase str)]
   [owner : String]
   [arena-handle : i64]) : i64
   (match action

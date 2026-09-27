@@ -113,8 +113,7 @@
   [insertion-index : i64]
   [module-id : i64]) : csym.ResultCompilerRegistries
   (let
-    [added-count : i64
-      (csym.compiler-decl-list-index-count (ast.ast-place-shared-view decls))]
+    [added-count : i64 (csym.compiler-decl-list-index-count decls)]
     [shifted : csym.CompilerRegistries
       (compiler-registries-shift-owner-indices
         registries

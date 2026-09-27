@@ -332,7 +332,7 @@
       ok)))
 
 (define (compiler-object-layout-data-label-offset-from
-  [records : cobj.CompilerObjectDataRecordList]
+  [records : (& records cobj.CompilerObjectDataRecordList)]
   [label : String]
   [offset : i64]) : i64
   (let

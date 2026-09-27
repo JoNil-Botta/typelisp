@@ -202,8 +202,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diagnostics)
       (let
         [diag : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))]
+          (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
         (begin
           (io.print-error (diagnostic.compiler-diagnostic-message diag))
           false))]))

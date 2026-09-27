@@ -233,11 +233,19 @@
   [archives : process.ProcessStringList]) : SourceToolLinkInputs
   (SourceToolLinkInputs (process.args-empty) (process.args-empty) archives))
 
-(define (source-tool-link-inputs-libs [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  inputs.libs)
+(define (source-tool-link-inputs-libs
+  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  (let
+    [inputs : SourceToolLinkInputs
+      (owned_view.compiler-owned-reference-shared-view inputs)]
+    inputs.libs))
 
-(define (source-tool-link-inputs-search-dirs [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  inputs.search-dirs)
+(define (source-tool-link-inputs-search-dirs
+  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  (let
+    [inputs : SourceToolLinkInputs
+      (owned_view.compiler-owned-reference-shared-view inputs)]
+    inputs.search-dirs))
 
 (define (source-tool-link-inputs-raw-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   inputs.raw-args)
@@ -261,34 +269,24 @@
   [inputs : SourceToolLinkInputs]
   [name : String]) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (source-tool-args-append
-      (source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view inputs))
-      name)
-    (source-tool-link-inputs-search-dirs
-      (owned_view.compiler-owned-shared-view inputs))
+    (source-tool-args-append (source-tool-link-inputs-libs inputs) name)
+    (source-tool-link-inputs-search-dirs inputs)
     (source-tool-link-inputs-raw-args inputs)))
 
 (define (source-tool-link-inputs-add-search-dir
   [inputs : SourceToolLinkInputs]
   [dir : String]) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (source-tool-link-inputs-libs
-      (owned_view.compiler-owned-shared-view inputs))
-    (source-tool-args-append
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view inputs))
-      dir)
+    (source-tool-link-inputs-libs inputs)
+    (source-tool-args-append (source-tool-link-inputs-search-dirs inputs) dir)
     (source-tool-link-inputs-raw-args inputs)))
 
 (define (source-tool-link-inputs-add-raw-arg
   [inputs : SourceToolLinkInputs]
   [arg-value : String]) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (source-tool-link-inputs-libs
-      (owned_view.compiler-owned-shared-view inputs))
-    (source-tool-link-inputs-search-dirs
-      (owned_view.compiler-owned-shared-view inputs))
+    (source-tool-link-inputs-libs inputs)
+    (source-tool-link-inputs-search-dirs inputs)
     (source-tool-args-append
       (source-tool-link-inputs-raw-args inputs)
       arg-value)))
@@ -339,15 +337,11 @@
   [right : SourceToolLinkInputs]) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (source-tool-string-list-merge-unique
-      (source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view left))
-      (source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view right)))
+      (source-tool-link-inputs-libs left)
+      (source-tool-link-inputs-libs right))
     (source-tool-string-list-merge-unique
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view left))
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view right)))
+      (source-tool-link-inputs-search-dirs left)
+      (source-tool-link-inputs-search-dirs right))
     (source-tool-string-list-merge-unique
       (source-tool-link-inputs-raw-args left)
       (source-tool-link-inputs-raw-args right))))
@@ -359,27 +353,21 @@
     [(ast.AstExternLinkInput.Lib name)
       (SourceToolLinkInputs
         (source-tool-args-append-unique
-          (source-tool-link-inputs-libs
-            (owned_view.compiler-owned-shared-view inputs))
+          (source-tool-link-inputs-libs inputs)
           name)
-        (source-tool-link-inputs-search-dirs
-          (owned_view.compiler-owned-shared-view inputs))
+        (source-tool-link-inputs-search-dirs inputs)
         (source-tool-link-inputs-raw-args inputs))]
     [(ast.AstExternLinkInput.Search dir)
       (SourceToolLinkInputs
-        (source-tool-link-inputs-libs
-          (owned_view.compiler-owned-shared-view inputs))
+        (source-tool-link-inputs-libs inputs)
         (source-tool-args-append-unique
-          (source-tool-link-inputs-search-dirs
-            (owned_view.compiler-owned-shared-view inputs))
+          (source-tool-link-inputs-search-dirs inputs)
           dir)
         (source-tool-link-inputs-raw-args inputs))]
     [(ast.AstExternLinkInput.Arg arg-value)
       (SourceToolLinkInputs
-        (source-tool-link-inputs-libs
-          (owned_view.compiler-owned-shared-view inputs))
-        (source-tool-link-inputs-search-dirs
-          (owned_view.compiler-owned-shared-view inputs))
+        (source-tool-link-inputs-libs inputs)
+        (source-tool-link-inputs-search-dirs inputs)
         (source-tool-args-append-unique
           (source-tool-link-inputs-raw-args inputs)
           arg-value))]))
@@ -952,12 +940,9 @@
 (define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (process.args-append
     (source-tool-linux-link-search-args
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view inputs)))
+      (source-tool-link-inputs-search-dirs inputs))
     (process.args-append
-      (source-tool-linux-link-lib-args
-        (source-tool-link-inputs-libs
-          (owned_view.compiler-owned-shared-view inputs)))
+      (source-tool-linux-link-lib-args (source-tool-link-inputs-libs inputs))
       (source-tool-link-inputs-raw-args inputs))))
 
 (define (source-tool-linker-command
@@ -1025,12 +1010,9 @@
 (define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (process.args-append
     (source-tool-windows-link-search-args
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view inputs)))
+      (source-tool-link-inputs-search-dirs inputs))
     (process.args-append
-      (source-tool-windows-link-lib-args
-        (source-tool-link-inputs-libs
-          (owned_view.compiler-owned-shared-view inputs)))
+      (source-tool-windows-link-lib-args (source-tool-link-inputs-libs inputs))
       (source-tool-link-inputs-raw-args inputs))))
 
 (define (source-tool-windows-linker-args

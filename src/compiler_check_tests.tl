@@ -7,6 +7,7 @@
 (import compiler_load_tests as load_tests)
 (import compiler_check_core as check_core)
 (import compiler_diagnostic as cdiag)
+(import compiler_diagnostic_tests as cdiag_tests)
 (import compiler_semantic_index as semantic_index)
 (import compiler_semantic_index_tests as sem_tests)
 (import compiler_builtin_ids as cbi)
@@ -87,8 +88,7 @@
       [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
         (let
           [diag : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first
-              (cdiag.compiler-diagnostic-list-box-shared-view diag-box))]
+            (cdiag.compiler-diagnostic-list-first (deref diag-box))]
           [fixes : cdiag.CompilerDiagnosticFixSeq
             (cdiag.compiler-diagnostic-fixes diag)]
           (and
@@ -145,8 +145,7 @@
     [(compiler_check_core.ResultCompilerCheck.Err diag _)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (= (__tl-project-field (cdiag.compiler-diagnostic-fixes first) len) 0))]))
 
 (define (compiler-check-first-diagnostic-exact?
@@ -166,8 +165,7 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq (cdiag.compiler-diagnostic-message diagnostic) message)
@@ -253,8 +251,7 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         [fixes : cdiag.CompilerDiagnosticFixSeq
           (cdiag.compiler-diagnostic-fixes diagnostic)]
         (and
@@ -295,8 +292,7 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
@@ -318,8 +314,7 @@
     [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
       (let
         [diag : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag-box))]
+          (cdiag.compiler-diagnostic-list-first (deref diag-box))]
         [message : String (cdiag.compiler-diagnostic-message diag)]
         [diag-path : String (cdiag.compiler-diagnostic-path diag)]
         (and
@@ -341,17 +336,11 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            0)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            1)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
         [third : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            2)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
           (string.eq
@@ -376,17 +365,11 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            0)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            1)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
         [third : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            2)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
           (string.eq
@@ -441,8 +424,7 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
@@ -510,14 +492,14 @@
           [slot-definition : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Definition
               0)]
           [slot-write : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               0)]
@@ -528,63 +510,63 @@
           [slot-rhs-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               1)]
           [slot-result-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               2)]
           [shadow-param-definition : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Definition
               0)]
           [shadow-local-definition : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Definition
               1)]
           [shadow-param-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               0)]
           [shadow-local-write : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               1)]
           [shadow-local-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               2)]
           [shadow-local-result-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               3)]
           [bump-read : i64
             (sem_tests.compiler-semantic-source-index-find-record
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "bump"
               semantic_index.CompilerSemanticRecordRole.Use
               -1)]
@@ -759,7 +741,11 @@
         2
         1
         "fatal after advisory")]
-    [_append : bool (tc_core.tc-job-state-add-advisory! job (& warning))]
+    [_append : bool
+      (cdiag_tests.compiler-advisory-sink-push!
+        (tc_core.tc-job-state-advisory-sink job)
+        cdiag.CompilerAdvisoryPhase.Semantic
+        (& warning))]
     [success : check_core.ResultCompilerCheck
       (check_core.ResultCompilerCheck.Ok
         (tc_core.CompilerTypecheckSummary 1 0 0)

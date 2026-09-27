@@ -3731,7 +3731,9 @@
           (compiler-parse-state-owner-table-id control)
           (ci.intern-active-table-id))))
       unit
-      (ci.intern-compat-state-install! (compiler-parse-state-owner control)))))
+      (let
+        [arg (compiler-parse-state-owner control)]
+        (ci.intern-compat-state-install! arg)))))
 
 (define (compiler-parse-state-owner-capture-active! [control : i64]) : unit
   (let

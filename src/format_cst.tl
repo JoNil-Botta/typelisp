@@ -116,8 +116,10 @@
       (fmt-cst-vec-push-list! (&mut out) rest)
       (fmt-cst-list-from-vec out))))
 
-(define (fmt-cst-list-step [items : FormatCstList]) : FormatCstListStep
+(define (fmt-cst-list-step [items : (& items FormatCstList)]) : FormatCstListStep
   (let
+    [items : FormatCstList
+      (owned_view.compiler-owned-reference-shared-view items)]
     [start : i64 items.start]
     [count : i64 items.len]
     (if (<= count 0)
@@ -145,11 +147,7 @@
   [stop-tag : i64]
   [items : (&mut items FormatCstVec)]) : ResultFormatParseSeqEnd
   (let
-    [tag : i64
-      (tokens.format-token-tag
-        (tokens.format-token-at
-          (owned_view.compiler-owned-shared-view stream)
-          idx))]
+    [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
       [(= tag (tokens.fmt-tag-end))
         (if (= stop-tag 0)
@@ -182,11 +180,7 @@
   [idx : i64]
   [stop-tag : i64]) : ResultFormatParsedCstList
   (let
-    [tag : i64
-      (tokens.format-token-tag
-        (tokens.format-token-at
-          (owned_view.compiler-owned-shared-view stream)
-          idx))]
+    [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
       [(= tag (tokens.fmt-tag-end))
         (if (= stop-tag 0)
@@ -234,15 +228,8 @@
   [stream : tokens.FormatTokenStream]
   [idx : i64]) : ResultFormatParsedCst
   (let
-    [tok : tokens.FormatToken
-      (tokens.format-token-at
-        (owned_view.compiler-owned-shared-view stream)
-        idx)]
-    [tag : i64
-      (tokens.format-token-tag
-        (tokens.format-token-at
-          (owned_view.compiler-owned-shared-view stream)
-          idx))]
+    [tok : tokens.FormatToken (tokens.format-token-at stream idx)]
+    [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
       [(= tag (tokens.fmt-tag-lparen))
         (match (fmt-parse-seq-result stream (+ idx 1) (tokens.fmt-tag-rparen))
@@ -311,10 +298,7 @@
   (match (owned_view.compiler-owned-shared-view parsed)
     [(FormatParsedCst.Parsed node next)
       (let
-        [dot : tokens.FormatToken
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            next)]
+        [dot : tokens.FormatToken (tokens.format-token-at stream next)]
         (if (and
           (> next 0)
           (= (tokens.format-token-tag dot) (tokens.fmt-tag-dot))
@@ -325,9 +309,7 @@
           (let
             [field-index : i64 (+ next 1)]
             [field : tokens.FormatToken
-              (tokens.format-token-at
-                (owned_view.compiler-owned-shared-view stream)
-                field-index)]
+              (tokens.format-token-at stream field-index)]
             (if (and
               (=
                 (tokens.format-token-tag

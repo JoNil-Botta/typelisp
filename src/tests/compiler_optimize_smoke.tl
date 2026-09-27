@@ -2131,12 +2131,7 @@
           func
           (opt.opt-program-summaries-empty)))]
     (begin
-      (unless
-        (>
-          (ir.compiler-ir-block-list-count
-            (opt.compiler-opt-global-shared-view blocks))
-          1024)
-        (return 1))
+      (unless (> (ir.compiler-ir-block-list-count blocks) 1024) (return 1))
       (unless
         (<=
           (ir.compiler-ir-block-list-count blocks)
@@ -2340,11 +2335,7 @@
                   (ot.opt-count-direct-call-name-blocks blocks "inline_branch")
                   0))
               11]
-            [(not
-                (=
-                  (ir.compiler-ir-block-list-count
-                    (opt.compiler-opt-global-shared-view blocks))
-                  7))
+            [(not (= (ir.compiler-ir-block-list-count blocks) 7))
               (+ 20 (ir.compiler-ir-block-list-count blocks))]
             [(not (= (ot.opt-count-phi-blocks blocks) 2))
               (+ 40 (ot.opt-count-phi-blocks blocks))]
@@ -2400,13 +2391,13 @@
                 (smoke-inline-phi-loop-repaired? blocks)
                 (opt.opt-inline-structure-ok? blocks)
                 (ot.opt-span-lookup-ok?
-                  (opt.compiler-opt-global-shared-view optimized-spans)
+                  optimized-spans
                   (ot.opt-test-symbol "main")
                   result-mov
                   161
                   31)
                 (ot.opt-span-lookup-ok?
-                  (opt.compiler-opt-global-shared-view optimized-spans)
+                  optimized-spans
                   (ot.opt-test-symbol "main")
                   repaired-header
                   162
@@ -2584,18 +2575,23 @@
       (smoke-c27-count-binop-instrs instrs (+ index 1) wanted))))
 
 (define (smoke-c27-count-binop
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
   [wanted : ir.CompilerIrBinOp]) : i64
-  (match (ir.compiler-ir-block-list-force-cons blocks)
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Array seq)
-      (smoke-c27-count-binop (ir.compiler-ir-block-seq-to-list seq) wanted)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (smoke-c27-count-binop-instrs instrs 0 wanted)
-            (smoke-c27-count-binop (deref rest) wanted))])]))
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (owned_view.compiler-owned-reference-shared-view blocks)]
+    (match (ir.compiler-ir-block-list-force-cons blocks)
+      [(ir.CompilerIrBlockList.Nil) 0]
+      [(ir.CompilerIrBlockList.Array seq)
+        (let
+          [blocks (ir.compiler-ir-block-seq-to-list seq)]
+          (smoke-c27-count-binop blocks wanted))]
+      [(ir.CompilerIrBlockList.Cons block rest)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (+
+              (smoke-c27-count-binop-instrs instrs 0 wanted)
+              (smoke-c27-count-binop (deref rest) wanted))])])))
 
 (define (smoke-c27-compare-function [extra-use? : bool]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -2685,9 +2681,7 @@
         4]
       [(not
           (=
-            (smoke-c27-count-binop
-              (opt.compiler-opt-global-shared-view multi-blocks)
-              ir.CompilerIrBinOp.BitTestNe)
+            (smoke-c27-count-binop multi-blocks ir.CompilerIrBinOp.BitTestNe)
             0))
         5]
       [(not (= (smoke-c27-count-binop multi-blocks ir.CompilerIrBinOp.Gt) 1)) 6]
@@ -2765,14 +2759,8 @@
     [blocks : ir.CompilerIrBlockList
       (smoke-c27-mask-dce-blocks
         (smoke-c27-mask-compare-function and-mask cmp-op cmp-const))]
-    [ne : i64
-      (smoke-c27-count-binop
-        (ir.compiler-ir-global-shared-view blocks)
-        ir.CompilerIrBinOp.BitTestNe)]
-    [eq : i64
-      (smoke-c27-count-binop
-        (ir.compiler-ir-global-shared-view blocks)
-        ir.CompilerIrBinOp.BitTestEq)]
+    [ne : i64 (smoke-c27-count-binop blocks ir.CompilerIrBinOp.BitTestNe)]
+    [eq : i64 (smoke-c27-count-binop blocks ir.CompilerIrBinOp.BitTestEq)]
     [ands : i64 (smoke-c27-count-binop blocks ir.CompilerIrBinOp.BitAnd)]
     (cond
       [(and (= ne 1) (= eq 0) (= ands 0)) 1]
@@ -2795,11 +2783,7 @@
         (opt.opt-collect-blocks-uses-array 4 once)
         once)]
     (and
-      (=
-        (smoke-c27-count-binop
-          (ir.compiler-ir-global-shared-view twice)
-          ir.CompilerIrBinOp.BitTestNe)
-        1)
+      (= (smoke-c27-count-binop twice ir.CompilerIrBinOp.BitTestNe) 1)
       (= (smoke-c27-count-binop twice ir.CompilerIrBinOp.BitAnd) 0))))
 
 ;; Returns 42 only when single-bit mask-test admission fires on exactly the

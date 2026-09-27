@@ -152,7 +152,7 @@
   [arity : i64]) : bool
   (if (>= index (ast.ast-decl-list-len (& decls)))
     false
-    (match (ast.ast-decl-list-ref (ast.ast-global-shared-view decls) index)
+    (match (ast.ast-decl-list-ref decls index)
       [(ast.AstDecl.DefFn _ found-name params _ body _)
         (if (= found-name name-id)
           (compiler-ctfe-source-parity-eval-decl
@@ -254,7 +254,7 @@
   [message : String]) : bool
   (if (>= index (ast.ast-decl-list-len (& decls)))
     false
-    (match (ast.ast-decl-list-ref (ast.ast-global-shared-view decls) index)
+    (match (ast.ast-decl-list-ref decls index)
       [(ast.AstDecl.DefFn _ found-name params _ body _)
         (if (= found-name name-id)
           (compiler-ctfe-source-placeholder-eval? params body message)

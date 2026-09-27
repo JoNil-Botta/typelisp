@@ -124,7 +124,7 @@
     unit
     (io.panic "test CLI replayable shuffle/selection self-test mismatch")))
 
-(define (tltest-path-at [paths : ast.AstDeclPathList] [index : i64]) : String
+(define (tltest-path-at [paths : (& paths ast.AstDeclPathList)] [index : i64]) : String
   (match (ast.ast-decl-path-list-step paths)
     [(ast.AstDeclPathListStep.Nil) ""]
     [(ast.AstDeclPathListStep.Cons path rest)
@@ -144,7 +144,7 @@
         (tltest-decl-name inner))]
     [_ ""]))
 
-(define (tltest-decl-name-at [decls : ast.AstDeclList] [index : i64]) : String
+(define (tltest-decl-name-at [decls : (& decls ast.AstDeclList)] [index : i64]) : String
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) ""]
     [(ast.AstDeclListStep.Cons decl rest)
@@ -152,7 +152,9 @@
         (tltest-decl-name decl)
         (tltest-decl-name-at rest (- index 1)))]))
 
-(define (tltest-decl-list-has-name? [decls : ast.AstDeclList] [name : String]) : bool
+(define (tltest-decl-list-has-name?
+  [decls : (& decls ast.AstDeclList)]
+  [name : String]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
@@ -222,9 +224,7 @@
           [(ast.AstProgram.Program harness-decls-box)
             (and
               (= count 1)
-              (tltest-decl-list-has-name?
-                (ast.ast-decl-list-box-shared-view harness-decls-box)
-                "eq"))])]))
+              (tltest-decl-list-has-name? (deref harness-decls-box) "eq"))])]))
     unit
     (io.panic "test CLI alias-qualified reachability mismatch")))
 
@@ -274,77 +274,25 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 2)
+                (string.eq (tltest-decl-name-at harness-decls 0) helper-name)
+                (string.eq (tltest-decl-name-at harness-decls 1) "")
                 (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    0)
-                  helper-name)
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    1)
-                  "")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    2)
+                  (tltest-decl-name-at harness-decls 2)
                   "__tl_inline_test_0")
+                (string.eq (tltest-decl-name-at harness-decls 3) "")
                 (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    3)
-                  "")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    4)
+                  (tltest-decl-name-at harness-decls 4)
                   "__tl_inline_test_1")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    5)
-                  "")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    6)
-                  "")
+                (string.eq (tltest-decl-name-at harness-decls 5) "")
+                (string.eq (tltest-decl-name-at harness-decls 6) "")
                 (string.eq (tltest-decl-name-at harness-decls 7) "main")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    0)
-                  "runtime.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    1)
-                  "driver.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    2)
-                  "driver.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    3)
-                  "driver.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    4)
-                  "driver.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    5)
-                  "driver.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    6)
-                  "driver.tl")
+                (string.eq (tltest-path-at harness-paths 0) "runtime.tl")
+                (string.eq (tltest-path-at harness-paths 1) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 2) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 3) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 4) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 5) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 6) "driver.tl")
                 (string.eq (tltest-path-at harness-paths 7) "driver.tl")))])]))
     unit
     (io.panic "test CLI vector builder order mismatch")))
@@ -394,12 +342,8 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
-                (tltest-decl-list-has-name?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "field-root-owner")
-                (tltest-decl-list-has-name?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "field-root-seed")
+                (tltest-decl-list-has-name? kept "field-root-owner")
+                (tltest-decl-list-has-name? kept "field-root-seed")
                 (not (tltest-decl-list-has-name? kept "field-root-unrelated"))))])]))
     unit
     (io.panic "test CLI global field root reachability mismatch")))
@@ -567,16 +511,8 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    0)
-                  "substring")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    1)
-                  "str-view")
+                (string.eq (tltest-decl-name-at harness-decls 0) "substring")
+                (string.eq (tltest-decl-name-at harness-decls 1) "str-view")
                 (string.eq
                   (tltest-decl-name-at harness-decls 2)
                   "__tl_generated_runtime_helper")))])]))
@@ -641,11 +577,7 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    0)
-                  "substring")
+                (string.eq (tltest-decl-name-at harness-decls 0) "substring")
                 (string.eq
                   (tltest-decl-name-at harness-decls 1)
                   "__tl_generated_lambda_helper")))])]))
@@ -707,11 +639,7 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    0)
-                  "substring")
+                (string.eq (tltest-decl-name-at harness-decls 0) "substring")
                 (string.eq
                   (tltest-decl-name-at harness-decls 1)
                   "__tl_generated_substring_helper")))])]))
@@ -766,57 +694,19 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
+                (string.eq (tltest-decl-name-at harness-decls 0) helper-name)
+                (string.eq (tltest-decl-name-at harness-decls 1) "")
                 (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    0)
-                  helper-name)
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    1)
-                  "")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    2)
+                  (tltest-decl-name-at harness-decls 2)
                   "__tl_inline_test_0")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    3)
-                  "")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    4)
-                  "")
+                (string.eq (tltest-decl-name-at harness-decls 3) "")
+                (string.eq (tltest-decl-name-at harness-decls 4) "")
                 (string.eq (tltest-decl-name-at harness-decls 5) "main")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    0)
-                  "driver.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    1)
-                  "driver.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    2)
-                  "driver.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    3)
-                  "driver.tl")
-                (string.eq
-                  (tltest-path-at
-                    (owned_view.compiler-owned-shared-view harness-paths)
-                    4)
-                  "driver.tl")
+                (string.eq (tltest-path-at harness-paths 0) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 1) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 2) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 3) "driver.tl")
+                (string.eq (tltest-path-at harness-paths 4) "driver.tl")
                 (string.eq (tltest-path-at harness-paths 5) "driver.tl")))])]))
     unit
     (io.panic "test CLI inline harness kept imported test")))
@@ -869,8 +759,7 @@
       [(tltest.InlineHarness.Harness program _ count)
         (match program
           [(ast.AstProgram.Program harness-decls-box)
-            (match (ast.ast-decl-list-step
-              (ast.ast-decl-list-box-shared-view harness-decls-box))
+            (match (ast.ast-decl-list-step (deref harness-decls-box))
               [(ast.AstDeclListStep.Cons first _)
                 (and (= count 1) (tltest-import-alias-preserved? first))]
               [_ false])])]))
@@ -956,15 +845,9 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
-                (tltest-decl-list-has-name?
-                  (owned_view.compiler-owned-shared-view harness-decls)
-                  helper-name)
-                (tltest-decl-list-has-name?
-                  (owned_view.compiler-owned-shared-view harness-decls)
-                  dep-name)
-                (tltest-decl-list-has-name?
-                  (owned_view.compiler-owned-shared-view harness-decls)
-                  eq-name)
+                (tltest-decl-list-has-name? harness-decls helper-name)
+                (tltest-decl-list-has-name? harness-decls dep-name)
+                (tltest-decl-list-has-name? harness-decls eq-name)
                 (tltest-decl-list-has-name? harness-decls eq-dep-name)))])]))
     unit
     (io.panic "test CLI inline harness pruned runtime string helper root")))
@@ -1036,13 +919,8 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
-                (tltest-decl-list-has-name?
-                  (owned_view.compiler-owned-shared-view harness-decls)
-                  fetch-name)
-                (not
-                  (tltest-decl-list-has-name?
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    load-name))
+                (tltest-decl-list-has-name? harness-decls fetch-name)
+                (not (tltest-decl-list-has-name? harness-decls load-name))
                 (tltest-decl-list-has-name? harness-decls wrapper-name)))])]))
     unit
     (io.panic "test CLI inline harness atomic runtime reachability mismatch")))
@@ -1129,12 +1007,8 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
-                (tltest-decl-list-has-name?
-                  (owned_view.compiler-owned-shared-view harness-decls)
-                  live-name)
-                (tltest-decl-list-has-name?
-                  (owned_view.compiler-owned-shared-view harness-decls)
-                  dep-name)
+                (tltest-decl-list-has-name? harness-decls live-name)
+                (tltest-decl-list-has-name? harness-decls dep-name)
                 (not (tltest-decl-list-has-name? harness-decls dead-name))))])]))
     unit
     (io.panic "test CLI inline harness generated reachability mismatch")))
@@ -1192,9 +1066,7 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
-                (tltest-decl-list-has-name?
-                  (owned_view.compiler-owned-shared-view harness-decls)
-                  dead-name)
+                (tltest-decl-list-has-name? harness-decls dead-name)
                 (not (tltest-decl-list-has-name? harness-decls ordinary-name))))])]))
     unit
     (io.panic "test CLI inline harness pruned imported generated wrapper")))
@@ -1252,36 +1124,14 @@
                 (ast.ast-decl-list-box-shared-view harness-decls-box)]
               (and
                 (= count 1)
+                (string.eq (tltest-decl-name-at harness-decls 0) helper-name)
+                (string.eq (tltest-decl-name-at harness-decls 1) macro-name)
+                (string.eq (tltest-decl-name-at harness-decls 2) "")
                 (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    0)
-                  helper-name)
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    1)
-                  macro-name)
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    2)
-                  "")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    3)
+                  (tltest-decl-name-at harness-decls 3)
                   "__tl_inline_test_0")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    4)
-                  "")
-                (string.eq
-                  (tltest-decl-name-at
-                    (owned_view.compiler-owned-shared-view harness-decls)
-                    5)
-                  "")
+                (string.eq (tltest-decl-name-at harness-decls 4) "")
+                (string.eq (tltest-decl-name-at harness-decls 5) "")
                 (string.eq (tltest-decl-name-at harness-decls 6) "main")))])]))
     unit
     (io.panic "test CLI inline harness dropped macro quasiquote dependency")))

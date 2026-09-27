@@ -24,14 +24,6 @@
 (import compiler_diagnostic as cdiag)
 (cfg test (import stdlib.test))
 
-(define (compiler-reg-add-advisory!
-  [sink : cdiag.CompilerAdvisorySink]
-  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
-  (cdiag.compiler-advisory-sink-push!
-    sink
-    (cdiag.CompilerAdvisoryPhase.RegisterAllocation)
-    diagnostic))
-
 (defmacro (compiler-reg-global-shared-view [place : Expr]) : Expr
   `(owned_view.compiler-owned-shared-view ,place))
 
@@ -1574,9 +1566,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-reg-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ ty id)
             (compiler-reg-var-type-array-set! present types id ty)])
         (set! position (+ position 1))))))
@@ -1726,10 +1716,14 @@
     (ir.compiler-ir-representation-index-empty)
     metrics))
 
-(define (compiler-reg-function-var-types [func : ir.CompilerIrFunction]) : CompilerRegVarTypes
-  (compiler-reg-function-var-types-with-representations
-    func
-    (ir.compiler-ir-representation-index-empty)))
+(define (compiler-reg-function-var-types
+  [func : (& func ir.CompilerIrFunction)]) : CompilerRegVarTypes
+  (let
+    [func : ir.CompilerIrFunction
+      (owned_view.compiler-owned-reference-shared-view func)]
+    (compiler-reg-function-var-types-with-representations
+      func
+      (ir.compiler-ir-representation-index-empty))))
 
 (define (compiler-reg-move-list-contains?
   [moves : (& moves CompilerRegMoveSeq)]
@@ -1830,9 +1824,7 @@
       moves
       (let
         [phi-input-at-2104-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-2104-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-2104-3 0)]
         [value : ir.CompilerIrValue phi-input-at-2104-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -4805,9 +4797,7 @@
       unit
       (let
         [phi-input-at-5085-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-5085-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-5085-3 0)]
         [value : ir.CompilerIrValue phi-input-at-5085-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -4880,9 +4870,7 @@
       false
       (let
         [phi-input-at-5154-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-5154-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-5154-3 0)]
         [value : ir.CompilerIrValue phi-input-at-5154-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -4910,8 +4898,10 @@
           (if (and
             (>= var 0)
             (=
-              (ir.compiler-ir-instr-dst
-                (compiler-reg-global-array-element-shared-view slots index))
+              (let
+                [instr
+                  (compiler-reg-global-array-element-shared-view slots index)]
+                (ir.compiler-ir-instr-dst instr))
               var))
             (set! found true)
             unit)
@@ -4959,8 +4949,10 @@
           (if (and
             (>= var 0)
             (=
-              (ir.compiler-ir-instr-dst
-                (compiler-reg-global-array-element-shared-view slots index))
+              (let
+                [instr
+                  (compiler-reg-global-array-element-shared-view slots index)]
+                (ir.compiler-ir-instr-dst instr))
               var))
             (set! found index)
             unit)
@@ -4987,9 +4979,7 @@
       (while (and (< index count) clean)
         (begin
           (if (let
-            [instr-uses
-              (live.compiler-live-instr-uses
-                (compiler-reg-global-array-element-shared-view slots index))]
+            [instr-uses (live.compiler-live-instr-uses (array-ref slots index))]
             (live.compiler-live-set-contains? instr-uses var))
             (set! clean false)
             unit)
@@ -5030,9 +5020,7 @@
       true
       (let
         [phi-input-at-5298-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-5298-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-5298-3 0)]
         [value : ir.CompilerIrValue phi-input-at-5298-3.value]
         [predecessor : i64 phi-input-at-5298-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -5889,9 +5877,7 @@
   [position : i64]) : live.CompilerLiveI64Set
   (if (>= position params.len)
     set
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-reg-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ _ var)
         (compiler-reg-ineligible-params-from
           params
@@ -6023,9 +6009,7 @@
   [position : i64]) : bool
   (if (>= position params.len)
     true
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-reg-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ ty _)
         (and
           (compiler-reg-integer-param-type?
@@ -6077,9 +6061,7 @@
   (if (>= position params.len)
     unit
     (begin
-      (match (ir.compiler-ir-param-seq-ref
-        (compiler-reg-global-shared-view params)
-        position)
+      (match (ir.compiler-ir-param-seq-ref params position)
         [(ir.CompilerIrParam.Param _ _ var)
           (let
             [root : i64
@@ -6382,9 +6364,7 @@
   [shift-points : live.CompilerLiveI64Set]) : CompilerRegParamAssignPlan
   (if (>= position params.len)
     (CompilerRegParamAssignPlan.Plan assignments ineligible blocked)
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-reg-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ ty var-id)
         (let
           [is-float : bool (compiler-reg-float-type? ty)]
@@ -6582,14 +6562,8 @@
             (live.compiler-live-set-empty)
             ;; Kind 6 excludes tail calls: control never returns, and the
             ;; marshalling arm reads an incoming pin before overwriting it.
-            (compiler-reg-clobber-kind-points
-              type-segment-bases
-              (compiler-reg-global-shared-view func)
-              6))
-          (compiler-reg-clobber-kind-points
-            type-segment-bases
-            (compiler-reg-global-shared-view func)
-            1)
+            (compiler-reg-clobber-kind-points type-segment-bases func 6))
+          (compiler-reg-clobber-kind-points type-segment-bases func 1)
           (compiler-reg-clobber-kind-points type-segment-bases func 2)))]))
 
 (define (compiler-reg-ineligible-instr
@@ -7601,9 +7575,7 @@
   [position : i64]) : live.CompilerLiveUseDef
   (if (>= position params.len)
     (live.CompilerLiveUseDef vector-set mask-set)
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-reg-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param name _ var)
         (compiler-reg-spmd-private-param-defs-from
           params
@@ -8389,8 +8361,10 @@
         (begin
           (compiler-reg-count-def!
             counts
-            (ir.compiler-ir-instr-dst
-              (compiler-reg-global-array-element-shared-view slots index)))
+            (let
+              [instr
+                (compiler-reg-global-array-element-shared-view slots index)]
+              (ir.compiler-ir-instr-dst instr)))
           (set! index (+ index 1))))
       unit)))
 
@@ -8469,9 +8443,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-reg-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ _ id)
             (compiler-reg-count-def! counts id)])
         (set! position (+ position 1))))))
@@ -8486,9 +8458,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-reg-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ _ id)
             (if (and (>= id 0) (< id (array-length candidates)))
               (set! (array-ref candidates id) 2)
@@ -8774,8 +8744,10 @@
         (begin
           (let
             [v : i64
-              (ir.compiler-ir-instr-dst
-                (compiler-reg-global-array-element-shared-view slots index))]
+              (let
+                [instr
+                  (compiler-reg-global-array-element-shared-view slots index)]
+                (ir.compiler-ir-instr-dst instr))]
             (if (and (>= v 0) (< v (array-length cursor)))
               (let
                 [slot : i64 (array-ref cursor v)]
@@ -10543,17 +10515,20 @@
 
 (define (compiler-reg-clobber-kind-points
   [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]
+  [func : (& func ir.CompilerIrFunction)]
   [kind : i64]) : live.CompilerLiveI64Set
-  (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-      (match (compiler-reg-clobber-kind-points-blocks
-        type-segment-bases
-        blocks
-        0
-        (live.compiler-live-set-empty)
-        kind)
-        [(CompilerRegCallScan.Scan _ set) set])]))
+  (let
+    [func : ir.CompilerIrFunction
+      (owned_view.compiler-owned-reference-shared-view func)]
+    (match func
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+        (match (compiler-reg-clobber-kind-points-blocks
+          type-segment-bases
+          blocks
+          0
+          (live.compiler-live-set-empty)
+          kind)
+          [(CompilerRegCallScan.Scan _ set) set])])))
 
 ;; "Does any set bit of `bits` land strictly inside (start, end) once offset by
 ;; `var-base`?" The bit positions satisfying `start < var-base + i < end` form a
@@ -12101,9 +12076,7 @@
     (if (< id-count 0)
       (begin
         (let
-          [instr-uses
-            (live.compiler-live-instr-uses
-              (compiler-reg-global-shared-view instr))]
+          [instr-uses (live.compiler-live-instr-uses instr)]
           (compiler-reg-ref-counts-add-set-weighted! counts instr-uses weight))
         (let
           [instr-defs (live.compiler-live-instr-defs instr)]
@@ -12197,8 +12170,7 @@
       (begin
         (compiler-reg-ref-mark-set-words!
           marks
-          (live.compiler-live-instr-uses
-            (compiler-reg-global-shared-view instr))
+          (live.compiler-live-instr-uses instr)
           0)
         (compiler-reg-ref-mark-set-words!
           marks
@@ -13413,14 +13385,11 @@
     [id-count : i64
       (live.compiler-live-instr-use-ids!
         (compiler-reg-global-shared-view instr))]
-    [def-var : i64
-      (ir.compiler-ir-instr-dst (compiler-reg-global-shared-view instr))]
+    [def-var : i64 (ir.compiler-ir-instr-dst instr)]
     (begin
       (if (< id-count 0)
         (let
-          [uses : live.CompilerLiveI64Set
-            (live.compiler-live-instr-uses
-              (compiler-reg-global-shared-view instr))]
+          [uses : live.CompilerLiveI64Set (live.compiler-live-instr-uses instr)]
           [defs : live.CompilerLiveI64Set
             (live.compiler-live-instr-defs
               (compiler-reg-global-shared-view instr))]
@@ -16632,8 +16601,7 @@
                       (if (< id-count 0)
                         (compiler-reg-call-hole-max-weight-set!
                           maxw
-                          (live.compiler-live-instr-uses
-                            (compiler-reg-global-shared-view instr))
+                          (live.compiler-live-instr-uses instr)
                           weight)
                         (compiler-reg-call-hole-max-weight-ids!
                           maxw
@@ -16921,9 +16889,7 @@
                               (compiler-reg-global-array-element-shared-view
                                 slots
                                 i)]
-                            [def-var : i64
-                              (ir.compiler-ir-instr-dst
-                                (compiler-reg-global-shared-view instr))]
+                            [def-var : i64 (ir.compiler-ir-instr-dst instr)]
                             (begin
                               (if (compiler-reg-clobber-instr-kind?
                                 type-segment-bases
@@ -17270,8 +17236,7 @@
           (let
             [instr : ir.CompilerIrInstr
               (compiler-reg-global-array-element-shared-view slots index)]
-            [def-var : i64
-              (ir.compiler-ir-instr-dst (compiler-reg-global-shared-view instr))]
+            [def-var : i64 (ir.compiler-ir-instr-dst instr)]
             (begin
               (if (and
                 (< index last)
@@ -17457,8 +17422,7 @@
               (compiler-reg-call-hole-selected-bit
                 selected
                 selected-count
-                (ir.compiler-ir-instr-dst
-                  (compiler-reg-global-shared-view instr)))]
+                (ir.compiler-ir-instr-dst instr))]
             [bits : i64 pending]
             (begin
               (while (not (= bits 0))
@@ -17804,9 +17768,7 @@
                       (compiler-reg-global-array-element-shared-view
                         slots
                         index)]
-                    [def-var : i64
-                      (ir.compiler-ir-instr-dst
-                        (compiler-reg-global-shared-view instr))]
+                    [def-var : i64 (ir.compiler-ir-instr-dst instr)]
                     (if (and
                       (< index last)
                       (compiler-reg-clobber-instr-kind?
@@ -18060,9 +18022,7 @@
   [total : i64]) : i64
   (if (>= position params.len)
     total
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-reg-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ ty var-id)
         (let
           [is-float : bool (compiler-reg-float-type? ty)]
@@ -18980,8 +18940,7 @@
                 (begin
                   (if (< id-count 0)
                     (compiler-reg-loop-park-note-resident-set!
-                      (live.compiler-live-instr-uses
-                        (compiler-reg-global-shared-view instr))
+                      (live.compiler-live-instr-uses instr)
                       vars
                       weight
                       stamp
@@ -19063,9 +19022,7 @@
         (begin
           (let
             [input : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (compiler-reg-global-shared-view inputs)
-                index)]
+              (ir.compiler-ir-phi-input-seq-ref inputs index)]
             (when
               (= input.label from-label)
               (match input.value
@@ -20206,9 +20163,7 @@
             (begin
               (let
                 [input : ir.CompilerIrPhiInput
-                  (ir.compiler-ir-phi-input-seq-ref
-                    (compiler-reg-global-shared-view inputs)
-                    index)]
+                  (ir.compiler-ir-phi-input-seq-ref inputs index)]
                 (set!
                   (array-ref out index)
                   (ir.CompilerIrPhiInput
@@ -21048,8 +21003,7 @@
                               (begin
                                 (if (< id-count 0)
                                   (compiler-reg-call-region-note-set!
-                                    (live.compiler-live-instr-uses
-                                      (compiler-reg-global-shared-view instr))
+                                    (live.compiler-live-instr-uses instr)
                                     false
                                     cand
                                     n
@@ -21378,8 +21332,7 @@
         (begin
           (if (< id-count 0)
             (compiler-reg-call-region-loop-note-set!
-              (live.compiler-live-instr-uses
-                (compiler-reg-global-shared-view instr))
+              (live.compiler-live-instr-uses instr)
               cand
               n
               sid
@@ -22091,8 +22044,7 @@
     (begin
       (if (< id-count 0)
         (compiler-reg-call-region-evict-mark-set!
-          (live.compiler-live-instr-uses
-            (compiler-reg-global-shared-view instr))
+          (live.compiler-live-instr-uses instr)
           n
           parents
           assignments
@@ -22233,8 +22185,7 @@
                               (compiler-reg-call-region-root
                                 parents
                                 n
-                                (ir.compiler-ir-instr-dst
-                                  (compiler-reg-global-shared-view instr)))
+                                (ir.compiler-ir-instr-dst instr))
                               vr)
                             (compiler-reg-call-region-evict-set-hits-class?
                               (live.compiler-live-instr-uses instr)
@@ -22344,10 +22295,7 @@
                       (compiler-reg-global-array-element-shared-view islots i)]
                     (begin
                       (when
-                        (=
-                          (ir.compiler-ir-instr-dst
-                            (compiler-reg-global-shared-view instr))
-                          v)
+                        (= (ir.compiler-ir-instr-dst instr) v)
                         (let
                           [p : i64
                             (+
@@ -23009,10 +22957,7 @@
         1
         n)]
     [kind0 : live.CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points
-        type-segment-bases
-        (compiler-reg-global-shared-view func)
-        0)]
+      (compiler-reg-clobber-kind-points type-segment-bases func 0)]
     [remat-table : CompilerRegRematTable
       (compiler-reg-remat-table-build
         (compiler-reg-global-shared-view func)
@@ -23742,9 +23687,7 @@
       false
       (let
         [phi-input-at-31057-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-31057-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-31057-3 0)]
         [value : ir.CompilerIrValue phi-input-at-31057-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -23767,9 +23710,7 @@
       set
       (let
         [phi-input-at-31077-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-31077-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-31077-3 0)]
         [value : ir.CompilerIrValue phi-input-at-31077-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -25040,12 +24981,14 @@
 ;; the scan's answer in every case. The guards practically never fire, so the
 ;; fallback is a correctness backstop, not a performance path.
 (define (compiler-reg-greedy-reg-free?
-  [occupancy : CompilerRegGreedyOccupancy]
+  [occupancy : (& occupancy CompilerRegGreedyOccupancy)]
   [interval-index : (& interval-index CompilerRegIntervalIndex)]
   [ref-counts : (& ref-counts (__tl_dyn-array i64))]
   [var : i64]
   [reg-index : i64]) : bool
   (let
+    [occupancy : CompilerRegGreedyOccupancy
+      (owned_view.compiler-owned-reference-shared-view occupancy)]
     [primary : (__tl_dyn-array i64) occupancy.primary]
     [coarse : (__tl_dyn-array i64) occupancy.live-union-coarse]
     [segs : CompilerRegIntervalSeq
@@ -25122,7 +25065,7 @@
             (compiler-reg-global-shared-view forbidden)
             reg))
         (compiler-reg-greedy-reg-free?
-          (compiler-reg-global-shared-view occupancy)
+          occupancy
           interval-index
           ref-counts
           var
@@ -28715,9 +28658,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-reg-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ _ var-id)
             (match (compiler-reg-assignment-table-lookup assignments var-id)
               [(CompilerRegMaybeLocation.Some location)
@@ -28817,8 +28758,7 @@
       (begin
         (compiler-reg-trace-depth-set!
           out
-          (live.compiler-live-instr-uses
-            (compiler-reg-global-shared-view instr))
+          (live.compiler-live-instr-uses instr)
           depth)
         (compiler-reg-trace-depth-set!
           out
@@ -29246,10 +29186,7 @@
     [clobber-points : live.CompilerLiveI64Set
       (if ignore-single-cold-call?
         (live.compiler-live-set-empty)
-        (compiler-reg-clobber-kind-points
-          type-segment-bases
-          (compiler-reg-global-shared-view func)
-          6))]
+        (compiler-reg-clobber-kind-points type-segment-bases func 6))]
     ;; Per-register clobber point sets (15c): kind 1 = idiv (rax:rdx), kind 2 =
     ;; variable shift (rcx). Bound once here and reused both for the destructive
     ;; tie exclusion below and for the GAP3c pin demotion / greedy further down,
@@ -29258,15 +29195,9 @@
     ;; blocks and `compiler-live-set-union` never writes through its operands,
     ;; so the shared sets are the same values two separate walks would produce.
     [div-points : live.CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points
-        type-segment-bases
-        (compiler-reg-global-shared-view func)
-        1)]
+      (compiler-reg-clobber-kind-points type-segment-bases func 1)]
     [shift-points : live.CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points
-        type-segment-bases
-        (compiler-reg-global-shared-view func)
-        2)]
+      (compiler-reg-clobber-kind-points type-segment-bases func 2)]
     [destructive-fixed-points : live.CompilerLiveI64Set
       (live.compiler-live-set-union
         (compiler-reg-global-shared-view div-points)
@@ -30268,9 +30199,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-reg-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ _ var)
             (let
               [starts : (__tl_dyn-array i64) interval-index.starts]
@@ -30899,9 +30828,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-reg-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param name _ var)
             (if (compiler-reg-spmd-avx2-special-param? name)
               (compiler-reg-vector-stack-words-set-mask! (&mut words) var)
@@ -30918,9 +30845,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-reg-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param name _ var)
             (if (and
               (compiler-reg-spmd-avx2-special-param? name)
@@ -31566,9 +31491,7 @@
       acc
       (let
         [phi-input-at-38677-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-38677-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-38677-3 0)]
         [value : ir.CompilerIrValue phi-input-at-38677-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -32083,9 +32006,7 @@
       unit
       (let
         [phi-input-at-39180-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-39180-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-39180-3 0)]
         [value : ir.CompilerIrValue phi-input-at-39180-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -32651,9 +32572,7 @@
     (begin
       (while (< position params.len)
         (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-reg-global-shared-view params)
-            position)
+          (match (ir.compiler-ir-param-seq-ref params position)
             [(ir.CompilerIrParam.Param name _ var-id)
               (begin
                 (if (and
@@ -33526,9 +33445,7 @@
       unit
       (let
         [phi-input-at-40955-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-40955-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-40955-3 0)]
         [value : ir.CompilerIrValue phi-input-at-40955-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -33981,9 +33898,7 @@
       false
       (let
         [phi-input-at-41418-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-41418-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-41418-3 0)]
         [value : ir.CompilerIrValue phi-input-at-41418-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -34701,9 +34616,7 @@
     (begin
       (while (< position params.len)
         (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-reg-global-shared-view params)
-            position)
+          (match (ir.compiler-ir-param-seq-ref params position)
             [(ir.CompilerIrParam.Param name ty var)
               (set!
                 (array-ref slots position)
@@ -36661,7 +36574,7 @@
     (begin
       (compiler-reg-ref-counts-add-var-weighted!
         (&mut def-counts)
-        (ir.compiler-ir-instr-dst (compiler-reg-global-shared-view instr))
+        (ir.compiler-ir-instr-dst instr)
         1)
       (match instr
         [(ir.CompilerIrInstr.Mov dst value ty)

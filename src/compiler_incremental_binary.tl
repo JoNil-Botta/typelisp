@@ -298,30 +298,3 @@
             (set! equal? false))
           (set! index (+ index 1))))
       equal?)))
-
-(define (compiler-incremental-binary-bytes-less?
-  [left : (& left (__tl_dyn-array u8))]
-  [right : (& right (__tl_dyn-array u8))]) : bool
-  (let
-    [limit : i64
-      (if (< (array-length left) (array-length right))
-        (array-length left)
-        (array-length right))]
-    [index : i64 0]
-    [decided? : bool false]
-    [less? : bool false]
-    (begin
-      (while (and (not decided?) (< index limit))
-        (let
-          [left-byte : u8 (array-ref left index)]
-          [right-byte : u8 (array-ref right index)]
-          (cond
-            [(< left-byte right-byte)
-              (begin
-                (set! less? true)
-                (set! decided? true))]
-            [(> left-byte right-byte) (set! decided? true)]
-            [else (set! index (+ index 1))])))
-      (if decided?
-        less?
-        (< (array-length left) (array-length right))))))

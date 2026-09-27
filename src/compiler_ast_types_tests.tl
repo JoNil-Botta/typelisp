@@ -8,6 +8,7 @@
 (import stdlib.arena)
 (import stdlib.string)
 (import compiler_ast_types as ast)
+(import compiler_owned_view as owned_view)
 
 ;; Layout queries need the struct names unqualified. Lint does not count a use
 ;; inside `(type ...)`.
@@ -158,10 +159,13 @@
 (define (ast-decl-list-empty? [v : (& v ast.AstDeclList)]) : bool
   (= (ast.ast-decl-list-len v) 0))
 
-(define (ast-decl-list-tail [items : ast.AstDeclList]) : ast.AstDeclList
-  (if (<= (ast.ast-decl-list-len (& items)) 0)
-    (ast.ast-decl-list-new)
-    (ast.AstDeclList items.slots (+ items.offset 1) (- items.len 1) false)))
+(define (ast-decl-list-tail [items : (& items ast.AstDeclList)]) : ast.AstDeclList
+  (let
+    [items : ast.AstDeclList
+      (owned_view.compiler-owned-reference-shared-view items)]
+    (if (<= (ast.ast-decl-list-len (& items)) 0)
+      (ast.ast-decl-list-new)
+      (ast.AstDeclList items.slots (+ items.offset 1) (- items.len 1) false))))
 
 (define (ast-decl-module-list-get
   [v : (& v ast.AstDeclModuleList)]
@@ -449,7 +453,7 @@
       (let
         [inner : ast.AstDecl (deref inner-box)]
         (and
-          (ast.ast-decl-comptime-only? (ast.ast-global-shared-view inner))
+          (ast.ast-decl-comptime-only? inner)
           (compiler-ast-decl-def-lit-ok? inner generated-name-id 7)))]
     [_ false]))
 
@@ -929,13 +933,11 @@
           (ast.ast-decl-must-use? same-comptime)
           (ast.ast-decl-must-use? same-unsafe)
           (not (ast.ast-decl-must-use? cleared-runtime))
-          (not
-            (ast.ast-decl-must-use?
-              (ast.ast-place-shared-view cleared-comptime)))
+          (not (ast.ast-decl-must-use? cleared-comptime))
           (ast.ast-decl-comptime-only? cleared-comptime)
           (ast.ast-decl-must-use? marked)
           (ast.ast-decl-must-use? comptime-decl)
           (ast.ast-decl-must-use? generated-decl)
-          (ast.ast-decl-must-use? (ast.ast-place-shared-view unsafe-decl))
+          (ast.ast-decl-must-use? unsafe-decl)
           (ast.ast-decl-comptime-only? unsafe-decl))
         (io.panic "aggregate marker wrapper semantics or allocation changed")))))

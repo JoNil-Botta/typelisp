@@ -967,14 +967,17 @@
 
 ;; The vars `instr` reads: its uses, Pack words and phi inputs included, and
 ;; AddrOf's storage var.
-(define (compiler-live-instr-uses [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
-  (match (compiler-live-shared-view instr)
-    [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
-    [_
-      (ir.compiler-ir-instr-fold-uses
-        instr
-        (compiler-live-set-empty)
-        compiler-live-use-vars-into)]))
+(define (compiler-live-instr-uses [instr : (& instr ir.CompilerIrInstr)]) : CompilerLiveI64Set
+  (let
+    [instr : ir.CompilerIrInstr
+      (owned_view.compiler-owned-reference-shared-view instr)]
+    (match (compiler-live-shared-view instr)
+      [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
+      [_
+        (ir.compiler-ir-instr-fold-uses
+          instr
+          (compiler-live-set-empty)
+          compiler-live-use-vars-into)])))
 
 ;; ---------------------------------------------------------------------------
 ;; Direct per-instruction var-id extraction.
@@ -1109,7 +1112,7 @@
     n
     (let
       [input : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref (compiler-live-shared-view inputs) 0)]
+        (ir.compiler-ir-phi-input-seq-ref inputs 0)]
       [rest : ir.CompilerIrPhiInputSeq
         (ir.CompilerIrPhiInputSeq
           inputs.slots
@@ -1568,8 +1571,9 @@
       (while (< index phi-end)
         (let
           [def-var : i64
-            (ir.compiler-ir-instr-dst
-              (ir.compiler-ir-instr-seq-ref instrs index))]
+            (let
+              [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+              (ir.compiler-ir-instr-dst instr))]
           (begin
             (when
               (>= def-var 0)
@@ -1618,7 +1622,7 @@
           [def-var : i64
             (if (< index phi-end)
               (- 0 1)
-              (ir.compiler-ir-instr-dst (compiler-live-shared-view instr)))]
+              (ir.compiler-ir-instr-dst instr))]
           (begin
             (if (< id-count 0)
               ;; Wider than the extraction buffer: take the bitset path, which
@@ -1628,7 +1632,7 @@
                   (if edge-precise?
                     (compiler-live-instr-uses-nophi
                       (compiler-live-shared-view instr))
-                    (compiler-live-instr-uses (compiler-live-shared-view instr)))]
+                    (compiler-live-instr-uses instr))]
                 [instr-defs : CompilerLiveI64Set
                   (if (< index phi-end)
                     (compiler-live-set-empty)
@@ -2034,8 +2038,7 @@
             (compiler-live-instr-use-ids-nophi!
               (compiler-live-shared-view instr))
             (compiler-live-instr-use-ids! (compiler-live-shared-view instr)))]
-        [def-var : i64
-          (ir.compiler-ir-instr-dst (compiler-live-shared-view instr))]
+        [def-var : i64 (ir.compiler-ir-instr-dst instr)]
         (begin
           ;; The final point is already a stored immutable set. Reuse it
           ;; rather than copying scratch once more at every block boundary.
@@ -2055,7 +2058,7 @@
                   (if edge-precise?
                     (compiler-live-instr-uses-nophi
                       (compiler-live-shared-view instr))
-                    (compiler-live-instr-uses (compiler-live-shared-view instr)))]
+                    (compiler-live-instr-uses instr))]
                 [instr-defs (compiler-live-instr-defs instr)]
                 (compiler-live-scratch-step!
                   (compiler-live-shared-view words)
@@ -2226,9 +2229,7 @@
       unit
       (let
         [phi-input-at-2533-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-2533-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-2533-3 0)]
         [value : ir.CompilerIrValue phi-input-at-2533-3.value]
         [label : i64 phi-input-at-2533-3.label]
         [rest : ir.CompilerIrPhiInputSeq

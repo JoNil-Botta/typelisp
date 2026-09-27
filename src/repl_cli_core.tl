@@ -1,7 +1,6 @@
 ;; repl_cli_core.tl - Selfhost REPL session command logic.
 ;;
-;; Shared by the retained `repl.tl` compatibility/coverage wrapper and the
-;; unified `cli.tl` dispatcher.
+;; Shared by the unified `main.tl` dispatcher and `cli_core_tests.tl`.
 ;;
 ;; Owns the REPL line loop and the dot-commands. It reads lines with
 ;; `read-stdin-line` until `.exit` or end of input, printing a flushed `tl> `

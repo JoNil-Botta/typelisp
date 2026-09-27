@@ -13,8 +13,6 @@ set -eu
 # most of the TypeLisp corpus. Files using syntax that the published seed
 # formatter may not preserve yet, such as extern metadata `(:symbol ...)` and
 # unsafe blocks, are checked with the formatter source in the current tree.
-#
-# refs #384.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -47,7 +45,7 @@ esac
 
 # `typelisp fmt` runs the self-hosted formatter as native code for the host.
 # Allow Linux and Windows (Git Bash / MSYS / MINGW / Cygwin) hosts so both CI
-# jobs run the check (#763); reject anything else so unsupported hosts do not
+# jobs run the check; reject anything else so unsupported hosts do not
 # silently pass the gate.
 HOST_OS=linux
 case "$(uname -s)" in

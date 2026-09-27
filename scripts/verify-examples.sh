@@ -3,7 +3,6 @@ set -eu
 
 # verify-examples.sh — Compile every .tl file in examples/ and verify its exit
 # code plus exact user-visible stdout.
-# refs #208
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

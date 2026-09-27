@@ -100,8 +100,7 @@
   (seq ir.CompilerIrBlockSeq)
   (graph CompilerLiveBlockGraph))
 
-;; Per-analysis edge facts that region-copy planning reads once per region,
-;; computed once per analysis instead:
+;; Per-analysis edge facts, computed once per analysis:
 ;; - `pred-counts`: how many blocks name each block among their successors;
 ;; - `succ-offsets` / `succ-index`: each block's successors, in the order its
 ;;   label set yields them (ref 0, 1, ...), as block indices (-1 where a label
@@ -151,13 +150,9 @@
 ;; per eight bytes, and reaching it costs the argument moves and the `call`.
 ;; That is roughly `5n` against `18 + n`, which crosses just above four words.
 ;;
-;; The threshold is not a guess and the scalar arm is not vestigial: a
-;; word-count census over an opt2 self-compile puts half of every live-set copy
-;; at three words or fewer (freezes: 4.9% empty, 25.9% one word, 14.2% two,
-;; 10.1% three; the range copies are wider still at the tail but 52% of them are
-;; also three or fewer). Those calls are half the traffic and 7% of the words,
-;; so they must keep the cheap arm while the long tail -- which is where nearly
-;; all the words are -- takes the bulk copy.
+;; The scalar arm is not vestigial: about half of all live-set copies are three
+;; words or fewer, so they keep the cheap arm while the long tail -- which is
+;; where nearly all the words are -- takes the bulk copy.
 (define (compiler-live-set-bulk-copy-words) : i64
   5)
 
@@ -192,9 +187,7 @@
 ;; Every empty set is the same value: the word array has length zero, so no
 ;; index is in range and nothing can ever be written into it. Handing out one
 ;; shared instance is therefore indistinguishable from allocating a fresh one,
-;; and it removes an allocation from a function called throughout liveness --
-;; call-edge attribution puts 318,627,090 Ir of `tl_alloc` behind this one
-;; caller in an opt2 self-compile.
+;; and it removes an allocation from a function called throughout liveness.
 (define compiler-live-set-empty-value : (__tl_dyn-array CompilerLiveI64Set)
   (__tl_make-array (CompilerLiveI64Set (__tl_make-array i64 0))))
 
@@ -211,13 +204,10 @@
 (define (compiler-live-set-word-count [set : (& set CompilerLiveI64Set)]) : i64
   (array-length set.words))
 
-;; There is no bounds-checked `compiler-live-set-word-at` any more. It existed
-;; to answer "the word at this index, or 0 when the set is too short" behind a
-;; call; P41 spelled that out inside `compiler-live-set-contains?` and P42 did
-;; the same for `compiler-live-set-insert` and `compiler-live-set-eq?`, which
-;; were the last two callers. Every remaining word read either proves its index
-;; in range and uses `-bounded` / `-at-data`, or spells the short-set arm out
-;; where the array's own length is already loaded.
+;; There is no bounds-checked "word at this index, or 0 when the set is too
+;; short" helper: every word read either proves its index in range and uses
+;; `-bounded` / `-at-data`, or spells the short-set arm out where the array's
+;; own length is already loaded.
 ;;
 ;; Callers must prove `0 <= word-index < compiler-live-set-word-count set`.
 (define (compiler-live-set-word-at-bounded
@@ -250,11 +240,9 @@
 ;; Copy `src[index, count)` into the same range of `dst`. Both callers below
 ;; allocate `dst` fresh at a length that covers `count` and never pass a `count`
 ;; past the end of `src`, so `dst` and `src` are always distinct arrays and the
-;; range is in bounds for both -- the recursive `array-ref`/`array-set!` form
-;; this replaces re-read both lengths and re-tested them on every word, which is
-;; four of the fourteen instructions it spent per word. Reading the backing
-;; pointers once and indexing them directly leaves the five-instruction word
-;; body, and once the range is wide enough to pay for the call (see
+;; range is in bounds for both. The backing pointers are therefore read once and
+;; indexed directly instead of re-reading and re-testing both lengths per word.
+;; Once the range is wide enough to pay for the call (see
 ;; `compiler-live-set-bulk-copy-words`) `tl_memcpy` moves it eight bytes per
 ;; instruction instead. Distinct arrays means the ranges cannot overlap, so the
 ;; forward bulk copy sees exactly what the ascending word walk saw.
@@ -335,25 +323,18 @@
               n)
             (CompilerLiveI64Set out)))))))
 
-;; Membership is the hottest liveness primitive in an opt2 self-compile --
-;; 13,669,761 calls spread over 25 register-allocator and backend sites, none of
-;; them dominant -- so the word read is spelled out here instead of going through
-;; the bounds-checked `compiler-live-set-word-at` helper this used to call (P42
-;; retired it once `insert` and `eq?` stopped calling it too). What that helper
-;; charged THIS caller was a call/ret and an argument move, a
-;; `word-index < 0` test that the `value < 0` guard above already decides (a
-;; non-negative value cannot shift right into a negative index), and -- because
-;; the mask has to survive the call -- a callee-saved register plus the frame to
-;; save and restore it in. Everything the helper does for an in-range index is
-;; done here directly, and an out-of-range index still answers false: the helper
-;; returned word 0 for it, and 0 masks to 0.
+;; Membership is the hottest liveness primitive, spread over many
+;; register-allocator and backend sites, so the word read is spelled out here
+;; instead of going through a bounds-checked helper call: that would cost this
+;; caller a call/ret and an argument move, a `word-index < 0` test that the
+;; `value < 0` guard above already decides (a non-negative value cannot shift
+;; right into a negative index), and -- because the mask has to survive the
+;; call -- a callee-saved register plus the frame to save and restore it in. An
+;; out-of-range index still answers false.
 ;;
-;; The RANGE test now runs before the mask is built, and that is the larger half
-;; of the win rather than a tidying: 46% of the calls in an opt2 self-compile
-;; answer false without reading a word (measured -- the average call costs 19.7
-;; instructions against 28 for the full path), and every one of them used to pay
-;; for `compiler-live-set-bit-mask` first, which is a `shl` by a computed amount
-;; and so carries the two range checks the shift itself needs. Deciding the
+;; The RANGE test runs before the mask is built: many calls answer false without
+;; reading a word, and `compiler-live-set-bit-mask` is a `shl` by a computed
+;; amount that carries the two range checks the shift itself needs. Deciding the
 ;; cheap, always-needed comparison first lets those calls skip the whole
 ;; sequence.
 (define (compiler-live-set-contains?
@@ -374,17 +355,15 @@
               (compiler-live-set-bit-mask value))
             0))))))
 
-;; The word read is spelled out rather than routed through the bounds-checked
-;; `compiler-live-set-word-at` helper, for the reason P41 gave for
-;; `compiler-live-set-contains?`: the call reloads the word array
-;; handle that `compiler-live-set-word-count` has already loaded one line above,
-;; and both are on the hot path of a function the liveness walk runs 2.4M times
-;; in an opt2 self-compile. Taking `words` once serves the count, the range test
-;; and the read. The helper's `word-index >= 0` half is dropped with it: `value`
-;; is non-negative on this arm and `compiler-live-set-word-index` is a right
-;; shift, so a negative index cannot arise here. The capacity `max` is spelled
-;; inline for P28's reason -- it is a real out-of-line call with 28 other sites
-;; keeping it that way, and this one sits on the hot path.
+;; The word read is spelled out rather than routed through a bounds-checked
+;; helper, as in `compiler-live-set-contains?`: the call would reload the word
+;; array handle that `compiler-live-set-word-count` has already loaded one line
+;; above, on the hot path of the liveness walk. Taking `words` once serves the
+;; count, the range test and the read. No `word-index >= 0` test is needed:
+;; `value` is non-negative on this arm and `compiler-live-set-word-index` is a
+;; right shift, so a negative index cannot arise here. The capacity `max` is
+;; spelled inline because it is a real out-of-line call and this one sits on
+;; the hot path.
 (define (compiler-live-set-insert [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
   (if (< value 0)
     set
@@ -549,20 +528,16 @@
             (compiler-live-set-from-words-trimmed out count)))
         left))))
 
-;; Two `compiler-live-set-word-at` calls per word was the whole cost of this
-;; comparison: each reloaded the set handle, the array handle behind it and the
-;; data pointer behind that, for one i64. Both arrays' handles, lengths and
-;; backing pointers are taken once here and the reads are spelled out, exactly
-;; as P41 did inside `compiler-live-set-contains?`. This was the helper's last
-;; caller together with `compiler-live-set-insert`, so it is gone. The short-set
-;; arm it provided is kept verbatim -- a set narrower than `count` reads 0 for
-;; its trailing words, which is what a missing word means -- so the same word
-;; pairs are compared in the same order and the same answer comes out.
+;; Both arrays' handles, lengths and backing pointers are taken once here and
+;; the reads are spelled out, as in `compiler-live-set-contains?`, rather than
+;; reloading the set handle, the array handle and the data pointer per word. A
+;; set narrower than `count` reads 0 for its trailing words, which is what a
+;; missing word means.
 ;;
 ;; The range proof is local: `index` starts at 0 and only ever increments, and
 ;; each read is guarded against that array's OWN length, so no caller contract
-;; is involved. The pointers cannot go stale either -- with the calls gone the
-;; loop body contains none at all, so nothing in it can allocate.
+;; is involved. The pointers cannot go stale either -- the loop body contains
+;; no calls at all, so nothing in it can allocate.
 (define (compiler-live-set-eq?
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : bool
@@ -1021,8 +996,8 @@
 ;;     into a caller-owned scratch array, or -1 when they do not fit.
 ;; Both mirror `compiler-live-instr-defs` / `-uses`: same operands, same
 ;; de-duplication, so `{ids} == set` element-wise. Order is operand order rather
-;; than the set's ascending id order, which is why order-sensitive consumers
-;; (remat's var renumbering) keep the bitset.
+;; than the set's ascending id order, so a consumer that needs ascending order
+;; keeps the bitset.
 ;; ---------------------------------------------------------------------------
 ;; Append `id` to `out[0..n)` unless it is already there (the bitset de-dups,
 ;; so `x = x + x` must yield one id, not two). Negative ids are dropped exactly
@@ -1423,8 +1398,7 @@
 ;; down the liveness / interval / ref-count call chains. Hold the ids only until
 ;; the next `compiler-live-instr-use-ids!` call.
 ;;
-;; 64 slots: an opt2 self-compile decodes 15,877,540 use lists whose widest is a
-;; 17..64-id call/phi (1,571 of them) and never exceeds 64; a wider one simply
+;; 64 slots covers the widest call/phi use lists in practice; a wider one simply
 ;; returns -1 and the caller takes the bitset path, so capacity is a throughput
 ;; choice, not a correctness one.
 (define compiler-live-instr-ids-buffer : (__tl_dyn-array i64)

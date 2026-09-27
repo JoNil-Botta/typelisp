@@ -82,9 +82,9 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 32 32)]
     [owner : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools
-        (ci.intern-compat-state-capture-active))]
+      (let
+        [intern-state (ci.intern-compat-state-capture-active)]
+        (spec.spec-owner-context-new pools intern-state))]
     [expr : ast.AstExpr (resource-with-owner (& owner))]
     [types : spec.SpecTypeSubst
       (spec.spec-type-subst-cons

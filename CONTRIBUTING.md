@@ -18,7 +18,7 @@ Thanks for your interest! This is a learning project — all contributions welco
 TypeLisp is **fully self-hosted**: the compiler compiles itself. There is no
 Rust (or other-language) compiler — see the self-perpetuating bootstrap in
 [`.github/workflows/bootstrap-stage0.yml`](.github/workflows/bootstrap-stage0.yml)
-and the README's stage0 section.
+and [Self-hosting and bootstrap](docs/testing-and-bootstrap.md#self-hosting-and-bootstrap).
 
 ## Zero Dependencies Rule
 
@@ -46,7 +46,7 @@ Path exceptions:
 - **`scripts/*.sh`** and **`tests/public-tools/*.sh`** - POSIX shell wrappers
   and public-tool corpus harnesses.
 - **`scripts/*.ps1`** - Windows PowerShell wrappers and benchmark helpers.
-- **`benchmarks/**`** - comparison baselines may be C (and other languages); the
+- **`benchmarks/**` C sources and headers** - comparison baselines; the
   benchmark harness exists to compare TypeLisp *against* clang-compiled C.
 - **`tools/vs-code-extension/**`** - editor-API client code.
 
@@ -101,8 +101,8 @@ the old form in the same change.**
 Keeping the old spelling working "for compatibility" leaves two ways to write
 the same thing and lets the old syntax linger indefinitely. A syntax change is
 complete only when the new spelling is the *sole* spelling: update `src/`,
-`src/`, `stdlib/`, `examples/`, `tests/`, `SPEC.md`, `README.md`, the
-editor grammar under `tools/`, and any verification scripts together, so that
+`stdlib/`, `examples/`, `tests/`, `SPEC.md`, `README.md`, the editor grammar
+under `tools/`, and any verification scripts together, so that
 `git grep <old-spelling>` returns no production code or syntax. Land the rename
 as one converging change rather than an add-then-maybe-migrate-later sequence.
 
@@ -119,7 +119,8 @@ as `type` use kebab-case; one-letter type variables may use conventional
 uppercase names such as `T`. A single leading `_` is allowed for an
 intentionally unused parameter or local. Keep ABI-constrained or mechanically
 generated spellings only when necessary, and put a targeted `lint-allow`
-directive at the declaration.
+directive at the declaration. Omit a `(module ...)` header that only repeats the
+file's inferred identity, unless the declaration itself is under test.
 
 Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
 `scripts/fetch-stage0.sh`, then:
@@ -148,59 +149,67 @@ Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
 4. Open a PR with a clear description
 5. CI must pass before merge
 
+## Keeping the Code Small
+
+Extend shared code instead of adding another copy, flag, wrapper or narrative:
+
+- **No unwired code on `main`.** Every `src/` module needs a production importer
+  or an open issue chain that builds on it. Experiments live on branches.
+- **No API chains.** Don't add `-with-X-and-Y` entry-point variants; add a field
+  to the request struct (`TypecheckRequest`, `OptimizeRequest`). Don't add new
+  `*-shared-view` wrappers.
+- **No hand-written full-variant walkers.** Walk AST children through
+  `ast-expr-child-ids`/`ast-expr-children` in `compiler_ast_types.tl` and IR
+  operands through the operand API in `compiler_ir_types.tl`
+  (`compiler-ir-instr-visit-uses`, `compiler-ir-instr-map`, ...). A full
+  `match` over every variant needs a comment naming its per-variant semantics.
+- **Optimizations must be general.** An optimization PR shows that the
+  transformation fires outside its target benchmark (self-compile, stdlib, the
+  integration corpus). Never specialize production code for benchmark shapes.
+- **Diagnostic cfgs and environment modes have an owner and an expiry.**
+  Delete stale ones.
+- **Measurements go in PR descriptions and commit messages,** not in comments
+  or Markdown. Docs keep what a reader needs to use a tool, plus invariants and
+  policies.
+- **Tests:** new optimizer and backend tests state their fixtures as IR text
+  (read by `src/compiler_ir_text.tl`); new language tests are black-box cases
+  under `tests/`.
+- **Report the line delta.** A PR that grows a file by more than about 300
+  lines says why.
+- **No CI gate whose only job is to test CI.**
+
 ## Architecture Notes
 
 The compiler is written in TypeLisp under [`src/`](src). Key modules:
 
-- `src/lexer.tl` — tokenizes source code
-- `src/compiler_parse_core.tl` — builds the AST from tokens
+- `src/lex.tl`, `src/read.tl` — the lexer and the spanned s-expression reader
+- `src/compiler_parse_core.tl` — builds the AST from the reader's forms
 - `src/compiler_typecheck_core.tl` — type inference and checking
 - `src/compiler_lower.tl` — lowering to the 3-address IR
 - `src/compiler_optimize.tl` — IR optimization passes
 - `src/compiler_backend.tl` — x86_64 code generation
-- `src/main.tl` — the unified toolchain CLI (the published stage0 binary)
-- `src/compile.tl` — the minimal compile entry point used by the bootstrap
+- `src/main.tl` — the unified toolchain CLI; the bootstrap and the published
+  stage0 binary both build it
+
+[`docs/compiler-architecture.md`](docs/compiler-architecture.md) describes the
+pipeline and its ownership rules.
 
 ### Compiler arena ownership
 
 Choose an arena for compiler-internal state by the longest boundary that the
 state must cross, not by whichever arena is active where the state is first
-created:
-
-- Transient parse, load, expansion, typecheck, lowering, and optimizer work may
-  use the owning scratch arena when no reference survives its rewind.
-- State that crosses scratch rewinds may use a dedicated phase arena with an
-  explicit reset or teardown after every consumer is finished. The
-  `tc-hygiene-module-env-cache-arena` in
-  [`src/compiler_typecheck_core.tl`](src/compiler_typecheck_core.tl) is this
-  shorter-lived pattern.
-- AST and type nodes belong to the installed `AstNodePoolContext`; use its pool
-  APIs and do not attach unrelated sidecars to its arena.
-- State that crosses node-pool context installs, intern persistent-arena floor
-  resets, or equivalent owner churn needs an independent arena with that full
-  lifetime. Create it once, allocate the collection and every later regrowth in
-  it, and do not rewind or destroy it while any consumer may retain the state.
-  Clear logical contents by rebinding the collection or resetting its metadata,
-  not by reclaiming the arena. `compiler-ir-label-arena` in
-  [`src/compiler_ir_types.tl`](src/compiler_ir_types.tl) is the process-lifetime
-  example.
-
-Never use `node-pool-base-arena` or the intern persistent arena as convenient
-storage for an unrelated long-lived cache or sidecar. The pool base handle is
-the moving head of an arena chain. Pool growth advances it, while installing an
-older captured context can restore an older head and strand later segments. A
-still-live global binding into one of those segments does not keep the raw arena
-storage reachable. The intern persistent arena is also reset to a floor and is
-replaced or destroyed on full reset; “persistent” does not mean process
-lifetime.
-
-This rule follows the delayed-corruption fixes in
-[#5458](https://github.com/JoNil-Botta/typelisp/pull/5458) and the rejected
-experiment in [#5474](https://github.com/JoNil-Botta/typelisp/issues/5474).
-Debug enforcement is tracked separately in
-[#5510](https://github.com/JoNil-Botta/typelisp/issues/5510). See
-[`src/TESTING.md`](src/TESTING.md#compiler-arena-ownership) for the operational
-test and reproducer guidance.
+created. Transient work uses the owning scratch arena; state that crosses
+scratch rewinds uses a dedicated phase arena reset at a documented boundary
+(`tc-hygiene-module-env-cache-arena` in
+[`src/compiler_typecheck_core.tl`](src/compiler_typecheck_core.tl)); AST and
+type nodes belong to the installed `AstNodePoolContext`; and state that crosses
+node-pool installs or intern resets needs its own arena for that whole lifetime
+(`compiler-ir-label-arena-handle` in
+[`src/compiler_ir_types.tl`](src/compiler_ir_types.tl)). Never use
+`node-pool-base-arena` or the intern persistent arena as storage for an
+unrelated long-lived cache or sidecar.
+[`src/TESTING.md`](src/TESTING.md#compiler-arena-ownership) gives the reasons,
+the regression-test recipe, and the incidents behind the rule.
 
 See [`src/TESTING.md`](src/TESTING.md) for the testing conventions.
 

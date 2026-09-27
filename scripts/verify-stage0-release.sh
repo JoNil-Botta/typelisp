@@ -4,7 +4,7 @@ set -eu
 # verify-stage0-release.sh - Publish and verify the mutable stage0 release.
 #
 # `gh release create` creates a draft, uploads assets, and then publishes it.
-# A failed or skipped final publish has previously left a complete draft while
+# A failed or skipped final publish can leave a complete draft while
 # still allowing the bootstrap workflow to report success. Find the release in
 # the authenticated release list (which includes drafts), validate its payload,
 # explicitly publish a complete draft, and then prove both the public tag API

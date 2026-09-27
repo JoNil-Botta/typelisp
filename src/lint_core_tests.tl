@@ -1,5 +1,5 @@
 ;; lint_core_tests.tl - Lint self-test fixtures and entry split from
-;; production lint_core.tl (simplify.md A1, #5169 pattern).
+;; production lint_core.tl.
 ;;
 ;; Main-less companion imported by src/tests/lint_smoke.tl: it holds the
 ;; flat-AST lint-test-* fixture helpers, the lint-name-set smoke check, and

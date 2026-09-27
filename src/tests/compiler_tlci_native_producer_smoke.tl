@@ -1,9 +1,9 @@
 ;; End-to-end host-image coverage for package-owned macro captures (#2754).
-;; Native template shapes beyond the original splice-only subset (nested
-;; calls, literals, splices, if/begin/binary/unary forms, plain symbols,
-;; computed list-length ifs, and identity bodies) are covered here too
-;; (#5596), along with the `str-cat` shape -- an operand-count integer match
-;; with indexed operand access and a count-binding default arm (#5617).
+;; Native template shapes (nested calls, literals, splices,
+;; if/begin/binary/unary forms, plain symbols, computed list-length ifs, and
+;; identity bodies) are covered here too (#5596), along with the `str-cat`
+;; shape -- an operand-count integer match with indexed operand access and a
+;; count-binding default arm (#5617).
 ;; A body outside the supported subset keeps the counted interpreted-fallback
 ;; shell.
 (import stdlib.str_cat_runtime as str_cat)
@@ -977,9 +977,9 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
-;; The `format-push` / `format-finish` shape: a computed match that
-;; destructures an `Expr` operand with `(comptime.Expr.Call callee args)`,
-;; binding the callee and the argument list into session locals. Check 0
+;; A computed match that destructures an `Expr` carrier operand with
+;; `(comptime.Expr.Call callee args)`, binding the callee and the argument
+;; list into session locals. Check 0
 ;; rebuilds `(,callee ,@pieces ,piece)` from a two-argument call operand,
 ;; check 1 takes the non-call default arm, and check 2 rebuilds
 ;; `(joined ,@pieces)` with a wildcard callee pattern. Refs #5602.
@@ -1255,8 +1255,7 @@
 ;; exercises the `Expr.Var` shape probe and name accessor, `int->string` over a
 ;; compile-time data local (which stages the index as a comptime value first),
 ;; and the existing `string-append` chain -- none of which any other fixture
-;; reaches, and none of which the embedded image exercises yet, because every
-;; consuming stdlib body is still blocked on its own reflection family.
+;; reaches.
 ;;
 ;; `var-operand` false passes a non-identifier first operand instead, so the
 ;; shape probe's negative answer and the wildcard arm stay covered too.
@@ -2047,10 +2046,10 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
-;; The comptime string scanner: `comptime.expr-string?` (256) guards a String
-;; session local that `expr-string-value` (246) binds, `string-length` (252)
-;; measures, `string-ref` (253) indexes through a `char` cast, `string-slice`
-;; (254) cuts and `expr-string-from-value` (255) turns back into a literal.
+;; The comptime string scanner: `comptime.expr-string?` guards a String
+;; session local that `expr-string-value` binds, `string-length` measures,
+;; `string-ref` indexes through a `char` cast, `string-slice` cuts and
+;; `expr-string-from-value` turns back into a literal.
 ;; The two arms differ only in which byte the operand starts with, so an
 ;; off-by-one in any of those reads still commits a result -- the assertions
 ;; compare the exact literal each arm must produce. Refs #5701.
@@ -4409,10 +4408,10 @@
 ;; site that hands the scrutinee back to the interpreter. Two entries here do:
 ;; `kindwild`, whose wildcard body is outside the supported subset, and
 ;; `kindfull`, which has no wildcard at all and so falls off the end of its arm
-;; chain for any type that is neither `i64` nor `f64`. The second was
-;; previously uncounted -- the chain terminator emitted the ok-with-no-result
-;; form without the marker -- which made a non-exhaustive dispatch look fully
-;; native. Refs #5596, #5604.
+;; chain for any type that is neither `i64` nor `f64`. The second pins that
+;; the chain terminator emits the ok-with-no-result form with the marker;
+;; without it a non-exhaustive dispatch would look fully native.
+;; Refs #5596, #5604.
 (define (producer-test-package-native-image-ok?) : bool
   (let
     [source-base : String
@@ -4829,9 +4828,7 @@
 ;; the whole of what a native expansion has to reproduce for lowering to place
 ;; the same located runtime-abort sites as an interpreted one: a compiler built
 ;; with `--cfg embedded-stdlib-tlci` and a compiler built without it must emit
-;; the same assembly, and before the producer walked these wrappers they
-;; disagreed on exactly the bounds checks whose spans were dropped here.
-;; Refs #5212.
+;; the same assembly, bounds checks included. Refs #5212.
 (define (producer-test-span-result-ok?
   [pools : ast.AstNodePoolContext]
   [operand : i64]) : bool

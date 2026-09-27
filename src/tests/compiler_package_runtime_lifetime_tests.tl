@@ -191,7 +191,7 @@
             (io.panic "repeated checked error changed diagnostic"))
           (set! index (+ index 1))))
       ;; Includes copied diagnostics and restored parent selectors. Leaking one
-      ;; source/checked pool per error retained 29 MB for these eight jobs.
+      ;; source/checked pool per error retains far more than this bound.
       (unless
         (< (- (profile.alloc-live) before) 1048576)
         (io.panic "checked errors retained retired AST pool generations")))))
@@ -321,7 +321,7 @@
             (io.panic "repeated direct object emission lost side assembly"))
           (set! index (+ index 1))))
       ;; Includes retained object images, assembly and restored parent state.
-      ;; Eight unretired side-backend arenas pushed this fixture above 1 MiB.
+      ;; Unretired side-backend arenas push this fixture above the bound.
       (unless
         (< (- (profile.alloc-live) before) 1048576)
         (io.panic "direct object jobs retained private side-backend arenas")))))

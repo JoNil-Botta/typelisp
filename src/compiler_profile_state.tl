@@ -154,12 +154,11 @@
     `(cast 0 : u64)))
 
 ;; Typecheck owns slots 242-373 as one raw metrics view. Lowering's retained
-;; name-cache storage counters use 374-377. Slots 350-361 and
-;; 368-369 are also
+;; name-cache storage counters use 374-377. Slots 350-360 and 368-369 are also
 ;; addressed by the driver/loader lifetime ledger, while typecheck owns the
-;; macro boundary starts in 362-367 and 370-373. Keeping the offset
-;; here makes the driver the only layer that knows how leaf-owned metric
-;; families are packed into CompilerProfileState.
+;; macro boundary starts in 362-367 and 370-373. Keeping the offset here makes
+;; the driver the only layer that knows how leaf-owned metric families are
+;; packed into CompilerProfileState.
 (defmacro (compiler-profile-state-typecheck-metrics-address [_state : Expr]) : Expr
   (cfg
     (any compile-profile test)

@@ -775,7 +775,7 @@ run_batched_comparison() {
             batch_index=$((batch_index + 1))
             if chunk_is_timed_selfhost "$left_cases"; then
                 # CI budgets the wall time of these four compiles, so they run
-                # alone, before the pool starts, exactly as they always have.
+                # alone, before the pool starts.
                 run_batch_chunk "opt1-built" "$OPT1_COMPILER" "$opt_level" "$left_chunk" "$left_cases" "$batch_index/$left_chunk_count" "$left_entries" ""
                 run_batch_chunk "opt2-built" "$OPT2_STAGE4" "$opt_level" "$right_chunk" "$right_cases" "$batch_index/$left_chunk_count" "$right_entries" ""
                 compare_batch_cases "$left_cases" "$LEFT_DIR" "$RIGHT_DIR"
@@ -864,6 +864,11 @@ build_invariance_digest() {
 }
 
 echo "[build-invariance] incoming opt2-built stage4 compiler: $COMPILER"
+# wide_struct_literal imports the generated #7921 declarations. Generate them
+# before the source digest, so a fresh checkout does not see tests/ change
+# during the comparison.
+awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
+mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 SOURCE_INPUTS='src stdlib tests scripts/check-build-invariance.sh scripts/lib-build-invariance-batch.sh scripts/lib-bounded-pool.sh scripts/lib-native-link.sh'
 # shellcheck disable=SC2086 # SOURCE_INPUTS is a fixed list of repository paths.
 SOURCE_DIGEST=$(build_invariance_digest $SOURCE_INPUTS)
@@ -885,9 +890,6 @@ echo "[build-invariance] compiler construction: ${construction_seconds}s"
 CORPUS="$WORKDIR/corpus.txt"
 LEFT_DIR="$WORKDIR/compare/opt1-built"
 RIGHT_DIR="$WORKDIR/compare/opt2-built"
-# wide_struct_literal imports the generated #7921 declarations.
-awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
-mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 write_corpus "$CORPUS"
 rm -rf "$LEFT_DIR" "$RIGHT_DIR"
 mkdir -p "$LEFT_DIR" "$RIGHT_DIR"

@@ -401,7 +401,7 @@ Inline stdlib coverage:
 - `ffi.tl` owns inline tests for C string buffers: required byte counts,
   exact-capacity caller-owned copies, trailing NUL writes, too-small buffers,
   interior NUL rejection, and active-arena pointer allocation through
-  `ffi-c-string-alloc` / `ffi-cstr`.
+  `ffi.c-string-alloc` / `ffi.cstr`.
 - `fs.tl` owns inline tests for variadic path joins.
 - `fs_api.tl` owns standalone tests for dirname/basename/extension helpers,
   path normalization, safe relative paths, temp-dir creation, recoverable

@@ -11,6 +11,7 @@
 (cfg compile-profile (import stdlib.profile))
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_profile_state as profile_state)
+(cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_backend)
 (import compiler_ast_types)
 (import compiler_typecheck_core)
@@ -1106,7 +1107,7 @@
 ;; arena is still live, so it performs the same cache/intern/lower teardown as a
 ;; full file reset but leaves only a one-slot pool context behind. The next
 ;; entry's normal reset grows a fresh load pool after the old scratch chain is
-;; gone instead of keeping a 4.39M-slot replacement live between entries.
+;; gone instead of keeping a full-size replacement live between entries.
 (define (compiler-driver-state-release-file-state!
   [state : CompilerDriverState]) : unit
   (begin
@@ -1191,137 +1192,53 @@
             "lower-cleanup"))))))
 
 (cfg
-  compile-profile
-  (define compiler-driver-profile-total-start-ms-metric : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-total-start-total-metric : i64
-    1))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-total-start-live-metric : i64
-    2))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-ms-metric : i64
-    3))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-total-metric : i64
-    4))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-live-metric : i64
-    5))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-metric : i64
-    6))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-slice-metric : i64
-    7))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-generated-metric : i64
-    8))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-render-metric : i64
-    9))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-lookup-metric : i64
-    10))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-pool-len-metric : i64
-    11))
-(cfg
   (any compile-profile test)
-  (define compiler-driver-profile-prelude-source-pipeline-entries-metric : i64
-    12))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-profile-prelude-hydrations-metric : i64
-    13))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-start-ms-metric : i64
-    14))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-start-total-metric : i64
-    15))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-start-live-metric : i64
-    16))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-best-peak-metric : i64
-    17))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-first-live-metric : i64
-    18))
+  (counters.defslots
+    compiler-driver-profile-starts
+    0
+    (compiler-driver-profile-total-start-ms-metric)
+    (compiler-driver-profile-total-start-total-metric)
+    (compiler-driver-profile-total-start-live-metric)
+    (compiler-driver-profile-phase-start-ms-metric)
+    (compiler-driver-profile-phase-start-total-metric)
+    (compiler-driver-profile-phase-start-live-metric)
+    (compiler-driver-profile-phase-start-intern-render-metric)
+    (compiler-driver-profile-prelude-source-pipeline-entries-metric)
+    (compiler-driver-profile-prelude-hydrations-metric)
+    (compiler-driver-batch-profile-start-ms-metric)
+    (compiler-driver-batch-profile-start-total-metric)
+    (compiler-driver-batch-profile-start-live-metric)
+    (compiler-driver-batch-profile-best-peak-metric)
+    (compiler-driver-batch-profile-first-live-metric)))
 
-;; Job-owned load lifetime boundary starts (CompilerProfileState 350-361).
-;; Slot 350 is incremented by compiler_load through this job's explicit
-;; interner metrics address; the driver owns the remaining boundary snapshots.
+;; Job-owned load lifetime boundary starts (CompilerProfileState 350-360 and
+;; 368-369). Slot 350 is incremented by compiler_load through this job's
+;; explicit interner metrics address; the driver owns the remaining boundary
+;; snapshots.
 (cfg
   (any compile-profile test)
-  (define compiler-driver-load-profile-input-bytes-metric : i64
-    350))
+  (counters.defslots
+    compiler-driver-load-profile-starts
+    350
+    (compiler-driver-load-profile-input-bytes-metric)
+    (compiler-driver-load-profile-start-total-metric)
+    (compiler-driver-load-profile-start-live-metric)
+    (compiler-driver-load-profile-start-peak-metric)
+    (compiler-driver-load-profile-token-start-metric)
+    (compiler-driver-load-profile-origin-start-metric)
+    (compiler-driver-load-profile-pool-base-start-metric)
+    (compiler-driver-load-profile-expr-start-metric)
+    (compiler-driver-load-profile-type-start-metric)
+    (compiler-driver-load-profile-surface-start-metric)
+    (compiler-driver-load-profile-intern-start-metric)))
+
 (cfg
   (any compile-profile test)
-  (define compiler-driver-load-profile-start-total-metric : i64
-    351))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-start-live-metric : i64
-    352))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-start-peak-metric : i64
-    353))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-token-start-metric : i64
-    354))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-origin-start-metric : i64
-    356))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-pool-base-start-metric : i64
-    357))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-expr-start-metric : i64
-    358))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-type-start-metric : i64
-    359))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-surface-start-metric : i64
-    360))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-intern-start-metric : i64
-    361))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-enclosing-handle-metric : i64
-    368))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-enclosing-start-metric : i64
-    369))
+  (counters.defslots
+    compiler-driver-load-profile-enclosing
+    368
+    (compiler-driver-load-profile-enclosing-handle-metric)
+    (compiler-driver-load-profile-enclosing-start-metric)))
 
 (cfg
   (any compile-profile test)
@@ -1868,33 +1785,9 @@
         (profile.alloc-live))
       (compiler-driver-profile-set!
         state
-        compiler-driver-profile-phase-start-intern-metric
-        (ci.intern-profile-intern-value
-          (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-profile-phase-start-intern-slice-metric
-        (ci.intern-profile-slice-value
-          (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-profile-phase-start-intern-generated-metric
-        (ci.intern-profile-generated-value
-          (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
         compiler-driver-profile-phase-start-intern-render-metric
         (ci.intern-profile-render-value
           (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-profile-phase-start-intern-lookup-metric
-        (ci.intern-profile-lookup-value
-          (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-profile-phase-start-intern-pool-len-metric
-        (ci.intern-pool-len))
       (profile.alloc-reset-peak))))
 
 (cfg
@@ -1909,16 +1802,8 @@
       [end-peak : i64 (profile.alloc-peak)]
       [intern-metrics-address : u64
         (compiler-driver-profile-intern-metrics-address state)]
-      [end-intern : i64 (ci.intern-profile-intern-value intern-metrics-address)]
-      [end-intern-slice : i64
-        (ci.intern-profile-slice-value intern-metrics-address)]
-      [end-intern-generated : i64
-        (ci.intern-profile-generated-value intern-metrics-address)]
       [end-intern-render : i64
         (ci.intern-profile-render-value intern-metrics-address)]
-      [end-intern-lookup : i64
-        (ci.intern-profile-lookup-value intern-metrics-address)]
-      [end-intern-pool-len : i64 (ci.intern-pool-len)]
       [peak-delta : i64
         (compiler-driver-profile-nonnegative
           (-
@@ -1959,51 +1844,6 @@
           unit
           (io.print-error
             (str_cat.str-cat
-              "compile-profile-detail|intern.phase|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.slice|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern-slice
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-slice-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.generated|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern-generated
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-generated-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
               "compile-profile-detail|intern.phase.render|"
               (owned_view.compiler-owned-shared-view phase)
               "|"
@@ -2013,47 +1853,6 @@
                   (compiler-driver-profile-value
                     state
                     compiler-driver-profile-phase-start-intern-render-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.lookup|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern-lookup
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-lookup-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.pool|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern-pool-len
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-pool-len-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.invalid_str_ids|"
-              phase
-              "|"
-              (string.int->string
-                (ci.intern-profile-invalid-str-value intern-metrics-address))
               "\n")))))))
 
 (cfg
@@ -2077,7 +1876,6 @@
       (profile.compile-wide-peak-start!)
       (ci.intern-profile-reset!
         (compiler-driver-profile-intern-metrics-address state))
-      (compiler_ctfe.ctfe-env-profile-reset!)
       (cfg
         compile-profile-summary
         (begin
@@ -2122,26 +1920,6 @@
 
 (cfg
   compile-profile
-  (define (compiler-driver-profile-intern-line [name : String] [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|intern."
-        name
-        (compiler-driver-profile-field value)
-        "|0|0|0\n"))))
-
-(cfg
-  compile-profile
-  (define (compiler-driver-profile-ctfe-env-line [name : String] [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|ctfe_env."
-        name
-        (compiler-driver-profile-field value)
-        "|0|0|0\n"))))
-
-(cfg
-  compile-profile
   (define (compiler-driver-profile-finish-total
     [state : profile_state.CompilerProfileState]) : unit
     (let
@@ -2149,7 +1927,6 @@
       [intern-metrics-address : u64
         (compiler-driver-profile-intern-metrics-address state)]
       (begin
-        (compiler_typecheck_core.compiler-tc-resolution-profile-finish "total")
         (io.print-error
           (compiler-driver-profile-line
             "total"
@@ -2169,161 +1946,8 @@
                 state
                 compiler-driver-profile-total-start-live-metric))
             compile-wide-peak))
-        (compiler-driver-profile-intern-line
-          "hash_words"
-          (ci.intern-profile-hash-words-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "intern_calls"
-          (ci.intern-profile-intern-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "slice_calls"
-          (ci.intern-profile-slice-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "generated_allocations"
-          (ci.intern-profile-generated-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "render_calls"
-          (ci.intern-profile-render-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "lookup_calls"
-          (ci.intern-profile-lookup-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "source_bytes"
-          (ci.intern-profile-source-bytes-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "source_symbols"
-          (ci.intern-profile-source-symbol-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "source_symbol_bytes"
-          (ci.intern-profile-source-symbol-bytes-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "slice_bytes"
-          (ci.intern-profile-slice-bytes-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "slice_hits"
-          (ci.intern-profile-slice-hit-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "slice_misses"
-          (ci.intern-profile-slice-miss-value intern-metrics-address))
-        (compiler-driver-profile-intern-line
-          "records.source_live"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-record-live-metric))
-        (compiler-driver-profile-intern-line
-          "records.source_capacity"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-record-capacity-metric))
-        (compiler-driver-profile-intern-line
-          "records.generated_live"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-generated-record-live-metric))
-        (compiler-driver-profile-intern-line
-          "records.generated_capacity"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-generated-record-capacity-metric))
-        (compiler-driver-profile-intern-line
-          "records.source_resizes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-record-resize-metric))
-        (compiler-driver-profile-intern-line
-          "records.generated_resizes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-generated-record-resize-metric))
-        (compiler-driver-profile-intern-line
-          "records.reserved_bytes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-record-reserved-bytes-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.live"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-live-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.capacity"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-capacity-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.probes_total"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-probe-total-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.probe_max"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-probe-max-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.resizes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-resize-metric))
-        (compiler-driver-profile-intern-line
-          "source_map.reserved_bytes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-source-map-reserved-bytes-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.live"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-live-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.capacity"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-capacity-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.probes_total"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-probe-total-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.probe_max"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-probe-max-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.resizes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-resize-metric))
-        (compiler-driver-profile-intern-line
-          "canonical_map.reserved_bytes"
-          (ci.intern-profile-value
-            intern-metrics-address
-            ci.intern-profile-canonical-map-reserved-bytes-metric))
-        (compiler-driver-profile-ctfe-env-line
-          "binding_appends"
-          (compiler_ctfe.ctfe-env-profile-binding-appends-value))
-        (compiler-driver-profile-ctfe-env-line
-          "value_lookups"
-          (compiler_ctfe.ctfe-env-profile-value-lookups-value))
-        (compiler-driver-profile-ctfe-env-line
-          "type_lookups"
-          (compiler_ctfe.ctfe-env-profile-type-lookups-value))
-        (compiler-driver-profile-ctfe-env-line
-          "lookup_steps"
-          (compiler_ctfe.ctfe-env-profile-lookup-steps-value))
-        (compiler-driver-profile-ctfe-env-line
-          "local_set_calls"
-          (compiler_ctfe.ctfe-env-profile-local-set-calls-value))
-        (compiler-driver-profile-ctfe-env-line
-          "local_set_steps"
-          (compiler_ctfe.ctfe-env-profile-local-set-steps-value))
-        (compiler-driver-profile-ctfe-env-line
-          "arena_roots"
-          (compiler_ctfe.ctfe-env-profile-arena-roots-value))
-        (compiler-driver-profile-ctfe-env-line
-          "arena_grows"
-          (compiler_ctfe.ctfe-env-profile-arena-grows-value))))))
+        (ci.intern-profile-activity-emit! intern-metrics-address)
+        (ci.intern-profile-storage-emit! intern-metrics-address)))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : compiler_backend.CompilerBackendTarget]
@@ -2470,9 +2094,9 @@
 
 ;; The lowered IR functions live in a dedicated arena
 ;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every
-;; surviving function out of it, so the arena is dead weight (~172MB on a
-;; cli.tl self-compile) once optimization returns. At level 0 the lowered
-;; program flows to the backend unchanged and the arena must stay alive.
+;; surviving function out of it, so the arena is dead weight once optimization
+;; returns. At level 0 the lowered program flows to the backend unchanged and
+;; the arena must stay alive.
 (define (compiler-driver-release-lowered-ir! [opt-level : i64]) : unit
   (if (>= opt-level 1)
     (compiler_lower.lower-ir-arena-release!)
@@ -4776,11 +4400,12 @@
             (compiler_lower.compiler-lower-profile-pools "source_load" pools)
             unit)
           ;; Load has returned its declaration list, so the lexer token buffer
-          ;; and the unspanned reader pool are dead scan scratch that would
-          ;; otherwise sit on the retain.program/retain.release peak for the
-          ;; rest of the process. Retire them here, on the same uncached
-          ;; single-entry gate the source-arena retirement uses, so a session
-          ;; that reuses loader state across jobs keeps its warm capacity.
+          ;; and the reader node pool's spare capacity are dead scan scratch
+          ;; that would otherwise sit on the retain.program/retain.release
+          ;; peak for the rest of the process. Retire them here, on the same
+          ;; uncached single-entry gate the source-arena retirement uses, so a
+          ;; session that reuses loader state across jobs keeps its warm
+          ;; capacity.
           (if route-source-allocations?
             (compiler_load.compiler-load-transfer-frontend-handoff!)
             unit)

@@ -27,13 +27,7 @@ scripts/verify-codegen-cases.sh --only 'perfbench_stores-*' tests/codegen/ispc.c
 ISPC_BIN=/path/to/ispc scripts/verify-codegen-cases.sh --only 'perfbench_stores-*' tests/codegen/ispc.cases
 ```
 
-Kernel-only report metrics, ratios and shared fingerprints are owned by the
-generic harness `scripts/measure-ispc-spmd.sh` (#4968); they are not a baseline.
-
 The TypeLisp AVX2 shape is one full x8 vector load/store loop plus a scalar
-tail; AVX-512 uses an x16 loop plus a masked load/store tail. On the initial
-Windows x86-64 run, the kernel-only report counted 109 TypeLisp versus 32 ISPC
-instructions for AVX2, and 150 versus 31 for AVX-512. Its conservative
-`rsp`/`rbp` traffic count was 33 versus 1 and 43 versus 1, respectively. These
-are report-only measurements (the TypeLisp side includes bounds/safety paths),
-but the register/stack gap is material and should remain visible to #4968.
+tail; AVX-512 uses an x16 loop plus a masked load/store tail. Kernel-only
+report metrics come from `scripts/measure-ispc-spmd.sh` (see
+[`../README.md`](../README.md)); they are not a baseline.

@@ -49,13 +49,16 @@ comparison. AVX2 `i32x8` and AVX-512 `x16` remain width-matched for f32 lanes.
 
 ## Cases
 
-| Case | Lane type | Upstream kernel | Current TypeLisp status |
-| --- | --- | --- | --- |
-| [`perfbench_gathers`](perfbench_gathers/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::gathers` | Scalar, AVX2, and AVX-512 supported |
-| [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` | Scalar, AVX2, and AVX-512 supported |
-| [`perfbench_stores`](perfbench_stores/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::stores` | Supported |
-| [`mandelbrot`](mandelbrot/) | `f32`/`i32` | `examples/cpu/mandelbrot/mandelbrot.ispc::mandelbrot_ispc` | Scalar and AVX-512 supported; AVX2 staged by #4971 |
-| [`point_transform`](point_transform/) | `f32` | `examples/cpu/point_transform_ctypes/point_transform.ispc::transform_points` | Scalar, AVX2, and AVX-512 supported |
+Every case supports all three TypeLisp backend modes (scalar, AVX2 and
+AVX-512); each `case.tsv` records the per-mode status.
+
+| Case | Lane type | Upstream kernel |
+| --- | --- | --- |
+| [`perfbench_gathers`](perfbench_gathers/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::gathers` |
+| [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` |
+| [`perfbench_stores`](perfbench_stores/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::stores` |
+| [`mandelbrot`](mandelbrot/) | `f32`/`i32` | `examples/cpu/mandelbrot/mandelbrot.ispc::mandelbrot_ispc` |
+| [`point_transform`](point_transform/) | `f32` | `examples/cpu/point_transform_ctypes/point_transform.ispc::transform_points` |
 
 `perfbench_loads` uses only integer-valued binary32 inputs and keeps every
 partial sum within the exactly representable integer range. Its scalar oracle,

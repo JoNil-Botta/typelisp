@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# Attribute selfhost compiler code size. Assembly mode retains the historical
-# source-text character report. --object enables the authoritative report:
+# Attribute selfhost compiler code size. Assembly mode gives a source-text
+# character report. --object enables the authoritative report:
 # sized text symbols are reconciled with the linked object's .text sections.
 
 usage() {
@@ -117,7 +117,7 @@ trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 module_prefixes_tsv="$tmp_dir/module-prefixes.tsv"
 tab=$(printf '\t')
 
-# Current symbols no longer encode module separators as _colon_colon. Mirror
+# Symbols do not encode module separators as _colon_colon. Mirror
 # compiler_backend.tl's path mangling and prefer the longest checked-in module
 # prefix, so compiler_backend wins over any shorter compiler prefix.
 find src stdlib -type f -name '*.tl' -print \

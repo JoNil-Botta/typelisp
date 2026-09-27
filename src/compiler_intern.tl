@@ -9,6 +9,7 @@
 ;; allocation extents without pulling collection or formatting modules into them.
 ;;
 (import compiler_owned_view as owned_view)
+(cfg (any compile-profile test) (import compiler_profile_counters as counters))
 
 ;; The table is PERSISTENT for a compile (ids stay valid across the loader's
 ;; per-file parse-arena destroy -- ids are integers, so they survive); it resets
@@ -189,17 +190,13 @@
 ;: session records. Raising it still requires auditing pool storage, generated
 ;: lanes, and the fixed-size lookup maps. Refs #6258, #6469.
 ;:
-;: 131072 -> 262144 (INTERN-CAP): the root package build (`build --opt-level 0`
-;: over the compiler's own closure, one process for every entry) met the two
-;: lanes at the old bound once the optimizer and allocator sources of #6248's
-;: packets were in the closure -- `tl: intern pool capacity exhausted: source
-;: and generated lanes met` in the stage2 cli gate, and byte-identical on a
-;: local bootstrap. The audit the note above asks for: every pool array is
-;: sized from this constant; the generated-id map is sized with it below
-;: (intern-generated-map-capacity); the structural pair cache, the AST node
-;: pool and the type dedup table carry their own 131072 and are not pool ids;
-;: the compact identity domains sit at 2^32 and above. Doubling costs the pool
-;: about eight megabytes more of fixed storage.
+;: INTERN-CAP: the root package build (`build --opt-level 0` over the
+;: compiler's own closure, one process for every entry) is what fills the two
+;: lanes. For that audit: every pool array is sized from this constant; the
+;: generated-id map is sized with it below (intern-generated-map-capacity); the
+;: structural pair cache, the AST node pool and the type dedup table carry
+;: their own capacities and are not pool ids; the compact identity domains sit
+;: at 2^32 and above.
 (define (intern-capacity) : i64
   262144)
 
@@ -2266,179 +2263,74 @@
 
 ;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
 ;: bucket placement, never the id a string gets (ids are insertion-ordered),
-;: so the function is free to change: byte-at-a-time djb2 was 18.6% of a
-;: stage2 self-compile profile before the marker memos and still ~8% after.
-;: Eight bytes are folded per step with a wrapping multiply; the byte tail is
-;: assembled into one final word. Overflow wraps in i64; the result may be
-;: negative, which is fine -- the bucket mask keeps only the low bits.
+;: so the function is free to change: byte-at-a-time djb2 was a large share of
+;: a self-compile profile. Eight bytes are folded per step with a wrapping
+;: multiply; the byte tail is assembled into one final word. Overflow wraps in
+;: i64; the result may be negative, which is fine -- the bucket mask keeps only
+;: the low bits.
 ;; --- compile-profile interning instrumentation ---
 ;; Deterministic per (compiler, input) counters that drive the redundant-
 ;; interning elimination work: hash-words counts every string hash (the real
 ;; cost), and the entry counters attribute those hashes to intern/intern-slice/
-;; intern-lookup. The render counter records each successful intern-str call;
-;; invalid IDs stay separate so diagnostics cannot hide semantic render work.
-;; `compiler_intern` has no formatting dependency, so it only exposes reset and
-;; value accessors; the driver (which owns `io`) prints them at compile end.
+;; intern-lookup. The render counter records each successful intern-str call,
+;; so an invalid ID in a diagnostic does not count as semantic render work. The
+;; driver writes the rows at compile end.
 (cfg
   (any compile-profile test)
-  (define intern-profile-hash-words-metric : i64
-    78))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-intern-metric : i64
-    79))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-slice-metric : i64
-    80))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-lookup-metric : i64
-    81))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-generated-metric : i64
-    82))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-render-metric : i64
-    83))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-invalid-str-metric : i64
-    84))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-invalid-str-last-id-metric : i64
-    85))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-bytes-metric : i64
-    86))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-symbol-metric : i64
-    87))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-symbol-bytes-metric : i64
-    88))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-slice-bytes-metric : i64
-    89))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-slice-hit-metric : i64
-    90))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-slice-miss-metric : i64
-    91))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-generated-role-create-start-metric : i64
-    92))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-generated-role-reuse-start-metric : i64
-    108))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-generated-role-render-start-metric : i64
-    124))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-metric-end : i64
-    140))
+  (counters.defslots
+    intern-profile-activity
+    78
+    (intern-profile-hash-words-metric "intern.hash_words")
+    (intern-profile-intern-metric "intern.intern_calls")
+    (intern-profile-slice-metric "intern.slice_calls")
+    (intern-profile-generated-metric "intern.generated_allocations")
+    (intern-profile-render-metric "intern.render_calls")
+    (intern-profile-lookup-metric "intern.lookup_calls")
+    (intern-profile-source-bytes-metric "intern.source_bytes")
+    (intern-profile-source-symbol-metric "intern.source_symbols")
+    (intern-profile-source-symbol-bytes-metric "intern.source_symbol_bytes")
+    (intern-profile-slice-bytes-metric "intern.slice_bytes")
+    (intern-profile-slice-hit-metric "intern.slice_hits")
+    (intern-profile-slice-miss-metric "intern.slice_misses")))
 
 ;; Slots 140-222 belong to the backend and register-allocation census cfgs.
 ;; Keep fixed-storage observations after that entire range so one compiler may
 ;; enable profiling and a census together without aliasing job-owned metrics.
 (cfg
   (any compile-profile test)
-  (define intern-profile-storage-metric-start : i64
-    223))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-record-live-metric : i64
-    223))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-record-capacity-metric : i64
-    224))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-generated-record-live-metric : i64
-    225))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-generated-record-capacity-metric : i64
-    226))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-record-resize-metric : i64
-    227))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-generated-record-resize-metric : i64
-    228))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-record-reserved-bytes-metric : i64
-    229))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-map-live-metric : i64
-    230))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-map-capacity-metric : i64
-    231))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-map-probe-total-metric : i64
-    232))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-map-probe-max-metric : i64
-    233))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-map-resize-metric : i64
-    234))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-source-map-reserved-bytes-metric : i64
-    235))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-canonical-map-live-metric : i64
-    236))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-canonical-map-capacity-metric : i64
-    237))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-canonical-map-probe-total-metric : i64
-    238))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-canonical-map-probe-max-metric : i64
-    239))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-canonical-map-resize-metric : i64
-    240))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-canonical-map-reserved-bytes-metric : i64
-    241))
-(cfg
-  (any compile-profile test)
-  (define intern-profile-storage-metric-end : i64
-    242))
+  (counters.defslots
+    intern-profile-storage
+    223
+    (intern-profile-source-record-live-metric "intern.records.source_live")
+    (intern-profile-source-record-capacity-metric
+      "intern.records.source_capacity")
+    (intern-profile-generated-record-live-metric
+      "intern.records.generated_live")
+    (intern-profile-generated-record-capacity-metric
+      "intern.records.generated_capacity")
+    (intern-profile-source-record-resize-metric "intern.records.source_resizes")
+    (intern-profile-generated-record-resize-metric
+      "intern.records.generated_resizes")
+    (intern-profile-record-reserved-bytes-metric
+      "intern.records.reserved_bytes")
+    (intern-profile-source-map-live-metric "intern.source_map.live")
+    (intern-profile-source-map-capacity-metric "intern.source_map.capacity")
+    (intern-profile-source-map-probe-total-metric
+      "intern.source_map.probes_total")
+    (intern-profile-source-map-probe-max-metric "intern.source_map.probe_max")
+    (intern-profile-source-map-resize-metric "intern.source_map.resizes")
+    (intern-profile-source-map-reserved-bytes-metric
+      "intern.source_map.reserved_bytes")
+    (intern-profile-canonical-map-live-metric "intern.canonical_map.live")
+    (intern-profile-canonical-map-capacity-metric
+      "intern.canonical_map.capacity")
+    (intern-profile-canonical-map-probe-total-metric
+      "intern.canonical_map.probes_total")
+    (intern-profile-canonical-map-probe-max-metric
+      "intern.canonical_map.probe_max")
+    (intern-profile-canonical-map-resize-metric "intern.canonical_map.resizes")
+    (intern-profile-canonical-map-reserved-bytes-metric
+      "intern.canonical_map.reserved_bytes")))
 
 ;; Installed compatibility calls select the metrics belonging to the installed
 ;; intern owner. Counter storage itself is never process-global; explicit-state
@@ -2554,12 +2446,12 @@
     (let
       [metric : i64 intern-profile-hash-words-metric]
       (begin
-        (while (< metric intern-profile-metric-end)
+        (while (< metric intern-profile-activity-end)
           (begin
             (intern-profile-set! metrics-address metric 0)
             (set! metric (+ metric 1))))
-        (set! metric intern-profile-storage-metric-start)
-        (while (< metric intern-profile-storage-metric-end)
+        (set! metric intern-profile-source-record-live-metric)
+        (while (< metric intern-profile-storage-end)
           (begin
             (intern-profile-set! metrics-address metric 0)
             (set! metric (+ metric 1))))
@@ -2653,124 +2545,8 @@
 
 (cfg
   compile-profile
-  (define (intern-profile-hash-words-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-hash-words-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-intern-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-intern-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-slice-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-slice-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-lookup-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-lookup-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-generated-metric)))
-
-(cfg
-  compile-profile
   (define (intern-profile-render-value [metrics-address : u64]) : i64
     (intern-profile-value metrics-address intern-profile-render-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-invalid-str-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-invalid-str-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-source-bytes-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-source-bytes-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-source-symbol-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-source-symbol-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-source-symbol-bytes-value [metrics-address : u64]) : i64
-    (intern-profile-value
-      metrics-address
-      intern-profile-source-symbol-bytes-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-slice-bytes-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-slice-bytes-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-slice-hit-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-slice-hit-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-slice-miss-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-slice-miss-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-role-value
-    [metrics-address : u64]
-    [start-metric : i64]
-    [role : i64]) : i64
-    (let
-      [index : i64 (intern-generated-symbol-role-index role)]
-      (if (< index 0)
-        (tl_oob_abort)
-        (intern-profile-value metrics-address (+ start-metric index))))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-role-create-value
-    [metrics-address : u64]
-    [role : i64]) : i64
-    (intern-profile-generated-role-value
-      metrics-address
-      intern-profile-generated-role-create-start-metric
-      role)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-role-reuse-value
-    [metrics-address : u64]
-    [role : i64]) : i64
-    (intern-profile-generated-role-value
-      metrics-address
-      intern-profile-generated-role-reuse-start-metric
-      role)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-role-render-value
-    [metrics-address : u64]
-    [role : i64]) : i64
-    (intern-profile-generated-role-value
-      metrics-address
-      intern-profile-generated-role-render-start-metric
-      role)))
-
-(cfg
-  (any compile-profile test)
-  (define (intern-profile-note-generated-role
-    [metrics-address : u64]
-    [start-metric : i64]
-    [role : i64]) : unit
-    (let
-      [index : i64 (intern-generated-symbol-role-index role)]
-      (if (< index 0)
-        (tl_oob_abort)
-        (intern-profile-add! metrics-address (+ start-metric index) 1)))))
 
 (cfg
   (any compile-profile test)
@@ -2781,36 +2557,6 @@
   (any compile-profile test)
   (define (intern-profile-note-generated [metrics-address : u64]) : unit
     (intern-profile-add! metrics-address intern-profile-generated-metric 1)))
-
-(cfg
-  (any compile-profile test)
-  (define (intern-profile-note-generated-role-create
-    [metrics-address : u64]
-    [role : i64]) : unit
-    (intern-profile-note-generated-role
-      metrics-address
-      intern-profile-generated-role-create-start-metric
-      role)))
-
-(cfg
-  (any compile-profile test)
-  (define (intern-profile-note-generated-role-reuse
-    [metrics-address : u64]
-    [role : i64]) : unit
-    (intern-profile-note-generated-role
-      metrics-address
-      intern-profile-generated-role-reuse-start-metric
-      role)))
-
-(cfg
-  (any compile-profile test)
-  (define (intern-profile-note-generated-role-render
-    [metrics-address : u64]
-    [role : i64]) : unit
-    (intern-profile-note-generated-role
-      metrics-address
-      intern-profile-generated-role-render-start-metric
-      role)))
 
 (cfg
   (any compile-profile test)
@@ -3679,11 +3425,6 @@
           (if (intern-compat-state-generated-id-active? state id)
             unit
             (tl_oob_abort))
-          (cfg
-            compile-profile
-            (intern-profile-note-generated-role-reuse
-              state.profile-metrics-address
-              role))
           id))
       (let
         [_refresh-active : unit
@@ -3714,11 +3455,6 @@
                 generated-symbol-handles)
               index)
             (intern-id-slot-encode id))
-          (cfg
-            compile-profile
-            (intern-profile-note-generated-role-create
-              state.profile-metrics-address
-              role))
           id)))))
 
 (define (intern-compat-state-generated-role-symbol-id
@@ -3793,12 +3529,7 @@
               (set!
                 (array-ref state.pool-last-slash-slots id)
                 (cast (intern-private-last-slash rendered) : i32))
-              unit)
-            (cfg
-              compile-profile
-              (intern-profile-note-generated-role-render
-                state.profile-metrics-address
-                role)))
+              unit))
           unit)
         rendered))))
 
@@ -3851,13 +3582,7 @@
       (intern-array-shared-view intern-structural-table-cell 0)]
     [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
     (if (not (intern-id-slot-empty? existing))
-      (begin
-        (cfg
-          compile-profile
-          (intern-profile-note-generated-role-reuse
-            intern-active-profile-metrics-address
-            role))
-        (intern-id-slot-decode existing))
+      (intern-id-slot-decode existing)
       (let
         [id : i64 (intern-generated-role-symbol-handle)]
         (begin
@@ -3879,11 +3604,6 @@
                 generated-symbol-handles)
               index)
             (intern-id-slot-encode id))
-          (cfg
-            compile-profile
-            (intern-profile-note-generated-role-create
-              intern-active-profile-metrics-address
-              role))
           id)))))
 
 (define (intern-generated-role-symbol-id [role : i64] [components : i64]) : i64
@@ -3919,11 +3639,6 @@
                 (array-ref intern-pool-last-slash-slots id)
                 (cast (intern-private-last-slash rendered) : i32))
               unit)
-            (cfg
-              compile-profile
-              (intern-profile-note-generated-role-render
-                intern-active-profile-metrics-address
-                role))
             rendered))))))
 
 (define (intern-compat-state-generated-role-symbol?
@@ -4262,9 +3977,9 @@
 ;: `intern-generated-canonical-name` would have matched on.
 ;:
 ;: The canonical generated namespace is one namespace, so two mints of one
-;: spelling used to be one id however far apart they were -- which is how a
-;: derived symbol spelled like a runtime builtin (`tl_arena_current`, say) came
-;: out equal to that builtin's id, and why the backend can decide "the runtime
+;: spelling are one id however far apart they are -- which is how a derived
+;: symbol spelled like a runtime builtin (`tl_arena_current`, say) comes out
+;: equal to that builtin's id, and why the backend can decide "the runtime
 ;: provides this" with an integer compare. The IR's derived symbol table mints
 ;: outside this pool, so it asks here first and defers to an identity that
 ;: already exists rather than minting a second one for the same spelling.
@@ -5121,16 +4836,7 @@
   (cfg
     compile-profile
     (if (or (< id 0) (>= id (intern-capacity)))
-      (begin
-        (intern-profile-add!
-          intern-active-profile-metrics-address
-          intern-profile-invalid-str-metric
-          1)
-        (intern-profile-set!
-          intern-active-profile-metrics-address
-          intern-profile-invalid-str-last-id-metric
-          id)
-        "<invalid-intern-id>")
+      "<invalid-intern-id>"
       (begin
         (intern-profile-add!
           intern-active-profile-metrics-address

@@ -78,10 +78,10 @@
 ;; is transient (consumed into AstExpr, spans copied out by value, then dead),
 ;; so the pool is reset per program parse (see compiler_parse_core.tl). Start
 ;; empty and retain geometrically grown storage: small compile commands should
-;; not construct 262,144 enum slots before argv dispatch. Dedicated storage
-;; keeps the globals valid across transient driver arenas. The pool cannot be
-;; retired once a load has finished, because its origin records outlive
-;; parsing.
+;; not construct a large pool of enum slots before argv dispatch. Dedicated
+;; storage keeps the globals valid across transient driver arenas. The pool
+;; cannot be retired once a load has finished, because its origin records
+;; outlive parsing.
 (define sp-node-pool-slots : (__tl_dyn-array SpannedSexpr)
   (__tl_make-array SpannedSexpr 0))
 

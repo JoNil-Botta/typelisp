@@ -1,4 +1,4 @@
-# Native-coverage ratchet for the embedded stdlib tlci image. Refs #5596.
+# Native-coverage ratchet for the embedded stdlib tlci image.
 #
 # scripts/verify-embedded-stdlib-tlci.sh reads these bounds and fails when the
 # image built from the checked-in stdlib sources drops below the floor. Nothing
@@ -13,43 +13,15 @@
 # interpreted-arms-max individual arm sites that return ok-with-no-result.
 #
 # These are a ratchet, not a target: raise the floor and lower the ceiling as
-# families land, never the other way around. #5596 is done when
-# native-entries-min equals the entry total and all three ceilings are 0.
+# families land, never the other way around.
 #
 # Improving past the ratchet is not a failure -- macro families land
 # concurrently and an exact expectation would collide on every merge -- but the
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
 #
-# Issue #5230 adds the native stdlib.math/pow macro, growing the catalog from
-# 107 to 108 entries. Issue #6550 reconstructs dynamically unquoted set!
-# targets through the named host ABI, moving stdlib.text_buf/append! off the
-# final registration shell. All 108 checked-in entries are now fully native,
-# so every fallback dimension is pinned to zero rather than allowing a future
-# catalog addition to hide one. Issue #6645 removes stdlib.io's duplicate
-# format-with transformer after moving the canonical implementation to
-# stdlib.format, shrinking the catalog to 107 without reintroducing any
-# fallback route. Issue #6215 grows the catalog to 126 for ordinary by-value
-# ownership. Native array, pointer-address, integer-pointer, computed-if, and
-# captured type-unquote construction keep every new shared-view/iteration
-# transformer off the shell route. The fixed-array core migration removes the
-# four compatibility-module macros, leaving 122 fully native entries. Issue
-# #6650 adds retained Arguments, the direct format sink family, and their
-# classification/streaming helpers, reaching 154 native entries. Issue #7073
-# adds seven explicit clone-generator entries; all 161 remain native. Issue
-# #7596 replaces two exported unchecked process array-view macros with checked,
-# element-specific functions, shrinking the catalog to 159 without introducing
-# a fallback route. Issue #7526 adds the compiler dense-list declaration
-# generator, reaching 160. Issue #7655 adds the canonical formatter writer-key
-# capability macro; all 161 remain native. Issue #7650 removes the generic
-# unsafe shared-view bridge instead of replacing it with an interpreted
-# transformer: the catalog now has 160 entries, all still native. Issue #7005
-# adds the stdlib.math/mul-add dispatch macro: 161 entries, all native. The
-# shrink refactor merges stdlib.format's materializing and streaming expanders
-# into one sink-operand `format-expand`/`format-expand-call` pair and drops the
-# three start macros and the retained completion step: 155 entries, all native.
-# stdlib.math/math-bits-table and math-bits-row then generate the musl
-# lookup-table `cond` chains: 157 entries, all native.
+# Every checked-in entry is fully native, so every fallback dimension is pinned
+# to zero rather than allowing a future catalog addition to hide one.
 native-entries-min 157
 shell-entries-max 0
 partial-entries-max 0

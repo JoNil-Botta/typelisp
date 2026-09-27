@@ -1,5 +1,5 @@
 ;; lint_driver_core_tests.tl - Lint driver self-test fixtures and entries
-;; split from production lint_driver_core.tl (simplify.md A1, #5169 pattern).
+;; split from production lint_driver_core.tl.
 ;;
 ;; Main-less companion imported by src/tests/lint_driver_smoke.tl: it holds
 ;; the selfhost-lint-*-source fixture getters, the fixture-decls builders, the

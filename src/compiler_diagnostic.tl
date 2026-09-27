@@ -1117,7 +1117,7 @@
       same-path
       (or same-empty-position (not (or left-before-right right-before-left))))))
 
-;; Scans the suffix after `start`, matching the old cons walk over the tail.
+;; Scans the suffix after `start`.
 (define (compiler-diagnostic-edit-overlaps-rest?
   [diagnostic-path : String]
   [edit : CompilerDiagnosticTextEdit]

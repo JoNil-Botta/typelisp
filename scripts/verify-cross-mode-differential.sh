@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Compact cross-cutting semantic/ABI differential (#7064).
+# Compact cross-cutting semantic/ABI differential.
 #
 # The expensive producer gates remain authoritative and exhaustive. This gate
 # consumes their checked artifacts through one manifest and one observation

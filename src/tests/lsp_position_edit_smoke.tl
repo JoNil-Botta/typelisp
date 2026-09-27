@@ -105,7 +105,7 @@
         "foo")
       (string.eq (lsp_tests.lsp-find-and-extract-name text 1 5) "bar"))))
 
-;; Test structuralMove destination helper: move foo after baz
+;; Test the tl/move destination helper: move foo after baz
 (define (lsp-structural-move-destination-ok?) : bool
   (let
     [text : String

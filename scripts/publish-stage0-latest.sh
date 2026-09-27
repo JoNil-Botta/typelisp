@@ -4,13 +4,13 @@ set -eu
 # publish-stage0-latest.sh - stage and promote the mutable stage0 release.
 #
 # GitHub's high-level release creation uploads through a draft and then
-# publishes it. Recreating stage0-latest through that composite command left a
-# successfully verified release draft again after the command returned (#6367).
+# publishes it. Recreating stage0-latest through that composite command can
+# leave a successfully verified release draft again after the command returns.
 # Build the complete candidate under a private temporary tag instead. Only
 # after every asset is uploaded and the candidate is rechecked do we remove the
 # old alias and publish the prepared release with one explicit REST PATCH.
 #
-# The alias only moves forward along main (#8055). A candidate is promoted
+# The alias only moves forward along main. A candidate is promoted
 # while its commit is still on main and strictly newer than the commit the
 # alias currently targets; main advancing past it is normal and not a reason
 # to skip, or the alias starves whenever merges outpace a publish run. An older
@@ -621,7 +621,6 @@ main"
 
     # Main advancing past the candidate at every checkpoint is normal: the
     # candidate is still on main and newer than the alias, so it is promoted.
-    # This is the case that used to skip every run while merges kept landing.
     reset_case "$newer_sha
 $newer_sha
 $newer_sha" "$older_sha

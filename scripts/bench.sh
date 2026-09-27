@@ -3,7 +3,7 @@ set -eu
 LC_ALL=C
 export LC_ALL
 
-# scripts/bench.sh - TypeLisp vs clang paired benchmark harness. refs #1097
+# scripts/bench.sh - TypeLisp vs clang paired benchmark harness.
 #
 # Required CI uses --correctness to build comparison pairs and compare exact
 # stdout, stderr, and exit status without collecting timings. Linux CI passes

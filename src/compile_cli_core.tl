@@ -5,8 +5,7 @@
 ;; [--opt-level <0|1|2>] [--backend-mode scalar] [--stdlib-root <dir>...]
 ;; [--cfg <name>...] [--profile-allocations]`,
 ;; plus `check <file.tl> [--stdlib-root <dir>...]`.
-;; Bootstrap scripts call the retained `compile.tl` driver with the same
-;; `compile` subcommand shape used by the unified CLI.
+;; Bootstrap scripts drive the compiler through this `compile` subcommand.
 ;; `--backend-mode scalar`, `avx2`, and `avx512` are accepted by the selfhost
 ;; compiler.
 ;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary. `--dump-ir`
@@ -17,9 +16,8 @@
 ;;
 ;; This is a main-free core (like the other `*_cli_core.tl` modules): the entry
 ;; `compile-cli-run [count]` dispatches and executes a command, reading `(io.arg 1)`
-;; as the command name. The retained bootstrap `compile.tl` driver and the
-;; unified `cli.tl` dispatcher both call it, so the single binary drives the
-;; compiler.
+;; as the command name. The unified `main.tl` dispatcher calls it, so the single
+;; binary drives the compiler.
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.byte_buf)

@@ -1396,8 +1396,8 @@ profile_rows "$STDLIB_TLCI_EMBEDDED_STDOUT" "$STDLIB_TLCI_EMBEDDED_STDERR" <<'RO
 c typecheck.macro.stdlib_tlci_catalog_hits >= 1
 c typecheck.macro.stdlib_tlci_catalog_misses = 0
 c typecheck.macro.stdlib_tlci_load_failures = 0
-# With the fold bodies native, every cataloged macro in this fixture now
-# commits natively; assert the dispatches instead of a fallback count.
+# Every cataloged macro in this fixture commits natively; assert the
+# dispatches instead of a fallback count.
 c typecheck.macro.stdlib_tlci_native_dispatches >= 1
 ROWS
 embedded_native_expr=$(profile_counter_value_in \

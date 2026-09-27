@@ -1,7 +1,7 @@
 ;; lint_driver_core.tl - Driver logic for the selfhost `typelisp lint` tool:
 ;; load a TypeLisp source, run the lint_core rules over its program, and
 ;; render each finding through the shared source diagnostic renderer. Kept
-;; main-less so both the CLI driver (`lint.tl`) and the runnable smoke
+;; main-less so both the CLI dispatcher (`main.tl`) and the runnable smoke
 ;; (`lint_driver_smoke.tl`) can import it. Warn-only by default; callers can pass
 ;; `--check` after the input path to exit non-zero when findings remain, or
 ;; `--format flat` for the stable `path:line:col: message` machine format. The
@@ -239,8 +239,8 @@
       rendered)))
 
 ;; Print every finding to stdout; returns the number printed.
-;; Findings are stored in discovery order, so render backward to preserve the
-;; historical list-accumulator output order.
+;; Findings are stored in discovery order; render backward, newest first, to
+;; keep the established output order.
 (define (selfhost-lint-print-findings-from
   [path : String]
   [source : String]
@@ -894,8 +894,8 @@
     (selfhost-lint-unsafe-surface-cache-reset!)
     unit))
 
-;; Paths are stored at most once (only the miss path stores), so scanning the
-;; slots front to back returns the same entry the newest-first chain did.
+;; Paths are stored at most once (only the miss path stores), so a front-to-back
+;; scan finds the one entry for a path.
 (define (selfhost-lint-unsafe-surface-cache-lookup [path : String]) : SelfhostLintUnsafeSurfaceLookup
   (let
     [n : i64 (__tl-project-field selfhost-lint-unsafe-surface-cache len)]
@@ -3499,9 +3499,8 @@
     ;; is a no-op under an explicit compat context: when the parse grows
     ;; (reallocates) its captured pool the fresh backing array is dropped, so the
     ;; AST lint walk later reads stale/undersized slots via ast-node-get and
-    ;; mis-reports live params/imports as unused on large sources (the
-    ;; compiler_backend.tl phi-copy/tail false positives). Threading the live
-    ;; context keeps ast-node-get pointed at the grown pool.
+    ;; mis-reports live params/imports as unused on large sources. Threading
+    ;; the live context keeps ast-node-get pointed at the grown pool.
     (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
       (owned_view.compiler-owned-shared-view input-path)
       (owned_view.compiler-owned-shared-view source)
@@ -3566,9 +3565,8 @@
     ;; is a no-op under an explicit compat context: when the parse grows
     ;; (reallocates) its captured pool the fresh backing array is dropped, so the
     ;; AST lint walk later reads stale/undersized slots via ast-node-get and
-    ;; mis-reports live params/imports as unused on large sources (the
-    ;; compiler_backend.tl phi-copy/tail false positives). Threading the live
-    ;; context keeps ast-node-get pointed at the grown pool.
+    ;; mis-reports live params/imports as unused on large sources. Threading
+    ;; the live context keeps ast-node-get pointed at the grown pool.
     (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
       (owned_view.compiler-owned-shared-view input-path)
       (owned_view.compiler-owned-shared-view source)

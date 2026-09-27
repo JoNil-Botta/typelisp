@@ -1,8 +1,9 @@
 # lib-native-link.sh — shared host toolchain discovery + assemble/link helpers.
 #
-# Extracted from scripts/check-bootstrap-fixpoint.sh so both the bootstrap
-# fixpoint gate and the stage0 self-build (scripts/build-stage0.sh, used by
-# .github/workflows/bootstrap-stage0.yml) drive the same proven native flow:
+# Shared so both the bootstrap fixpoint gate
+# (scripts/check-bootstrap-fixpoint.sh) and the stage0 self-build
+# (scripts/build-stage0.sh, used by .github/workflows/bootstrap-stage0.yml)
+# drive the same proven native flow:
 #   - Linux: `as` + `ld` (libc dynamic link).
 #   - Windows (Git Bash/MSYS/Cygwin): `clang --target=x86_64-pc-windows-msvc -c`
 #     to assemble, then a Windows COFF linker (`lld-link` by default,
@@ -13,11 +14,11 @@
 # `native_link_detect_host` (sets NL_HOST_OS / NL_OBJ_EXT / NL_BIN_EXT /
 # NL_BOOTSTRAP_TARGET) and `configure_toolchain` once, then `assemble_and_link`.
 #
-# Stack reserve: keep the historical 256 MiB PE entry-stack setting for
-# compatibility with existing link paths. The freestanding Windows entry uses
-# it only for bounded argv/fiber bootstrap; `main` runs on a runtime-owned 1 GiB
-# fiber stack, so compiler-sized recursion no longer depends on this linker
-# value. Override with TYPELISP_WINDOWS_STACK_RESERVE (bytes).
+# Stack reserve: a 256 MiB PE entry-stack setting, kept for compatibility with
+# existing link paths. The freestanding Windows entry uses it only for bounded
+# argv/fiber bootstrap; `main` runs on a runtime-owned 1 GiB fiber stack, so
+# compiler-sized recursion does not depend on this linker value. Override with
+# TYPELISP_WINDOWS_STACK_RESERVE (bytes).
 
 HEARTBEAT_SECONDS=${TYPELISP_BOOTSTRAP_HEARTBEAT_SECONDS:-30}
 NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-268435456}

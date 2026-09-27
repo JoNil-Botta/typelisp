@@ -1,8 +1,7 @@
 ;; format_cli_core.tl - Self-hosted `fmt` command logic.
 ;;
-;; The formatter CLI logic, factored out of `format.tl` so both the retained
-;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
-;; can run the `fmt` command without duplicating a `main`.
+;; The formatter CLI logic, main-free so the unified `main.tl` dispatcher and
+;; the formatter tests can run the `fmt` command without duplicating a `main`.
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
@@ -121,10 +120,10 @@
 
 ;; --- unified diff for --check -----------------------------------------------
 ;;
-;; #5671: `--check` named the file but not what was wrong with it, so a failing
-;; CI log made the contributor reproduce the formatting locally to see it. The
-;; formatted text is already in memory at the point of the report, so rendering
-;; the diff needs no extra formatting work.
+;; `--check` prints what is wrong with a file, so a failing CI log does not make
+;; the contributor reproduce the formatting locally to see it. The formatted
+;; text is already in memory at the point of the report, so rendering the diff
+;; needs no extra formatting work.
 ;;
 ;; Diffing is deliberately bounded rather than using a whole-file LCS. Local
 ;; edits resynchronize on a short run of equal lines, and equal runs longer than
@@ -569,7 +568,7 @@
             (str_cat.str-cat (fmt-source-error-message path err) "\n"))
           1)])))
 
-;; Parsing and rendering retain a complete CST and document tree. Reclaim that
+;; Parsing and rendering retain a complete token stream and CST. Reclaim that
 ;; scratch state after each file so multi-file formatter invocations do not grow
 ;; the process-lifetime arena with the size of the whole corpus.
 (define (fmt-format-file-scoped [check : bool] [path : String]) : i64

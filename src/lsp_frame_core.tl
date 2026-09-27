@@ -2357,8 +2357,8 @@
   [old-uris : lsp_vector_families.LspDiagnosticUris]
   [next-uris : lsp_vector_families.LspDiagnosticUris]) : unit
   (let
-    ;; Dense construction appends first-seen URIs. Walk backward to preserve
-    ;; the stale-clear wire order of the former prepend-built list.
+    ;; Dense construction appends first-seen URIs. Walk backward so stale
+    ;; clears go out newest first, the established wire order.
     [index : i64 (- (lsp-diagnostic-uris-len old-uris) 1)]
     (while (>= index 0)
       (let
@@ -3816,11 +3816,10 @@
 ;; --------------------------------------------------------------------------
 ;; Go-to-definition (textDocument/definition).
 ;;
-;; Top-level AST declarations do not yet carry source spans (compiler_ast_types
-;; defers them), so definitions are resolved by scanning the document text for
-;; the defining form. The scan skips string literals, character literals, and
-;; `;` comments so fixture sources that embed TypeLisp inside literals never
-;; produce a false match.
+;; An import operand resolves to its module file; any other symbol resolves
+;; through the current document's semantic snapshot. The lexical scans below
+;; skip string literals, character literals, and `;` comments so fixture
+;; sources that embed TypeLisp inside literals never produce a false match.
 ;; --------------------------------------------------------------------------
 (define (lsp-ident-char? [c : char]) : bool
   (or
@@ -3959,8 +3958,8 @@
           (set! i (+ i 1))))
       i)))
 
-;; Exact position conversion for cursor-sensitive requests. Unlike the older
-;; clamping helper, this rejects missing lines, columns beyond the line, and a
+;; Exact position conversion for cursor-sensitive requests. Unlike the clamping
+;; `lsp-offset-at-position`, this rejects missing lines, columns beyond the line, and a
 ;; UTF-16 character position in the middle of a surrogate pair.
 (define (lsp-offset-at-position-checked
   [text : String]
@@ -5375,9 +5374,9 @@
 ;; --------------------------------------------------------------------------
 ;; Completion (textDocument/completion).
 ;;
-;; Offers the language's special forms, builtins, and primitive types, plus the
-;; top-level names defined in any open document. The client filters by the
-;; typed prefix, so the full candidate set is returned.
+;; Offers the language's special forms, builtins, and primitive types, plus
+;; semantic and workspace declarations. Candidates must match the typed prefix
+;; and only the best-ranked rows are returned (`lsp-completion-results-insert!`).
 ;; --------------------------------------------------------------------------
 (define (lsp-completion-keywords) : String
   "define lambda let if begin while set! return match foreach cond when unless and or with-arena with-escape with-scratch try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime include-str include-bin test spmd-reduce spmd-scan spmd-broadcast spmd-shuffle program-index program-count")
@@ -7021,10 +7020,9 @@
 ;; --------------------------------------------------------------------------
 ;; Hover (textDocument/hover).
 ;;
-;; Entirely text-based: parameter/let-binding types come from the [name : type]
-;; declaration, function signatures from the (define ...) header, and docs from
-;; the ;: / ;# comment lines directly above the definition (current document,
-;; other open documents, or imported modules).
+;; Resolved through the current document's semantic snapshot: the definition's
+;; name and resolved type, plus its recorded documentation. Builtins, operators
+;; and special forms have no semantic identity and use the curated table below.
 ;; --------------------------------------------------------------------------
 ;; Offset just past a balanced ( ... ) group starting at `i`.
 (define (lsp-skip-paren-group [text : (& text str)] [i : i64] [n : i64]) : i64
@@ -7076,8 +7074,8 @@
       (< i n))))
 
 ;; Validate that text contains one or more complete parenthesized forms.
-;; Returns true if all non-comment content consists of valid forms.
-;; Now uses the real compiler parser for accurate error reporting.
+;; Returns true if all non-comment content consists of valid forms, using the
+;; real compiler parser.
 (define (lsp-text-is-valid-forms [text : String]) : bool
   (if (not (lsp-text-has-form-content? text))
     false
@@ -7209,8 +7207,8 @@
         (string.substring text start (- i start))
         ""))))
 
-;; Validate forms using real parser. Returns ValidLspForms on success,
-;; or InvalidLspForms with line, col, message, and context on failure.
+;; Validate forms using real parser. Returns `LspValidationResult.Valid` on
+;; success, or `Invalid` with line, col, message, and context on failure.
 (define (lsp-validate-forms-result [text : String]) : LspValidationResult
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -9072,8 +9070,8 @@
           (& record))))))
 
 ;; Read-only provider boundary. It never checks source: missing or stale disk
-;; entries are omitted and reported as Refreshable, while current partial or
-;; unavailable open/negative entries are reported as CurrentlyIncomplete.
+;; entries are omitted and reported as refreshable, while current partial or
+;; unavailable open/negative entries are reported as currently incomplete.
 (define (lsp-workspace-semantic-query
   [state : (& state lsp_vector_families.LspServerState)]
   [stdlib-roots : (& stdlib-roots lsp_svec.Vec)]

@@ -54,8 +54,8 @@
 
 ;; Every absolute SymbolAddress data record becomes exactly one load-base
 ;; fixup. Size the output from the object rather than imposing a fixed ceiling:
-;; large native declaration generators can legitimately carry more than the
-;; historical 1024 records. Refs #6551.
+;; large native declaration generators can legitimately carry more than 1024
+;; records. Refs #6551.
 (define (compiler-tlci-native-data-fixup-count
   [records : cobj.CompilerObjectDataRecordList]) : i64
   (let

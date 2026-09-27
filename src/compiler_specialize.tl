@@ -29,6 +29,7 @@
           [_ (compiler-specialize-decl-list-defines? rest name)]))]))
 
 (import compiler_profile_state as profile_state)
+(cfg (any compile-profile test) (import compiler_profile_counters as counters))
 
 ;; Specialization contexts are immutable handles over arena-backed compiler
 ;; storage. Recursive helpers borrow the handle and make shallow views only when
@@ -308,32 +309,27 @@
 
 (cfg
   (any compile-profile test)
-  (define spec-profile-structural-key-created-metric : i64
-    39))
-(cfg
-  (any compile-profile test)
-  (define spec-profile-structural-key-reused-metric : i64
-    40))
-(cfg
-  (any compile-profile test)
-  (define spec-profile-name-render-calls-metric : i64
-    41))
-(cfg
-  (any compile-profile test)
-  (define spec-profile-name-render-cache-hits-metric : i64
-    42))
-(cfg
-  (any compile-profile test)
-  (define spec-profile-name-render-cache-misses-metric : i64
-    43))
-(cfg
-  (any compile-profile test)
-  (define spec-profile-generated-text-materialized-metric : i64
-    44))
-(cfg
-  (any compile-profile test)
-  (define spec-profile-metric-end : i64
-    45))
+  (counters.defslots
+    spec-profile
+    39
+    (spec-profile-structural-key-created-metric
+      "lower.specialization.structural_keys.created"
+      live)
+    (spec-profile-structural-key-reused-metric
+      "lower.specialization.structural_keys.reused"
+      live)
+    (spec-profile-generated-text-materialized-metric
+      "lower.specialization.generated_text.materialized"
+      live)
+    (spec-profile-name-render-calls-metric
+      "lower.specialization.render.calls"
+      live)
+    (spec-profile-name-render-cache-hits-metric
+      "lower.specialization.render.cache_hits"
+      live)
+    (spec-profile-name-render-cache-misses-metric
+      "lower.specialization.render.cache_misses"
+      live)))
 
 (define (spec-profile-reset! [_state : profile_state.CompilerProfileState]) : unit
   (cfg
@@ -341,7 +337,7 @@
     (profile_state.compiler-profile-state-metric-reset-range!
       _state
       spec-profile-structural-key-created-metric
-      spec-profile-metric-end)
+      spec-profile-end)
     unit))
 
 (define (spec-profile-note-generated-text-materialized
@@ -390,54 +386,6 @@
           spec-profile-name-render-cache-misses-metric
           1)))
     unit))
-
-(cfg
-  (any compile-profile test)
-  (define (spec-profile-structural-key-created-value
-    [state : profile_state.CompilerProfileState]) : i64
-    (profile_state.compiler-profile-state-metric-value
-      state
-      spec-profile-structural-key-created-metric)))
-
-(cfg
-  (any compile-profile test)
-  (define (spec-profile-structural-key-reused-value
-    [state : profile_state.CompilerProfileState]) : i64
-    (profile_state.compiler-profile-state-metric-value
-      state
-      spec-profile-structural-key-reused-metric)))
-
-(cfg
-  (any compile-profile test)
-  (define (spec-profile-name-render-calls-value
-    [state : profile_state.CompilerProfileState]) : i64
-    (profile_state.compiler-profile-state-metric-value
-      state
-      spec-profile-name-render-calls-metric)))
-
-(cfg
-  (any compile-profile test)
-  (define (spec-profile-name-render-cache-hits-value
-    [state : profile_state.CompilerProfileState]) : i64
-    (profile_state.compiler-profile-state-metric-value
-      state
-      spec-profile-name-render-cache-hits-metric)))
-
-(cfg
-  (any compile-profile test)
-  (define (spec-profile-name-render-cache-misses-value
-    [state : profile_state.CompilerProfileState]) : i64
-    (profile_state.compiler-profile-state-metric-value
-      state
-      spec-profile-name-render-cache-misses-metric)))
-
-(cfg
-  (any compile-profile test)
-  (define (spec-profile-generated-text-materialized-value
-    [state : profile_state.CompilerProfileState]) : i64
-    (profile_state.compiler-profile-state-metric-value
-      state
-      spec-profile-generated-text-materialized-metric)))
 
 (defenum SpecValueBinding
   (Bind i64 ctfe.CompilerCtfeValue))
@@ -1326,9 +1274,9 @@
     (string.int->string n)))
 
 ;; Build the "_<code>" tail into `buf` without re-copying the accumulated
-;; prefix per character. The old recursive string.append form cost O(n^2) per
-;; key, and macro-identity-key-sexpr applies this to already-encoded sub-keys,
-;; which made deep syntax identities allocate gigabytes on a self-compile.
+;; prefix per character. A recursive string.append form costs O(n^2) per key,
+;; and macro-identity-key-sexpr applies this to already-encoded sub-keys, so
+;; deep syntax identities would allocate quadratically.
 (define (spec-string-key-from-into
   [text : String]
   [idx : i64]

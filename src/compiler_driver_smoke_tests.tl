@@ -310,16 +310,13 @@
       (cbi.compiler-builtin-initialize-for-parse!)
       ok)))
 
-;; Derived logical symbols used to dominate the intern pool's generated lane:
-;; 50,409 of the 51,482 generated names a whole-program self-compile allocated,
-;; which met the pool's fixed 131,072-slot ceiling and aborted the
-;; profile-enabled CLI build with a bare out-of-bounds three stages downstream
-;; (#6293). They are minted into the IR's own growable table now, so a compile's
-;; generated lane must stay a small fraction of the pool -- the self-compile's
-;; lane fell to about 1,073 names, well under capacity/64. Pin both halves of
-;; that here: a real front-to-back emit stays inside the budget, and the derived
-;; mint itself costs the lane nothing. Moving the mint back into the pool fails
-;; as a named smoke instead of as a later bootstrap stage's bare abort.
+;; Derived logical symbols are minted into the IR's own growable table, not the
+;; intern pool's generated lane, whose fixed ceiling a whole-program compile's
+;; derived names would otherwise exhaust. A compile's generated lane must stay a
+;; small fraction of the pool. Pin both halves of that here: a real
+;; front-to-back emit stays inside the budget, and the derived mint itself costs
+;; the lane nothing. Moving the mint back into the pool fails as a named smoke
+;; instead of as a later bootstrap stage's bare abort.
 (define (lower-symbol-generated-lane-budget-ok?) : bool
   (let
     [emitted : bool
@@ -1936,9 +1933,6 @@
         (ci.intern-profile-note-slice left-address 7)
         (ci.intern-profile-note-lookup right-address)
         (ci.intern-profile-note-generated right-address)
-        (ci.intern-profile-note-generated-role-create
-          left-address
-          (ci.intern-generated-symbol-role-lambda))
         (ci.intern-profile-reset! right-address)
         (test.assert-i64-eq
           (ci.intern-profile-value left-address ci.intern-profile-intern-metric)
@@ -1950,15 +1944,6 @@
             ci.intern-profile-slice-bytes-metric)
           7
           "right reset does not erase left slice bytes")
-        (test.assert-i64-eq
-          (ci.intern-profile-value
-            left-address
-            (+
-              ci.intern-profile-generated-role-create-start-metric
-              (ci.intern-generated-symbol-role-index
-                (ci.intern-generated-symbol-role-lambda))))
-          1
-          "role counters use the same slot in the left owner")
         (test.assert-i64-eq
           (ci.intern-profile-value
             right-address

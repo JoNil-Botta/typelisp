@@ -1,7 +1,6 @@
 ;; Build the host-native stdlib comptime image catalog from the exact embedded
-;; source manifest. Macro bodies remain on the interpreted path until general
-;; source-to-native comptime lowering lands; the registered identities and
-;; loader/container path are production-shaped build inputs now.
+;; source manifest. Macro bodies the native producer cannot lower stay on the
+;; interpreted path.
 (import compiler_parse_core)
 (import compiler_tlci_native_producer)
 (import tlci_core)
@@ -332,9 +331,8 @@
           ;; sites separately so #5596's zero-fallback goal is measurable.
           ;; Per-shell reasons on stderr, one `identity<TAB>reason` line each, so
           ;; a family's real blocker is read out of the producer instead of
-          ;; inferred from an AST histogram -- which mis-predicted the residue
-          ;; twice (#5605, #5600). stdout keeps exactly the two lines the gates
-          ;; match on. Refs #5596.
+          ;; inferred from an AST histogram, which mis-predicts it. stdout keeps
+          ;; exactly the two lines the gates match on. Refs #5596.
           (io.print-error
             (if full-blockers
               (array-ref

@@ -73,8 +73,8 @@ All in `src/compiler_optimize.tl`:
 - `opt-scc-next-child` rescans the entire callee list for every child step,
   making the SCC walk quadratic in a function's out-degree. That is the
   compiler's real cost and is kept.
-- A round re-initialises the maps and the node pool without freeing them, as
-  the packet requires; the map `clear-ref!` still touches every slot, which is
+- A round re-initialises the maps and the node pool without freeing them; the
+  map `clear-ref!` still touches every slot, which is
   what the compiler's fresh zeroed `with-capacity` array costs per compile.
 
 **Dropped, and why none of it changes what is measured.**
@@ -103,8 +103,7 @@ All in `src/compiler_optimize.tl`:
    the ten dumps is named `main`, so the test is constant-false over this
    corpus; dropping it cannot change an absorb class.
 5. **`opt-scc-copy-order` allocates its result.** Here it copies into a scratch
-   array reserved once at the corpus maximum, as rule 5 of the benchmark
-   conventions requires. The copy itself is unchanged.
+   array reserved once at the corpus maximum. The copy itself is unchanged.
 6. **Address-taken references are represented but unexercised.** Both kernels
    implement `opt-inline-census-add-address` and the corpus format carries
    kind 1, but none of the ten `after-fold` dumps contains a `fn@` operand, so
@@ -158,35 +157,28 @@ record, functions are deduplicated by name, keeping the first occurrence (a
 per-pass dump holds one snapshot per pipeline iteration; the census sees each
 function once).
 
-The two whole-compiler modules `compiler_load` and `compiler_regalloc` used by
-`cfg_domloops` and `gvn_table` are **not** in this corpus: the per-pass dump
-path clones the accumulated snapshot buffer on every observation, so its memory
-is quadratic in the function count and both modules OOM at 16 GB. Ten modules
-in the ~250–2000 function range were dumped instead.
+The whole-compiler modules `compiler_load` and `compiler_regalloc` that
+`cfg_domloops` and `gvn_table` use are not in this corpus: their per-pass dumps
+did not fit in memory at the export commit, so ten modules in the ~250–2000
+function range were dumped instead.
 
 ### Regeneration
 
-The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
-exported at commit `933fdf56c` (#7382) by a Python exporter that read the
-snapshot compiler's `--dump-ir` output of that time. The exporter and its
-regeneration commands were deleted once the corpus was committed;
-`git log --diff-filter=D -- benchmarks/callgraph_scc/tools` finds the deleting
-commit, whose parent still has both, including the exporter's header that
-documents the full corpus format.
+Exported at `933fdf56c` (#7382) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `200` in `optimization.tsv` | tunes TypeLisp Ir to 0.79 G and C to 0.35 G; 200 rounds is 20 passes over each of the ten programs |
 | round rotation | program advances by one per round, and the fold's starting slot advances by one | each round folds a different program, and inside a round a different rotation of that program's slots |
 | index / census map capacity | `round-up-pow2(count < 4 ? 8 : count * 2)` | `opt-function-index-capacity`, `opt-inline-census-capacity` and `round-capacity` |
 | map growth threshold | `len >= capacity - capacity / 4` | `growth-limit-for` for `stdlib/hashmap.tl`'s scalar family. Capacity is at least twice the function count, so `grow!` never fires on this corpus; the test itself is on every insert |
 | node pool | one node per reference across the whole corpus, bump cursor reset per round | peak live is one `Cons` per deduplicated edge; the reset is the compiler's arena rewind |
 | depth weight | `8^min(depth, 2)` | `opt-inline-census-depth-base` / `-depth-cap` |
 | absorb class ceiling | 2 | `opt-inline-dup-max-refcount` |
-| checksum | 64-bit FNV-1a, no division | identical bits in TypeLisp i64 and C `uint64_t` |
 | folded per slot | SCC id, callee count, refcount, hot refcount, absorb class | the five quantities every inline site reads back; the bottom-up SCC order and the edge total are folded once per round |
 | self-check | deduplicated call-graph edge count and SCC count, per program | both are computed independently by the exporter (the edge count from a Python replay of `opt-slot-list-add`'s dedup, the SCC count from an independent recursive Tarjan) and carried in the corpus; each round compares them against its own tables and aborts with exit 134 on a mismatch |
 

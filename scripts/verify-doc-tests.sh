@@ -2,13 +2,11 @@
 set -eu
 
 # verify-doc-tests.sh - auto-discover documented TypeLisp sources and run one
-# batched `typelisp doc --test --batch` process. This intentionally uses a built
-# compiler from TYPELISP_BIN so CI can run it without relying on the Rust test
-# harness.
+# batched `typelisp doc --test --batch` process with the built compiler from
+# TYPELISP_BIN.
 # In CI, TYPELISP_BIN is the command-tier compiler selected by the
 # caller. Seed fallback is only a compatibility path for older artifacts and
 # cannot verify future stdlib borrowed-`str` doctests.
-# refs #946
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -40,8 +38,7 @@ DISCOVERED="$WORKDIR/discovered.txt"
 : > "$DISCOVERED"
 
 # `docs` carries the getting-started guide, whose whole value is that every
-# example in it compiles; leaving it out of this sweep would let it rot exactly
-# the way #5672 set out to prevent.
+# example in it compiles; leaving it out of this sweep would let it rot.
 for root in stdlib src examples tests docs; do
     if [ -d "$root" ]; then
         find "$root" \

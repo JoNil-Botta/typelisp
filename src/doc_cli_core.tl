@@ -1,13 +1,13 @@
 ;; doc_cli_core.tl - Selfhost doc command logic.
 ;;
-;; Usage through the current compiler runner:
-;;   typelisp run selfhost/cli.tl -- doc input.tl output.md
-;;   typelisp run selfhost/cli.tl -- doc entry.tl imported.tl output.md
-;;   typelisp run selfhost/cli.tl -- doc --html input.tl output.html
-;;   typelisp run selfhost/cli.tl -- doc --html entry.tl imported.tl output.html
-;;   typelisp run selfhost/cli.tl -- doc --test input.tl
-;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
-;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
+;; Usage:
+;;   typelisp doc input.tl output.md
+;;   typelisp doc entry.tl imported.tl output.md
+;;   typelisp doc --html input.tl output.html
+;;   typelisp doc --html entry.tl imported.tl output.html
+;;   typelisp doc --test input.tl
+;;   typelisp doc --test --batch inputs.txt
+;;   typelisp doc --load input.tl output.md [--stdlib-root <dir>...]
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
@@ -1017,8 +1017,7 @@
 
 ;; The doc subcommands below take a `base` offset: `base` is the index of the
 ;; command-kind argument, so kind-relative arguments are at `base+1`, `base+2`,
-;; ... The retained doc wrapper passes base=1; the unified dispatcher passes
-;; base=2.
+;; ... The unified dispatcher passes base=2.
 (define (doc-main-test [base : i64]) : i64
   (begin
     (compiler_load.compiler-load-session-cache-enable!)

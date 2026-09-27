@@ -9,9 +9,10 @@ Inline tests live next to source declarations as `(test name body...)`
 items. Normal builds type-check inline tests owned by the package's own
 sources (never imported stdlib or dependencies), then drop them before
 production codegen. `typelisp test <file.tl>` turns a file's inline tests
-into a generated harness and runs it; with no file, it runs the nearest
-package's inline tests plus `tests/**/*.tl` integration programs (exit 0
-passes). `typelisp test --check` type-checks harnesses without linking.
+into a generated harness and runs it (imported files contribute declarations,
+not tests); with no file, it runs the nearest package's inline tests plus
+`tests/**/*.tl` integration programs (exit 0 passes). `typelisp test --check`
+type-checks harnesses and integration programs without linking.
 The runner announces every selected runnable test, continues after assertion
 failures, prints `ok` or `FAILED` for each executed test, and finishes with
 passed, failed, ignored, slow-skipped, and total counts. Tests may begin with
@@ -19,11 +20,11 @@ passed, failed, ignored, slow-skipped, and total counts. Tests may begin with
 corresponding `--include-ignored` / `--include-slow` option is present.
 `--filter <substring>` selects inline-test names (and package integration
 paths); `--exact <name>` selects a complete name or normalized integration path
-instead. `--list` prints names, locations, and skip states. Repeatable `--cfg
-<name>` values compose with automatic `test` and target cfgs. `--shuffle`
-prints its seed before listing/execution, and `--shuffle --seed <u64>` replays
-the same portable order. Ordinary assertion failures exit `1`; an unexpected
-harness abort exits `2`.
+instead. `--list` prints names, locations, skip states, and ignore reasons.
+Repeatable `--cfg <name>` values compose with automatic `test` and target
+cfgs. `--shuffle` prints its seed before listing/execution, and
+`--shuffle --seed <u64>` replays the same portable order. Ordinary assertion
+failures exit `1`; a panic, trap, or other unexpected harness abort exits `2`.
 Tests commonly import `stdlib/test.tl` for assertions. CI auto-discovers
 inline-test-bearing files, so adding tests requires no manifest edits.
 
@@ -42,8 +43,9 @@ contain checked examples:
 ```
 
 `typelisp doc --test <file.tl>` type-checks every fenced `typelisp`/`tl`
-example (add `expect-error` for intended failures; `typelisp run` fences
-compile, run, and compare exit/stdout/stderr on Linux). `typelisp doc input.tl
+example (add `expect-error` for intended failures; a `typelisp run` fence also
+compiles and runs the example and compares its exit status, stdout and
+stderr). `typelisp doc input.tl
 -o output.md` renders Markdown docs for the entry file and its import graph.
 Bare `typelisp doc` discovers the nearest package and writes a deterministic
 offline site to `target/doc/index.html`; `--open` opens that index when a
@@ -164,18 +166,15 @@ Windows the fixpoint script runs from Git Bash and uses `clang
 `TYPELISP_WINDOWS_CLANG` / `TYPELISP_WINDOWS_LINK` to override tool
 discovery. The Windows package archive gate also requires `llvm-ar` and checks
 the deterministic `TYPELISP_WINDOWS_LIB` contract documented in
-[`packages.md`](packages.md).
+[`packages.md`](../docs/packages.md).
 
-The required top-level host inventories can be inspected without running tests
-or fetching a compiler: `sh scripts/ci-verify.sh --list-gates linux` (or
-`windows`). [`ci-gates.tsv`](../scripts/ci-gates.tsv) is the gate table: one
-row per gate, in run order, with its hosts, label, `needs` (the earlier gates
-whose outputs it uses), compiler and command. A failed gate stops the run.
-`sh scripts/ci-verify.sh --gates <id>[,<id>...]` reproduces one gate locally:
-it runs the named gates plus every gate their `needs` reach, in order, and ends
-with a partial result rather than verification success (add `--list-gates linux`
-before `--gates` to print that closure without running it). See the
-[gate table](../scripts/README.md#core-development-loop).
+`sh scripts/ci-verify.sh --list-gates linux` (or `windows`) lists the required
+gates without running tests or fetching a compiler, and
+`sh scripts/ci-verify.sh --gates <id>[,<id>...]` reproduces one gate locally
+together with the gates it needs, ending with a partial result rather than
+verification success. The gate table,
+[`ci-gates.tsv`](../scripts/ci-gates.tsv), is described in
+[`scripts/README.md`](../scripts/README.md#core-development-loop).
 
 ## Documentation site
 

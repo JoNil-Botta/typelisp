@@ -2,7 +2,6 @@
 set -eu
 
 # verify-inline-tests.sh - auto-discover and run inline TypeLisp tests.
-# refs #947
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -67,10 +66,9 @@ export TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three"
 # (scripts/lib-bounded-pool.sh): TYPELISP_INLINE_TEST_WORKERS `typelisp test
 # --batch` processes at once (1-3, default 2), each under an enforced memory cap
 # and timeout (a user cgroup on Linux, a Job Object on Windows). A batch shares
-# nothing between its sources, because #4820 resets the driver for each one, so
-# a chunk costs only its own process start. Contiguous chunks concatenate back
-# into the discovered order, so the checks below read one combined stream
-# exactly as they read the single batch before (#7995).
+# nothing between its sources, because the driver resets for each one, so a
+# chunk costs only its own process start. Contiguous chunks concatenate back
+# into the discovered order, so the checks below read one combined stream.
 INLINE_TEST_WORKERS=${TYPELISP_INLINE_TEST_WORKERS:-2}
 case "$INLINE_TEST_WORKERS" in
     1 | 2 | 3) ;;
@@ -181,10 +179,10 @@ inline_test_settle_chunk() {
     cat "$_settle_stderr" >> "$_settle_combined_stderr"
 }
 
-# The checks the single batch always had, over the combined chunk streams: one
-# count line and one success summary per discovered source, the discovered order
-# exactly, and no source that ran zero tests. The order check is also the
-# partition proof: every discovered source ran in exactly one chunk.
+# Checks over the combined chunk streams: one count line and one success
+# summary per discovered source, the discovered order exactly, and no source
+# that ran zero tests. The order check is also the partition proof: every
+# discovered source ran in exactly one chunk.
 inline_test_check_combined() {
     _check_discovered=$1
     _check_stdout=$2
@@ -370,9 +368,9 @@ fi
 
 discovered_file_count=$(wc -l < "$DISCOVERED" | tr -d ' ')
 
-# #5122: fixed-array `(init)` once expanded the profile-summary tables into
-# thousands of initializer AST nodes and made this single inline test peak above
-# 5 GiB. Keep a focused Linux hard-cap probe ahead of the aggregate batch so the
+# Fixed-array `(init)` expanding the profile-summary tables into thousands of
+# initializer AST nodes makes this single inline test's memory explode. A
+# focused Linux hard-cap probe runs ahead of the aggregate batch so that
 # regression fails deterministically without asking an uncapped runner to OOM.
 #
 # RLIMIT_AS is unsuitable here: the runtime reserves large virtual mappings,
@@ -453,9 +451,9 @@ mkdir -p "$INLINE_TEST_POOL_DIR/timing"
 echo "[inline-tests] run ($discovered_file_count file(s) in $chunk_count chunk(s)" \
     "of up to $INLINE_TEST_CHUNK_FILES, $INLINE_TEST_WORKERS worker(s)," \
     "$INLINE_TEST_POOL_BUDGET_MIB MiB of enforced caps at once)"
-# #4820: execution batches keep every source inside its own destroyable scratch
-# arena with a full driver reset, preserving the old one-process-per-file
-# semantics without paying process/bootstrap overhead for every source.
+# Execution batches keep every source inside its own destroyable scratch arena
+# with a full driver reset, preserving one-process-per-file semantics without
+# paying process/bootstrap overhead for every source.
 ci_timing_set_now_ms
 pool_started=$CI_TIMING_NOW_MS
 bounded_pool_start "$INLINE_TEST_POOL_DIR" "$INLINE_TEST_WORKERS"

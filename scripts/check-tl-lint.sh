@@ -9,8 +9,6 @@ set -eu
 #
 # The public `typelisp lint` command is warn-only by default so cleanup can
 # happen in normal reviewable slices. This gate opts into enforcing mode.
-#
-# refs #1164.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -148,7 +146,7 @@ echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE
 # ordered chunks so opt-in timing can attribute individual outliers. Split at
 # src/ boundaries as well as the size bound: compiler sources receive the union
 # of normal and deprecated-concat rules in one parse/traversal, while the other
-# source units retain their existing opt-in rule scope. Refs #7826.
+# source units retain their existing opt-in rule scope.
 LINT_CHUNK_DIR="$WORKDIR/chunks"
 rm -rf "$LINT_CHUNK_DIR"
 mkdir -p "$LINT_CHUNK_DIR"

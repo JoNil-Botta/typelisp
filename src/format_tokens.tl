@@ -254,10 +254,9 @@
 
 ;; --- char classification lookup table (lexer hot path) ----------------------
 ;; The per-character scan loops (symbol and number scans, whitespace skipping,
-;; the main dispatch) tested character classes with `fmt-is-*`, which stay real
-;; function calls at every opt level. Lexing ~9 MB of source therefore paid
-;; millions of call prologues just to classify bytes. Precompute a 256-entry
-;; class table once per process and test membership with an inline array lookup.
+;; the main dispatch) would pay a real call per byte through `fmt-is-*`, which
+;; stay real function calls at every opt level. Precompute a 256-entry class
+;; table once per process and test membership with an inline array lookup.
 ;; Bit 0 = whitespace, bit 1 = digit, bit 2 = symbol char, bit 3 = hex digit.
 (define fmt-char-class-table : (__tl_dyn-array i64)
   (__tl_make-array i64 256))
@@ -615,8 +614,8 @@
 ;; Copy `count` token slots into a freshly sized array. The lexer sizes its
 ;; token buffers to an estimate of the token count and grows them by doubling
 ;; rather than pre-allocating one slot per source byte (most bytes are inside
-;; multi-character tokens or whitespace, so the byte-sized arrays were ~3x
-;; larger than needed and paid that cost in zero-init on every file).
+;; multi-character tokens or whitespace, so byte-sized arrays would be several
+;; times larger than needed and pay that cost in zero-init on every file).
 (define (fmt-grow-token-array
   [old : (__tl_dyn-array FormatToken)]
   [count : i64]
@@ -646,7 +645,7 @@
       bigger)))
 
 ;; Token-buffer capacity estimate for a `n`-byte source: roughly one token per
-;; three bytes, with slack for short inputs and the trailing `FmtEnd`.
+;; three bytes, with slack for short inputs and the trailing `FormatToken.End`.
 (define (fmt-token-capacity-estimate [n : i64]) : i64
   (+ (/ n 3) 16))
 

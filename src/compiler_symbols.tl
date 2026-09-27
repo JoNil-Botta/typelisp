@@ -281,9 +281,9 @@
 ;; handle splits the index into `owner-index * child-stride + child-index`.
 ;; Both ranges are bounded so that no two (kind, owner, child) triples share a
 ;; handle: child indexes stay below the child stride and owner indexes below
-;; handle-stride / child-stride. With a child stride of 1000, child 1001 of one
-;; declaration decoded as child 1 of the next and typed a field through the
-;; wrong struct (#7921). Both strides are powers of two (2^50 and 2^20), so
+;; handle-stride / child-stride; otherwise a child index past the stride decodes
+;; as a child of the next declaration and types a field through the wrong
+;; struct. Both strides are powers of two (2^50 and 2^20), so
 ;; typecheck's frequent handle decoding is shifts and masks rather than
 ;; multiplications by 64-bit constants.
 (define (compiler-symbol-handle-stride) : i64
@@ -2050,9 +2050,6 @@
       (sym_i64_env.sym-i64-empty)
       (sym_i64_env.sym-i64-empty))))
 
-;; An explicit `module ... as alias` import resolves dotted uses through the
-;; import target directly. It should not leave the module's legacy bare macro
-;; alias in the importer.
 ;; Real (non-Import/Module/Test) decls grouped by their enclosing module, built
 ;; once so alias installation touches only a module's own decls instead of
 ;; rescanning every decl in the program per import. Installing aliases for M
@@ -2064,8 +2061,7 @@
 ;; association (module counts are tiny, so a linear probe beats a hashmap here);
 ;; num-modules is its length. Per-module entries chain forward in decl order via
 ;; ent-next (-1 terminates); ent-pos[k] is the decl's index in `decls` and
-;; ent-ridx[k] is the global real-decl ordinal the alias handles are keyed by --
-;; both identical to the ordinals the previous whole-program scans produced.
+;; ent-ridx[k] is the global real-decl ordinal the alias handles are keyed by.
 (defenum ModuleDeclIndex
   (ModuleDeclIndex
     (__tl_dyn-array i64)
@@ -2269,6 +2265,9 @@
               (set! index (+ index 1)))
             cur-symbols))])))
 
+;; An explicit `module ... as alias` import resolves dotted uses through the
+;; import target directly. It should not leave the module's legacy bare macro
+;; alias in the importer.
 (define (compiler-symbols-remove-module-macro-aliases-indexed
   [symbols : CompilerSymbols]
   [decls : (& decls ast.AstDeclList)]

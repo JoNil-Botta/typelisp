@@ -19,6 +19,7 @@
 (import compiler_specialize as spec)
 (import compiler_clone as clone_support)
 (import compiler_allocation_profile as allocation_profile)
+(cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_surface_facts as surface_facts)
 (import (hashmap.hashmap i64 i64) as tc_i64_i64_map)
 (import compiler_parse_core as parser)
@@ -130,7 +131,7 @@
   ;; It is first so hot bind paths can read it directly through the capability
   ;; without copying the larger table carrier.
   (mode i64)
-  ;; The measured hot prefix of renderable names uses bounded epoch-stamped
+  ;; The hot prefix of renderable names uses bounded epoch-stamped
   ;; dense lanes. Higher typed IDs use a sparse overflow map, so an ID's numeric
   ;; value never forces allocation up to that value. Structural and marker keys
   ;; take a distinct explicit path into the same map; the validated renderable
@@ -4460,8 +4461,8 @@
 ;; Transitional owner for a resolver result consumed by paths that still read
 ;; nested type ids through the installed compatibility reader. An explicitly
 ;; installed ctx already names those cells. A captured ctx does not: until its
-;; consumers are threaded, reconstruct into the installed live cells exactly
-;; as the historical global constructors did. The explicit resolver below is
+;; consumers are threaded, reconstruct into the installed live cells. The
+;; explicit resolver below is
 ;; available to callers whose whole consumer chain carries `pools`.
 (define (tc-context-type-resolution-pools [ctx : TcContext]) : ast.AstNodePoolContext
   (let
@@ -4474,8 +4475,8 @@
 
 ;; Type segment-bases for a pure read under `ctx`. Lifetime-elision walks may
 ;; append reconstructed nodes, but never install a different pool; the table is
-;; stable across push/grow. Compatibility callers continue following the
-;; installed pool that their historical no-context API selected.
+;; stable across push/grow. Compatibility callers keep following the
+;; installed pool that their no-context API selects.
 (define (tc-context-type-bases [ctx : TcContext]) : i64
   (if (ast.ast-node-pool-compat-context-active?)
     (let
@@ -4490,10 +4491,10 @@
 ;; at the walk's entry and threaded down as a scalar.
 ;;
 ;; Reading through `AstNodePoolContext` per node is not an option on this path:
-;; at opt2 `tc-context-expr-get` is 30 instructions against `ast-node-get`'s 14,
-;; because the context struct is copied to the stack for every call. The scalar
-;; token is 13, so a converted walk is cheaper than the global reader it
-;; replaces, and the hoist is what makes that true rather than the conversion.
+;; `tc-context-expr-get` copies the context struct to the stack for every call,
+;; which makes it about twice the cost of `ast-node-get`. The hoisted scalar
+;; token avoids that copy, so a converted walk is no dearer than the global
+;; reader; the hoist, not the conversion, is what makes that true.
 ;;
 ;; A compatibility pool context suppresses the ctx install (see
 ;; `tc-context-install-pools!`), so under one the walk must follow the installed
@@ -5045,553 +5046,452 @@
   (define (compiler-tc-walk-now-ns) : i64
     (cfg windows 0 (profile.now-ticks))))
 
+;; Typecheck counter rows, in the order `compiler-tc-decl-profile-finish`
+;; writes them. The resolve, unbound, macro-program and splice tables reset
+;; with each macro-expansion program, the env and layout tables with each
+;; typecheck job; the walk tables accumulate for the whole process.
 (cfg
   compile-profile
-  (define compiler-tc-macro-walk-scrut-tc-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-scrut-tc-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-scrut-tc-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-scrut-tc-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-scrut-tc-alloc-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-scrut-tc-live-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-scrut-tc-live-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-arm-bind-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-arm-bind-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-arm-bind-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-arm-bind-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-arm-bind-alloc-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-arm-bind-live-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-arm-bind-live-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-bind-params-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-bind-params-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-bind-params-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-bind-params-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-bind-params-alloc-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-bind-params-live-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-bind-params-live-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-direct-marshal-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-direct-marshal-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-direct-marshal-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-direct-marshal-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-direct-marshal-alloc-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-direct-marshal-live-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-direct-marshal-live-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-native-dispatch-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-native-dispatch-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-native-dispatch-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-native-dispatch-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-native-dispatch-alloc-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-native-dispatch-live-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-native-dispatch-live-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-entry-resolution-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-entry-resolution-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-entry-resolution-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-entry-invoke-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-entry-invoke-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-entry-invoke-start-ns : i64
-    0))
-
-;; The four regions are non-reentrant leaves of the walk (none of them can
-;; re-enter itself through macro expansion), so a single global start slot
-;; per region is sufficient.
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-scrut-tc-start!) : unit
-    (begin
-      (set! compiler-tc-macro-walk-scrut-tc-start-ns (compiler-tc-walk-now-ns))
-      (set! compiler-tc-macro-walk-scrut-tc-alloc-start (profile.alloc-total))
-      (set! compiler-tc-macro-walk-scrut-tc-live-start (profile.alloc-live)))))
+  (counters.defcounters
+    compiler-tc-resolve-profile
+    (tc-profile-resolve-ordinary-calls
+      "typecheck.resolve.typecheck.ordinary_calls")
+    (tc-profile-resolve-concrete-leaf-calls
+      "typecheck.resolve.typecheck.concrete_leaf_calls")
+    (tc-profile-resolve-concrete-composite-calls
+      "typecheck.resolve.typecheck.concrete_composite_calls")
+    (tc-profile-resolve-unresolved-var-calls
+      "typecheck.resolve.typecheck.unresolved_var_calls")
+    (tc-profile-resolve-unresolved-varargs-calls
+      "typecheck.resolve.typecheck.unresolved_varargs_calls")
+    (tc-profile-resolve-unresolved-composite-calls
+      "typecheck.resolve.typecheck.unresolved_composite_calls")
+    (tc-profile-resolve-name-lookup-calls
+      "typecheck.resolve.typecheck.name_lookup_calls")
+    (tc-profile-resolve-name-cache-hits
+      "typecheck.resolve.typecheck.name_cache_hits")
+    (tc-profile-resolve-name-cache-misses
+      "typecheck.resolve.typecheck.name_cache_misses")
+    (tc-profile-resolve-type-symbol-probes
+      "typecheck.resolve.typecheck.type_symbol_probes")
+    (tc-profile-type-handle-lookups
+      "typecheck.resolve.typecheck.type_handle_lookups")
+    (tc-profile-type-handle-cache-hits
+      "typecheck.resolve.typecheck.type_handle_cache_hits")
+    (tc-profile-type-handle-cache-misses
+      "typecheck.resolve.typecheck.type_handle_cache_misses")
+    (tc-profile-type-handle-symbol-probes
+      "typecheck.resolve.typecheck.type_handle_symbol_probes")
+    (tc-profile-type-handle-resolver-lookups
+      "typecheck.resolve.typecheck.type_handle_resolver_lookups")
+    (tc-profile-type-handle-nominal-lifetime-lookups
+      "typecheck.resolve.typecheck.type_handle_nominal_lifetime_lookups")
+    (tc-profile-type-handle-constructor-lookups
+      "typecheck.resolve.typecheck.type_handle_constructor_lookups")
+    (tc-profile-type-handle-aggregate-layout-lookups
+      "typecheck.resolve.typecheck.type_handle_aggregate_layout_lookups")
+    (tc-profile-type-handle-move-kind-lookups
+      "typecheck.resolve.typecheck.type_handle_move_kind_lookups")
+    (tc-profile-type-handle-qualified-owner-lookups
+      "typecheck.resolve.typecheck.type_handle_qualified_owner_lookups")
+    (tc-profile-type-handle-lazy-unique-lookups
+      "typecheck.resolve.typecheck.type_handle_lazy_unique_lookups")))
 
 (cfg
   compile-profile
-  (define (compiler-tc-walk-scrut-tc-finish!) : unit
-    (begin
-      (set!
-        compiler-tc-macro-walk-scrut-tc-ns
-        (+
-          compiler-tc-macro-walk-scrut-tc-ns
-          (- (compiler-tc-walk-now-ns) compiler-tc-macro-walk-scrut-tc-start-ns)))
-      (set!
-        compiler-tc-macro-walk-scrut-tc-alloc-bytes
-        (+
-          compiler-tc-macro-walk-scrut-tc-alloc-bytes
-          (- (profile.alloc-total) compiler-tc-macro-walk-scrut-tc-alloc-start)))
-      (set!
-        compiler-tc-macro-walk-scrut-tc-live-bytes
-        (+
-          compiler-tc-macro-walk-scrut-tc-live-bytes
-          (- (profile.alloc-live) compiler-tc-macro-walk-scrut-tc-live-start)))
-      (set!
-        compiler-tc-macro-walk-scrut-tc-calls
-        (+ compiler-tc-macro-walk-scrut-tc-calls 1)))))
+  (counters.defcounters
+    compiler-tc-env-profile
+    (tc-profile-env-binds "typecheck.env.binds")
+    (tc-profile-env-lookups "typecheck.env.lookups")
+    (tc-profile-env-cache-builds "typecheck.env.cache_builds")
+    (tc-profile-env-cache-entries "typecheck.env.cache_entries")
+    (tc-profile-env-marker-scans "typecheck.env.marker_scans")
+    (tc-profile-env-module-local-hits "typecheck.env.module_local_hits")
+    (tc-profile-env-module-local-misses "typecheck.env.module_local_misses")
+    (tc-profile-env-scoped-binds "typecheck.env.scoped_binds")
+    (tc-profile-env-scoped-cache-hits "typecheck.env.scoped_cache_hits")
+    (tc-profile-env-scoped-cache-misses "typecheck.env.scoped_cache_misses")
+    (tc-profile-env-scoped-tail-fallbacks "typecheck.env.scoped_tail_fallbacks")
+    (tc-profile-env-scoped-materializations
+      "typecheck.env.scoped_materializations")
+    (tc-profile-env-scoped-materialized-slots
+      "typecheck.env.scoped_materialized_slots")
+    (tc-profile-env-borrow-lifetime-scans "typecheck.env.borrow_lifetime_scans")
+    (tc-profile-env-borrow-lifetime-scan-bindings
+      "typecheck.env.borrow_lifetime_scan_bindings")
+    (tc-profile-env-borrow-lifetime-scan-max
+      "typecheck.env.borrow_lifetime_scan_max")))
 
 (cfg
   compile-profile
-  (define (compiler-tc-walk-arm-bind-start!) : unit
-    (begin
-      (set! compiler-tc-macro-walk-arm-bind-start-ns (compiler-tc-walk-now-ns))
-      (set! compiler-tc-macro-walk-arm-bind-alloc-start (profile.alloc-total))
-      (set! compiler-tc-macro-walk-arm-bind-live-start (profile.alloc-live)))))
+  (counters.defcounters
+    compiler-tc-unbound-profile
+    (tc-profile-unbound-finalizers "typecheck.env.unbound_finalizers")
+    (tc-profile-unbound-scans "typecheck.env.unbound_scans")
+    (tc-profile-unbound-candidate-slots "typecheck.env.unbound_candidate_slots")
+    (tc-profile-unbound-visible-candidates
+      "typecheck.env.unbound_visible_candidates")
+    (tc-profile-unbound-length-survivors
+      "typecheck.env.unbound_length_survivors")
+    (tc-profile-unbound-edit-evaluations
+      "typecheck.env.unbound_edit_evaluations")))
+
+;; Full catalogs are validated by their one ordinary typecheck walk, so
+;; `generated_module_catalog_validations` stays zero. The active-generation
+;; rotation row is the sum of declaration and splice generation rotations.
+(cfg
+  compile-profile
+  (counters.defcounters
+    compiler-tc-macro-program-profile
+    (tc-profile-generated-module-materializations
+      "typecheck.macro.generated_module_materializations")
+    (tc-profile-generated-decl-checks "typecheck.macro.generated_decl_checks")
+    (tc-profile-generated-module-memo-hits
+      "typecheck.macro.generated_module_memo_hits")
+    (tc-profile-generated-module-catalog-builds
+      "typecheck.macro.generated_module_catalog_builds")
+    (tc-profile-generated-module-catalog-hits
+      "typecheck.macro.generated_module_catalog_hits")
+    (tc-profile-generated-module-catalog-validations
+      "typecheck.macro.generated_module_catalog_validations")
+    (tc-profile-live-rebuilds "typecheck.macro.live_rebuilds")
+    (tc-profile-live-reuses "typecheck.macro.live_reuses")
+    (tc-profile-live-registry-rebuilds "typecheck.macro.live_registry_rebuilds")
+    (tc-profile-live-registry-reuses "typecheck.macro.live_registry_reuses")
+    (tc-profile-retired-symbol-rotations
+      "typecheck.macro.retention_retired_symbol_rotations")
+    (tc-profile-expansion-scratch-creations
+      "typecheck.macro.retention_expansion_scratch_creations")
+    (tc-profile-active-generation-rotations
+      "typecheck.macro.retention_active_generation_rotations")
+    (tc-profile-retired-generation-rotations
+      "typecheck.macro.retention_retired_generation_rotations")
+    (tc-profile-live-symbols-max-bytes
+      "typecheck.macro.retention_live_symbols_max_bytes")
+    (tc-profile-retired-symbols-max-bytes
+      "typecheck.macro.retention_retired_symbols_max_bytes")
+    (tc-profile-expansion-scratch-max-bytes
+      "typecheck.macro.retention_expansion_scratch_max_bytes")
+    (tc-profile-active-generations-max-bytes
+      "typecheck.macro.retention_active_generations_max_bytes")
+    (tc-profile-retired-generations-max-bytes
+      "typecheck.macro.retention_retired_generations_max_bytes")
+    (tc-profile-stdlib-catalog-hits "typecheck.macro.stdlib_tlci_catalog_hits")
+    (tc-profile-stdlib-catalog-misses
+      "typecheck.macro.stdlib_tlci_catalog_misses")
+    (tc-profile-stdlib-load-failures
+      "typecheck.macro.stdlib_tlci_load_failures")
+    (tc-profile-stdlib-interpreted-fallbacks
+      "typecheck.macro.stdlib_tlci_interpreted_fallbacks")
+    (tc-profile-stdlib-native-dispatches
+      "typecheck.macro.stdlib_tlci_native_dispatches")
+    (tc-profile-stdlib-shell-learns "typecheck.macro.stdlib_tlci_shell_learns")
+    (tc-profile-stdlib-shell-cache-hits
+      "typecheck.macro.stdlib_tlci_shell_cache_hits")
+    (tc-profile-stdlib-native-expr-results
+      "typecheck.macro.stdlib_tlci_native_expr_results")
+    (tc-profile-stdlib-direct-expr-results
+      "typecheck.macro.stdlib_tlci_direct_expr_results")
+    (tc-profile-stdlib-direct-shell-env-folds
+      "typecheck.macro.stdlib_tlci_direct_shell_env_folds")
+    (tc-profile-stdlib-native-module-results
+      "typecheck.macro.stdlib_tlci_native_module_results")
+    (tc-profile-stdlib-native-decls-results
+      "typecheck.macro.stdlib_tlci_native_decls_results")
+    (tc-profile-stdlib-entry-resolution-ns
+      "typecheck.macro.stdlib_tlci_entry_resolution_us"
+      us)
+    (tc-profile-stdlib-entry-resolution-calls
+      "typecheck.macro.stdlib_tlci_entry_resolution_calls")
+    (tc-profile-stdlib-entry-invoke-ns
+      "typecheck.macro.stdlib_tlci_entry_invoke_us"
+      us)
+    (tc-profile-stdlib-entry-invoke-calls
+      "typecheck.macro.stdlib_tlci_entry_invoke_calls")
+    (tc-profile-stdlib-source-interpreted
+      "typecheck.macro.stdlib_source_interpreted")))
+
+;; Fired-declaration rows. The walk's decl loop samples each iteration's time
+;; and live bytes into the fired bucket when the iteration captured macro
+;; operands. Survivor bytes are allocations made while the exhaustive
+;; generation copy-out persists the returned graph (including declaration/path
+;; shells and vector/list/string backing payload). Superseded bytes are bump
+;; storage added to the declaration generation; the ring's later destroy is
+;; reported separately so the signed non-output live contribution reconciles
+;; the fired-decl live lane. `nested` is the union of the hygiene and
+;; produced-node rewalk lanes, and the pool-node, survivor, non-output and
+;; residual rows are derived from the others when the rows are written.
+(cfg
+  compile-profile
+  (counters.defcounters
+    compiler-tc-walk-profile
+    (tc-profile-direct-marshal-ns "typecheck.macro.walk_direct_marshal_us" us)
+    (tc-profile-direct-marshal-calls
+      "typecheck.macro.walk_direct_marshal_calls")
+    (tc-profile-direct-marshal-alloc
+      "typecheck.macro.walk_direct_marshal_alloc_kb"
+      kb)
+    (tc-profile-direct-marshal-live
+      "typecheck.macro.walk_direct_marshal_live_kb"
+      kb)
+    (tc-profile-fire-ns "typecheck.macro.walk_decl_fire_us" us)
+    (tc-profile-fire-live "typecheck.macro.walk_decl_fire_live_bytes")
+    (tc-profile-fire-count "typecheck.macro.walk_decl_fire_count")
+    (tc-profile-fire-self-ns "typecheck.macro.walk_decl_fire_self_us" us)
+    (tc-profile-fire-nested-ns "typecheck.macro.walk_decl_fire_nested_us" us)
+    (tc-profile-fire-attributed-calls
+      "typecheck.macro.walk_decl_fire_attributed_calls")
+    (tc-profile-fire-survivor-alloc
+      "typecheck.macro.walk_decl_fire_survivor_alloc_bytes")
+    (tc-profile-fire-survivor-live
+      "typecheck.macro.walk_decl_fire_survivor_live_bytes")
+    (tc-profile-fire-survivor-pool-node-bytes
+      "typecheck.macro.walk_decl_fire_survivor_pool_node_bytes")
+    (tc-profile-fire-survivor-bytes
+      "typecheck.macro.walk_decl_fire_survivor_bytes")
+    (tc-profile-fire-superseded-alloc
+      "typecheck.macro.walk_decl_fire_superseded_alloc_bytes")
+    (tc-profile-fire-superseded-released
+      "typecheck.macro.walk_decl_fire_superseded_released_bytes")
+    (tc-profile-fire-nonoutput-live
+      "typecheck.macro.walk_decl_fire_nonoutput_live_bytes")
+    (tc-profile-fire-residual-live
+      "typecheck.macro.walk_decl_fire_residual_live_bytes")
+    (tc-profile-fire-committed-live
+      "typecheck.macro.walk_decl_fire_residual_committed_live_bytes")
+    (tc-profile-fire-post-boundary-live
+      "typecheck.macro.walk_decl_fire_residual_post_boundary_live_bytes")
+    (tc-profile-fire-unattributed-live
+      "typecheck.macro.walk_decl_fire_residual_unattributed_live_bytes")
+    (tc-profile-fire-source-shared-expr-refs
+      "typecheck.macro.walk_decl_fire_source_shared_expr_refs")
+    (tc-profile-fire-source-shared-type-refs
+      "typecheck.macro.walk_decl_fire_source_shared_type_refs")
+    (tc-profile-fire-survivor-expr-nodes
+      "typecheck.macro.walk_decl_fire_survivor_expr_nodes")
+    (tc-profile-fire-survivor-type-nodes
+      "typecheck.macro.walk_decl_fire_survivor_type_nodes")
+    (tc-profile-decl-generations "typecheck.macro.walk_decl_generations")
+    (tc-profile-decl-generation-rotations
+      "typecheck.macro.walk_decl_generation_rotations")
+    (tc-profile-hygiene-nodes-reused
+      "typecheck.macro.walk_hygiene_nodes_reused")
+    (tc-profile-hygiene-nodes-copied
+      "typecheck.macro.walk_hygiene_nodes_copied")
+    (tc-profile-rewalk-zero-fire-calls
+      "typecheck.macro.walk_rewalk_zero_fire_calls")
+    (tc-profile-rewalk-provenance-skips
+      "typecheck.macro.walk_rewalk_provenance_skips")
+    (tc-profile-materialized-splices "typecheck.macro.walk_decl_sp_mat_count")))
+
+;; Additive top-env splice accounting: candidates are unresolved cache entries
+;; revisited against a new symbol surface, updates are entries whose type
+;; changed. No splice falls back to a whole-environment rebuild, so
+;; `walk_splice_env_fallbacks` stays zero.
+(cfg
+  compile-profile
+  (counters.defcounters
+    compiler-tc-splice-profile
+    (tc-profile-splice-registry-invalidated
+      "typecheck.macro.walk_splice_registry_invalidated")
+    (tc-profile-splice-ctfe-cleared "typecheck.macro.walk_splice_ctfe_cleared")
+    (tc-profile-splice-ctfe-builds "typecheck.macro.walk_splice_ctfe_builds")
+    (tc-profile-splice-ctfe-rebuilds
+      "typecheck.macro.walk_splice_ctfe_rebuilds")
+    (tc-profile-splice-ctfe-extensions
+      "typecheck.macro.walk_splice_ctfe_extensions")
+    (tc-profile-splice-ctfe-semantic-rejections
+      "typecheck.macro.walk_splice_ctfe_semantic_rejections")
+    (tc-profile-splice-ctfe-capacity-grows
+      "typecheck.macro.walk_splice_ctfe_capacity_grows")
+    (tc-profile-splice-ctfe-cache-unavailable
+      "typecheck.macro.walk_splice_ctfe_cache_unavailable")
+    (tc-profile-splice-env-reresolve-calls
+      "typecheck.macro.walk_splice_env_reresolve_calls")
+    (tc-profile-splice-env-reresolve-candidates
+      "typecheck.macro.walk_splice_env_reresolve_candidates")
+    (tc-profile-splice-env-reresolve-updates
+      "typecheck.macro.walk_splice_env_reresolve_updates")
+    (tc-profile-splice-env-fallbacks
+      "typecheck.macro.walk_splice_env_fallbacks")
+    (tc-profile-segment-splits "typecheck.macro.walk_segment_splits")
+    (tc-profile-segment-delta-decls "typecheck.macro.walk_segment_delta_decls")
+    (tc-profile-segment-fallback-flattens
+      "typecheck.macro.walk_segment_fallback_flattens")
+    (tc-profile-segment-fallback-alias-flattens
+      "typecheck.macro.walk_segment_fallback_alias_flattens")
+    (tc-profile-segment-fallback-file-flattens
+      "typecheck.macro.walk_segment_fallback_file_flattens")
+    (tc-profile-segment-final-flattens
+      "typecheck.macro.walk_segment_final_flattens")))
+
+;; Marker-path probes. Every marker batch flushes a delta cache, so the bounded
+;; fallback environment build never runs and its rows stay zero.
+(cfg
+  compile-profile
+  (counters.defcounters
+    compiler-tc-walk-probe-profile
+    (tc-profile-envbuild-alloc "typecheck.macro.walk_sp_envbuild_alloc_kb" kb)
+    (tc-profile-envbuild-calls "typecheck.macro.walk_sp_envbuild_calls")
+    (tc-profile-reresolve-alloc "typecheck.macro.walk_sp_reresolve_alloc_kb" kb)
+    (tc-profile-reresolve-calls "typecheck.macro.walk_sp_reresolve_calls")))
 
 (cfg
   compile-profile
-  (define (compiler-tc-walk-arm-bind-finish!) : unit
-    (begin
-      (set!
-        compiler-tc-macro-walk-arm-bind-ns
-        (+
-          compiler-tc-macro-walk-arm-bind-ns
-          (- (compiler-tc-walk-now-ns) compiler-tc-macro-walk-arm-bind-start-ns)))
-      (set!
-        compiler-tc-macro-walk-arm-bind-alloc-bytes
-        (+
-          compiler-tc-macro-walk-arm-bind-alloc-bytes
-          (- (profile.alloc-total) compiler-tc-macro-walk-arm-bind-alloc-start)))
-      (set!
-        compiler-tc-macro-walk-arm-bind-live-bytes
-        (+
-          compiler-tc-macro-walk-arm-bind-live-bytes
-          (- (profile.alloc-live) compiler-tc-macro-walk-arm-bind-live-start)))
-      (set!
-        compiler-tc-macro-walk-arm-bind-calls
-        (+ compiler-tc-macro-walk-arm-bind-calls 1)))))
+  (counters.defcounters
+    compiler-tc-layout-profile
+    (tc-profile-layout-repr-c-field-builds
+      "typecheck.layout.repr_c_field_builds")
+    (tc-profile-layout-repr-c-field-visits
+      "typecheck.layout.repr_c_field_visits")
+    (tc-profile-layout-inline-field-builds
+      "typecheck.layout.inline_field_builds")
+    (tc-profile-layout-inline-field-visits
+      "typecheck.layout.inline_field_visits")
+    (tc-profile-layout-inline-payload-builds
+      "typecheck.layout.inline_payload_builds")
+    (tc-profile-layout-inline-payload-visits
+      "typecheck.layout.inline_payload_visits")
+    (tc-profile-layout-inline-variant-builds
+      "typecheck.layout.inline_variant_builds")
+    (tc-profile-layout-inline-variant-visits
+      "typecheck.layout.inline_variant_visits")
+    (tc-profile-layout-stdlib-field-spec-builds
+      "typecheck.layout.stdlib_field_spec_builds")
+    (tc-profile-layout-stdlib-field-spec-visits
+      "typecheck.layout.stdlib_field_spec_visits")
+    (tc-profile-layout-stdlib-variant-spec-builds
+      "typecheck.layout.stdlib_variant_spec_builds")
+    (tc-profile-layout-stdlib-variant-spec-visits
+      "typecheck.layout.stdlib_variant_spec_visits")
+    (tc-profile-layout-cache-hits "typecheck.layout.cache_hits")
+    (tc-profile-layout-cache-misses "typecheck.layout.cache_misses")
+    (tc-profile-layout-cache-bypasses "typecheck.layout.cache_bypasses")))
 
+;; Walk-region interval starts. An operand capture is either a bound
+;; interpreted parameter list or a direct native marshal; a decl-loop
+;; iteration that captured operands fired a macro.
 (cfg
   compile-profile
-  (define (compiler-tc-walk-bind-params-start!) : unit
-    (begin
-      (set!
-        compiler-tc-macro-walk-bind-params-start-ns
-        (compiler-tc-walk-now-ns))
-      (set!
-        compiler-tc-macro-walk-bind-params-alloc-start
-        (profile.alloc-total))
-      (set! compiler-tc-macro-walk-bind-params-live-start (profile.alloc-live)))))
-
+  (define compiler-tc-walk-operand-captures : i64
+    0))
 (cfg
   compile-profile
-  (define (compiler-tc-walk-bind-params-finish!) : unit
-    (begin
-      (set!
-        compiler-tc-macro-walk-bind-params-ns
-        (+
-          compiler-tc-macro-walk-bind-params-ns
-          (-
-            (compiler-tc-walk-now-ns)
-            compiler-tc-macro-walk-bind-params-start-ns)))
-      (set!
-        compiler-tc-macro-walk-bind-params-alloc-bytes
-        (+
-          compiler-tc-macro-walk-bind-params-alloc-bytes
-          (-
-            (profile.alloc-total)
-            compiler-tc-macro-walk-bind-params-alloc-start)))
-      (set!
-        compiler-tc-macro-walk-bind-params-live-bytes
-        (+
-          compiler-tc-macro-walk-bind-params-live-bytes
-          (- (profile.alloc-live) compiler-tc-macro-walk-bind-params-live-start)))
-      (set!
-        compiler-tc-macro-walk-bind-params-calls
-        (+ compiler-tc-macro-walk-bind-params-calls 1)))))
+  (define compiler-tc-walk-direct-marshal-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-direct-marshal-start-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-direct-marshal-start-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-stdlib-entry-resolution-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-stdlib-entry-invoke-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-reresolve-start-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-splice-generation-rotations : i64
+    0))
 
 (cfg
   compile-profile
   (define (compiler-tc-walk-direct-marshal-start!) : unit
     (begin
-      (set!
-        compiler-tc-macro-walk-direct-marshal-start-ns
-        (compiler-tc-walk-now-ns))
-      (set!
-        compiler-tc-macro-walk-direct-marshal-alloc-start
-        (profile.alloc-total))
-      (set!
-        compiler-tc-macro-walk-direct-marshal-live-start
-        (profile.alloc-live)))))
+      (set! compiler-tc-walk-direct-marshal-start-ns (compiler-tc-walk-now-ns))
+      (set! compiler-tc-walk-direct-marshal-start-alloc (profile.alloc-total))
+      (set! compiler-tc-walk-direct-marshal-start-live (profile.alloc-live)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-walk-direct-marshal-finish!) : unit
     (begin
-      (set!
-        compiler-tc-macro-walk-direct-marshal-ns
-        (+
-          compiler-tc-macro-walk-direct-marshal-ns
-          (-
-            (compiler-tc-walk-now-ns)
-            compiler-tc-macro-walk-direct-marshal-start-ns)))
-      (set!
-        compiler-tc-macro-walk-direct-marshal-alloc-bytes
-        (+
-          compiler-tc-macro-walk-direct-marshal-alloc-bytes
-          (-
-            (profile.alloc-total)
-            compiler-tc-macro-walk-direct-marshal-alloc-start)))
-      (set!
-        compiler-tc-macro-walk-direct-marshal-live-bytes
-        (+
-          compiler-tc-macro-walk-direct-marshal-live-bytes
-          (-
-            (profile.alloc-live)
-            compiler-tc-macro-walk-direct-marshal-live-start)))
-      (set!
-        compiler-tc-macro-walk-direct-marshal-calls
-        (+ compiler-tc-macro-walk-direct-marshal-calls 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-native-dispatch-start!) : unit
-    (begin
-      (set!
-        compiler-tc-macro-walk-native-dispatch-start-ns
-        (compiler-tc-walk-now-ns))
-      (set!
-        compiler-tc-macro-walk-native-dispatch-alloc-start
-        (profile.alloc-total))
-      (set!
-        compiler-tc-macro-walk-native-dispatch-live-start
-        (profile.alloc-live)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-native-dispatch-finish!) : unit
-    (begin
-      (set!
-        compiler-tc-macro-walk-native-dispatch-ns
-        (+
-          compiler-tc-macro-walk-native-dispatch-ns
-          (-
-            (compiler-tc-walk-now-ns)
-            compiler-tc-macro-walk-native-dispatch-start-ns)))
-      (set!
-        compiler-tc-macro-walk-native-dispatch-alloc-bytes
-        (+
-          compiler-tc-macro-walk-native-dispatch-alloc-bytes
-          (-
-            (profile.alloc-total)
-            compiler-tc-macro-walk-native-dispatch-alloc-start)))
-      (set!
-        compiler-tc-macro-walk-native-dispatch-live-bytes
-        (+
-          compiler-tc-macro-walk-native-dispatch-live-bytes
-          (-
-            (profile.alloc-live)
-            compiler-tc-macro-walk-native-dispatch-live-start)))
-      (set!
-        compiler-tc-macro-walk-native-dispatch-calls
-        (+ compiler-tc-macro-walk-native-dispatch-calls 1)))))
+      (counters.add!
+        tc-profile-direct-marshal-ns
+        (- (compiler-tc-walk-now-ns) compiler-tc-walk-direct-marshal-start-ns))
+      (counters.add!
+        tc-profile-direct-marshal-alloc
+        (- (profile.alloc-total) compiler-tc-walk-direct-marshal-start-alloc))
+      (counters.add!
+        tc-profile-direct-marshal-live
+        (- (profile.alloc-live) compiler-tc-walk-direct-marshal-start-live))
+      (counters.bump! tc-profile-direct-marshal-calls)
+      (counters.bump! compiler-tc-walk-operand-captures))))
 
 (cfg
   compile-profile
   (define (compiler-tc-stdlib-tlci-entry-resolution-start!) : unit
     (set!
-      compiler-tc-macro-stdlib-tlci-entry-resolution-start-ns
+      compiler-tc-stdlib-entry-resolution-start-ns
       (compiler-tc-walk-now-ns))))
 
 (cfg
   compile-profile
   (define (compiler-tc-stdlib-tlci-entry-resolution-finish!) : unit
     (begin
-      (set!
-        compiler-tc-macro-stdlib-tlci-entry-resolution-ns
-        (+
-          compiler-tc-macro-stdlib-tlci-entry-resolution-ns
-          (-
-            (compiler-tc-walk-now-ns)
-            compiler-tc-macro-stdlib-tlci-entry-resolution-start-ns)))
-      (set!
-        compiler-tc-macro-stdlib-tlci-entry-resolution-calls
-        (+ compiler-tc-macro-stdlib-tlci-entry-resolution-calls 1)))))
+      (counters.add!
+        tc-profile-stdlib-entry-resolution-ns
+        (-
+          (compiler-tc-walk-now-ns)
+          compiler-tc-stdlib-entry-resolution-start-ns))
+      (counters.bump! tc-profile-stdlib-entry-resolution-calls))))
 
 (cfg
   compile-profile
   (define (compiler-tc-stdlib-tlci-entry-invoke-start!) : unit
-    (set!
-      compiler-tc-macro-stdlib-tlci-entry-invoke-start-ns
-      (compiler-tc-walk-now-ns))))
+    (set! compiler-tc-stdlib-entry-invoke-start-ns (compiler-tc-walk-now-ns))))
 
 (cfg
   compile-profile
   (define (compiler-tc-stdlib-tlci-entry-invoke-finish!) : unit
     (begin
-      (set!
-        compiler-tc-macro-stdlib-tlci-entry-invoke-ns
-        (+
-          compiler-tc-macro-stdlib-tlci-entry-invoke-ns
-          (-
-            (compiler-tc-walk-now-ns)
-            compiler-tc-macro-stdlib-tlci-entry-invoke-start-ns)))
-      (set!
-        compiler-tc-macro-stdlib-tlci-entry-invoke-calls
-        (+ compiler-tc-macro-stdlib-tlci-entry-invoke-calls 1)))))
+      (counters.add!
+        tc-profile-stdlib-entry-invoke-ns
+        (- (compiler-tc-walk-now-ns) compiler-tc-stdlib-entry-invoke-start-ns))
+      (counters.bump! tc-profile-stdlib-entry-invoke-calls))))
 
 (cfg
   compile-profile
-  (define compiler-tc-macro-walk-decl-gate-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-decl-gate-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-decl-gate-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-decl-gate-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-decl-gate-alloc-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-decl-gate-live-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-decl-gate-live-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-let-bind-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-let-bind-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-let-bind-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-let-bind-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-let-bind-alloc-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-let-bind-live-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-let-bind-live-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-fire-touches : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-expand-visits : i64
-    0))
+  (define (compiler-tc-walk-reresolve-start!) : unit
+    (set! compiler-tc-walk-reresolve-start-alloc (profile.alloc-total))))
 
 (cfg
   compile-profile
-  (define (compiler-tc-walk-decl-gate-start!) : unit
+  (define (compiler-tc-walk-reresolve-finish!) : unit
     (begin
-      (set! compiler-tc-macro-walk-decl-gate-start-ns (compiler-tc-walk-now-ns))
-      (set! compiler-tc-macro-walk-decl-gate-alloc-start (profile.alloc-total))
-      (set! compiler-tc-macro-walk-decl-gate-live-start (profile.alloc-live)))))
+      (counters.add!
+        tc-profile-reresolve-alloc
+        (- (profile.alloc-total) compiler-tc-walk-reresolve-start-alloc))
+      (counters.bump! tc-profile-reresolve-calls))))
 
+;; An intermediate segmented-program flatten names its conservative reason:
+;; 1 = an alias import, 2 = a file import.
 (cfg
   compile-profile
-  (define (compiler-tc-walk-decl-gate-finish!) : unit
+  (define (compiler-tc-walk-segment-fallback-flatten-note! [reason : i64]) : unit
     (begin
-      (set!
-        compiler-tc-macro-walk-decl-gate-ns
-        (+
-          compiler-tc-macro-walk-decl-gate-ns
-          (-
-            (compiler-tc-walk-now-ns)
-            compiler-tc-macro-walk-decl-gate-start-ns)))
-      (set!
-        compiler-tc-macro-walk-decl-gate-alloc-bytes
-        (+
-          compiler-tc-macro-walk-decl-gate-alloc-bytes
-          (- (profile.alloc-total) compiler-tc-macro-walk-decl-gate-alloc-start)))
-      (set!
-        compiler-tc-macro-walk-decl-gate-live-bytes
-        (+
-          compiler-tc-macro-walk-decl-gate-live-bytes
-          (- (profile.alloc-live) compiler-tc-macro-walk-decl-gate-live-start)))
-      (set!
-        compiler-tc-macro-walk-decl-gate-calls
-        (+ compiler-tc-macro-walk-decl-gate-calls 1)))))
+      (counters.bump! tc-profile-segment-fallback-flattens)
+      (cond
+        [(= reason 1)
+          (counters.bump! tc-profile-segment-fallback-alias-flattens)]
+        [(= reason 2)
+          (counters.bump! tc-profile-segment-fallback-file-flattens)]
+        [else unit]))))
 
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-let-bind-start!) : unit
-    (begin
-      (set! compiler-tc-macro-walk-let-bind-start-ns (compiler-tc-walk-now-ns))
-      (set! compiler-tc-macro-walk-let-bind-alloc-start (profile.alloc-total))
-      (set! compiler-tc-macro-walk-let-bind-live-start (profile.alloc-live)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-let-bind-finish!) : unit
-    (begin
-      (set!
-        compiler-tc-macro-walk-let-bind-ns
-        (+
-          compiler-tc-macro-walk-let-bind-ns
-          (- (compiler-tc-walk-now-ns) compiler-tc-macro-walk-let-bind-start-ns)))
-      (set!
-        compiler-tc-macro-walk-let-bind-alloc-bytes
-        (+
-          compiler-tc-macro-walk-let-bind-alloc-bytes
-          (- (profile.alloc-total) compiler-tc-macro-walk-let-bind-alloc-start)))
-      (set!
-        compiler-tc-macro-walk-let-bind-live-bytes
-        (+
-          compiler-tc-macro-walk-let-bind-live-bytes
-          (- (profile.alloc-live) compiler-tc-macro-walk-let-bind-live-start)))
-      (set!
-        compiler-tc-macro-walk-let-bind-calls
-        (+ compiler-tc-macro-walk-let-bind-calls 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-note-fire-touch!) : unit
-    (set!
-      compiler-tc-macro-walk-fire-touches
-      (+ compiler-tc-macro-walk-fire-touches 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-note-expand-visit!) : unit
-    (set!
-      compiler-tc-macro-walk-expand-visits
-      (+ compiler-tc-macro-walk-expand-visits 1))))
-
-;; Per-decl sampler for the expansion walk's decl loop. Each iteration is
-;; classified by its arm (1 = shared/module bookkeeping, 2 = walked decl,
-;; 3 = import splice) and its time/alloc/live deltas land in that bucket;
-;; walked decls split further into fired/no-fire by the bind-params call
-;; delta. All state is plain globals.
+;; Per-decl sampler for the expansion walk's decl loop. Each iteration notes
+;; its arm (2 = walked decl, 7 = generated-normal-import materialization; the
+;; other arms are bookkeeping and splices), and a walked decl that captured
+;; macro operands adds its time and live bytes to the fired bucket.
 (cfg
   compile-profile
   (define compiler-tc-walk-decl-sample-kind : i64
@@ -5602,115 +5502,18 @@
     0))
 (cfg
   compile-profile
-  (define compiler-tc-walk-decl-sample-start-alloc : i64
-    0))
-(cfg
-  compile-profile
   (define compiler-tc-walk-decl-sample-start-live : i64
     0))
 (cfg
   compile-profile
   (define compiler-tc-walk-decl-sample-start-captures : i64
     0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-shared-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-shared-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-shared-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-shared-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-splice-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-splice-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-splice-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-splice-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-nofire-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-nofire-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-nofire-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-nofire-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-count : i64
-    0))
 
-;; Fired-declaration ownership attribution.  Survivor bytes are allocations
-;; made while the exhaustive generation copy-out persists the returned graph
-;; (including declaration/path shells and vector/list/string backing payload).
-;; Superseded bytes are bump storage added to the declaration generation; the
-;; ring's later destroy is reported separately so the signed non-output live
-;; contribution can reconcile the existing fired-decl live lane.
 (cfg
   compile-profile
-  (define compiler-tc-walk-decl-fire-attributed-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-survivor-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-survivor-live-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-superseded-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-superseded-released-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-committed-live-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-post-boundary-live-bytes : i64
-    0))
+  (define (compiler-tc-walk-decl-sample-note! [kind : i64]) : unit
+    (set! compiler-tc-walk-decl-sample-kind kind)))
+
 (cfg
   compile-profile
   (define compiler-tc-walk-decl-fire-boundary-live : i64
@@ -5719,25 +5522,9 @@
   compile-profile
   (define compiler-tc-walk-decl-fire-boundary-pending : bool
     false))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-source-shared-expr-refs : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-source-shared-type-refs : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-survivor-expr-nodes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-survivor-type-nodes : i64
-    0))
 
 ;; Union of the two nested fired-decl lanes.  Hygiene can run inside a
-;; produced-node rewalk, so subtracting the two existing totals independently
+;; produced-node rewalk, so subtracting the two lanes independently
 ;; double-counts their overlap.  This depth counts outer lane activations and
 ;; times their union once; fired self time is fire total minus this value.
 (cfg
@@ -5747,10 +5534,6 @@
 (cfg
   compile-profile
   (define compiler-tc-walk-decl-fire-child-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-fire-child-ns : i64
     0))
 
 (cfg
@@ -5777,13 +5560,11 @@
           compiler-tc-walk-decl-fire-child-depth
           (- compiler-tc-walk-decl-fire-child-depth 1))
         (if (= compiler-tc-walk-decl-fire-child-depth 0)
-          (set!
-            compiler-tc-walk-decl-fire-child-ns
-            (+
-              compiler-tc-walk-decl-fire-child-ns
-              (-
-                (compiler-tc-walk-now-ns)
-                compiler-tc-walk-decl-fire-child-start-ns)))
+          (counters.add!
+            tc-profile-fire-nested-ns
+            (-
+              (compiler-tc-walk-now-ns)
+              compiler-tc-walk-decl-fire-child-start-ns))
           unit))
       unit)))
 
@@ -5856,858 +5637,18 @@
     [survivor-expr-nodes : i64]
     [survivor-type-nodes : i64]) : unit
     (begin
-      (set!
-        compiler-tc-walk-decl-fire-attributed-calls
-        (+ compiler-tc-walk-decl-fire-attributed-calls 1))
-      (set!
-        compiler-tc-walk-decl-fire-survivor-alloc-bytes
-        (+ compiler-tc-walk-decl-fire-survivor-alloc-bytes survivor-alloc))
-      (set!
-        compiler-tc-walk-decl-fire-survivor-live-bytes
-        (+ compiler-tc-walk-decl-fire-survivor-live-bytes survivor-live))
-      (set!
-        compiler-tc-walk-decl-fire-superseded-alloc-bytes
-        (+ compiler-tc-walk-decl-fire-superseded-alloc-bytes superseded-alloc))
-      (set!
-        compiler-tc-walk-decl-fire-superseded-released-bytes
-        (+
-          compiler-tc-walk-decl-fire-superseded-released-bytes
-          superseded-released))
-      (set!
-        compiler-tc-walk-decl-fire-committed-live-bytes
-        (+ compiler-tc-walk-decl-fire-committed-live-bytes committed-live))
+      (counters.bump! tc-profile-fire-attributed-calls)
+      (counters.add! tc-profile-fire-survivor-alloc survivor-alloc)
+      (counters.add! tc-profile-fire-survivor-live survivor-live)
+      (counters.add! tc-profile-fire-superseded-alloc superseded-alloc)
+      (counters.add! tc-profile-fire-superseded-released superseded-released)
+      (counters.add! tc-profile-fire-committed-live committed-live)
       (set! compiler-tc-walk-decl-fire-boundary-live boundary-live)
       (set! compiler-tc-walk-decl-fire-boundary-pending true)
-      (set!
-        compiler-tc-walk-decl-fire-source-shared-expr-refs
-        (+ compiler-tc-walk-decl-fire-source-shared-expr-refs source-expr-refs))
-      (set!
-        compiler-tc-walk-decl-fire-source-shared-type-refs
-        (+ compiler-tc-walk-decl-fire-source-shared-type-refs source-type-refs))
-      (set!
-        compiler-tc-walk-decl-fire-survivor-expr-nodes
-        (+ compiler-tc-walk-decl-fire-survivor-expr-nodes survivor-expr-nodes))
-      (set!
-        compiler-tc-walk-decl-fire-survivor-type-nodes
-        (+ compiler-tc-walk-decl-fire-survivor-type-nodes survivor-type-nodes)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-decl-fire-attribution-flush! [fired : bool]) : unit
-    (begin
-      (if (and fired compiler-tc-walk-decl-fire-boundary-pending)
-        (set!
-          compiler-tc-walk-decl-fire-post-boundary-live-bytes
-          (+
-            compiler-tc-walk-decl-fire-post-boundary-live-bytes
-            (- (profile.alloc-live) compiler-tc-walk-decl-fire-boundary-live)))
-        unit)
-      (set! compiler-tc-walk-decl-fire-boundary-pending false))))
-
-;; R3-P1 observability: how many firing declarations got their own arena
-;; generation, how many fell back to the ambient arena (no scratch pipeline or
-;; no installed pool context), and how many expression rows the per-declaration
-;; copy-out had to re-push. The last one is the whole cost of the scheme --
-;; type nodes are never re-pushed because their payloads persist at push time.
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-generations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-generation-rotations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-generation-skips : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-generation-expr-copies : i64
-    0))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-decl-generation-note! [expr-copies : i64]) : unit
-    (begin
-      (set!
-        compiler-tc-walk-decl-generations
-        (+ compiler-tc-walk-decl-generations 1))
-      (set!
-        compiler-tc-walk-decl-generation-expr-copies
-        (+ compiler-tc-walk-decl-generation-expr-copies expr-copies)))))
-
-(cfg
-  compile-profile
-  (define compiler-tc-pool-context-reseats : i64
-    0))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-note-pool-context-reseat!) : unit
-    (set!
-      compiler-tc-pool-context-reseats
-      (+ compiler-tc-pool-context-reseats 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-decl-generation-skip!) : unit
-    (set!
-      compiler-tc-walk-decl-generation-skips
-      (+ compiler-tc-walk-decl-generation-skips 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-decl-sample-note! [kind : i64]) : unit
-    (set! compiler-tc-walk-decl-sample-kind kind)))
-
-;; Splice sub-kind buckets: 4 = marker-only import batched without a cache,
-;; 5 = marker-only import that flushes the additive cache batch, 6 = forced inline
-;; splice, 7 = generated-normal-import materialization. Kind 3 remains the
-;; placeholder arm's default (empty expansions and any path that noted
-;; nothing more specific).
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-defer-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-defer-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-defer-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-defer-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-refresh-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-refresh-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-refresh-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-refresh-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-inline-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-inline-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-inline-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-inline-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-mat-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-mat-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-mat-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-decl-sp-mat-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-nodes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-splits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-delta-decls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-fallback-flattens : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-fallback-alias-flattens : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-fallback-file-flattens : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-fallback-flatten-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-fallback-flatten-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-fallback-flatten-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-fallback-flatten-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-fallback-flatten-start-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-fallback-flatten-start-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-final-flattens : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-final-flatten-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-final-flatten-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-final-flatten-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-final-flatten-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-final-flatten-start-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-segment-final-flatten-start-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-registry-incremental : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-registry-invalidated : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-deferred : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-cleared : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-prescan-resets : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-builds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-rebuilds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-build-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-build-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-build-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-rebuild-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-rebuild-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-rebuild-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-build-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-build-start-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-build-start-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-extensions : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-extension-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-extension-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-extension-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-extension-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-extension-start-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-extension-start-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-semantic-rejections : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-capacity-grows : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-cache-unavailable : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-clear-ordinary : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-ctfe-clear-file : i64
-    0))
-
-;; Additive top-env splice accounting. Candidates are unresolved cache entries
-;; revisited against a new symbol surface, updates are entries whose type
-;; changed, and remaining is the unresolved set retained for a later surface.
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-env-reresolve-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-env-reresolve-candidates : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-env-reresolve-updates : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-env-reresolve-remaining : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-env-fallbacks : i64
-    0))
-
-;; Marker-path sub-probe: 0 = whole-program list copies + context build,
-;; 1 = macro-extend-top-env-with-module-marker, 2 = the env cache layer,
-;; 3 = bounded fallback tail build, 4 = unresolved-signature re-resolution.
-;; Array-indexed accumulators
-;; (plain globals, allocated at process init like the reinfer site arrays).
-(cfg
-  compile-profile
-  (define compiler-tc-walk-sp-probe-ns : (__tl_dyn-array i64)
-    (__tl_make-array i64 5)))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-sp-probe-alloc : (__tl_dyn-array i64)
-    (__tl_make-array i64 5)))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-sp-probe-live : (__tl_dyn-array i64)
-    (__tl_make-array i64 5)))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-sp-probe-calls : (__tl_dyn-array i64)
-    (__tl_make-array i64 5)))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-sp-probe-start-ns : (__tl_dyn-array i64)
-    (__tl_make-array i64 5)))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-sp-probe-start-alloc : (__tl_dyn-array i64)
-    (__tl_make-array i64 5)))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-sp-probe-start-live : (__tl_dyn-array i64)
-    (__tl_make-array i64 5)))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-sp-probe-start! [index : i64]) : unit
-    (begin
-      (set!
-        (array-ref compiler-tc-walk-sp-probe-start-ns index)
-        (compiler-tc-walk-now-ns))
-      (set!
-        (array-ref compiler-tc-walk-sp-probe-start-alloc index)
-        (profile.alloc-total))
-      (set!
-        (array-ref compiler-tc-walk-sp-probe-start-live index)
-        (profile.alloc-live)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-sp-probe-finish! [index : i64]) : unit
-    (begin
-      (set!
-        (array-ref compiler-tc-walk-sp-probe-ns index)
-        (+
-          (array-ref compiler-tc-walk-sp-probe-ns index)
-          (-
-            (compiler-tc-walk-now-ns)
-            (array-ref compiler-tc-walk-sp-probe-start-ns index))))
-      (set!
-        (array-ref compiler-tc-walk-sp-probe-alloc index)
-        (+
-          (array-ref compiler-tc-walk-sp-probe-alloc index)
-          (-
-            (profile.alloc-total)
-            (array-ref compiler-tc-walk-sp-probe-start-alloc index))))
-      (set!
-        (array-ref compiler-tc-walk-sp-probe-live index)
-        (+
-          (array-ref compiler-tc-walk-sp-probe-live index)
-          (-
-            (profile.alloc-live)
-            (array-ref compiler-tc-walk-sp-probe-start-live index))))
-      (set!
-        (array-ref compiler-tc-walk-sp-probe-calls index)
-        (+ (array-ref compiler-tc-walk-sp-probe-calls index) 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-segment-node-note!) : unit
-    (set! compiler-tc-walk-segment-nodes (+ compiler-tc-walk-segment-nodes 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-segment-split-note! [delta-decls : i64]) : unit
-    (begin
-      (set!
-        compiler-tc-walk-segment-splits
-        (+ compiler-tc-walk-segment-splits 1))
-      (set!
-        compiler-tc-walk-segment-delta-decls
-        (+ compiler-tc-walk-segment-delta-decls delta-decls)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-segment-fallback-flatten-start!) : unit
-    (begin
-      (set!
-        compiler-tc-walk-segment-fallback-flatten-start-ns
-        (compiler-tc-walk-now-ns))
-      (set!
-        compiler-tc-walk-segment-fallback-flatten-start-alloc
-        (profile.alloc-total))
-      (set!
-        compiler-tc-walk-segment-fallback-flatten-start-live
-        (profile.alloc-live)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-segment-fallback-flatten-finish! [reason : i64]) : unit
-    (begin
-      (set!
-        compiler-tc-walk-segment-fallback-flattens
-        (+ compiler-tc-walk-segment-fallback-flattens 1))
-      (if (= reason 1)
-        (set!
-          compiler-tc-walk-segment-fallback-alias-flattens
-          (+ compiler-tc-walk-segment-fallback-alias-flattens 1))
-        (if (= reason 2)
-          (set!
-            compiler-tc-walk-segment-fallback-file-flattens
-            (+ compiler-tc-walk-segment-fallback-file-flattens 1))
-          unit))
-      (set!
-        compiler-tc-walk-segment-fallback-flatten-ns
-        (+
-          compiler-tc-walk-segment-fallback-flatten-ns
-          (-
-            (compiler-tc-walk-now-ns)
-            compiler-tc-walk-segment-fallback-flatten-start-ns)))
-      (set!
-        compiler-tc-walk-segment-fallback-flatten-alloc
-        (+
-          compiler-tc-walk-segment-fallback-flatten-alloc
-          (-
-            (profile.alloc-total)
-            compiler-tc-walk-segment-fallback-flatten-start-alloc)))
-      (set!
-        compiler-tc-walk-segment-fallback-flatten-live
-        (+
-          compiler-tc-walk-segment-fallback-flatten-live
-          (-
-            (profile.alloc-live)
-            compiler-tc-walk-segment-fallback-flatten-start-live))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-segment-final-flatten-start!) : unit
-    (begin
-      (set!
-        compiler-tc-walk-segment-final-flatten-start-ns
-        (compiler-tc-walk-now-ns))
-      (set!
-        compiler-tc-walk-segment-final-flatten-start-alloc
-        (profile.alloc-total))
-      (set!
-        compiler-tc-walk-segment-final-flatten-start-live
-        (profile.alloc-live)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-segment-final-flatten-finish!) : unit
-    (begin
-      (set!
-        compiler-tc-walk-segment-final-flattens
-        (+ compiler-tc-walk-segment-final-flattens 1))
-      (set!
-        compiler-tc-walk-segment-final-flatten-ns
-        (+
-          compiler-tc-walk-segment-final-flatten-ns
-          (-
-            (compiler-tc-walk-now-ns)
-            compiler-tc-walk-segment-final-flatten-start-ns)))
-      (set!
-        compiler-tc-walk-segment-final-flatten-alloc
-        (+
-          compiler-tc-walk-segment-final-flatten-alloc
-          (-
-            (profile.alloc-total)
-            compiler-tc-walk-segment-final-flatten-start-alloc)))
-      (set!
-        compiler-tc-walk-segment-final-flatten-live
-        (+
-          compiler-tc-walk-segment-final-flatten-live
-          (-
-            (profile.alloc-live)
-            compiler-tc-walk-segment-final-flatten-start-live))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-splice-flag-note! [flag : i64]) : unit
-    (cond
-      [(= flag 1)
-        (set!
-          compiler-tc-walk-splice-registry-incremental
-          (+ compiler-tc-walk-splice-registry-incremental 1))]
-      [(= flag 2)
-        (set!
-          compiler-tc-walk-splice-registry-invalidated
-          (+ compiler-tc-walk-splice-registry-invalidated 1))]
-      [(= flag 3)
-        (set!
-          compiler-tc-walk-splice-ctfe-deferred
-          (+ compiler-tc-walk-splice-ctfe-deferred 1))]
-      [(= flag 4)
-        (set!
-          compiler-tc-walk-splice-ctfe-cleared
-          (+ compiler-tc-walk-splice-ctfe-cleared 1))]
-      [(= flag 5)
-        (set!
-          compiler-tc-walk-splice-prescan-resets
-          (+ compiler-tc-walk-splice-prescan-resets 1))]
-      [else unit])))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-ctfe-build-start!) : unit
-    (begin
-      (set!
-        compiler-tc-walk-splice-ctfe-build-start-ns
-        (compiler-tc-walk-now-ns))
-      (set!
-        compiler-tc-walk-splice-ctfe-build-start-alloc
-        (profile.alloc-total))
-      (set! compiler-tc-walk-splice-ctfe-build-start-live (profile.alloc-live)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-ctfe-build-finish! [rebuild? : bool]) : unit
-    (let
-      [ns : i64
-        (-
-          (compiler-tc-walk-now-ns)
-          compiler-tc-walk-splice-ctfe-build-start-ns)]
-      [alloc : i64
-        (- (profile.alloc-total) compiler-tc-walk-splice-ctfe-build-start-alloc)]
-      [live : i64
-        (- (profile.alloc-live) compiler-tc-walk-splice-ctfe-build-start-live)]
-      (begin
-        (set!
-          compiler-tc-walk-splice-ctfe-builds
-          (+ compiler-tc-walk-splice-ctfe-builds 1))
-        (if rebuild?
-          (begin
-            (set!
-              compiler-tc-walk-splice-ctfe-rebuilds
-              (+ compiler-tc-walk-splice-ctfe-rebuilds 1))
-            (set!
-              compiler-tc-walk-splice-ctfe-rebuild-ns
-              (+ compiler-tc-walk-splice-ctfe-rebuild-ns ns))
-            (set!
-              compiler-tc-walk-splice-ctfe-rebuild-alloc
-              (+ compiler-tc-walk-splice-ctfe-rebuild-alloc alloc))
-            (set!
-              compiler-tc-walk-splice-ctfe-rebuild-live
-              (+ compiler-tc-walk-splice-ctfe-rebuild-live live)))
-          unit)
-        (set!
-          compiler-tc-walk-splice-ctfe-build-ns
-          (+ compiler-tc-walk-splice-ctfe-build-ns ns))
-        (set!
-          compiler-tc-walk-splice-ctfe-build-alloc
-          (+ compiler-tc-walk-splice-ctfe-build-alloc alloc))
-        (set!
-          compiler-tc-walk-splice-ctfe-build-live
-          (+ compiler-tc-walk-splice-ctfe-build-live live))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-ctfe-extension-start!) : unit
-    (begin
-      (set!
-        compiler-tc-walk-splice-ctfe-extension-start-ns
-        (compiler-tc-walk-now-ns))
-      (set!
-        compiler-tc-walk-splice-ctfe-extension-start-alloc
-        (profile.alloc-total))
-      (set!
-        compiler-tc-walk-splice-ctfe-extension-start-live
-        (profile.alloc-live)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-ctfe-extension-finish!) : unit
-    (begin
-      (set!
-        compiler-tc-walk-splice-ctfe-extensions
-        (+ compiler-tc-walk-splice-ctfe-extensions 1))
-      (set!
-        compiler-tc-walk-splice-ctfe-extension-ns
-        (+
-          compiler-tc-walk-splice-ctfe-extension-ns
-          (-
-            (compiler-tc-walk-now-ns)
-            compiler-tc-walk-splice-ctfe-extension-start-ns)))
-      (set!
-        compiler-tc-walk-splice-ctfe-extension-alloc
-        (+
-          compiler-tc-walk-splice-ctfe-extension-alloc
-          (-
-            (profile.alloc-total)
-            compiler-tc-walk-splice-ctfe-extension-start-alloc)))
-      (set!
-        compiler-tc-walk-splice-ctfe-extension-live
-        (+
-          compiler-tc-walk-splice-ctfe-extension-live
-          (-
-            (profile.alloc-live)
-            compiler-tc-walk-splice-ctfe-extension-start-live))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-ctfe-extension-reject-note! [reason : i64]) : unit
-    (cond
-      [(= reason 1)
-        (set!
-          compiler-tc-walk-splice-ctfe-semantic-rejections
-          (+ compiler-tc-walk-splice-ctfe-semantic-rejections 1))]
-      [(= reason 2)
-        (set!
-          compiler-tc-walk-splice-ctfe-cache-unavailable
-          (+ compiler-tc-walk-splice-ctfe-cache-unavailable 1))]
-      [(= reason 3)
-        (set!
-          compiler-tc-walk-splice-ctfe-capacity-grows
-          (+ compiler-tc-walk-splice-ctfe-capacity-grows 1))]
-      [else unit])))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-ctfe-clear-reason-note! [reason : i64]) : unit
-    (begin
-      (compiler-tc-walk-splice-flag-note! 4)
-      (cond
-        [(= reason 1)
-          (set!
-            compiler-tc-walk-splice-ctfe-clear-ordinary
-            (+ compiler-tc-walk-splice-ctfe-clear-ordinary 1))]
-        [(= reason 2)
-          (set!
-            compiler-tc-walk-splice-ctfe-clear-file
-            (+ compiler-tc-walk-splice-ctfe-clear-file 1))]
-        [else unit]))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-decl-sample-add!
-    [kind : i64]
-    [ns : i64]
-    [alloc : i64]
-    [live : i64]
-    [fired : bool]) : unit
-    (cond
-      [(= kind 1)
-        (begin
-          (set!
-            compiler-tc-walk-decl-shared-ns
-            (+ compiler-tc-walk-decl-shared-ns ns))
-          (set!
-            compiler-tc-walk-decl-shared-alloc
-            (+ compiler-tc-walk-decl-shared-alloc alloc))
-          (set!
-            compiler-tc-walk-decl-shared-live
-            (+ compiler-tc-walk-decl-shared-live live))
-          (set!
-            compiler-tc-walk-decl-shared-count
-            (+ compiler-tc-walk-decl-shared-count 1)))]
-      [(= kind 3)
-        (begin
-          (set!
-            compiler-tc-walk-decl-splice-ns
-            (+ compiler-tc-walk-decl-splice-ns ns))
-          (set!
-            compiler-tc-walk-decl-splice-alloc
-            (+ compiler-tc-walk-decl-splice-alloc alloc))
-          (set!
-            compiler-tc-walk-decl-splice-live
-            (+ compiler-tc-walk-decl-splice-live live))
-          (set!
-            compiler-tc-walk-decl-splice-count
-            (+ compiler-tc-walk-decl-splice-count 1)))]
-      [(= kind 4)
-        (begin
-          (set!
-            compiler-tc-walk-decl-sp-defer-ns
-            (+ compiler-tc-walk-decl-sp-defer-ns ns))
-          (set!
-            compiler-tc-walk-decl-sp-defer-alloc
-            (+ compiler-tc-walk-decl-sp-defer-alloc alloc))
-          (set!
-            compiler-tc-walk-decl-sp-defer-live
-            (+ compiler-tc-walk-decl-sp-defer-live live))
-          (set!
-            compiler-tc-walk-decl-sp-defer-count
-            (+ compiler-tc-walk-decl-sp-defer-count 1)))]
-      [(= kind 5)
-        (begin
-          (set!
-            compiler-tc-walk-decl-sp-refresh-ns
-            (+ compiler-tc-walk-decl-sp-refresh-ns ns))
-          (set!
-            compiler-tc-walk-decl-sp-refresh-alloc
-            (+ compiler-tc-walk-decl-sp-refresh-alloc alloc))
-          (set!
-            compiler-tc-walk-decl-sp-refresh-live
-            (+ compiler-tc-walk-decl-sp-refresh-live live))
-          (set!
-            compiler-tc-walk-decl-sp-refresh-count
-            (+ compiler-tc-walk-decl-sp-refresh-count 1)))]
-      [(= kind 6)
-        (begin
-          (set!
-            compiler-tc-walk-decl-sp-inline-ns
-            (+ compiler-tc-walk-decl-sp-inline-ns ns))
-          (set!
-            compiler-tc-walk-decl-sp-inline-alloc
-            (+ compiler-tc-walk-decl-sp-inline-alloc alloc))
-          (set!
-            compiler-tc-walk-decl-sp-inline-live
-            (+ compiler-tc-walk-decl-sp-inline-live live))
-          (set!
-            compiler-tc-walk-decl-sp-inline-count
-            (+ compiler-tc-walk-decl-sp-inline-count 1)))]
-      [(= kind 7)
-        (begin
-          (set!
-            compiler-tc-walk-decl-sp-mat-ns
-            (+ compiler-tc-walk-decl-sp-mat-ns ns))
-          (set!
-            compiler-tc-walk-decl-sp-mat-alloc
-            (+ compiler-tc-walk-decl-sp-mat-alloc alloc))
-          (set!
-            compiler-tc-walk-decl-sp-mat-live
-            (+ compiler-tc-walk-decl-sp-mat-live live))
-          (set!
-            compiler-tc-walk-decl-sp-mat-count
-            (+ compiler-tc-walk-decl-sp-mat-count 1)))]
-      [fired
-        (begin
-          (set!
-            compiler-tc-walk-decl-fire-ns
-            (+ compiler-tc-walk-decl-fire-ns ns))
-          (set!
-            compiler-tc-walk-decl-fire-alloc
-            (+ compiler-tc-walk-decl-fire-alloc alloc))
-          (set!
-            compiler-tc-walk-decl-fire-live
-            (+ compiler-tc-walk-decl-fire-live live))
-          (set!
-            compiler-tc-walk-decl-fire-count
-            (+ compiler-tc-walk-decl-fire-count 1)))]
-      [else
-        (begin
-          (set!
-            compiler-tc-walk-decl-nofire-ns
-            (+ compiler-tc-walk-decl-nofire-ns ns))
-          (set!
-            compiler-tc-walk-decl-nofire-alloc
-            (+ compiler-tc-walk-decl-nofire-alloc alloc))
-          (set!
-            compiler-tc-walk-decl-nofire-live
-            (+ compiler-tc-walk-decl-nofire-live live))
-          (set!
-            compiler-tc-walk-decl-nofire-count
-            (+ compiler-tc-walk-decl-nofire-count 1)))])))
+      (counters.add! tc-profile-fire-source-shared-expr-refs source-expr-refs)
+      (counters.add! tc-profile-fire-source-shared-type-refs source-type-refs)
+      (counters.add! tc-profile-fire-survivor-expr-nodes survivor-expr-nodes)
+      (counters.add! tc-profile-fire-survivor-type-nodes survivor-type-nodes))))
 
 ;; Called at the top of every decl-loop iteration: flush the previous
 ;; iteration's sample (its arm noted a kind), then restart the sample
@@ -6718,93 +5659,47 @@
     (let
       [fired : bool
         (>
-          (+
-            compiler-tc-macro-walk-bind-params-calls
-            compiler-tc-macro-walk-direct-marshal-calls)
+          compiler-tc-walk-operand-captures
           compiler-tc-walk-decl-sample-start-captures)]
+      [kind : i64 compiler-tc-walk-decl-sample-kind]
       (begin
-        (compiler-tc-walk-decl-fire-attribution-flush! fired)
-        (if (= compiler-tc-walk-decl-sample-kind 0)
-          unit
-          (compiler-tc-walk-decl-sample-add!
-            compiler-tc-walk-decl-sample-kind
-            (- (compiler-tc-walk-now-ns) compiler-tc-walk-decl-sample-start-ns)
-            (- (profile.alloc-total) compiler-tc-walk-decl-sample-start-alloc)
-            (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live)
-            fired))
+        (if (and fired compiler-tc-walk-decl-fire-boundary-pending)
+          (counters.add!
+            tc-profile-fire-post-boundary-live
+            (- (profile.alloc-live) compiler-tc-walk-decl-fire-boundary-live))
+          unit)
+        (set! compiler-tc-walk-decl-fire-boundary-pending false)
+        (cond
+          [(= kind 7) (counters.bump! tc-profile-materialized-splices)]
+          [(and fired (= kind 2))
+            (begin
+              (counters.add!
+                tc-profile-fire-ns
+                (-
+                  (compiler-tc-walk-now-ns)
+                  compiler-tc-walk-decl-sample-start-ns))
+              (counters.add!
+                tc-profile-fire-live
+                (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live))
+              (counters.bump! tc-profile-fire-count))]
+          [else unit])
         (set! compiler-tc-walk-decl-sample-kind 0)
         (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
-        (set! compiler-tc-walk-decl-sample-start-alloc (profile.alloc-total))
         (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
         (set!
           compiler-tc-walk-decl-sample-start-captures
-          (+
-            compiler-tc-macro-walk-bind-params-calls
-            compiler-tc-macro-walk-direct-marshal-calls))))))
+          compiler-tc-walk-operand-captures)))))
 
 ;; Hygiene-rebuild and transformer-output-rewalk regions. Both re-enter
 ;; themselves (hygiene through its own recursion, the output re-walk through
-;; nested expansions), so a depth counter keeps only the outermost
-;; activation's deltas.
+;; nested expansions), so a depth counter times only the outermost activation.
 (cfg
   compile-profile
   (define compiler-tc-walk-hygiene-depth : i64
     0))
 (cfg
   compile-profile
-  (define compiler-tc-walk-hygiene-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-hygiene-start-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-hygiene-start-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-hygiene-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-hygiene-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-hygiene-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-hygiene-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-hygiene-nodes-reused : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-hygiene-nodes-copied : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-hygiene-env-bindings : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-hygiene-env-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-hygiene-env-lookup-steps : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-hygiene-pattern-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-hygiene-pattern-lookup-steps : i64
+  (define compiler-tc-walk-rewalk-depth : i64
     0))
 
 (cfg
@@ -6813,11 +5708,7 @@
     (begin
       (set! compiler-tc-walk-hygiene-depth (+ compiler-tc-walk-hygiene-depth 1))
       (if (= compiler-tc-walk-hygiene-depth 1)
-        (begin
-          (compiler-tc-walk-decl-fire-child-enter!)
-          (set! compiler-tc-walk-hygiene-start-ns (compiler-tc-walk-now-ns))
-          (set! compiler-tc-walk-hygiene-start-alloc (profile.alloc-total))
-          (set! compiler-tc-walk-hygiene-start-live (profile.alloc-live)))
+        (compiler-tc-walk-decl-fire-child-enter!)
         unit))))
 
 (cfg
@@ -6825,85 +5716,9 @@
   (define (compiler-tc-walk-hygiene-finish!) : unit
     (begin
       (if (= compiler-tc-walk-hygiene-depth 1)
-        (begin
-          (set!
-            compiler-tc-walk-hygiene-ns
-            (+
-              compiler-tc-walk-hygiene-ns
-              (- (compiler-tc-walk-now-ns) compiler-tc-walk-hygiene-start-ns)))
-          (set!
-            compiler-tc-walk-hygiene-alloc
-            (+
-              compiler-tc-walk-hygiene-alloc
-              (- (profile.alloc-total) compiler-tc-walk-hygiene-start-alloc)))
-          (set!
-            compiler-tc-walk-hygiene-live
-            (+
-              compiler-tc-walk-hygiene-live
-              (- (profile.alloc-live) compiler-tc-walk-hygiene-start-live)))
-          (set!
-            compiler-tc-walk-hygiene-calls
-            (+ compiler-tc-walk-hygiene-calls 1))
-          (compiler-tc-walk-decl-fire-child-leave!))
+        (compiler-tc-walk-decl-fire-child-leave!)
         unit)
       (set! compiler-tc-walk-hygiene-depth (- compiler-tc-walk-hygiene-depth 1)))))
-
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-depth : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-start-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-start-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-zero-fire-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-rewalk-provenance-skips : i64
-    0))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-note-rewalk-fire-decision! [fires : bool]) : unit
-    (if fires
-      unit
-      (set!
-        compiler-tc-walk-rewalk-zero-fire-calls
-        (+ compiler-tc-walk-rewalk-zero-fire-calls 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-walk-note-rewalk-provenance-skip!) : unit
-    (set!
-      compiler-tc-walk-rewalk-provenance-skips
-      (+ compiler-tc-walk-rewalk-provenance-skips 1))))
 
 (cfg
   compile-profile
@@ -6911,11 +5726,7 @@
     (begin
       (set! compiler-tc-walk-rewalk-depth (+ compiler-tc-walk-rewalk-depth 1))
       (if (= compiler-tc-walk-rewalk-depth 1)
-        (begin
-          (compiler-tc-walk-decl-fire-child-enter!)
-          (set! compiler-tc-walk-rewalk-start-ns (compiler-tc-walk-now-ns))
-          (set! compiler-tc-walk-rewalk-start-alloc (profile.alloc-total))
-          (set! compiler-tc-walk-rewalk-start-live (profile.alloc-live)))
+        (compiler-tc-walk-decl-fire-child-enter!)
         unit))))
 
 (cfg
@@ -6923,48 +5734,13 @@
   (define (compiler-tc-walk-rewalk-finish!) : unit
     (begin
       (if (= compiler-tc-walk-rewalk-depth 1)
-        (begin
-          (set!
-            compiler-tc-walk-rewalk-ns
-            (+
-              compiler-tc-walk-rewalk-ns
-              (- (compiler-tc-walk-now-ns) compiler-tc-walk-rewalk-start-ns)))
-          (set!
-            compiler-tc-walk-rewalk-alloc
-            (+
-              compiler-tc-walk-rewalk-alloc
-              (- (profile.alloc-total) compiler-tc-walk-rewalk-start-alloc)))
-          (set!
-            compiler-tc-walk-rewalk-live
-            (+
-              compiler-tc-walk-rewalk-live
-              (- (profile.alloc-live) compiler-tc-walk-rewalk-start-live)))
-          (set!
-            compiler-tc-walk-rewalk-calls
-            (+ compiler-tc-walk-rewalk-calls 1))
-          (compiler-tc-walk-decl-fire-child-leave!))
+        (compiler-tc-walk-decl-fire-child-leave!)
         unit)
       (set! compiler-tc-walk-rewalk-depth (- compiler-tc-walk-rewalk-depth 1)))))
 
 (cfg
   compile-profile
   (define compiler-tc-macro-profile-start-ms : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-eval-alloc-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-eval-alloc-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-eval-live-start : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-eval-live-bytes : i64
     0))
 
 (cfg
@@ -7006,10 +5782,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-start) : unit
-    (begin
-      (set! compiler-tc-macro-profile-start-ms (profile.now-ms))
-      (set! compiler-tc-macro-walk-eval-alloc-start (profile.alloc-total))
-      (set! compiler-tc-macro-walk-eval-live-start (profile.alloc-live)))))
+    (set! compiler-tc-macro-profile-start-ms (profile.now-ms))))
 
 (cfg
   compile-profile
@@ -7103,25 +5876,14 @@
     [macro-name : String]
     [arity : i64]
     [elapsed-ms : i64]) : unit
-    (begin
-      (set!
-        compiler-tc-macro-walk-eval-alloc-bytes
-        (+
-          compiler-tc-macro-walk-eval-alloc-bytes
-          (- (profile.alloc-total) compiler-tc-macro-walk-eval-alloc-start)))
-      (set!
-        compiler-tc-macro-walk-eval-live-bytes
-        (+
-          compiler-tc-macro-walk-eval-live-bytes
-          (- (profile.alloc-live) compiler-tc-macro-walk-eval-live-start)))
-      (if compiler-tc-macro-profile-active
-        (compiler-tc-macro-profile-record-entry!
-          state
-          macro-id
-          macro-name
-          arity
-          elapsed-ms)
-        unit))))
+    (if compiler-tc-macro-profile-active
+      (compiler-tc-macro-profile-record-entry!
+        state
+        macro-id
+        macro-name
+        arity
+        elapsed-ms)
+      unit)))
 
 ;; The dense entry arrays and pair index outlive the declaration whose
 ;; expansion first appends to them. Under a per-declaration macro generation,
@@ -7267,16 +6029,16 @@
         (& compiler-tc-macro-profile-entries))
       (set! compiler-tc-macro-profile-active false))))
 
-;; Packed job-owned view (CompilerProfileState slots 242-371): four 18-site
-;; reinference columns followed by the 18-site body-fact hit/miss columns.
-;; Relative slots 108-119 and 126-127 map to the driver/loader lifetime ledger;
-;; relative slots 120-125 and 128-131 retain macro lifetime boundary starts.
-;; Keeping the six equal-width families contiguous makes reset/render order
-;; deterministic without reintroducing array owners in this leaf module.
+;; Packed job-owned view (CompilerProfileState slots 242-373): four reinference
+;; columns followed by the body-fact hit/miss columns, one slot per profiled
+;; site. Relative slots 108-118 and 126-127 map to the driver/loader lifetime
+;; ledger; relative slots 120-125 and 128-131 retain macro lifetime boundary
+;; starts. Keeping the six equal-width families contiguous makes reset/render
+;; order deterministic without reintroducing array owners in this leaf module.
 (cfg
   (any compile-profile test)
   (define compiler-tc-reinfer-profile-site-count : i64
-    18))
+    3))
 (cfg
   (any compile-profile test)
   (define compiler-tc-reinfer-profile-calls-start : i64
@@ -7284,67 +6046,49 @@
 (cfg
   (any compile-profile test)
   (define compiler-tc-reinfer-profile-ms-start : i64
-    18))
+    3))
 (cfg
   (any compile-profile test)
   (define compiler-tc-reinfer-profile-alloc-start : i64
-    36))
+    6))
 (cfg
   (any compile-profile test)
   (define compiler-tc-reinfer-profile-live-start : i64
-    54))
+    9))
 (cfg
   (any compile-profile test)
   (define compiler-tc-body-fact-profile-hits-start : i64
-    72))
+    12))
 (cfg
   (any compile-profile test)
   (define compiler-tc-body-fact-profile-misses-start : i64
-    90))
+    15))
 (cfg
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
     132))
+
 (cfg
   (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-total-metric : i64
-    120))
+  (counters.defslots
+    compiler-tc-macro-lifetime-starts
+    120
+    (compiler-tc-macro-lifetime-start-total-metric)
+    (compiler-tc-macro-lifetime-start-live-metric)
+    (compiler-tc-macro-lifetime-start-peak-metric)
+    (compiler-tc-macro-lifetime-start-pool-base-metric)
+    (compiler-tc-macro-lifetime-start-expr-pool-metric)
+    (compiler-tc-macro-lifetime-start-type-pool-metric)))
+
 (cfg
   (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-live-metric : i64
-    121))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-peak-metric : i64
-    122))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-pool-base-metric : i64
-    123))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-expr-pool-metric : i64
-    124))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-type-pool-metric : i64
-    125))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-enclosing-handle-metric : i64
-    128))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-enclosing-bytes-metric : i64
-    129))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-job-owner-bytes-metric : i64
-    130))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-scoped-env-bytes-metric : i64
-    131))
+  (counters.defslots
+    compiler-tc-macro-lifetime-owner-starts
+    128
+    (compiler-tc-macro-lifetime-start-enclosing-handle-metric)
+    (compiler-tc-macro-lifetime-start-enclosing-bytes-metric)
+    (compiler-tc-macro-lifetime-start-job-owner-bytes-metric)
+    (compiler-tc-macro-lifetime-start-scoped-env-bytes-metric)))
 
 (cfg
   (any compile-profile test)
@@ -7394,23 +6138,8 @@
   (define (compiler-tc-reinfer-profile-site-index [site : String]) : i64
     (cond
       [(string.eq site "move.call_func") 0]
-      [(string.eq site "move.call_arg") 1]
-      [(string.eq site "move.let_init") 2]
-      [(string.eq site "move.resource_init") 3]
-      [(string.eq site "move.match_scrutinee") 4]
-      [(string.eq site "move.tuple_list") 5]
-      [(string.eq site "move.array_list") 6]
-      [(string.eq site "move.bind_init") 7]
-      [(string.eq site "borrow.call_func") 8]
-      [(string.eq site "borrow.call_arg") 9]
-      [(string.eq site "borrow.let_init") 10]
-      [(string.eq site "borrow.resource_init") 11]
-      [(string.eq site "borrow.match_scrutinee") 12]
-      [(string.eq site "borrow.tuple_list") 13]
-      [(string.eq site "borrow.array_list") 14]
-      [(string.eq site "borrow.bind_init") 15]
-      [(string.eq site "borrow.return_arg") 16]
-      [(string.eq site "borrow.return_call") 17]
+      [(string.eq site "borrow.call_func") 1]
+      [(string.eq site "borrow.call_arg") 2]
       [else -1])))
 
 (cfg
@@ -7418,24 +6147,8 @@
   (define (compiler-tc-reinfer-profile-site-name [index : i64]) : String
     (cond
       [(= index 0) "move.call_func"]
-      [(= index 1) "move.call_arg"]
-      [(= index 2) "move.let_init"]
-      [(= index 3) "move.resource_init"]
-      [(= index 4) "move.match_scrutinee"]
-      [(= index 5) "move.tuple_list"]
-      [(= index 6) "move.array_list"]
-      [(= index 7) "move.bind_init"]
-      [(= index 8) "borrow.call_func"]
-      [(= index 9) "borrow.call_arg"]
-      [(= index 10) "borrow.let_init"]
-      [(= index 11) "borrow.resource_init"]
-      [(= index 12) "borrow.match_scrutinee"]
-      [(= index 13) "borrow.tuple_list"]
-      [(= index 14) "borrow.array_list"]
-      [(= index 15) "borrow.bind_init"]
-      [(= index 16) "borrow.return_arg"]
-      [(= index 17) "borrow.return_call"]
-      [else "unknown"])))
+      [(= index 1) "borrow.call_func"]
+      [else "borrow.call_arg"])))
 
 (cfg
   (any compile-profile test)
@@ -7569,136 +6282,27 @@
       (- (profile.alloc-total) start-total)
       (- (profile.alloc-live) start-live))))
 
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-expr
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [expr : ast.AstExpr]) : ResultTcType
-    (let
+;; Time `body`, the re-inference at `site`, into that site's reinference row.
+(defmacro (compiler-tc-reinfer-profiled
+  [_ctx : Expr]
+  [_site : Expr]
+  [body : Expr]) : Expr
+  (cfg
+    compile-profile
+    `(let
       [start-ms : i64 (profile.now-ms)]
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcType (tc-expr ctx env expr)]
+      [result ,body]
       (begin
         (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
+          (tc-context-job-state ,_ctx)
+          ,_site
           start-ms
           start-total
           start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-expr-id
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [expr-id : i64]) : ResultTcType
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcType (tc-expr-id ctx env expr-id)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-expr-list-types
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [exprs : ast.AstExprList]) : ResultTcTypeList
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcTypeList (tc-expr-list-types ctx env exprs)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-effective-arg-expr
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [arg : ast.AstExpr]
-    [want : ast.AstType]) : ResultTcExpr
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcExpr (tc-call-effective-arg-expr ctx env arg want)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-call-param-types-id
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [func-id : i64]) : ResultTcTypeList
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcTypeList
-        (tc-move-call-param-types-id-raw ctx env func-id)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-borrow-call-info-id
-    [site : String]
-    [ctx : TcContext]
-    [expr-bases : i64]
-    [env : TcTypeEnv]
-    [func-id : i64]
-    [args : ast.AstExprList]) : ResultTcBorrowCallInfo
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcBorrowCallInfo
-        (tc-borrow-call-info-id-raw ctx expr-bases env func-id args)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
+        result))
+    body))
 
 (cfg
   compile-profile
@@ -7813,457 +6417,6 @@
       (compiler-tc-profile-metrics-address state)
       0)))
 
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-start-ms : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-section-start-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-section-start-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-local-env-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-local-env-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-arena-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-arena-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-def-expr-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-def-expr-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-fn-expr-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-fn-expr-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-fn-move-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-fn-move-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-macro-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-macro-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-extern-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-extern-live : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-local-env-ms : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-arena-ms : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-def-expr-ms : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-fn-expr-ms : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-fn-move-ms : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-macro-ms : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-extern-ms : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-decl-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-def-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-fn-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-macro-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-extern-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-decl-profile-other-count : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-ordinary-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-concrete-leaf-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-concrete-composite-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-unresolved-var-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-unresolved-varargs-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-unresolved-composite-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-name-lookup-calls : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-name-cache-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-name-cache-misses : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-resolution-profile-type-symbol-probes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-cache-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-cache-misses : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-symbol-probes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-resolver-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-nominal-lifetime-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-constructor-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-aggregate-layout-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-move-kind-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-qualified-owner-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-type-handle-profile-lazy-unique-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-binds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-lookups : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-cache-builds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-cache-entries : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-marker-scans : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-module-local-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-module-local-misses : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-scoped-binds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-scoped-cache-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-scoped-cache-misses : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-scoped-tail-fallbacks : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-scoped-materializations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-scoped-materialized-slots : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-borrow-lifetime-scans : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-borrow-lifetime-scan-bindings : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-borrow-lifetime-scan-current : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-borrow-lifetime-scan-max : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-unbound-finalizers : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-unbound-scans : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-unbound-candidate-slots : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-unbound-visible-candidates : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-unbound-length-survivors : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-env-profile-unbound-edit-evaluations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-generated-module-materializations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-generated-decl-checks : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-generated-module-memo-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-generated-module-catalog-builds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-generated-module-catalog-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-live-rebuilds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-live-reuses : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-live-registry-rebuilds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-live-registry-reuses : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-retired-symbol-rotations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-expansion-scratch-creations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-splice-generation-rotations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-retired-generation-rotations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-live-symbols-max-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-retired-symbols-max-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-expansion-scratch-max-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-active-generations-max-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-retired-generations-max-bytes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-catalog-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-catalog-misses : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-load-failures : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-interpreted-fallbacks : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-native-dispatches : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-shell-learns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-shell-cache-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-native-expr-results : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-direct-expr-results : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-direct-shell-env-folds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-native-module-results : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-tlci-native-decls-results : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-stdlib-source-interpreted : i64
-    0))
-(cfg
-  compile-profile
-  (define tc-lp-counts : (__tl_dyn-array i64)
-    (__tl_make-array i64 15)))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-resolution-profile-reset) : unit
-    (begin
-      (set! compiler-tc-resolution-profile-ordinary-calls 0)
-      (set! compiler-tc-resolution-profile-concrete-leaf-calls 0)
-      (set! compiler-tc-resolution-profile-concrete-composite-calls 0)
-      (set! compiler-tc-resolution-profile-unresolved-var-calls 0)
-      (set! compiler-tc-resolution-profile-unresolved-varargs-calls 0)
-      (set! compiler-tc-resolution-profile-unresolved-composite-calls 0)
-      (set! compiler-tc-resolution-profile-name-lookup-calls 0)
-      (set! compiler-tc-resolution-profile-name-cache-hits 0)
-      (set! compiler-tc-resolution-profile-name-cache-misses 0)
-      (set! compiler-tc-resolution-profile-type-symbol-probes 0)
-      (set! compiler-tc-type-handle-profile-lookups 0)
-      (set! compiler-tc-type-handle-profile-cache-hits 0)
-      (set! compiler-tc-type-handle-profile-cache-misses 0)
-      (set! compiler-tc-type-handle-profile-symbol-probes 0)
-      (set! compiler-tc-type-handle-profile-resolver-lookups 0)
-      (set! compiler-tc-type-handle-profile-nominal-lifetime-lookups 0)
-      (set! compiler-tc-type-handle-profile-constructor-lookups 0)
-      (set! compiler-tc-type-handle-profile-aggregate-layout-lookups 0)
-      (set! compiler-tc-type-handle-profile-move-kind-lookups 0)
-      (set! compiler-tc-type-handle-profile-qualified-owner-lookups 0)
-      (set! compiler-tc-type-handle-profile-lazy-unique-lookups 0))))
-
 (define tc-type-handle-lookup-caller-resolver : i64
   0)
 (define tc-type-handle-lookup-caller-nominal-lifetime : i64
@@ -8283,56 +6436,38 @@
   compile-profile
   (define (compiler-tc-type-handle-profile-note-lookup [caller : i64]) : unit
     (begin
-      (set!
-        compiler-tc-type-handle-profile-lookups
-        (+ compiler-tc-type-handle-profile-lookups 1))
+      (counters.bump! tc-profile-type-handle-lookups)
       (cond
         [(= caller tc-type-handle-lookup-caller-resolver)
-          (set!
-            compiler-tc-type-handle-profile-resolver-lookups
-            (+ compiler-tc-type-handle-profile-resolver-lookups 1))]
+          (counters.bump! tc-profile-type-handle-resolver-lookups)]
         [(= caller tc-type-handle-lookup-caller-nominal-lifetime)
-          (set!
-            compiler-tc-type-handle-profile-nominal-lifetime-lookups
-            (+ compiler-tc-type-handle-profile-nominal-lifetime-lookups 1))]
+          (counters.bump! tc-profile-type-handle-nominal-lifetime-lookups)]
         [(= caller tc-type-handle-lookup-caller-constructor)
-          (set!
-            compiler-tc-type-handle-profile-constructor-lookups
-            (+ compiler-tc-type-handle-profile-constructor-lookups 1))]
+          (counters.bump! tc-profile-type-handle-constructor-lookups)]
         [(= caller tc-type-handle-lookup-caller-aggregate-layout)
-          (set!
-            compiler-tc-type-handle-profile-aggregate-layout-lookups
-            (+ compiler-tc-type-handle-profile-aggregate-layout-lookups 1))]
+          (counters.bump! tc-profile-type-handle-aggregate-layout-lookups)]
         [(= caller tc-type-handle-lookup-caller-move-kind)
-          (set!
-            compiler-tc-type-handle-profile-move-kind-lookups
-            (+ compiler-tc-type-handle-profile-move-kind-lookups 1))]
+          (counters.bump! tc-profile-type-handle-move-kind-lookups)]
         [(= caller tc-type-handle-lookup-caller-qualified-owner)
-          (set!
-            compiler-tc-type-handle-profile-qualified-owner-lookups
-            (+ compiler-tc-type-handle-profile-qualified-owner-lookups 1))]
-        [else
-          (set!
-            compiler-tc-type-handle-profile-lazy-unique-lookups
-            (+ compiler-tc-type-handle-profile-lazy-unique-lookups 1))]))))
+          (counters.bump! tc-profile-type-handle-qualified-owner-lookups)]
+        [else (counters.bump! tc-profile-type-handle-lazy-unique-lookups)]))))
 
 (cfg
   compile-profile
-  (define (compiler-tc-type-handle-profile-note-cache-hit) : unit
-    (set!
-      compiler-tc-type-handle-profile-cache-hits
-      (+ compiler-tc-type-handle-profile-cache-hits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-type-handle-profile-note-cache-miss) : unit
-    (begin
-      (set!
-        compiler-tc-type-handle-profile-cache-misses
-        (+ compiler-tc-type-handle-profile-cache-misses 1))
-      (set!
-        compiler-tc-type-handle-profile-symbol-probes
-        (+ compiler-tc-type-handle-profile-symbol-probes 1)))))
+  (define (compiler-tc-resolution-profile-composite? [ty : (& ty ast.AstType)]) : bool
+    (match ty
+      [(ast.AstType.Func _ _) true]
+      [(ast.AstType.Tuple _) true]
+      [(ast.AstType.Array _ _) true]
+      [(ast.AstType.DynArray _) true]
+      [(ast.AstType.Slice _) true]
+      [(ast.AstType.Box _) true]
+      [(ast.AstType.Ptr _) true]
+      [(ast.AstType.MutPtr _) true]
+      [(ast.AstType.Ref _ _) true]
+      [(ast.AstType.MutRef _ _) true]
+      [(ast.AstType.Region _ _) true]
+      [_ false])))
 
 (cfg
   compile-profile
@@ -8340,1806 +6475,146 @@
     [ty : (& ty ast.AstType)]
     [needs-resolution : bool]) : unit
     (begin
-      (set!
-        compiler-tc-resolution-profile-ordinary-calls
-        (+ compiler-tc-resolution-profile-ordinary-calls 1))
+      (counters.bump! tc-profile-resolve-ordinary-calls)
       (match ty
         [(ast.AstType.Var _)
-          (set!
-            compiler-tc-resolution-profile-unresolved-var-calls
-            (+ compiler-tc-resolution-profile-unresolved-var-calls 1))]
+          (counters.bump! tc-profile-resolve-unresolved-var-calls)]
         [(ast.AstType.VarArgs _ _)
-          (set!
-            compiler-tc-resolution-profile-unresolved-varargs-calls
-            (+ compiler-tc-resolution-profile-unresolved-varargs-calls 1))]
-        [(ast.AstType.Func _ _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.Tuple _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.Array _ _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.DynArray _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.Slice _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.Box _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.Ptr _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.MutPtr _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.Ref _ _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.MutRef _ _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
-        [(ast.AstType.Region _ _)
-          (if needs-resolution
-            (set!
-              compiler-tc-resolution-profile-unresolved-composite-calls
-              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
-            (set!
-              compiler-tc-resolution-profile-concrete-composite-calls
-              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+          (counters.bump! tc-profile-resolve-unresolved-varargs-calls)]
         [_
-          (set!
-            compiler-tc-resolution-profile-concrete-leaf-calls
-            (+ compiler-tc-resolution-profile-concrete-leaf-calls 1))]))))
+          (cond
+            [(not (compiler-tc-resolution-profile-composite? ty))
+              (counters.bump! tc-profile-resolve-concrete-leaf-calls)]
+            [needs-resolution
+              (counters.bump! tc-profile-resolve-unresolved-composite-calls)]
+            [else (counters.bump! tc-profile-resolve-concrete-composite-calls)])]))))
 
 (cfg
   compile-profile
-  (define (compiler-tc-resolution-profile-note-name-cache-hit) : unit
-    (begin
-      (set!
-        compiler-tc-resolution-profile-name-lookup-calls
-        (+ compiler-tc-resolution-profile-name-lookup-calls 1))
-      (set!
-        compiler-tc-resolution-profile-name-cache-hits
-        (+ compiler-tc-resolution-profile-name-cache-hits 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-resolution-profile-note-name-cache-miss) : unit
-    (begin
-      (set!
-        compiler-tc-resolution-profile-name-lookup-calls
-        (+ compiler-tc-resolution-profile-name-lookup-calls 1))
-      (set!
-        compiler-tc-resolution-profile-name-cache-misses
-        (+ compiler-tc-resolution-profile-name-cache-misses 1))
-      (set!
-        compiler-tc-resolution-profile-type-symbol-probes
-        (+ compiler-tc-resolution-profile-type-symbol-probes 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-bind) : unit
-    (set! compiler-tc-env-profile-binds (+ compiler-tc-env-profile-binds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-lookup) : unit
-    (set! compiler-tc-env-profile-lookups (+ compiler-tc-env-profile-lookups 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-cache-build) : unit
-    (set!
-      compiler-tc-env-profile-cache-builds
-      (+ compiler-tc-env-profile-cache-builds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-cache-entry) : unit
-    (set!
-      compiler-tc-env-profile-cache-entries
-      (+ compiler-tc-env-profile-cache-entries 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-marker-scan) : unit
-    (set!
-      compiler-tc-env-profile-marker-scans
-      (+ compiler-tc-env-profile-marker-scans 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-module-local-hit) : unit
-    (set!
-      compiler-tc-env-profile-module-local-hits
-      (+ compiler-tc-env-profile-module-local-hits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-module-local-miss) : unit
-    (set!
-      compiler-tc-env-profile-module-local-misses
-      (+ compiler-tc-env-profile-module-local-misses 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-scoped-bind) : unit
-    (set!
-      compiler-tc-env-profile-scoped-binds
-      (+ compiler-tc-env-profile-scoped-binds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-scoped-cache-hit) : unit
-    (set!
-      compiler-tc-env-profile-scoped-cache-hits
-      (+ compiler-tc-env-profile-scoped-cache-hits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-scoped-cache-miss) : unit
-    (set!
-      compiler-tc-env-profile-scoped-cache-misses
-      (+ compiler-tc-env-profile-scoped-cache-misses 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-scoped-tail-fallback) : unit
-    (set!
-      compiler-tc-env-profile-scoped-tail-fallbacks
-      (+ compiler-tc-env-profile-scoped-tail-fallbacks 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-scoped-materialization [slots : i64]) : unit
-    (begin
-      (set!
-        compiler-tc-env-profile-scoped-materializations
-        (+ compiler-tc-env-profile-scoped-materializations 1))
-      (set!
-        compiler-tc-env-profile-scoped-materialized-slots
-        (+ compiler-tc-env-profile-scoped-materialized-slots slots)))))
+  (define compiler-tc-env-profile-borrow-lifetime-scan-current : i64
+    0))
 
 (cfg
   compile-profile
   (define (compiler-tc-env-profile-borrow-lifetime-scan-start!) : unit
     (begin
-      (set!
-        compiler-tc-env-profile-borrow-lifetime-scans
-        (+ compiler-tc-env-profile-borrow-lifetime-scans 1))
+      (counters.bump! tc-profile-env-borrow-lifetime-scans)
       (set! compiler-tc-env-profile-borrow-lifetime-scan-current 0))))
 
 (cfg
   compile-profile
   (define (compiler-tc-env-profile-borrow-lifetime-scan-note-binding!) : unit
     (begin
-      (set!
-        compiler-tc-env-profile-borrow-lifetime-scan-bindings
-        (+ compiler-tc-env-profile-borrow-lifetime-scan-bindings 1))
-      (set!
-        compiler-tc-env-profile-borrow-lifetime-scan-current
-        (+ compiler-tc-env-profile-borrow-lifetime-scan-current 1)))))
+      (counters.bump! tc-profile-env-borrow-lifetime-scan-bindings)
+      (counters.bump! compiler-tc-env-profile-borrow-lifetime-scan-current))))
 
 (cfg
   compile-profile
   (define (compiler-tc-env-profile-borrow-lifetime-scan-finish!) : unit
-    (if (>
-      compiler-tc-env-profile-borrow-lifetime-scan-current
-      compiler-tc-env-profile-borrow-lifetime-scan-max)
-      (set!
-        compiler-tc-env-profile-borrow-lifetime-scan-max
-        compiler-tc-env-profile-borrow-lifetime-scan-current)
-      unit)))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-unbound-finalizer) : unit
-    (set!
-      compiler-tc-env-profile-unbound-finalizers
-      (+ compiler-tc-env-profile-unbound-finalizers 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-unbound-scan) : unit
-    (set!
-      compiler-tc-env-profile-unbound-scans
-      (+ compiler-tc-env-profile-unbound-scans 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-unbound-candidate-slot) : unit
-    (set!
-      compiler-tc-env-profile-unbound-candidate-slots
-      (+ compiler-tc-env-profile-unbound-candidate-slots 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-unbound-visible-candidate) : unit
-    (set!
-      compiler-tc-env-profile-unbound-visible-candidates
-      (+ compiler-tc-env-profile-unbound-visible-candidates 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-unbound-length-survivor) : unit
-    (set!
-      compiler-tc-env-profile-unbound-length-survivors
-      (+ compiler-tc-env-profile-unbound-length-survivors 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-note-unbound-edit-evaluation) : unit
-    (set!
-      compiler-tc-env-profile-unbound-edit-evaluations
-      (+ compiler-tc-env-profile-unbound-edit-evaluations 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-unbound-profile-reset) : unit
-    (begin
-      (set! compiler-tc-env-profile-unbound-finalizers 0)
-      (set! compiler-tc-env-profile-unbound-scans 0)
-      (set! compiler-tc-env-profile-unbound-candidate-slots 0)
-      (set! compiler-tc-env-profile-unbound-visible-candidates 0)
-      (set! compiler-tc-env-profile-unbound-length-survivors 0)
-      (set! compiler-tc-env-profile-unbound-edit-evaluations 0))))
+    (counters.max!
+      tc-profile-env-borrow-lifetime-scan-max
+      compiler-tc-env-profile-borrow-lifetime-scan-current)))
 
 (cfg
   compile-profile
   (define (compiler-tc-env-profile-reset) : unit
     (begin
-      (set! compiler-tc-env-profile-binds 0)
-      (set! compiler-tc-env-profile-lookups 0)
-      (set! compiler-tc-env-profile-cache-builds 0)
-      (set! compiler-tc-env-profile-cache-entries 0)
-      (set! compiler-tc-env-profile-marker-scans 0)
-      (set! compiler-tc-env-profile-module-local-hits 0)
-      (set! compiler-tc-env-profile-module-local-misses 0)
-      (set! compiler-tc-env-profile-scoped-binds 0)
-      (set! compiler-tc-env-profile-scoped-cache-hits 0)
-      (set! compiler-tc-env-profile-scoped-cache-misses 0)
-      (set! compiler-tc-env-profile-scoped-tail-fallbacks 0)
-      (set! compiler-tc-env-profile-scoped-materializations 0)
-      (set! compiler-tc-env-profile-scoped-materialized-slots 0)
-      (set! compiler-tc-env-profile-borrow-lifetime-scans 0)
-      (set! compiler-tc-env-profile-borrow-lifetime-scan-bindings 0)
-      (set! compiler-tc-env-profile-borrow-lifetime-scan-current 0)
-      (set! compiler-tc-env-profile-borrow-lifetime-scan-max 0))))
+      (compiler-tc-env-profile-reset!)
+      (set! compiler-tc-env-profile-borrow-lifetime-scan-current 0))))
 
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-decls-shared : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-decls-expanded : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-walk-share-gate-open : i64
-    0))
-
+;; The macro-expansion program's counters; the walk tables keep accumulating.
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-reset-program-counters) : unit
     (begin
-      (compiler-tc-resolution-profile-reset)
-      (compiler-tc-unbound-profile-reset)
-      (set! compiler-tc-macro-generated-module-materializations 0)
-      (set! compiler-tc-macro-generated-decl-checks 0)
-      (set! compiler-tc-macro-generated-module-memo-hits 0)
-      (set! compiler-tc-macro-generated-module-catalog-builds 0)
-      (set! compiler-tc-macro-generated-module-catalog-hits 0)
-      (set! compiler-tc-macro-live-rebuilds 0)
-      (set! compiler-tc-macro-live-reuses 0)
-      (set! compiler-tc-macro-live-registry-rebuilds 0)
-      (set! compiler-tc-macro-live-registry-reuses 0)
-      (set! compiler-tc-macro-retired-symbol-rotations 0)
-      (set! compiler-tc-macro-expansion-scratch-creations 0)
-      (set! compiler-tc-macro-splice-generation-rotations 0)
-      (set! compiler-tc-macro-retired-generation-rotations 0)
-      (set! compiler-tc-macro-live-symbols-max-bytes 0)
-      (set! compiler-tc-macro-retired-symbols-max-bytes 0)
-      (set! compiler-tc-macro-expansion-scratch-max-bytes 0)
-      (set! compiler-tc-macro-active-generations-max-bytes 0)
-      (set! compiler-tc-macro-retired-generations-max-bytes 0)
-      (set! compiler-tc-macro-stdlib-tlci-catalog-hits 0)
-      (set! compiler-tc-macro-stdlib-tlci-catalog-misses 0)
-      (set! compiler-tc-macro-stdlib-tlci-load-failures 0)
-      (set! compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 0)
-      (set! compiler-tc-macro-stdlib-tlci-native-dispatches 0)
-      (set! compiler-tc-macro-stdlib-tlci-shell-learns 0)
-      (set! compiler-tc-macro-stdlib-tlci-shell-cache-hits 0)
-      (set! compiler-tc-macro-stdlib-tlci-native-expr-results 0)
-      (set! compiler-tc-macro-stdlib-tlci-direct-expr-results 0)
-      (set! compiler-tc-macro-stdlib-tlci-direct-shell-env-folds 0)
-      (set! compiler-tc-macro-stdlib-tlci-native-module-results 0)
-      (set! compiler-tc-macro-stdlib-tlci-native-decls-results 0)
-      (set! compiler-tc-macro-stdlib-tlci-entry-resolution-ns 0)
-      (set! compiler-tc-macro-stdlib-tlci-entry-resolution-calls 0)
-      (set! compiler-tc-macro-stdlib-tlci-entry-invoke-ns 0)
-      (set! compiler-tc-macro-stdlib-tlci-entry-invoke-calls 0)
-      (set! compiler-tc-macro-stdlib-source-interpreted 0)
-      (set! compiler-tc-macro-walk-decls-shared 0)
-      (set! compiler-tc-macro-walk-decls-expanded 0)
-      (set! compiler-tc-macro-walk-share-gate-open 0)
-      (set! compiler-tc-walk-segment-nodes 0)
-      (set! compiler-tc-walk-segment-splits 0)
-      (set! compiler-tc-walk-segment-delta-decls 0)
-      (set! compiler-tc-walk-segment-fallback-flattens 0)
-      (set! compiler-tc-walk-segment-fallback-alias-flattens 0)
-      (set! compiler-tc-walk-segment-fallback-file-flattens 0)
-      (set! compiler-tc-walk-segment-fallback-flatten-ns 0)
-      (set! compiler-tc-walk-segment-fallback-flatten-alloc 0)
-      (set! compiler-tc-walk-segment-fallback-flatten-live 0)
-      (set! compiler-tc-walk-segment-final-flattens 0)
-      (set! compiler-tc-walk-segment-final-flatten-ns 0)
-      (set! compiler-tc-walk-segment-final-flatten-alloc 0)
-      (set! compiler-tc-walk-segment-final-flatten-live 0)
-      (set! compiler-tc-walk-splice-registry-incremental 0)
-      (set! compiler-tc-walk-splice-registry-invalidated 0)
-      (set! compiler-tc-walk-splice-ctfe-deferred 0)
-      (set! compiler-tc-walk-splice-ctfe-cleared 0)
-      (set! compiler-tc-walk-splice-prescan-resets 0)
-      (set! compiler-tc-walk-splice-ctfe-builds 0)
-      (set! compiler-tc-walk-splice-ctfe-rebuilds 0)
-      (set! compiler-tc-walk-splice-ctfe-build-ns 0)
-      (set! compiler-tc-walk-splice-ctfe-build-alloc 0)
-      (set! compiler-tc-walk-splice-ctfe-build-live 0)
-      (set! compiler-tc-walk-splice-ctfe-rebuild-ns 0)
-      (set! compiler-tc-walk-splice-ctfe-rebuild-alloc 0)
-      (set! compiler-tc-walk-splice-ctfe-rebuild-live 0)
-      (set! compiler-tc-walk-splice-ctfe-extensions 0)
-      (set! compiler-tc-walk-splice-ctfe-extension-ns 0)
-      (set! compiler-tc-walk-splice-ctfe-extension-alloc 0)
-      (set! compiler-tc-walk-splice-ctfe-extension-live 0)
-      (set! compiler-tc-walk-splice-ctfe-semantic-rejections 0)
-      (set! compiler-tc-walk-splice-ctfe-capacity-grows 0)
-      (set! compiler-tc-walk-splice-ctfe-cache-unavailable 0)
-      (set! compiler-tc-walk-splice-ctfe-clear-ordinary 0)
-      (set! compiler-tc-walk-splice-ctfe-clear-file 0)
-      (set! compiler-tc-walk-splice-env-reresolve-calls 0)
-      (set! compiler-tc-walk-splice-env-reresolve-candidates 0)
-      (set! compiler-tc-walk-splice-env-reresolve-updates 0)
-      (set! compiler-tc-walk-splice-env-reresolve-remaining 0)
-      (set! compiler-tc-walk-splice-env-fallbacks 0))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-walk-decl-shared) : unit
-    (set!
-      compiler-tc-macro-walk-decls-shared
-      (+ compiler-tc-macro-walk-decls-shared 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-walk-decl-expanded) : unit
-    (set!
-      compiler-tc-macro-walk-decls-expanded
-      (+ compiler-tc-macro-walk-decls-expanded 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-walk-share-gate [open : bool]) : unit
-    (if open
-      (set!
-        compiler-tc-macro-walk-share-gate-open
-        (+ compiler-tc-macro-walk-share-gate-open 1))
-      unit)))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-generated-module-materialization) : unit
-    (set!
-      compiler-tc-macro-generated-module-materializations
-      (+ compiler-tc-macro-generated-module-materializations 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-generated-module-memo-hit) : unit
-    (set!
-      compiler-tc-macro-generated-module-memo-hits
-      (+ compiler-tc-macro-generated-module-memo-hits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-generated-module-catalog-build) : unit
-    (set!
-      compiler-tc-macro-generated-module-catalog-builds
-      (+ compiler-tc-macro-generated-module-catalog-builds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-generated-module-catalog-hit) : unit
-    (set!
-      compiler-tc-macro-generated-module-catalog-hits
-      (+ compiler-tc-macro-generated-module-catalog-hits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-live-rebuild) : unit
-    (set! compiler-tc-macro-live-rebuilds (+ compiler-tc-macro-live-rebuilds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-live-reuse) : unit
-    (set! compiler-tc-macro-live-reuses (+ compiler-tc-macro-live-reuses 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-live-registry-rebuild) : unit
-    (set!
-      compiler-tc-macro-live-registry-rebuilds
-      (+ compiler-tc-macro-live-registry-rebuilds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-live-registry-reuse) : unit
-    (set!
-      compiler-tc-macro-live-registry-reuses
-      (+ compiler-tc-macro-live-registry-reuses 1))))
-
-(cfg
-  compile-profile
-  (define (tc-lp-index-valid? [index : i64]) : bool
-    (and (>= index 0) (< index 15))))
-
-(cfg
-  compile-profile
-  (define (tc-lp-count [index : i64]) : i64
-    (if (tc-lp-index-valid? index)
-      (array-ref tc-lp-counts index)
-      0)))
-
-(cfg
-  compile-profile
-  (define (tc-lp-reset [index : i64]) : unit
-    (if (< index 15)
-      (begin
-        (set! (array-ref tc-lp-counts index) 0)
-        (tc-lp-reset (+ index 1)))
-      unit)))
-
-(cfg
-  compile-profile
-  (define (tc-lp-note [index : i64]) : unit
-    (if (tc-lp-index-valid? index)
-      (set! (array-ref tc-lp-counts index) (+ (tc-lp-count index) 1))
-      unit)))
+      (compiler-tc-resolve-profile-reset!)
+      (compiler-tc-unbound-profile-reset!)
+      (compiler-tc-macro-program-profile-reset!)
+      (compiler-tc-splice-profile-reset!)
+      (set! compiler-tc-macro-splice-generation-rotations 0))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-reset [state : TcJobState]) : unit
     (begin
-      (set! compiler-tc-decl-profile-start-ms 0)
-      (set! compiler-tc-decl-profile-section-start-alloc 0)
-      (set! compiler-tc-decl-profile-section-start-live 0)
-      (set! compiler-tc-decl-profile-local-env-ms 0)
-      (set! compiler-tc-decl-profile-local-env-alloc 0)
-      (set! compiler-tc-decl-profile-local-env-live 0)
-      (set! compiler-tc-decl-profile-arena-ms 0)
-      (set! compiler-tc-decl-profile-arena-alloc 0)
-      (set! compiler-tc-decl-profile-arena-live 0)
-      (set! compiler-tc-decl-profile-def-expr-ms 0)
-      (set! compiler-tc-decl-profile-def-expr-alloc 0)
-      (set! compiler-tc-decl-profile-def-expr-live 0)
-      (set! compiler-tc-decl-profile-fn-expr-ms 0)
-      (set! compiler-tc-decl-profile-fn-expr-alloc 0)
-      (set! compiler-tc-decl-profile-fn-expr-live 0)
-      (set! compiler-tc-decl-profile-fn-move-ms 0)
-      (set! compiler-tc-decl-profile-fn-move-alloc 0)
-      (set! compiler-tc-decl-profile-fn-move-live 0)
-      (set! compiler-tc-decl-profile-macro-ms 0)
-      (set! compiler-tc-decl-profile-macro-alloc 0)
-      (set! compiler-tc-decl-profile-macro-live 0)
-      (set! compiler-tc-decl-profile-extern-ms 0)
-      (set! compiler-tc-decl-profile-extern-alloc 0)
-      (set! compiler-tc-decl-profile-extern-live 0)
-      (set! compiler-tc-decl-profile-decl-count 0)
-      (set! compiler-tc-decl-profile-def-count 0)
-      (set! compiler-tc-decl-profile-fn-count 0)
-      (set! compiler-tc-decl-profile-macro-count 0)
-      (set! compiler-tc-decl-profile-extern-count 0)
-      (set! compiler-tc-decl-profile-other-count 0)
       (compiler-tc-env-profile-reset)
       (compiler-tc-reinfer-profile-reset state)
       (compiler-tc-body-fact-profile-reset state)
-      (tc-lp-reset 0))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-start-section) : unit
-    (begin
-      (set! compiler-tc-decl-profile-start-ms (profile.now-ms))
-      (set! compiler-tc-decl-profile-section-start-alloc (profile.alloc-total))
-      (set! compiler-tc-decl-profile-section-start-live (profile.alloc-live)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-add-local-env) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-local-env-ms
-        (+
-          compiler-tc-decl-profile-local-env-ms
-          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
-      (set!
-        compiler-tc-decl-profile-local-env-alloc
-        (+
-          compiler-tc-decl-profile-local-env-alloc
-          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
-      (set!
-        compiler-tc-decl-profile-local-env-live
-        (+
-          compiler-tc-decl-profile-local-env-live
-          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-add-arena) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-arena-ms
-        (+
-          compiler-tc-decl-profile-arena-ms
-          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
-      (set!
-        compiler-tc-decl-profile-arena-alloc
-        (+
-          compiler-tc-decl-profile-arena-alloc
-          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
-      (set!
-        compiler-tc-decl-profile-arena-live
-        (+
-          compiler-tc-decl-profile-arena-live
-          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-add-def-expr) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-def-expr-ms
-        (+
-          compiler-tc-decl-profile-def-expr-ms
-          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
-      (set!
-        compiler-tc-decl-profile-def-expr-alloc
-        (+
-          compiler-tc-decl-profile-def-expr-alloc
-          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
-      (set!
-        compiler-tc-decl-profile-def-expr-live
-        (+
-          compiler-tc-decl-profile-def-expr-live
-          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-add-fn-expr-named [name : String]) : unit
-    (let
-      [elapsed : i64 (- (profile.now-ms) compiler-tc-decl-profile-start-ms)]
-      [alloc-delta : i64
-        (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)]
-      [live-delta : i64
-        (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live)]
-      (begin
-        (set!
-          compiler-tc-decl-profile-fn-expr-ms
-          (+ compiler-tc-decl-profile-fn-expr-ms elapsed))
-        (set!
-          compiler-tc-decl-profile-fn-expr-alloc
-          (+ compiler-tc-decl-profile-fn-expr-alloc alloc-delta))
-        (set!
-          compiler-tc-decl-profile-fn-expr-live
-          (+ compiler-tc-decl-profile-fn-expr-live live-delta))
-        (cfg
-          compile-profile-summary
-          unit
-          (if (>= elapsed 1)
-            (io.print-error
-              (str_cat.str-cat
-                "compile-profile-detail|typecheck.fn_expr|"
-                (string.int->string elapsed)
-                "|"
-                (tc-global-shared-view name)
-                "\n"))
-            unit))
-        (cfg
-          compile-profile-summary
-          unit
-          (if (>= live-delta 131072)
-            (io.print-error
-              (str_cat.str-cat
-                "compile-profile-detail|typecheck.fn_live_kb|"
-                (string.int->string (/ live-delta 1024))
-                "|"
-                name
-                "\n"))
-            unit))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-add-macro) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-macro-ms
-        (+
-          compiler-tc-decl-profile-macro-ms
-          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
-      (set!
-        compiler-tc-decl-profile-macro-alloc
-        (+
-          compiler-tc-decl-profile-macro-alloc
-          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
-      (set!
-        compiler-tc-decl-profile-macro-live
-        (+
-          compiler-tc-decl-profile-macro-live
-          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-add-extern) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-extern-ms
-        (+
-          compiler-tc-decl-profile-extern-ms
-          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
-      (set!
-        compiler-tc-decl-profile-extern-alloc
-        (+
-          compiler-tc-decl-profile-extern-alloc
-          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
-      (set!
-        compiler-tc-decl-profile-extern-live
-        (+
-          compiler-tc-decl-profile-extern-live
-          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-count-def) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-decl-count
-        (+ compiler-tc-decl-profile-decl-count 1))
-      (set!
-        compiler-tc-decl-profile-def-count
-        (+ compiler-tc-decl-profile-def-count 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-count-fn) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-decl-count
-        (+ compiler-tc-decl-profile-decl-count 1))
-      (set!
-        compiler-tc-decl-profile-fn-count
-        (+ compiler-tc-decl-profile-fn-count 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-count-macro) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-decl-count
-        (+ compiler-tc-decl-profile-decl-count 1))
-      (set!
-        compiler-tc-decl-profile-macro-count
-        (+ compiler-tc-decl-profile-macro-count 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-count-extern) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-decl-count
-        (+ compiler-tc-decl-profile-decl-count 1))
-      (set!
-        compiler-tc-decl-profile-extern-count
-        (+ compiler-tc-decl-profile-extern-count 1)))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-count-other) : unit
-    (begin
-      (set!
-        compiler-tc-decl-profile-decl-count
-        (+ compiler-tc-decl-profile-decl-count 1))
-      (set!
-        compiler-tc-decl-profile-other-count
-        (+ compiler-tc-decl-profile-other-count 1)))))
+      (compiler-tc-layout-profile-reset!))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-record [decl : ast.AstDecl]) : unit
-    (begin
-      (match (ast.ast-decl-generated-meta decl)
-        [(ast.AstGeneratedDeclMeta.Some _ _ _ _)
-          (set!
-            compiler-tc-macro-generated-decl-checks
-            (+ compiler-tc-macro-generated-decl-checks 1))]
-        [(ast.AstGeneratedDeclMeta.No) unit])
-      (match decl
-        [(ast.AstDecl.Def decl-meta _ _ _)
-          (begin
-            (compiler-tc-decl-profile-count-def)
-            (compiler-tc-decl-profile-add-def-expr))]
-        [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-          (begin
-            (compiler-tc-decl-profile-count-fn)
-            (compiler-tc-decl-profile-add-fn-expr-named
-              (tc-env-key-name-text name)))]
-        [(ast.AstDecl.DefMacro decl-meta _ _ _ _)
-          (begin
-            (compiler-tc-decl-profile-count-macro)
-            (compiler-tc-decl-profile-add-macro))]
-        [(ast.AstDecl.Extern decl-meta _ _ _ _)
-          (begin
-            (compiler-tc-decl-profile-count-extern)
-            (compiler-tc-decl-profile-add-extern))]
-        [_
-          (begin
-            (compiler-tc-decl-profile-count-other)
-            (compiler-tc-decl-profile-add-arena))]))))
+    (match (ast.ast-decl-generated-meta decl)
+      [(ast.AstGeneratedDeclMeta.Some _ _ _ _)
+        (counters.bump! tc-profile-generated-decl-checks)]
+      [(ast.AstGeneratedDeclMeta.No) unit])))
 
 (cfg
   compile-profile
-  (define (compiler-tc-decl-profile-line [phase : String] [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|typecheck.decl."
-        phase
-        (compiler-tc-profile-field value)
-        "|0|0|0\n"))))
+  (define (compiler-tc-env-profile-emit-macro-cache-entries) : unit
+    (counters.profile-counter-row!
+      "typecheck.env.macro_cache_entries"
+      tc-profile-env-cache-entries)))
 
+;; Set the rows derived from other counters. Fired self time excludes the
+;; nested lanes; the survivor pool nodes are priced at their pool node size.
 (cfg
   compile-profile
-  (define (compiler-tc-env-profile-line [phase : String] [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|typecheck.env."
-        phase
-        (compiler-tc-profile-field value)
-        "|0|0|0\n"))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-env-profile-emit-prefix [prefix : String]) : unit
-    (begin
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "binds")
-        compiler-tc-env-profile-binds)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "lookups")
-        compiler-tc-env-profile-lookups)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "cache_builds")
-        compiler-tc-env-profile-cache-builds)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "cache_entries")
-        compiler-tc-env-profile-cache-entries)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "marker_scans")
-        compiler-tc-env-profile-marker-scans)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "module_local_hits")
-        compiler-tc-env-profile-module-local-hits)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "module_local_misses")
-        compiler-tc-env-profile-module-local-misses)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "scoped_binds")
-        compiler-tc-env-profile-scoped-binds)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "scoped_cache_hits")
-        compiler-tc-env-profile-scoped-cache-hits)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "scoped_cache_misses")
-        compiler-tc-env-profile-scoped-cache-misses)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat (tc-global-shared-view prefix) "scoped_tail_fallbacks")
-        compiler-tc-env-profile-scoped-tail-fallbacks)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat
-          (tc-global-shared-view prefix)
-          "scoped_materializations")
-        compiler-tc-env-profile-scoped-materializations)
-      (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "scoped_materialized_slots")
-        compiler-tc-env-profile-scoped-materialized-slots))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-resolution-profile-line
-    [scope : String]
-    [phase : String]
-    [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|typecheck.resolve."
-        scope
-        "."
-        phase
-        (compiler-tc-profile-field value)
-        "|0|0|0\n"))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-resolution-profile-finish [scope : String]) : unit
-    (begin
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "ordinary_calls"
-        compiler-tc-resolution-profile-ordinary-calls)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "concrete_leaf_calls"
-        compiler-tc-resolution-profile-concrete-leaf-calls)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "concrete_composite_calls"
-        compiler-tc-resolution-profile-concrete-composite-calls)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "unresolved_var_calls"
-        compiler-tc-resolution-profile-unresolved-var-calls)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "unresolved_varargs_calls"
-        compiler-tc-resolution-profile-unresolved-varargs-calls)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "unresolved_composite_calls"
-        compiler-tc-resolution-profile-unresolved-composite-calls)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "name_lookup_calls"
-        compiler-tc-resolution-profile-name-lookup-calls)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "name_cache_hits"
-        compiler-tc-resolution-profile-name-cache-hits)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "name_cache_misses"
-        compiler-tc-resolution-profile-name-cache-misses)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_symbol_probes"
-        compiler-tc-resolution-profile-type-symbol-probes)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_lookups"
-        compiler-tc-type-handle-profile-lookups)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_cache_hits"
-        compiler-tc-type-handle-profile-cache-hits)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_cache_misses"
-        compiler-tc-type-handle-profile-cache-misses)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_symbol_probes"
-        compiler-tc-type-handle-profile-symbol-probes)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_resolver_lookups"
-        compiler-tc-type-handle-profile-resolver-lookups)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_nominal_lifetime_lookups"
-        compiler-tc-type-handle-profile-nominal-lifetime-lookups)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_constructor_lookups"
-        compiler-tc-type-handle-profile-constructor-lookups)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_aggregate_layout_lookups"
-        compiler-tc-type-handle-profile-aggregate-layout-lookups)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_move_kind_lookups"
-        compiler-tc-type-handle-profile-move-kind-lookups)
-      (compiler-tc-resolution-profile-line
-        (tc-global-shared-view scope)
-        "type_handle_qualified_owner_lookups"
-        compiler-tc-type-handle-profile-qualified-owner-lookups)
-      (compiler-tc-resolution-profile-line
-        scope
-        "type_handle_lazy_unique_lookups"
-        compiler-tc-type-handle-profile-lazy-unique-lookups))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-counter-profile-line
-    [phase : String]
-    [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|typecheck.macro."
-        phase
-        (compiler-tc-profile-field value)
-        "|0|0|0\n"))))
-
-(cfg
-  compile-profile
-  (define (tc-lp-line [phase : String] [index : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|typecheck.layout."
-        phase
-        (compiler-tc-profile-field (tc-lp-count index))
-        "|0|0|0\n"))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-decl-profile-line-mem
-    [phase : String]
-    [value : i64]
-    [alloc : i64]
-    [live : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|typecheck.decl."
-        phase
-        (compiler-tc-profile-field value)
-        (compiler-tc-profile-field alloc)
-        (compiler-tc-profile-field live)
-        "|0\n"))))
+  (define (compiler-tc-walk-profile-derive!) : unit
+    (let
+      [nonoutput : i64
+        (- tc-profile-fire-superseded-alloc tc-profile-fire-superseded-released)]
+      [pool-node-bytes : i64
+        (+
+          (* tc-profile-fire-survivor-expr-nodes (ast.ast-expr-node-bytes))
+          (* tc-profile-fire-survivor-type-nodes (ast.ast-type-node-bytes)))]
+      (begin
+        (set!
+          tc-profile-active-generation-rotations
+          (+
+            tc-profile-decl-generation-rotations
+            compiler-tc-macro-splice-generation-rotations))
+        (set!
+          tc-profile-fire-self-ns
+          (if (> tc-profile-fire-ns tc-profile-fire-nested-ns)
+            (- tc-profile-fire-ns tc-profile-fire-nested-ns)
+            0))
+        (set! tc-profile-fire-survivor-pool-node-bytes pool-node-bytes)
+        (set!
+          tc-profile-fire-survivor-bytes
+          (+ tc-profile-fire-survivor-alloc pool-node-bytes))
+        (set! tc-profile-fire-nonoutput-live nonoutput)
+        (set!
+          tc-profile-fire-residual-live
+          (- tc-profile-fire-live (+ tc-profile-fire-survivor-live nonoutput)))
+        (set!
+          tc-profile-fire-unattributed-live
+          (-
+            tc-profile-fire-live
+            (+
+              tc-profile-fire-survivor-live
+              (+
+                nonoutput
+                (+
+                  tc-profile-fire-committed-live
+                  tc-profile-fire-post-boundary-live)))))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-finish [state : TcJobState]) : unit
     (begin
-      (compiler-tc-resolution-profile-finish "typecheck")
-      (compiler-tc-decl-profile-line-mem
-        "local_env"
-        compiler-tc-decl-profile-local-env-ms
-        compiler-tc-decl-profile-local-env-alloc
-        compiler-tc-decl-profile-local-env-live)
-      (compiler-tc-decl-profile-line-mem
-        "arena"
-        compiler-tc-decl-profile-arena-ms
-        compiler-tc-decl-profile-arena-alloc
-        compiler-tc-decl-profile-arena-live)
-      (compiler-tc-decl-profile-line-mem
-        "def_expr"
-        compiler-tc-decl-profile-def-expr-ms
-        compiler-tc-decl-profile-def-expr-alloc
-        compiler-tc-decl-profile-def-expr-live)
-      (compiler-tc-decl-profile-line-mem
-        "fn_expr"
-        compiler-tc-decl-profile-fn-expr-ms
-        compiler-tc-decl-profile-fn-expr-alloc
-        compiler-tc-decl-profile-fn-expr-live)
-      (compiler-tc-decl-profile-line-mem
-        "fn_move"
-        compiler-tc-decl-profile-fn-move-ms
-        compiler-tc-decl-profile-fn-move-alloc
-        compiler-tc-decl-profile-fn-move-live)
-      (compiler-tc-decl-profile-line-mem
-        "macro"
-        compiler-tc-decl-profile-macro-ms
-        compiler-tc-decl-profile-macro-alloc
-        compiler-tc-decl-profile-macro-live)
-      (compiler-tc-decl-profile-line-mem
-        "extern"
-        compiler-tc-decl-profile-extern-ms
-        compiler-tc-decl-profile-extern-alloc
-        compiler-tc-decl-profile-extern-live)
-      (compiler-tc-decl-profile-line
-        "decl_count"
-        compiler-tc-decl-profile-decl-count)
-      (compiler-tc-decl-profile-line
-        "def_count"
-        compiler-tc-decl-profile-def-count)
-      (compiler-tc-decl-profile-line
-        "fn_count"
-        compiler-tc-decl-profile-fn-count)
-      (compiler-tc-decl-profile-line
-        "macro_count"
-        compiler-tc-decl-profile-macro-count)
-      (compiler-tc-decl-profile-line
-        "extern_count"
-        compiler-tc-decl-profile-extern-count)
-      (compiler-tc-decl-profile-line
-        "other_count"
-        compiler-tc-decl-profile-other-count)
-      (compiler-tc-env-profile-line "binds" compiler-tc-env-profile-binds)
-      (compiler-tc-env-profile-line "lookups" compiler-tc-env-profile-lookups)
-      (compiler-tc-env-profile-line
-        "cache_builds"
-        compiler-tc-env-profile-cache-builds)
-      (compiler-tc-env-profile-line
-        "cache_entries"
-        compiler-tc-env-profile-cache-entries)
-      (compiler-tc-env-profile-line
-        "marker_scans"
-        compiler-tc-env-profile-marker-scans)
-      (compiler-tc-env-profile-line
-        "module_local_hits"
-        compiler-tc-env-profile-module-local-hits)
-      (compiler-tc-env-profile-line
-        "module_local_misses"
-        compiler-tc-env-profile-module-local-misses)
-      (compiler-tc-env-profile-line
-        "scoped_binds"
-        compiler-tc-env-profile-scoped-binds)
-      (compiler-tc-env-profile-line
-        "scoped_cache_hits"
-        compiler-tc-env-profile-scoped-cache-hits)
-      (compiler-tc-env-profile-line
-        "scoped_cache_misses"
-        compiler-tc-env-profile-scoped-cache-misses)
-      (compiler-tc-env-profile-line
-        "scoped_tail_fallbacks"
-        compiler-tc-env-profile-scoped-tail-fallbacks)
-      (compiler-tc-env-profile-line
-        "scoped_materializations"
-        compiler-tc-env-profile-scoped-materializations)
-      (compiler-tc-env-profile-line
-        "scoped_materialized_slots"
-        compiler-tc-env-profile-scoped-materialized-slots)
-      (compiler-tc-env-profile-line
-        "borrow_lifetime_scans"
-        compiler-tc-env-profile-borrow-lifetime-scans)
-      (compiler-tc-env-profile-line
-        "borrow_lifetime_scan_bindings"
-        compiler-tc-env-profile-borrow-lifetime-scan-bindings)
-      (compiler-tc-env-profile-line
-        "borrow_lifetime_scan_max"
-        compiler-tc-env-profile-borrow-lifetime-scan-max)
-      (compiler-tc-env-profile-line
-        "unbound_finalizers"
-        compiler-tc-env-profile-unbound-finalizers)
-      (compiler-tc-env-profile-line
-        "unbound_scans"
-        compiler-tc-env-profile-unbound-scans)
-      (compiler-tc-env-profile-line
-        "unbound_candidate_slots"
-        compiler-tc-env-profile-unbound-candidate-slots)
-      (compiler-tc-env-profile-line
-        "unbound_visible_candidates"
-        compiler-tc-env-profile-unbound-visible-candidates)
-      (compiler-tc-env-profile-line
-        "unbound_length_survivors"
-        compiler-tc-env-profile-unbound-length-survivors)
-      (compiler-tc-env-profile-line
-        "unbound_edit_evaluations"
-        compiler-tc-env-profile-unbound-edit-evaluations)
-      (compiler-tc-macro-counter-profile-line
-        "generated_module_materializations"
-        compiler-tc-macro-generated-module-materializations)
-      (compiler-tc-macro-counter-profile-line
-        "generated_decl_checks"
-        compiler-tc-macro-generated-decl-checks)
-      (compiler-tc-macro-counter-profile-line
-        "generated_module_memo_hits"
-        compiler-tc-macro-generated-module-memo-hits)
-      (compiler-tc-macro-counter-profile-line
-        "generated_module_catalog_builds"
-        compiler-tc-macro-generated-module-catalog-builds)
-      (compiler-tc-macro-counter-profile-line
-        "generated_module_catalog_hits"
-        compiler-tc-macro-generated-module-catalog-hits)
-      ;; Full catalogs are validated by their one ordinary typecheck walk.
-      (compiler-tc-macro-counter-profile-line
-        "generated_module_catalog_validations"
-        0)
-      (compiler-tc-macro-counter-profile-line
-        "live_rebuilds"
-        compiler-tc-macro-live-rebuilds)
-      (compiler-tc-macro-counter-profile-line
-        "live_reuses"
-        compiler-tc-macro-live-reuses)
-      (compiler-tc-macro-counter-profile-line
-        "live_registry_rebuilds"
-        compiler-tc-macro-live-registry-rebuilds)
-      (compiler-tc-macro-counter-profile-line
-        "live_registry_reuses"
-        compiler-tc-macro-live-registry-reuses)
-      (compiler-tc-macro-counter-profile-line
-        "retention_retired_symbol_rotations"
-        compiler-tc-macro-retired-symbol-rotations)
-      (compiler-tc-macro-counter-profile-line
-        "retention_expansion_scratch_creations"
-        compiler-tc-macro-expansion-scratch-creations)
-      (compiler-tc-macro-counter-profile-line
-        "retention_active_generation_rotations"
-        (+
-          compiler-tc-walk-decl-generation-rotations
-          compiler-tc-macro-splice-generation-rotations))
-      (compiler-tc-macro-counter-profile-line
-        "retention_retired_generation_rotations"
-        compiler-tc-macro-retired-generation-rotations)
-      (compiler-tc-macro-counter-profile-line
-        "retention_live_symbols_max_bytes"
-        compiler-tc-macro-live-symbols-max-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "retention_retired_symbols_max_bytes"
-        compiler-tc-macro-retired-symbols-max-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "retention_expansion_scratch_max_bytes"
-        compiler-tc-macro-expansion-scratch-max-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "retention_active_generations_max_bytes"
-        compiler-tc-macro-active-generations-max-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "retention_retired_generations_max_bytes"
-        compiler-tc-macro-retired-generations-max-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_catalog_hits"
-        compiler-tc-macro-stdlib-tlci-catalog-hits)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_catalog_misses"
-        compiler-tc-macro-stdlib-tlci-catalog-misses)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_load_failures"
-        compiler-tc-macro-stdlib-tlci-load-failures)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_interpreted_fallbacks"
-        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_native_dispatches"
-        compiler-tc-macro-stdlib-tlci-native-dispatches)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_shell_learns"
-        compiler-tc-macro-stdlib-tlci-shell-learns)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_shell_cache_hits"
-        compiler-tc-macro-stdlib-tlci-shell-cache-hits)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_native_expr_results"
-        compiler-tc-macro-stdlib-tlci-native-expr-results)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_direct_expr_results"
-        compiler-tc-macro-stdlib-tlci-direct-expr-results)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_direct_shell_env_folds"
-        compiler-tc-macro-stdlib-tlci-direct-shell-env-folds)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_native_module_results"
-        compiler-tc-macro-stdlib-tlci-native-module-results)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_native_decls_results"
-        compiler-tc-macro-stdlib-tlci-native-decls-results)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_entry_resolution_us"
-        (/ compiler-tc-macro-stdlib-tlci-entry-resolution-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_entry_resolution_calls"
-        compiler-tc-macro-stdlib-tlci-entry-resolution-calls)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_entry_invoke_us"
-        (/ compiler-tc-macro-stdlib-tlci-entry-invoke-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_tlci_entry_invoke_calls"
-        compiler-tc-macro-stdlib-tlci-entry-invoke-calls)
-      (compiler-tc-macro-counter-profile-line
-        "stdlib_source_interpreted"
-        compiler-tc-macro-stdlib-source-interpreted)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decls_shared"
-        compiler-tc-macro-walk-decls-shared)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decls_expanded"
-        compiler-tc-macro-walk-decls-expanded)
-      (compiler-tc-macro-counter-profile-line
-        "walk_share_gate_open"
-        compiler-tc-macro-walk-share-gate-open)
-      (compiler-tc-macro-counter-profile-line
-        "walk_scrut_tc_us"
-        (/ compiler-tc-macro-walk-scrut-tc-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_scrut_tc_calls"
-        compiler-tc-macro-walk-scrut-tc-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_arm_bind_us"
-        (/ compiler-tc-macro-walk-arm-bind-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_arm_bind_calls"
-        compiler-tc-macro-walk-arm-bind-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_bind_params_us"
-        (/ compiler-tc-macro-walk-bind-params-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_bind_params_calls"
-        compiler-tc-macro-walk-bind-params-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_direct_marshal_us"
-        (/ compiler-tc-macro-walk-direct-marshal-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_direct_marshal_calls"
-        compiler-tc-macro-walk-direct-marshal-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_native_dispatch_us"
-        (/ compiler-tc-macro-walk-native-dispatch-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_native_dispatch_calls"
-        compiler-tc-macro-walk-native-dispatch-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_gate_us"
-        (/ compiler-tc-macro-walk-decl-gate-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_gate_calls"
-        compiler-tc-macro-walk-decl-gate-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_let_bind_us"
-        (/ compiler-tc-macro-walk-let-bind-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_let_bind_calls"
-        compiler-tc-macro-walk-let-bind-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_fire_scan_touches"
-        compiler-tc-macro-walk-fire-touches)
-      (compiler-tc-macro-counter-profile-line
-        "walk_expand_visits"
-        compiler-tc-macro-walk-expand-visits)
-      (compiler-tc-macro-counter-profile-line
-        "walk_scrut_tc_alloc_kb"
-        (/ compiler-tc-macro-walk-scrut-tc-alloc-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_scrut_tc_live_kb"
-        (/ compiler-tc-macro-walk-scrut-tc-live-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_arm_bind_alloc_kb"
-        (/ compiler-tc-macro-walk-arm-bind-alloc-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_arm_bind_live_kb"
-        (/ compiler-tc-macro-walk-arm-bind-live-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_bind_params_alloc_kb"
-        (/ compiler-tc-macro-walk-bind-params-alloc-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_bind_params_live_kb"
-        (/ compiler-tc-macro-walk-bind-params-live-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_direct_marshal_alloc_kb"
-        (/ compiler-tc-macro-walk-direct-marshal-alloc-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_direct_marshal_live_kb"
-        (/ compiler-tc-macro-walk-direct-marshal-live-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_native_dispatch_alloc_kb"
-        (/ compiler-tc-macro-walk-native-dispatch-alloc-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_native_dispatch_live_kb"
-        (/ compiler-tc-macro-walk-native-dispatch-live-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_gate_alloc_kb"
-        (/ compiler-tc-macro-walk-decl-gate-alloc-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_gate_live_kb"
-        (/ compiler-tc-macro-walk-decl-gate-live-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_let_bind_alloc_kb"
-        (/ compiler-tc-macro-walk-let-bind-alloc-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_let_bind_live_kb"
-        (/ compiler-tc-macro-walk-let-bind-live-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_eval_alloc_kb"
-        (/ compiler-tc-macro-walk-eval-alloc-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_eval_live_kb"
-        (/ compiler-tc-macro-walk-eval-live-bytes 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_shared_us"
-        (/ compiler-tc-walk-decl-shared-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_shared_alloc_kb"
-        (/ compiler-tc-walk-decl-shared-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_shared_live_kb"
-        (/ compiler-tc-walk-decl-shared-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_shared_count"
-        compiler-tc-walk-decl-shared-count)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_splice_us"
-        (/ compiler-tc-walk-decl-splice-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_splice_alloc_kb"
-        (/ compiler-tc-walk-decl-splice-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_splice_live_kb"
-        (/ compiler-tc-walk-decl-splice-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_splice_count"
-        compiler-tc-walk-decl-splice-count)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_nofire_us"
-        (/ compiler-tc-walk-decl-nofire-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_nofire_alloc_kb"
-        (/ compiler-tc-walk-decl-nofire-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_nofire_live_kb"
-        (/ compiler-tc-walk-decl-nofire-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_nofire_count"
-        compiler-tc-walk-decl-nofire-count)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_us"
-        (/ compiler-tc-walk-decl-fire-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_alloc_kb"
-        (/ compiler-tc-walk-decl-fire-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_live_kb"
-        (/ compiler-tc-walk-decl-fire-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_live_bytes"
-        compiler-tc-walk-decl-fire-live)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_count"
-        compiler-tc-walk-decl-fire-count)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_self_us"
-        (/
-          (if (>
-            compiler-tc-walk-decl-fire-ns
-            compiler-tc-walk-decl-fire-child-ns)
-            (-
-              compiler-tc-walk-decl-fire-ns
-              compiler-tc-walk-decl-fire-child-ns)
-            0)
-          1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_nested_us"
-        (/ compiler-tc-walk-decl-fire-child-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_attributed_calls"
-        compiler-tc-walk-decl-fire-attributed-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_survivor_alloc_bytes"
-        compiler-tc-walk-decl-fire-survivor-alloc-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_survivor_live_bytes"
-        compiler-tc-walk-decl-fire-survivor-live-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_survivor_pool_node_bytes"
-        (+
-          (*
-            compiler-tc-walk-decl-fire-survivor-expr-nodes
-            (ast.ast-expr-node-bytes))
-          (*
-            compiler-tc-walk-decl-fire-survivor-type-nodes
-            (ast.ast-type-node-bytes))))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_survivor_bytes"
-        (+
-          compiler-tc-walk-decl-fire-survivor-alloc-bytes
-          (+
-            (*
-              compiler-tc-walk-decl-fire-survivor-expr-nodes
-              (ast.ast-expr-node-bytes))
-            (*
-              compiler-tc-walk-decl-fire-survivor-type-nodes
-              (ast.ast-type-node-bytes)))))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_superseded_alloc_bytes"
-        compiler-tc-walk-decl-fire-superseded-alloc-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_superseded_released_bytes"
-        compiler-tc-walk-decl-fire-superseded-released-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_nonoutput_live_bytes"
-        (-
-          compiler-tc-walk-decl-fire-superseded-alloc-bytes
-          compiler-tc-walk-decl-fire-superseded-released-bytes))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_residual_live_bytes"
-        (-
-          compiler-tc-walk-decl-fire-live
-          (+
-            compiler-tc-walk-decl-fire-survivor-live-bytes
-            (-
-              compiler-tc-walk-decl-fire-superseded-alloc-bytes
-              compiler-tc-walk-decl-fire-superseded-released-bytes))))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_residual_committed_live_bytes"
-        compiler-tc-walk-decl-fire-committed-live-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_residual_post_boundary_live_bytes"
-        compiler-tc-walk-decl-fire-post-boundary-live-bytes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_residual_unattributed_live_bytes"
-        (-
-          compiler-tc-walk-decl-fire-live
-          (+
-            compiler-tc-walk-decl-fire-survivor-live-bytes
-            (+
-              (-
-                compiler-tc-walk-decl-fire-superseded-alloc-bytes
-                compiler-tc-walk-decl-fire-superseded-released-bytes)
-              (+
-                compiler-tc-walk-decl-fire-committed-live-bytes
-                compiler-tc-walk-decl-fire-post-boundary-live-bytes)))))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_source_shared_expr_refs"
-        compiler-tc-walk-decl-fire-source-shared-expr-refs)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_source_shared_type_refs"
-        compiler-tc-walk-decl-fire-source-shared-type-refs)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_survivor_expr_nodes"
-        compiler-tc-walk-decl-fire-survivor-expr-nodes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_fire_survivor_type_nodes"
-        compiler-tc-walk-decl-fire-survivor-type-nodes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_generations"
-        compiler-tc-walk-decl-generations)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_generation_rotations"
-        compiler-tc-walk-decl-generation-rotations)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_generation_skips"
-        compiler-tc-walk-decl-generation-skips)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_generation_expr_copies"
-        compiler-tc-walk-decl-generation-expr-copies)
-      (compiler-tc-macro-counter-profile-line
-        "pool_context_reseats"
-        compiler-tc-pool-context-reseats)
-      (compiler-tc-macro-counter-profile-line
-        "walk_hygiene_us"
-        (/ compiler-tc-walk-hygiene-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_hygiene_alloc_kb"
-        (/ compiler-tc-walk-hygiene-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_hygiene_live_kb"
-        (/ compiler-tc-walk-hygiene-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_hygiene_calls"
-        compiler-tc-walk-hygiene-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_hygiene_nodes_reused"
-        compiler-tc-walk-hygiene-nodes-reused)
-      (compiler-tc-macro-counter-profile-line
-        "walk_hygiene_nodes_copied"
-        compiler-tc-walk-hygiene-nodes-copied)
-      (compiler-tc-macro-counter-profile-line
-        "hygiene_env_bindings"
-        compiler-tc-macro-hygiene-env-bindings)
-      (compiler-tc-macro-counter-profile-line
-        "hygiene_env_lookups"
-        compiler-tc-macro-hygiene-env-lookups)
-      (compiler-tc-macro-counter-profile-line
-        "hygiene_env_lookup_steps"
-        compiler-tc-macro-hygiene-env-lookup-steps)
-      (compiler-tc-macro-counter-profile-line
-        "hygiene_pattern_lookups"
-        compiler-tc-macro-hygiene-pattern-lookups)
-      (compiler-tc-macro-counter-profile-line
-        "hygiene_pattern_lookup_steps"
-        compiler-tc-macro-hygiene-pattern-lookup-steps)
-      (compiler-tc-macro-counter-profile-line
-        "walk_rewalk_us"
-        (/ compiler-tc-walk-rewalk-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_rewalk_alloc_kb"
-        (/ compiler-tc-walk-rewalk-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_rewalk_live_kb"
-        (/ compiler-tc-walk-rewalk-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_rewalk_calls"
-        compiler-tc-walk-rewalk-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_rewalk_zero_fire_calls"
-        compiler-tc-walk-rewalk-zero-fire-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_rewalk_provenance_skips"
-        compiler-tc-walk-rewalk-provenance-skips)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_batch_us"
-        (/ compiler-tc-walk-decl-sp-defer-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_batch_alloc_kb"
-        (/ compiler-tc-walk-decl-sp-defer-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_batch_live_kb"
-        (/ compiler-tc-walk-decl-sp-defer-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_batch_count"
-        compiler-tc-walk-decl-sp-defer-count)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_flush_us"
-        (/ compiler-tc-walk-decl-sp-refresh-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_flush_alloc_kb"
-        (/ compiler-tc-walk-decl-sp-refresh-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_flush_live_kb"
-        (/ compiler-tc-walk-decl-sp-refresh-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_flush_count"
-        compiler-tc-walk-decl-sp-refresh-count)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_inline_us"
-        (/ compiler-tc-walk-decl-sp-inline-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_inline_alloc_kb"
-        (/ compiler-tc-walk-decl-sp-inline-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_inline_live_kb"
-        (/ compiler-tc-walk-decl-sp-inline-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_inline_count"
-        compiler-tc-walk-decl-sp-inline-count)
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_mat_us"
-        (/ compiler-tc-walk-decl-sp-mat-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_mat_alloc_kb"
-        (/ compiler-tc-walk-decl-sp-mat-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_mat_live_kb"
-        (/ compiler-tc-walk-decl-sp-mat-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_mat_count"
-        compiler-tc-walk-decl-sp-mat-count)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_registry_incremental"
-        compiler-tc-walk-splice-registry-incremental)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_registry_invalidated"
-        compiler-tc-walk-splice-registry-invalidated)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_deferred"
-        compiler-tc-walk-splice-ctfe-deferred)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_cleared"
-        compiler-tc-walk-splice-ctfe-cleared)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_builds"
-        compiler-tc-walk-splice-ctfe-builds)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_rebuilds"
-        compiler-tc-walk-splice-ctfe-rebuilds)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_build_us"
-        (/ compiler-tc-walk-splice-ctfe-build-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_build_alloc_kb"
-        (/ compiler-tc-walk-splice-ctfe-build-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_build_live_kb"
-        (/ compiler-tc-walk-splice-ctfe-build-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_rebuild_us"
-        (/ compiler-tc-walk-splice-ctfe-rebuild-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_rebuild_alloc_kb"
-        (/ compiler-tc-walk-splice-ctfe-rebuild-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_rebuild_live_kb"
-        (/ compiler-tc-walk-splice-ctfe-rebuild-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_extensions"
-        compiler-tc-walk-splice-ctfe-extensions)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_extension_us"
-        (/ compiler-tc-walk-splice-ctfe-extension-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_extension_alloc_kb"
-        (/ compiler-tc-walk-splice-ctfe-extension-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_extension_live_kb"
-        (/ compiler-tc-walk-splice-ctfe-extension-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_semantic_rejections"
-        compiler-tc-walk-splice-ctfe-semantic-rejections)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_capacity_grows"
-        compiler-tc-walk-splice-ctfe-capacity-grows)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_cache_unavailable"
-        compiler-tc-walk-splice-ctfe-cache-unavailable)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_clear_ordinary"
-        compiler-tc-walk-splice-ctfe-clear-ordinary)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_ctfe_clear_file"
-        compiler-tc-walk-splice-ctfe-clear-file)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_prescan_resets"
-        compiler-tc-walk-splice-prescan-resets)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_env_reresolve_calls"
-        compiler-tc-walk-splice-env-reresolve-calls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_env_reresolve_candidates"
-        compiler-tc-walk-splice-env-reresolve-candidates)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_env_reresolve_updates"
-        compiler-tc-walk-splice-env-reresolve-updates)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_env_reresolve_remaining"
-        compiler-tc-walk-splice-env-reresolve-remaining)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_env_fallbacks"
-        compiler-tc-walk-splice-env-fallbacks)
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_nodes"
-        compiler-tc-walk-segment-nodes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_splits"
-        compiler-tc-walk-segment-splits)
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_delta_decls"
-        compiler-tc-walk-segment-delta-decls)
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_fallback_flattens"
-        compiler-tc-walk-segment-fallback-flattens)
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_fallback_alias_flattens"
-        compiler-tc-walk-segment-fallback-alias-flattens)
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_fallback_file_flattens"
-        compiler-tc-walk-segment-fallback-file-flattens)
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_fallback_flatten_us"
-        (/ compiler-tc-walk-segment-fallback-flatten-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_fallback_flatten_alloc_kb"
-        (/ compiler-tc-walk-segment-fallback-flatten-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_fallback_flatten_live_kb"
-        (/ compiler-tc-walk-segment-fallback-flatten-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_final_flattens"
-        compiler-tc-walk-segment-final-flattens)
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_final_flatten_us"
-        (/ compiler-tc-walk-segment-final-flatten-ns 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_final_flatten_alloc_kb"
-        (/ compiler-tc-walk-segment-final-flatten-alloc 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_segment_final_flatten_live_kb"
-        (/ compiler-tc-walk-segment-final-flatten-live 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_copy_us"
-        (/ (array-ref compiler-tc-walk-sp-probe-ns 0) 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_copy_alloc_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-alloc 0) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_copy_live_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-live 0) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_copy_calls"
-        (array-ref compiler-tc-walk-sp-probe-calls 0))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_extend_us"
-        (/ (array-ref compiler-tc-walk-sp-probe-ns 1) 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_extend_alloc_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-alloc 1) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_extend_live_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-live 1) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_extend_calls"
-        (array-ref compiler-tc-walk-sp-probe-calls 1))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_cache_us"
-        (/ (array-ref compiler-tc-walk-sp-probe-ns 2) 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_cache_alloc_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-alloc 2) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_cache_live_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-live 2) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_cache_calls"
-        (array-ref compiler-tc-walk-sp-probe-calls 2))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_envbuild_us"
-        (/ (array-ref compiler-tc-walk-sp-probe-ns 3) 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_envbuild_alloc_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-alloc 3) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_envbuild_live_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-live 3) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_envbuild_calls"
-        (array-ref compiler-tc-walk-sp-probe-calls 3))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_reresolve_us"
-        (/ (array-ref compiler-tc-walk-sp-probe-ns 4) 1000))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_reresolve_alloc_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-alloc 4) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_reresolve_live_kb"
-        (/ (array-ref compiler-tc-walk-sp-probe-live 4) 1024))
-      (compiler-tc-macro-counter-profile-line
-        "walk_sp_reresolve_calls"
-        (array-ref compiler-tc-walk-sp-probe-calls 4))
+      (compiler-tc-walk-profile-derive!)
+      (compiler-tc-resolve-profile-emit!)
+      (compiler-tc-env-profile-emit!)
+      (compiler-tc-unbound-profile-emit!)
+      (compiler-tc-macro-program-profile-emit!)
+      (compiler-tc-walk-profile-emit!)
+      (compiler-tc-splice-profile-emit!)
+      (compiler-tc-walk-probe-profile-emit!)
       (compiler-tc-reinfer-profile-emit state)
       (compiler-tc-body-fact-profile-emit state)
-      (tc-lp-line "repr_c_field_builds" 0)
-      (tc-lp-line "repr_c_field_visits" 1)
-      (tc-lp-line "inline_field_builds" 2)
-      (tc-lp-line "inline_field_visits" 3)
-      (tc-lp-line "inline_payload_builds" 4)
-      (tc-lp-line "inline_payload_visits" 5)
-      (tc-lp-line "inline_variant_builds" 6)
-      (tc-lp-line "inline_variant_visits" 7)
-      (tc-lp-line "stdlib_field_spec_builds" 8)
-      (tc-lp-line "stdlib_field_spec_visits" 9)
-      (tc-lp-line "stdlib_variant_spec_builds" 10)
-      (tc-lp-line "stdlib_variant_spec_visits" 11)
-      (tc-lp-line "cache_hits" 12)
-      (tc-lp-line "cache_misses" 13)
-      (tc-lp-line "cache_bypasses" 14))))
+      (compiler-tc-layout-profile-emit!))))
 
 (define (tc-expr-diag
   [expr-bases : i64]
@@ -10820,9 +7295,9 @@
   (set! (array-ref store.caches index) cache))
 
 ;; Hot persistent-env walkers expand these address/field reads at their direct
-;; match sites. Returning an enum-shaped view per node was measurably expensive
-;; here: it copied the store and the largest cache payload even when a walker
-;; only needed the binding key and parent. Arena segments are never moved, so a
+;; match sites. Returning an enum-shaped view per node is expensive here: it
+;; copies the store and the largest cache payload even when a walker only
+;; needs the binding key and parent. Arena segments are never moved, so a
 ;; snapshot head remains a valid element address after later segments are added.
 ;; `tc-type-env-raw-layout-smoke?` pins the word offsets used by these hot
 ;; accessors without adding byte-offset conversion work to each expansion.
@@ -11071,15 +7546,13 @@
       raw-name-id)))
 
 ;; --- top-env build membership side table ------------------------------------
-;; The whole-program top-level env is an UNCACHED spine of ~46K binds. The
+;; The whole-program top-level env is an UNCACHED spine of every top bind. The
 ;; threshold-compaction machinery (tc-env-compact-local-if-threshold) is for
 ;; single-bind function scopes and does not fire here: unsafe/c-abi decls
 ;; prepend two binds at once, breaking the exact-"32 binds above a cache"
 ;; alignment it needs, so the top env stays a plain list. The enum-variant
 ;; binder uses `tc-bind-alias-id-if-free`, whose guard `tc-name-bound-id?`
-;; rescans that whole spine per variant -> O(decls^2) (measured: 46.4M node
-;; visits, ~120ms of the top-env build of a self-compile, with the guard never
-;; once finding a name already bound).
+;; rescans that whole spine per variant -> O(decls^2).
 ;;
 ;; This is a job-owned membership bloom keyed by name identity: every name
 ;; bound during the build (plus the seeded base env) is stamped with the
@@ -11097,8 +7570,8 @@
 ;; conservative). A stamped id is therefore definitely bound, so the guard can
 ;; skip without the O(spine) scan.
 ;; Self-compiles repeat enum-variant names (Ok/Err/None/Nil/...) across
-;; hundreds of enums; every repeat after the first used to rescan the whole
-;; spine from the head down to the first binding. Ids that are bloom-marked but
+;; hundreds of enums; without bit 1 every repeat after the first would rescan
+;; the spine from the head down to the first binding. Ids that are bloom-marked but
 ;; not bound-stamped (e.g. spine binds made outside the alias binder) still
 ;; take the exact scan, so results are identical either way.
 (define (tc-topenv-membership-state-present? [state : TcTopEnvMembershipState]) : bool
@@ -11407,7 +7880,7 @@
       (tc-type-env-topenv-membership-state env)]
     [topenv-mode : i64 (tc-topenv-membership-mode topenv-state)]
     (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-bind))
+      (cfg compile-profile (counters.bump! tc-profile-env-binds))
       (if (not (= (bit-and topenv-mode 2) 0))
         (tc-topenv-membership-mark-bound! topenv-state name-id)
         (if (not (= (bit-and topenv-mode 1) 0))
@@ -11695,7 +8168,7 @@
     ;; The state owns only the fixed carrier, dense lanes, and memo cells.
     ;; Scoped stacks are transient pass data and must follow the caller's
     ;; current scratch arena; retaining every function's stack in the state
-    ;; arena makes a self-compile consume hundreds of megabytes unnecessarily.
+    ;; arena would keep them all alive for the whole compile.
     (TcTypeEnvScopedStack
       state.address
       (__tl_make-array
@@ -11791,7 +8264,7 @@
           (&mut (__tl-box-place stack.lookup-cache))
           name-id
           index))
-      (cfg compile-profile (compiler-tc-env-profile-note-scoped-bind))
+      (cfg compile-profile (counters.bump! tc-profile-env-scoped-binds))
       (set! stack.slot-count (+ index 1)))))
 
 (define (tc-type-env-scoped-stack-bind-id!
@@ -11880,7 +8353,7 @@
     (begin
       (set! (array-ref dense-indices name-id) index)
       (set! (array-ref dense-epochs name-id) stack.lookup-epoch)
-      (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
+      (cfg compile-profile (counters.bump! tc-profile-env-scoped-cache-misses))
       index)))
 
 (define (tc-type-env-scoped-stack-map-cached-index
@@ -11901,17 +8374,23 @@
         name-id)]
     (if (= index -2)
       (begin
-        (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-env-scoped-cache-misses))
         -1)
       (if (and
         (>= index 0)
         (< index stack.slot-count)
         (= (__tl-project-field (array-ref stack.slots index) name-id) name-id))
         (begin
-          (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-hit))
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-env-scoped-cache-hits))
           index)
         (begin
-          (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-env-scoped-cache-misses))
           (let
             [repaired-index : i64
               (tc-type-env-scoped-stack-find-id-index-from
@@ -11941,13 +8420,13 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-tc-env-profile-note-scoped-cache-hit))
+                (counters.bump! tc-profile-env-scoped-cache-hits))
               -1)
             (if (< index stack.slot-count)
               (begin
                 (cfg
                   compile-profile
-                  (compiler-tc-env-profile-note-scoped-cache-hit))
+                  (counters.bump! tc-profile-env-scoped-cache-hits))
                 index)
               (tc-type-env-scoped-stack-dense-lookup-id-refresh
                 (& stack)
@@ -12238,7 +8717,7 @@
         stack
         (+ index 1)
         (begin
-          (cfg compile-profile (compiler-tc-env-profile-note-bind))
+          (cfg compile-profile (counters.bump! tc-profile-env-binds))
           (tc-type-env-bind-node env slot.name-id slot.ty))))))
 
 (define (tc-type-env-scoped-sidecar-materialize
@@ -12246,10 +8725,13 @@
   (begin
     (cfg
       compile-profile
-      (compiler-tc-env-profile-note-scoped-materialization
-        (-
-          (tc-type-env-scoped-stack-len sidecar.stack)
-          sidecar.materialize-start)))
+      (begin
+        (counters.bump! tc-profile-env-scoped-materializations)
+        (counters.add!
+          tc-profile-env-scoped-materialized-slots
+          (-
+            (tc-type-env-scoped-stack-len sidecar.stack)
+            sidecar.materialize-start))))
     (tc-type-env-scoped-stack-materialize-at
       sidecar.stack
       sidecar.materialize-start
@@ -13052,16 +9534,14 @@
           false))
       false)))
 
-;; Cache construction is the dominant i64 map workload of a self-compile
-;; (~16% of stage2 CPU before this change): the previous shape walked the
-;; spine FOUR times per compaction (entry count, shadow count, entry fill,
-;; shadow fill) and built a second whole-env map just to answer "is this
-;; default builtin shadowed?". Default-shadow membership is now a per-entry
-;; flag array parallel to `values`/`unsafe-flags`, computed during the single
-;; entry fill walk: an entry's low bit is set when its head-most binding sits
-;; above the first default-boundary marker. Head-first walk order means a
-;; name bound both above and below the boundary keeps its head-most (above)
-;; occurrence, which matches the old any-occurrence-above map exactly.
+;; Cache construction is the dominant i64 map workload of a self-compile, so
+;; it walks the spine once per compaction and builds no second whole-env map
+;; to answer "is this default builtin shadowed?". Default-shadow membership is
+;; a per-entry flag array parallel to `values`/`unsafe-flags`, computed during
+;; the single entry fill walk: an entry's low bit is set when its head-most
+;; binding sits above the first default-boundary marker. Head-first walk order
+;; means a name bound both above and below the boundary keeps its head-most
+;; (above) occurrence, so the bit is set exactly when any occurrence is above.
 (define (tc-env-cache-add!
   [ids : (&mut ids tc_i64_i64_map.Map)]
   [values : (&mut values (__tl_dyn-array ast.AstType))]
@@ -13075,7 +9555,7 @@
   [position : i64]) : bool
   (if (tc_i64_i64_map.insert-if-absent-ref! ids name-id next)
     (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-cache-entry))
+      (cfg compile-profile (counters.bump! tc-profile-env-cache-entries))
       (set! (array-ref values next) ty)
       (set!
         (array-ref unsafe-flags next)
@@ -13386,14 +9866,11 @@
 ;;
 ;; `tc-env-with-cache-layer-over-explicit` pushes one explicit layer per module
 ;; extension / additive splice, each layer's `below` being the layer
-;; it extends. A self-compile builds 343 such layers over 2 explicit roots, and
-;; because splices and module extensions re-extend older base snapshots the
-;; result is a FOREST, not a stack (measured: 214 of 343 pushes did not sit on
-;; the previous tip; max depth 128, mean creation depth 52). Every layer is a
-;; correct non-membership filter, so lookups fall through them one map probe at
-;; a time: 31.2M probes per opt1 self-compile, most of them from walks 12-18
-;; layers deep. With the index the same compile does 3.18M probes plus 0.53M
-;; version-list steps (0.17 per probe, 32 at worst).
+;; it extends. A self-compile builds hundreds of such layers, and because
+;; splices and module extensions re-extend older base snapshots the result is
+;; a deep FOREST, not a stack. Every layer is a correct non-membership filter,
+;; so without the index lookups fall through them one map probe at a time,
+;; most of them many layers deep.
 ;;
 ;; The index replaces that per-layer fall-through with one probe. Per store it
 ;; keeps a single map from binding key to the packed reference of the NEWEST
@@ -13778,7 +10255,7 @@
 
 (define (tc-env-with-cache-mode [env : TcTypeEnv] [scan-through : bool]) : TcTypeEnv
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
+    (cfg compile-profile (counters.bump! tc-profile-env-cache-builds))
     (let
       [count : i64 (tc-env-cache-count env)]
       [capacity : i64 (tc-env-cache-capacity count)]
@@ -13844,7 +10321,7 @@
   [scan-through : bool]
   [below : TcTypeEnv]) : TcTypeEnv
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
+    (cfg compile-profile (counters.bump! tc-profile-env-cache-builds))
     (let
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
@@ -14816,7 +11293,7 @@
     (tc-type-env-scoped-carrier-in-unsafe?
       (tc-type-env-scoped-runtime-current env))
     (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (match (tc-env-marker-type env (tc-unsafe-marker-id))
         [(ast.AstMaybeType.Some (ast.AstType.Unit)) true]
         [(ast.AstMaybeType.Some _) false]
@@ -15101,7 +11578,7 @@
     (tc-type-env-scoped-carrier-current-return-type
       (tc-type-env-scoped-runtime-current env))
     (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (match (tc-env-marker-type env (tc-return-type-id))
         [(ast.AstMaybeType.Some ty) (ResultTcType.Ok ty)]
         [(ast.AstMaybeType.No)
@@ -15666,7 +12143,9 @@
       (__tl_make-array TcStdlibFieldSpec (+ n 1))]
     [i : i64 0]
     (begin
-      (cfg compile-profile (tc-lp-note 8))
+      (cfg
+        compile-profile
+        (counters.bump! tc-profile-layout-stdlib-field-spec-builds))
       (set! (array-ref slots 0) (TcStdlibFieldSpec.Spec name ty))
       (while (< i n)
         (begin
@@ -15688,7 +12167,9 @@
       (__tl_make-array TcStdlibVariantSpec (+ n 1))]
     [i : i64 0]
     (begin
-      (cfg compile-profile (tc-lp-note 10))
+      (cfg
+        compile-profile
+        (counters.bump! tc-profile-layout-stdlib-variant-spec-builds))
       (set! (array-ref slots 0) (TcStdlibVariantSpec.Spec name payloads))
       (while (< i n)
         (begin
@@ -15966,7 +12447,9 @@
         (let
           [expected-name-text : String (ci.intern-str expected-name)]
           (begin
-            (cfg compile-profile (tc-lp-note 9))
+            (cfg
+              compile-profile
+              (counters.bump! tc-profile-layout-stdlib-field-spec-visits))
             (if (>= index fields.len)
               (tc-stdlib-well-known-mismatch
                 type-name
@@ -16057,7 +12540,9 @@
         (let
           [expected-name-text : String (ci.intern-str expected-name)]
           (begin
-            (cfg compile-profile (tc-lp-note 11))
+            (cfg
+              compile-profile
+              (counters.bump! tc-profile-layout-stdlib-variant-spec-visits))
             (if (>= index variants.len)
               (tc-stdlib-well-known-mismatch
                 type-name
@@ -17666,7 +14151,7 @@
   [lookup-id : i64]
   [display-id : i64]) : ResultTcType
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-lookup))
+    (cfg compile-profile (counters.bump! tc-profile-env-lookups))
     (let
       [store-handle : i64 env.store]
       [head : i64 env.head]
@@ -17763,7 +14248,7 @@
           (let
             [sidecar : TcTypeEnvScopedSidecar carrier.sidecar]
             (begin
-              (cfg compile-profile (compiler-tc-env-profile-note-lookup))
+              (cfg compile-profile (counters.bump! tc-profile-env-lookups))
               (match (tc-type-env-scoped-stack-lookup-id-at sidecar.stack index)
                 [(TcTypeEnvScopedLookup.Found ty _ _ _ _) (ResultTcType.Ok ty)]
                 [(TcTypeEnvScopedLookup.Missing)
@@ -17772,7 +14257,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-tc-env-profile-note-scoped-tail-fallback))
+              (counters.bump! tc-profile-env-scoped-tail-fallbacks))
             (tc-lookup-persistent-key-id
               (__tl-project-field
                 (__tl-project-field carrier sidecar)
@@ -17851,7 +14336,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-tc-env-profile-note-scoped-tail-fallback))
+              (counters.bump! tc-profile-env-scoped-tail-fallbacks))
             (tc-name-bound-persistent-key-id?
               (__tl-project-field
                 (__tl-project-field carrier sidecar)
@@ -17871,7 +14356,7 @@
   [lookup-id : i64]
   [display-id : i64]) : ResultTcTypeUnsafe
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-lookup))
+    (cfg compile-profile (counters.bump! tc-profile-env-lookups))
     (let
       [store-handle : i64 env.store]
       [head : i64 env.head]
@@ -17990,7 +14475,7 @@
                   slots)
                 index)]
             (begin
-              (cfg compile-profile (compiler-tc-env-profile-note-lookup))
+              (cfg compile-profile (counters.bump! tc-profile-env-lookups))
               (ResultTcTypeUnsafe.Ok
                 slot.ty
                 (tc-type-env-scoped-flag?
@@ -17999,7 +14484,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-tc-env-profile-note-scoped-tail-fallback))
+              (counters.bump! tc-profile-env-scoped-tail-fallbacks))
             (tc-lookup-unsafe-persistent-key-id
               (__tl-project-field
                 (__tl-project-field carrier sidecar)
@@ -18028,15 +14513,14 @@
 ;; hygiene global boundary, at the first non-scan-through cache, or at the root?
 ;; Module-local overlay construction asks it once per declaration against a
 ;; chain that grows one binding at a time, so the plain walk below is quadratic
-;; in the number of declarations a module contributes (measured: 15.5M chain
-;; steps for 161K queries in one opt1 self compile, 99.99% of them answering
-;; "no").
+;; in the number of declarations a module contributes, and nearly every query
+;; answers "no".
 ;;
 ;; The span of a chain head is `delta ++ span(parent head)`, so a single-entry
 ;; index of the last queried head answers repeated queries without rewalking:
 ;; binding keys go into an open-addressed key set and cache nodes into a short
 ;; list that is probed as before. Only the bindings pushed since the previous
-;; query are walked (measured: 23.8K walk steps instead of 15.5M).
+;; query are walked.
 ;;
 ;; Soundness. The chain below a head is immutable and binding/cache records are
 ;; append-only within a store, so a recorded key set stays exact for as long as
@@ -18646,7 +15130,7 @@
     (tc-type-env-scoped-carrier-active-region
       (tc-type-env-scoped-runtime-current env))
     (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (match (tc-env-marker-type env (tc-region-marker-id))
         [(ast.AstMaybeType.Some (ast.AstType.Var region))
           (TcMaybeNameId.Some region)]
@@ -19183,7 +15667,7 @@
 
 (define (tc-arena-phase-token-region-active [env : TcTypeEnv] [token-id : i64]) : TcMaybeNameId
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (let
       [region-marker-id : i64
         (tc-arena-phase-token-region-marker-id env token-id)]
@@ -19225,7 +15709,7 @@
 
 (define (tc-arena-phase-token-owner-active [env : TcTypeEnv] [token-id : i64]) : TcMaybeNameId
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (let
       [owner-marker-id : i64
         (tc-arena-phase-token-owner-marker-id env token-id)]
@@ -19247,7 +15731,7 @@
 
 (define (tc-current-arena-owner-region [env : TcTypeEnv] [owner : i64]) : i64
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (match (tc-env-marker-type
       env
       (tc-arena-phase-current-region-marker-id env owner))
@@ -19344,7 +15828,7 @@
       (tc-type-env-scoped-runtime-current env)
       name-id)
     (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (tc-cleanup-owner-active-persistent-id? env name-id))))
 
 (define (tc-arena-owner-active-persistent-id?
@@ -19369,7 +15853,7 @@
       name-id
       marker-id)
     (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (tc-arena-owner-active-persistent-id? env name-id marker-id))))
 
 (define (tc-ordinary-arena-owner-active-id? [env : TcTypeEnv] [name-id : i64]) : bool
@@ -19425,7 +15909,7 @@
 
 (define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (if (not (tc-cleanup-owner-markers-possible?))
       TcStringList.Nil
       (let
@@ -19949,7 +16433,7 @@
         (tc-type-env-scoped-runtime-current env)
         lifetime-id)
       (begin
-        (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+        (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
         (tc-lifetime-visible-persistent-id? env lifetime-id)))))
 
 (define (tc-reference-lifetimes-visible?
@@ -20087,7 +16571,7 @@
       lifetime-id
       target-id)
     (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (tc-lifetime-outlives-binding-persistent-id? env lifetime-id target-id))))
 
 (define (tc-reference-lifetimes-outlive-binding-id?
@@ -20267,7 +16751,7 @@
         value-lifetime-id
         target-lifetime-id)
       (begin
-        (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+        (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
         (tc-lifetime-outlives-lifetime-persistent-id?
           env
           value-lifetime-id
@@ -21549,7 +18033,7 @@
   [value-region : i64]
   [target-region : i64]) : bool
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (match (tc-type-env-view env)
       [(TcTypeEnvView.Cache _ _ _ rest _)
         (tc-region-outlives-or-matches-scan rest value-region target-region)]
@@ -22173,7 +18657,7 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-tc-env-profile-note-scoped-tail-fallback))
+                (counters.bump! tc-profile-env-scoped-tail-fallbacks))
               (tc-source-leading-segment-wins-over-exact-persistent-id?
                 (__tl-project-field
                   (__tl-project-field carrier sidecar)
@@ -23349,8 +19833,7 @@
 ;; Shape code of one declaration as the index build reads it: a module marker
 ;; carries its module id (never negative), imports are -1, everything else -2.
 ;; Reads the tag through a borrow and the module id straight out of the row, so
-;; the whole-program shape sweep no longer copies a 104 B `AstDecl` per
-;; declaration (twice over, once into `ast-decl-unwrapped` and once back out).
+;; the whole-program shape sweep never copies an `AstDecl` per declaration.
 (define (tc-module-decl-index-shape-code-at
   [decls : (& decls ast.AstDeclList)]
   [index : i64]) : i64
@@ -25067,10 +21550,10 @@
   [name-id : i64]
   [check-local-field : bool]) : ResultTcString
   ;; Intern `name` once; every metadata query below reads the id-keyed slots
-  ;; instead of re-hashing the string. This is the hottest name-resolution
-  ;; function, previously hashing each name 3-4x (slash-qualified?, first-dot,
-  ;; leading-segment, bound-exact?). The already-interned `name-id` is threaded
-  ;; from the caller (AST field or upstream intern) so this hot path no longer
+  ;; instead of re-hashing the string for each of slash-qualified?, first-dot,
+  ;; leading-segment and bound-exact?. This is the hottest name-resolution
+  ;; function. The already-interned `name-id` is threaded
+  ;; from the caller (AST field or upstream intern) so this hot path never
   ;; re-interns the string; the public String wrappers below intern once.
   (if (tc-source-slash-qualified-id?
     (tc-context-structural-session ctx)
@@ -25574,7 +22057,11 @@
       (set! data.symbols-owner stamp.owner)
       (set! data.symbols-generation stamp.generation)
       (tc-type-handle-cache-state-data-set! state data)
-      (cfg compile-profile (compiler-tc-type-handle-profile-note-cache-miss))
+      (cfg
+        compile-profile
+        (begin
+          (counters.bump! tc-profile-type-handle-cache-misses)
+          (counters.bump! tc-profile-type-handle-symbol-probes)))
       (tc-type-handle-cache-probe-and-store! state symbols lookup-id key))))
 
 (define (tc-type-handle-cache-probe-and-store!
@@ -25646,13 +22133,15 @@
           (begin
             (cfg
               compile-profile
-              (compiler-tc-type-handle-profile-note-cache-hit))
+              (counters.bump! tc-profile-type-handle-cache-hits))
             (unsafe
               (ptr-read (ptr-offset handles slot))))
           (begin
             (cfg
               compile-profile
-              (compiler-tc-type-handle-profile-note-cache-miss))
+              (begin
+                (counters.bump! tc-profile-type-handle-cache-misses)
+                (counters.bump! tc-profile-type-handle-symbol-probes)))
             (tc-type-handle-cache-probe-and-store! state symbols lookup-id key))))
       (tc-type-handle-cache-rebind-and-probe! state symbols lookup-id key))))
 
@@ -25674,13 +22163,17 @@
       (begin
         (cfg
           compile-profile
-          (compiler-tc-resolution-profile-note-name-cache-hit))
+          (begin
+            (counters.bump! tc-profile-resolve-name-lookup-calls)
+            (counters.bump! tc-profile-resolve-name-cache-hits)))
         handle)]
     [(TcTypeNameLookupCache.Missing)
       (begin
         (cfg
           compile-profile
-          (compiler-tc-resolution-profile-note-name-cache-hit))
+          (begin
+            (counters.bump! tc-profile-resolve-name-lookup-calls)
+            (counters.bump! tc-profile-resolve-name-cache-hits)))
         (csym.compiler-symbols-missing-handle))]
     [(TcTypeNameLookupCache.Miss)
       (let
@@ -25693,7 +22186,10 @@
         (begin
           (cfg
             compile-profile
-            (compiler-tc-resolution-profile-note-name-cache-miss))
+            (begin
+              (counters.bump! tc-profile-resolve-name-lookup-calls)
+              (counters.bump! tc-profile-resolve-name-cache-misses)
+              (counters.bump! tc-profile-resolve-type-symbol-probes)))
           (tc-resolve-type-name-cache-store!
             state
             lookup-id
@@ -26192,10 +22688,9 @@
         ty))))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
-  ;; Concrete leaves already returned directly from this match. Keep that
-  ;; 17M-call selfhost path free of pool selection, and consult the recursive
-  ;; job-owned predicate only for composite shapes that the old resolver would
-  ;; otherwise rebuild unconditionally.
+  ;; Concrete leaves return directly from this match. Keep that hot path free
+  ;; of pool selection, and consult the recursive job-owned predicate only for
+  ;; composite shapes, so they are rebuilt only when they need resolution.
   (match (tc-global-shared-view ty)
     [(ast.AstType.CFunc _ _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.Func _ _) (tc-resolve-type-composite ctx ty)]
@@ -34177,11 +30672,15 @@
       module-id)
       [(TcMaybeTypeEnv.Some env)
         (begin
-          (cfg compile-profile (compiler-tc-env-profile-note-module-local-hit))
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-env-module-local-hits))
           (ResultTcModuleLocalEnv.Ok env cache))]
       [(TcMaybeTypeEnv.No)
         (begin
-          (cfg compile-profile (compiler-tc-env-profile-note-module-local-miss))
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-env-module-local-misses))
           (match (tc-module-local-env-id ctx top-env module module-id)
             [(ResultTcEnv.Ok env)
               (ResultTcModuleLocalEnv.Ok
@@ -35598,10 +32097,7 @@
     expr-id)
     [(TcBodyTypeFact.Hit ty) (ResultTcType.Ok ty)]
     [(TcBodyTypeFact.Miss)
-      (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-expr-id site ctx env expr-id)
-        (tc-expr-id ctx env expr-id))]))
+      (compiler-tc-reinfer-profiled ctx site (tc-expr-id ctx env expr-id))]))
 
 (define (tc-body-type-fact-list-types-into-at
   [state : TcBodyState]
@@ -35649,9 +32145,9 @@
           (compiler-tc-body-fact-profile-miss
             (tc-context-job-state ctx)
             (tc-global-shared-view _site)))
-        (cfg
-          compile-profile
-          (compiler-tc-reinfer-profile-expr-list-types _site ctx env exprs)
+        (compiler-tc-reinfer-profiled
+          ctx
+          _site
           (tc-expr-list-types ctx env exprs)))]))
 
 (define (tc-move-binding-type-id
@@ -36053,7 +32549,7 @@
         (tc-private-string-intrinsic-type ctx env lookup-id))]
     [_ (ResultTcType.Err "")]))
 
-;; Source-level builtin dispatch historically observed module-local declaration
+;; Source-level builtin dispatch observes module-local declaration
 ;; copies through `tc-name-bound-id?`. Dotted modules keep the authoritative
 ;; declaration under its qualified top-env key instead, so consult symbol
 ;; ownership when the exact environment lookup misses. Lexical and imported
@@ -36091,7 +32587,7 @@
               (begin
                 (cfg
                   compile-profile
-                  (compiler-tc-env-profile-note-scoped-tail-fallback))
+                  (counters.bump! tc-profile-env-scoped-tail-fallbacks))
                 (tc-default-builtin-unshadowed-scan-id?
                   (__tl-project-field
                     (__tl-project-field carrier sidecar)
@@ -36487,7 +32983,7 @@
       (set! names.len (+ names.len 1))
       (cfg
         compile-profile
-        (compiler-tc-env-profile-note-unbound-visible-candidate))
+        (counters.bump! tc-profile-unbound-visible-candidates))
       unit)
     unit))
 
@@ -36557,9 +33053,7 @@
         [else (tc-env-key-source-id-or-neg session key-id)])]
     (begin
       (set! names.slots (+ names.slots 1))
-      (cfg
-        compile-profile
-        (compiler-tc-env-profile-note-unbound-candidate-slot))
+      (cfg compile-profile (counters.bump! tc-profile-unbound-candidate-slots))
       (if (and
         (>= source-id 0)
         (or wanted-qualified (< key-module-id 0) module-qualified))
@@ -36683,8 +33177,8 @@
 
 ;; A speculative typecheck whose failure the caller discards (a macro operand
 ;; probe) must not pay for a "did you mean" suggestion: finalizing one unbound
-;; name scans every visible name, about 7.5M instructions, and a self-compile
-;; discards about a thousand such errors. The depth lives in the job-owned scoped
+;; name scans every visible name, and a self-compile discards many such
+;; errors. The depth lives in the job-owned scoped
 ;; state reached through the environment, so no other job is affected and no
 ;; signature has to carry it. Only a caller that drops the error unconditionally
 ;; may open this scope; a reported diagnostic must keep its suggestion.
@@ -36783,7 +33277,7 @@
     [best-distance : i64 (+ max-distance 1)]
     [best : String ""]
     (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-unbound-scan))
+      (cfg compile-profile (counters.bump! tc-profile-unbound-scans))
       (while (< candidate-index visible.len)
         (let
           [candidate-id : i64 (array-ref visible.ids candidate-index)]
@@ -36805,12 +33299,12 @@
               (begin
                 (cfg
                   compile-profile
-                  (compiler-tc-env-profile-note-unbound-length-survivor))
+                  (counters.bump! tc-profile-unbound-length-survivors))
                 (let
                   [_note-edit : unit
                     (cfg
                       compile-profile
-                      (compiler-tc-env-profile-note-unbound-edit-evaluation))]
+                      (counters.bump! tc-profile-unbound-edit-evaluations))]
                   [distance : i64
                     (tc-unbound-edit-distance
                       (tc-global-shared-view wanted-text)
@@ -36875,7 +33369,7 @@
 
 (define (tc-unbound-finalize-located-error [message : String]) : String
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-unbound-finalizer))
+    (cfg compile-profile (counters.bump! tc-profile-unbound-finalizers))
     (if (and (tc-located-error? message) (not (tc-rich-error? message)))
       (let
         [prefix-len : i64 (string.string-length (tc-located-error-prefix))]
@@ -43659,7 +40153,7 @@
   [params : ast.AstParamList]
   [body : ast.AstExpr]) : bool
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (tc-type-env-scoped-lambda-captures-reference-scan
       expr-bases
       (tc-type-env-scoped-carrier-marker-cursor carrier)
@@ -50554,7 +47048,7 @@
   [body : ast.AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
       expr-bases
       (tc-global-shared-view carrier)
@@ -50602,9 +47096,9 @@
 
 ;; Enum queries are frequent during macro expansion, and the generated-name
 ;; compatibility path cannot always use CompilerSymbols. Index the flat
-;; program view by the same source and module-qualified ids that the old string
-;; scan compared. The index is rebuilt at the existing macro-splice cache
-;; boundary, so a replaced ComptimeDecl template cannot leave a stale name.
+;; program view by source and module-qualified ids. The index is rebuilt at the
+;; existing macro-splice cache boundary, so a replaced comptime template
+;; declaration cannot leave a stale name.
 (define tc-program-enum-index-ready : bool
   false)
 (define tc-program-enum-index-decl-count : i64
@@ -50856,7 +47350,9 @@
       [field : TcInlineFieldLayout
         (tc-inline-field-layout-list-ref fields index)]
       (begin
-        (cfg compile-profile (tc-lp-note 3))
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-layout-inline-field-visits))
         (if (=
           (tc-inline-field-layout-name-id (tc-global-shared-view field))
           name-id)
@@ -51088,7 +47584,9 @@
       [payload : TcInlinePayloadLayout
         (tc-inline-payload-layout-list-ref payloads index)]
       (begin
-        (cfg compile-profile (tc-lp-note 5))
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-layout-inline-payload-visits))
         (if (=
           (tc-inline-payload-layout-index (tc-global-shared-view payload))
           payload-index)
@@ -51149,7 +47647,9 @@
       [variant : TcInlineVariantLayout
         (tc-inline-variant-layout-list-ref variants index)]
       (begin
-        (cfg compile-profile (tc-lp-note 7))
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-layout-inline-variant-visits))
         (if (=
           (tc-inline-variant-layout-name-id (tc-global-shared-view variant))
           name-id)
@@ -51183,7 +47683,9 @@
       [variant : TcInlineVariantLayout
         (tc-inline-variant-layout-list-ref variants index)]
       (begin
-        (cfg compile-profile (tc-lp-note 7))
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-layout-inline-variant-visits))
         (if (tc-inline-variant-layout-name-matches-id?
           (tc-inline-variant-layout-name-id (tc-global-shared-view variant))
           name-id)
@@ -51656,7 +48158,9 @@
                 [next-cursor : i64 (+ offset field-size)]
                 [next-align : i64 (tc-max-i64 max-align field-align)]
                 (begin
-                  (cfg compile-profile (tc-lp-note 2))
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-layout-inline-field-builds))
                   (tc-inline-field-layout-list-set!
                     (tc-global-shared-view layout)
                     index
@@ -51725,7 +48229,9 @@
             [next-cursor : i64 (+ offset field-size)]
             [next-align : i64 (tc-max-i64 max-align field-align)]
             (begin
-              (cfg compile-profile (tc-lp-note 4))
+              (cfg
+                compile-profile
+                (counters.bump! tc-profile-layout-inline-payload-builds))
               (tc-inline-payload-layout-list-set!
                 layout
                 index
@@ -51881,7 +48387,9 @@
                   [next-size : i64 (tc-max-i64 max-size variant-size)]
                   [next-align : i64 (tc-max-i64 max-align variant-align)]
                   (begin
-                    (cfg compile-profile (tc-lp-note 6))
+                    (cfg
+                      compile-profile
+                      (counters.bump! tc-profile-layout-inline-variant-builds))
                     (tc-inline-variant-layout-list-set!
                       layout
                       index
@@ -51928,12 +48436,11 @@
         (ResultTcInlineAggregateLayout.Err message)])))
 
 ;; --- full inline-aggregate layout memo ---------------------------------------
-;; The Superluminal profile of the stage2 self-compile shows ~18% of CPU inside
-;; the tc-inline-aggregate-* layout walk: every struct-get field offset, enum
-;; payload offset, and lower-type-size query on a nominal recomputes the whole
-;; recursive layout (the scalar caches only memoized the final size and the
-;; register-word count as scalars). This cache memoizes the COMPLETE
-;; TcInlineAggregateLayout per type name. Unlike the scalar handle-index caches,
+;; Without it, every struct-get field offset, enum payload offset, and
+;; lower-type-size query on a nominal recomputes the whole recursive
+;; tc-inline-aggregate-* layout (the scalar caches memoize only the final size
+;; and the register-word count as scalars). This cache memoizes the COMPLETE
+;; TcInlineAggregateLayout per type name. Like the scalar caches,
 ;; this cache is keyed by the intern id of the nominal name: symbol handles can
 ;; be reassigned when specialization rebuilds the symbol table, while intern ids
 ;; are stable until intern-reset!. The cached value's final-size backing arrays
@@ -52132,7 +48639,9 @@
           [slot : i64 (tc-agg-layout-cache-probe-slot-for-state state name-id)]
           (if (< slot 0)
             (begin
-              (cfg compile-profile (tc-lp-note 14))
+              (cfg
+                compile-profile
+                (counters.bump! tc-profile-layout-cache-bypasses))
               (tc-inline-aggregate-layout-kind-dispatch
                 ctx
                 name
@@ -52142,11 +48651,15 @@
             (match (tc-global-array-element-shared-view slots slot)
               [(TcAggLayoutCacheSlot.Full _ layout)
                 (begin
-                  (cfg compile-profile (tc-lp-note 12))
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-layout-cache-hits))
                   (ResultTcInlineAggregateLayout.Ok layout))]
               [(TcAggLayoutCacheSlot.Empty)
                 (begin
-                  (cfg compile-profile (tc-lp-note 13))
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-layout-cache-misses))
                   (tc-inline-aggregate-layout-fill-cache
                     ctx
                     name
@@ -52171,7 +48684,7 @@
 
 ;; Borrowed slices are represented physically as a data pointer plus a signed
 ;; length.  Their referent is stored in the type pool, so inspect that node
-;; here rather than treating every Ref/MutRef as the historical one-word
+;; here rather than treating every Ref/MutRef as a one-word
 ;; pointer.  Region wrappers on either the reference itself (stripped by the
 ;; caller) or its immediate referent do not change the representation.
 (define (tc-inline-aggregate-reference-to-slice?
@@ -52343,9 +48856,9 @@
     name-id
     TcStringList.Nil))
 
-;; Compile-time cache: memoize the inline-aggregate SIZE. tc-inline-aggregate-
-;; layout-for re-walks the whole layout on every lower-type-size query, which is
-;; ~70% of the -O1 lower phase. The cache must do NO allocation during lowering
+;; Compile-time cache: memoize the inline-aggregate SIZE. Without it,
+;; tc-inline-aggregate-layout-for-with-stack re-walks the whole layout on every
+;; lower-type-size query. The cache must do NO allocation during lowering
 ;; (the scratch-arena hazard makes a grown map / cached field-list dangle):
 ;; so it is a FIXED job-owned i64 array, allocated lazily in the owning compiler
 ;; job's lifetime arena and only read/written by that job thereafter. It is keyed
@@ -52359,8 +48872,8 @@
 (define tc-agg-scalar-cache-capacity : i64
   400000)
 
-;; These scalar caches used to be keyed by symbol-handle INDEX, which is
-;; only meaningful for one snapshot of a program's symbol table. Specialization
+;; These scalar caches are keyed by intern id, not by symbol-handle INDEX, which
+;; is only meaningful for one snapshot of a program's symbol table. Specialization
 ;; rebuilds that table after inserting generated declarations, so a cached value
 ;; under an old handle index could be returned for a different type whose new
 ;; handle reuses the same index. Intern ids are stable across that rebuild.
@@ -52548,7 +49061,7 @@
 ;; Compile-time cache: memoize a bare aggregate's register-resident word count
 ;; (0 = not register-resident, else 1 or 2). Same arena-safe intern-id keyed
 ;; fixed array as the size cache; this is the hot query for every aggregate
-;; construct / struct-get / copy (lower-name-register-words). Encoded as
+;; construct / struct-get / copy (lower-type-register-words). Encoded as
 ;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
 ;; Same per-program keying as the size cache, so it is gated on
 ;; intern-generation and explicitly invalidated at lower boundaries.
@@ -52877,7 +49390,9 @@
                 [next-cursor : i64 (+ offset field-size)]
                 [next-align : i64 (tc-max-i64 max-align field-align)]
                 (begin
-                  (cfg compile-profile (tc-lp-note 0))
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-layout-repr-c-field-builds))
                   (tc-repr-c-field-layout-list-set!
                     layout
                     index
@@ -57636,9 +54151,8 @@
     [(ast.AstReduceOp.All) "typecheck: spmd-scan all requires a bool type"]
     [(ast.AstReduceOp.Any) "typecheck: spmd-scan any requires a bool type"]))
 
-;; spmd-reduce purity/effect rules (SPEC.md 5.15): mirror the Rust
-;; typechecker's `check_spmd_reduce_value`. The first reduction slice accepts a
-;; narrow, clearly-pure surface and rejects everything else with a focused
+;; spmd-reduce purity/effect rules (SPEC.md 5.15). The first reduction slice
+;; accepts a narrow, clearly-pure surface and rejects everything else with a focused
 ;; diagnostic rather than guessing at varying/uniform semantics not yet
 ;; implemented: the varying index, uniform variables, and literals;
 ;; arithmetic/comparison/boolean operators over those; `ann`/`cast` wrappers;
@@ -64267,11 +60781,9 @@
 ;; --- shared empty moved-set id map -----------------------------------------
 ;;
 ;; Branch checking clones the moved-set at every arm/branch entry, and the
-;; census says the id-map copies are overwhelmingly empty: 2,036,034 copies per
-;; self-compile carry 1,722,057 entries in total, and only 237,294 of them are
-;; non-empty. Allocating a private empty table for the other 1,798,740 is pure
-;; waste, so an empty table is ALIASED instead of copied, with copy-on-write at
-;; the writers.
+;; id-map copies are overwhelmingly empty. Allocating a private empty table for
+;; each of those is pure waste, so an empty table is ALIASED instead of copied,
+;; with copy-on-write at the writers.
 ;;
 ;; The sharing invariant has two halves, both checked locally:
 ;;
@@ -64283,8 +60795,7 @@
 ;;      the two removers. Every inserting site takes private storage first via
 ;;      `tc-moved-id-map-own`. The removers need no guard: `remove-ref!` writes
 ;;      only after its probe finds an Occupied slot, and the shared map has
-;;      none -- exactly how the freshly allocated empty copy this replaces
-;;      behaved.
+;;      none -- exactly how a freshly allocated empty copy would behave.
 ;;   2. The "is this the shared map?" test is exact. Every private moved-set map
 ;;      is born at `with-capacity 8` (from `tc-moved-id-map-own`) or copied at
 ;;      its source's capacity, and `grow!` only doubles, so private capacities
@@ -64299,8 +60810,8 @@
   (= (tc_i64_i64_map.capacity map) 1))
 
 ;; Give an inserting writer private storage when it holds the shared empty map.
-;; The replacement is the capacity the old code handed a fresh branch copy, so
-;; only the shared alias pays an allocation here.
+;; The replacement starts at the private-map birth capacity, so only the shared
+;; alias pays an allocation here.
 (define (tc-moved-id-map-own [map : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
   (if (tc-moved-id-map-shared-empty? (& map))
     (tc_i64_i64_map.with-capacity 8)
@@ -64595,13 +61106,13 @@
 
 (define (tc-moved-clone-id-map [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
   ;; Counting down the entry count skips the scan-to-capacity tail entirely;
-  ;; branch moved-sets are usually empty or tiny, so the old full-capacity
-  ;; walk was almost all empty slots.
+  ;; branch moved-sets are usually empty or tiny, so a full-capacity walk
+  ;; would be almost all empty slots.
   (let
     [remaining : i64 (tc_i64_i64_map.len src)]
     (if (= remaining 0)
-      ;; The empty copy this used to allocate had no content and no identity of
-      ;; its own -- it existed only so a later insert could not reach the
+      ;; An empty copy would have no content and no identity of its own -- it
+      ;; would exist only so a later insert could not reach the
       ;; source's slots. `tc-moved-id-map-own` provides that separation at the
       ;; insert instead, so the empty case aliases the shared map and allocates
       ;; nothing. Lookups and removals see an empty table either way.
@@ -64625,7 +61136,7 @@
 ;; Hand the shared map straight back when the source already IS it. That is the
 ;; same value `tc-moved-clone-id-map` returns, and recognizing it here -- rather
 ;; than inside the call -- keeps the by-value map argument and return off the
-;; 1.8M-per-self-compile empty path.
+;; common empty path.
 (define (tc-moved-clone-id-map-or-shared [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
   (if (tc-moved-id-map-shared-empty? src)
     (tc-global-shared-view tc-moved-shared-empty-id-map)
@@ -68359,19 +64870,11 @@
             [(ResultTcType.Ok actual) actual]
             [(ResultTcType.Err _) raw-ty])]
         (match (if auto-borrow?
-          (cfg
-            compile-profile
-            (compiler-tc-reinfer-profile-effective-arg-expr
-              "move.call_arg"
-              ctx
-              env
-              head-expr
-              (tc-global-shared-view raw-ty))
-            (tc-call-effective-arg-expr
-              ctx
-              env
-              head-expr
-              (tc-global-shared-view raw-ty)))
+          (tc-call-effective-arg-expr
+            ctx
+            env
+            head-expr
+            (tc-global-shared-view raw-ty))
           (ResultTcExpr.Ok head-expr))
           [(ResultTcExpr.Ok effective-head)
             (match (tc-move-check-expr
@@ -68914,15 +65417,9 @@
       [(TcBodyTypeFact.Hit fn-ty)
         (tc-borrow-call-info-from-type ctx env func args fn-ty)]
       [(TcBodyTypeFact.Miss)
-        (cfg
-          compile-profile
-          (compiler-tc-reinfer-profile-borrow-call-info-id
-            site
-            ctx
-            expr-bases
-            env
-            func-id
-            args)
+        (compiler-tc-reinfer-profiled
+          ctx
+          site
           (tc-borrow-call-info-id-raw ctx expr-bases env func-id args))])))
 
 (define (tc-move-call-param-types-id-raw
@@ -68949,9 +65446,9 @@
     func-id)
     [(TcBodyTypeFact.Hit fn-ty) (tc-move-call-param-types-from-type fn-ty)]
     [(TcBodyTypeFact.Miss)
-      (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-call-param-types-id site ctx env func-id)
+      (compiler-tc-reinfer-profiled
+        ctx
+        site
         (tc-move-call-param-types-id-raw ctx env func-id))]))
 
 (define (tc-move-check-exprs
@@ -73936,7 +70433,7 @@
 ;; capabilities are 0 = shared/reusable, 1 = exclusive/reusable (FnMut), and
 ;; 2 = consuming (FnOnce). A local lambda binding stores that capability in a
 ;; disjoint Copy/non-Copy range inside the existing locals map; ordinary locals
-;; retain the historical -1 sentinel. This keeps concrete environment
+;; keep the -1 sentinel. This keeps concrete environment
 ;; copyability available after a fact-preserving local alias without making a
 ;; plain `(-> ...)` type depend on one particular lambda value.
 (define (tc-closure-call-capability-shared) : i64
@@ -77749,14 +74246,9 @@
   [borrowed : TcMovedSet]
   [arg : ast.AstExpr]
   [ty : ast.AstType]) : TcBorrowCheckResult
-  (match (cfg
-    compile-profile
-    (compiler-tc-reinfer-profile-effective-arg-expr
-      "borrow.call_arg"
-      ctx
-      env
-      (tc-global-shared-view arg)
-      (tc-global-shared-view ty))
+  (match (compiler-tc-reinfer-profiled
+    ctx
+    "borrow.call_arg"
     (tc-call-effective-arg-expr
       ctx
       env
@@ -78040,14 +74532,9 @@
       [raw-ty : ast.AstType
         (ast.ty-node-get
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (match (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-effective-arg-expr
-          "borrow.call_arg"
-          ctx
-          env
-          (tc-global-shared-view head-expr)
-          (tc-global-shared-view raw-ty))
+      (match (compiler-tc-reinfer-profiled
+        ctx
+        "borrow.call_arg"
         (tc-call-effective-arg-expr
           ctx
           env
@@ -78201,14 +74688,9 @@
   [ty : ast.AstType]) : TcBorrowCheckResult
   (if (tc-call-explicit-borrow-expr? (tc-global-shared-view arg))
     (TcBorrowCheckResult.Ok borrowed)
-    (match (cfg
-      compile-profile
-      (compiler-tc-reinfer-profile-effective-arg-expr
-        "borrow.call_arg"
-        ctx
-        env
-        (tc-global-shared-view arg)
-        ty)
+    (match (compiler-tc-reinfer-profiled
+      ctx
+      "borrow.call_arg"
       (tc-call-effective-arg-expr ctx env (tc-global-shared-view arg) ty))
       [(ResultTcExpr.Ok effective)
         (match (ast.ast-expr-unspan effective)
@@ -80191,14 +76673,7 @@
   [borrowed : TcMovedSet]
   [arg : ast.AstExpr]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (match (cfg
-    compile-profile
-    (compiler-tc-reinfer-profile-expr
-      "borrow.return_arg"
-      ctx
-      env
-      (tc-global-shared-view arg))
-    (tc-expr ctx env (tc-global-shared-view arg)))
+  (match (tc-expr ctx env (tc-global-shared-view arg))
     [(ResultTcType.Ok arg-ty)
       (if (tc-name-id-list-overlaps?
         (tc-type-collect-reference-lifetimes
@@ -80364,14 +76839,7 @@
         args
         result-lifetimes)]
     [(TcBorrowCallReturnLifetimes.Fallback)
-      (match (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-expr
-          "borrow.return_call"
-          ctx
-          env
-          call-expr)
-        (tc-expr ctx env call-expr))
+      (match (tc-expr ctx env call-expr)
         [(ResultTcType.Ok result-ty)
           (tc-borrow-check-after-returning-call-lifetimes
             ctx
@@ -83026,7 +79494,7 @@
 ;; creation, consuming Box dereference, `with-region` blocks, calls to functions
 ;; whose signature mentions a region, and region-typed parameters/results
 ;; (which seed borrowed places). A body with none of those checks out as a pure
-;; pass-through (measured: 72.6% of self-compile bodies), so the gate answers
+;; pass-through, so the gate answers
 ;; `Ok` without walking. A call whose recorded callee type (the body type
 ;; facts from the tc-expr walk) contains no region keeps its Fallback lifetime
 ;; handling, which cannot error either; a fact Miss stays conservative.
@@ -84053,66 +80521,41 @@
 ;; allocator hot paths remain unchanged.
 (cfg
   compile-profile
-  (define (compiler-tc-macro-retention-max [old : i64] [value : i64]) : i64
-    (if (> value old)
-      value
-      old)))
-
-(cfg
-  compile-profile
   (define (compiler-tc-macro-retention-arena-bytes [owner : i64]) : i64
     (allocation_profile.compiler-allocation-profile-arena-bump-bytes owner)))
 
 (cfg
   compile-profile
   (define (compiler-tc-macro-retention-sample-symbols! [state : TcMacroState]) : unit
-    (let
-      [live-symbols : i64
+    (begin
+      (counters.max!
+        tc-profile-live-symbols-max-bytes
         (compiler-tc-macro-retention-arena-bytes
-          (tc-macro-walk-field state macro-live-symbols-arena))]
-      [retired-symbols : i64
+          (tc-macro-walk-field state macro-live-symbols-arena)))
+      (counters.max!
+        tc-profile-retired-symbols-max-bytes
         (compiler-tc-macro-retention-arena-bytes
-          (tc-macro-walk-field state macro-live-symbols-retired-arena))]
-      (begin
-        (set!
-          compiler-tc-macro-live-symbols-max-bytes
-          (compiler-tc-macro-retention-max
-            compiler-tc-macro-live-symbols-max-bytes
-            live-symbols))
-        (set!
-          compiler-tc-macro-retired-symbols-max-bytes
-          (compiler-tc-macro-retention-max
-            compiler-tc-macro-retired-symbols-max-bytes
-            retired-symbols))))))
+          (tc-macro-walk-field state macro-live-symbols-retired-arena))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-macro-retention-sample-generations!
     [state : TcMacroState]) : unit
-    (let
-      [active-generations : i64
+    (begin
+      (counters.max!
+        tc-profile-active-generations-max-bytes
         (+
           (compiler-tc-macro-retention-arena-bytes
             (tc-macro-walk-field state macro-decl-generation-arena))
           (compiler-tc-macro-retention-arena-bytes
-            (tc-macro-walk-field state macro-splice-generation-arena)))]
-      [retired-generations : i64
+            (tc-macro-walk-field state macro-splice-generation-arena))))
+      (counters.max!
+        tc-profile-retired-generations-max-bytes
         (+
           (compiler-tc-macro-retention-arena-bytes
             (tc-macro-walk-field state macro-decl-generation-retired-arena))
           (compiler-tc-macro-retention-arena-bytes
-            (tc-macro-walk-field state macro-splice-generation-retired-arena)))]
-      (begin
-        (set!
-          compiler-tc-macro-active-generations-max-bytes
-          (compiler-tc-macro-retention-max
-            compiler-tc-macro-active-generations-max-bytes
-            active-generations))
-        (set!
-          compiler-tc-macro-retired-generations-max-bytes
-          (compiler-tc-macro-retention-max
-            compiler-tc-macro-retired-generations-max-bytes
-            retired-generations))))))
+            (tc-macro-walk-field state macro-splice-generation-retired-arena)))))))
 
 (cfg
   compile-profile
@@ -84124,11 +80567,7 @@
       (begin
         (compiler-tc-macro-retention-sample-symbols! state)
         (compiler-tc-macro-retention-sample-generations! state)
-        (set!
-          compiler-tc-macro-expansion-scratch-max-bytes
-          (compiler-tc-macro-retention-max
-            compiler-tc-macro-expansion-scratch-max-bytes
-            scratch))))))
+        (counters.max! tc-profile-expansion-scratch-max-bytes scratch)))))
 
 (define (tc-macro-walk-state-new) : TcMacroWalkStateData
   (TcMacroWalkStateData
@@ -84275,74 +80714,47 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-dependency-tlci-route-profile-row [counter : i64]) : String
+    (cond
+      [(= counter tc-dependency-tlci-catalog-hits)
+        "typecheck.macro.dependency_tlci_catalog_hits"]
+      [(= counter tc-dependency-tlci-catalog-misses)
+        "typecheck.macro.dependency_tlci_catalog_misses"]
+      [(= counter tc-dependency-tlci-load-failures)
+        "typecheck.macro.dependency_tlci_load_failures"]
+      [(= counter tc-dependency-tlci-interpreted-fallbacks)
+        "typecheck.macro.dependency_tlci_interpreted_fallbacks"]
+      [(= counter tc-dependency-tlci-native-dispatches)
+        "typecheck.macro.dependency_tlci_native_dispatches"]
+      [(= counter tc-dependency-tlci-shell-learns)
+        "typecheck.macro.dependency_tlci_shell_learns"]
+      [(= counter tc-dependency-tlci-shell-cache-hits)
+        "typecheck.macro.dependency_tlci_shell_cache_hits"]
+      [(= counter tc-dependency-tlci-parameter-name-lookups)
+        "typecheck.macro.dependency_tlci_parameter_name_lookups"]
+      [(= counter tc-dependency-tlci-native-expr-results)
+        "typecheck.macro.dependency_tlci_native_expr_results"]
+      [(= counter tc-dependency-tlci-direct-expr-results)
+        "typecheck.macro.dependency_tlci_direct_expr_results"]
+      [(= counter tc-dependency-tlci-native-module-results)
+        "typecheck.macro.dependency_tlci_native_module_results"]
+      [(= counter tc-dependency-tlci-native-decls-results)
+        "typecheck.macro.dependency_tlci_native_decls_results"]
+      [else "typecheck.macro.dependency_tlci_direct_shell_env_folds"])))
+
+;; The route counters are numbered in row order.
+(cfg
+  compile-profile
   (define (compiler-tc-dependency-tlci-route-profile-finish
     [state : TcMacroState]) : unit
-    (begin
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_catalog_hits"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-catalog-hits))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_catalog_misses"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-catalog-misses))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_load_failures"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-load-failures))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_interpreted_fallbacks"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-interpreted-fallbacks))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_native_dispatches"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-native-dispatches))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_shell_learns"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-shell-learns))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_shell_cache_hits"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-shell-cache-hits))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_parameter_name_lookups"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-parameter-name-lookups))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_native_expr_results"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-native-expr-results))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_direct_expr_results"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-direct-expr-results))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_native_module_results"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-native-module-results))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_native_decls_results"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-native-decls-results))
-      (compiler-tc-macro-counter-profile-line
-        "dependency_tlci_direct_shell_env_folds"
-        (tc-dependency-tlci-route-counter-value
-          state
-          tc-dependency-tlci-direct-shell-env-folds)))))
+    (let
+      [counter : i64 tc-dependency-tlci-catalog-hits]
+      (while (<= counter tc-dependency-tlci-direct-shell-env-folds)
+        (begin
+          (counters.profile-counter-row!
+            (compiler-tc-dependency-tlci-route-profile-row counter)
+            (tc-dependency-tlci-route-counter-value state counter))
+          (set! counter (+ counter 1)))))))
 
 (defmacro (tc-macro-walk-set! [state : Expr] [field : Expr] [value : Expr]) : Expr
   `(let
@@ -84466,12 +80878,12 @@
 ;; lookup in `macro-call-decl`. Populated once per expansion run.
 ;; Exact module-qualified macro identities whose transformer bodies can call
 ;; `expr-type`. Only those macros need fixed `Expr` operands to carry produced
-;; type metadata. Keep the hot per-call membership check ID-keyed: the former
-;; TcStringList compared module/name strings linearly for every expansion.
+;; type metadata. Keep the hot per-call membership check ID-keyed rather than
+;; comparing module/name strings linearly for every expansion.
 ;; Cached CTFE base environment (reflection + layout metadata) for the current
-;; expansion run. `macro-expand-call` rebuilt this via `tc-ctfe-env` -- which runs
-;; `ctfe-reflections-from-program` over the WHOLE program (O(program)) -- on EVERY
-;; macro call, costing ~150MB per call on a self-compile. Reuse it across the
+;; expansion run. Building it via `tc-ctfe-env` runs
+;; `ctfe-reflections-from-program` over the WHOLE program (O(program)), so it is
+;; not rebuilt per macro call: reuse it across the
 ;; run unless a splice materializes a reflection-relevant nominal declaration.
 ;; Whether the cached CTFE env was built with the full reflection/layout metadata
 ;; (plan P2). The cache is built once per expansion run and reused across every
@@ -84497,10 +80909,7 @@
   [state : TcMacroState]
   [_reason : i64]) : unit
   (begin
-    (cfg
-      compile-profile
-      (compiler-tc-walk-ctfe-clear-reason-note! _reason)
-      unit)
+    (cfg compile-profile (counters.bump! tc-profile-splice-ctfe-cleared))
     (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
     (tc-macro-walk-set! state macro-expand-ctfe-env-has-metadata false)
     (tc-macro-walk-set! state macro-expand-ctfe-env-rebuild-pending true)
@@ -84770,11 +81179,6 @@
                 (or
                   (> required-layouts (array-length layouts.slots))
                   (> required-reflections (array-length reflections.slots)))]
-              [_profile-start : unit
-                (cfg
-                  compile-profile
-                  (compiler-tc-walk-ctfe-extension-start!)
-                  unit)]
               (in-arena
                 (arena.Arena
                   (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))
@@ -84813,26 +81217,22 @@
                     (if grew?
                       (cfg
                         compile-profile
-                        (compiler-tc-walk-ctfe-extension-reject-note! 3)
-                        unit)
+                        (counters.bump! tc-profile-splice-ctfe-capacity-grows))
                       unit)
                     (cfg
                       compile-profile
-                      (compiler-tc-walk-ctfe-extension-finish!)
-                      unit)
+                      (counters.bump! tc-profile-splice-ctfe-extensions))
                     CompilerCtfeSpliceExtensionResult.Extended))))
             (begin
               (cfg
                 compile-profile
-                (compiler-tc-walk-ctfe-extension-reject-note! 1)
-                unit)
+                (counters.bump! tc-profile-splice-ctfe-semantic-rejections))
               CompilerCtfeSpliceExtensionResult.SemanticRejected)))]
       [else
         (begin
           (cfg
             compile-profile
-            (compiler-tc-walk-ctfe-extension-reject-note! 2)
-            unit)
+            (counters.bump! tc-profile-splice-ctfe-cache-unavailable))
           CompilerCtfeSpliceExtensionResult.CacheUnavailable)])))
 
 ;; Build the CTFE base env (reflection + layout metadata) once per expansion run
@@ -84841,7 +81241,7 @@
 ;; immediately rebuild it. The one other exception is a run whose first build
 ;; did not need metadata (empty env) and a later rebuild that does; the
 ;; has-metadata guard rebuilds for that case. On reuse the cached env is only
-;; rebased onto the active pools (cheap); a full build otherwise costs ~150MB.
+;; rebased onto the active pools (cheap); a full build walks the whole program.
 (define (macro-expand-ctfe-env-build-once! [ctx : TcContext]) : unit
   (let
     [state : TcMacroState (tc-context-macro-state ctx)]
@@ -84856,8 +81256,6 @@
       (let
         [_rebuild? : bool
           (tc-macro-walk-field state macro-expand-ctfe-env-rebuild-pending)]
-        [_profile-start : unit
-          (cfg compile-profile (compiler-tc-walk-ctfe-build-start!) unit)]
         [owner-arena : i64
           (if (=
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena)
@@ -84897,9 +81295,12 @@
               state
               macro-expand-ctfe-env-rebuild-pending
               false)
+            (cfg compile-profile (counters.bump! tc-profile-splice-ctfe-builds))
             (cfg
               compile-profile
-              (compiler-tc-walk-ctfe-build-finish! _rebuild?)
+              (if _rebuild?
+                (counters.bump! tc-profile-splice-ctfe-rebuilds)
+                unit)
               unit)))))))
 
 (define (compiler-typecheck-ctfe-env-rebuild-for-splice!
@@ -85056,13 +81457,11 @@
     (tc-macro-walk-field state macro-live-registries-ready)
     (not (tc-macro-walk-field state macro-live-registries-fallback)))
     (begin
-      (cfg compile-profile (compiler-tc-macro-profile-note-live-registry-reuse))
+      (cfg compile-profile (counters.bump! tc-profile-live-registry-reuses))
       (csym.ResultCompilerRegistries.Ok
         (macro-live-registries-shared-view state)))
     (begin
-      (cfg
-        compile-profile
-        (compiler-tc-macro-profile-note-live-registry-rebuild))
+      (cfg compile-profile (counters.bump! tc-profile-live-registry-rebuilds))
       (let
         [registries : csym.CompilerRegistries
           (try (csym.build-compiler-registries-with-symbols program symbols))]
@@ -85092,7 +81491,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]) : csym.ResultCompilerSymbols
   (begin
-    (cfg compile-profile (compiler-tc-macro-profile-note-live-rebuild))
+    (cfg compile-profile (counters.bump! tc-profile-live-rebuilds))
     (match (csym.build-compiler-symbols-diagnostic-with-paths-and-capacity
       (tc-global-shared-view program)
       paths
@@ -85160,9 +81559,7 @@
                 (begin
                   (if (= previous 0)
                     unit
-                    (set!
-                      compiler-tc-macro-retired-symbol-rotations
-                      (+ compiler-tc-macro-retired-symbol-rotations 1)))
+                    (counters.bump! tc-profile-retired-symbol-rotations))
                   (compiler-tc-macro-retention-sample-symbols! state)))
               (macro-expand-allocation-profile-snapshot! state retired)
               (if (= retired 0)
@@ -85188,7 +81585,7 @@
     (tc-macro-walk-field state macro-live-symbols-ready)
     (not (tc-macro-walk-field state macro-live-symbols-fallback)))
     (begin
-      (cfg compile-profile (compiler-tc-macro-profile-note-live-reuse))
+      (cfg compile-profile (counters.bump! tc-profile-live-reuses))
       (match (macro-live-registries-build-current
         state
         program
@@ -85381,43 +81778,15 @@
 ;; still copied out at every declaration boundary -- that is what makes the
 ;; garbage droppable -- but a fresh arena is only cut every
 ;; `macro-decl-generation-batch-size` declarations. One arena costs a reserve
-;; and a release syscall pair. #5893 measured 13,820 generation entries (9,498
-;; attributed firing declarations) on a Linux opt1 self-compile: batch 32 used
-;; 432 arenas and retained 106,558,504 non-output bytes, while batch 8 used
-;; 1,728 arenas and retained 77,175,304 bytes without a work regression. Batch
-;; 1 retained only 27,169,064 bytes, but paid 13,820 arena pairs and raised
-;; fired-declaration self time by 9.4%. Eight was the measured memory/work knee;
-;; after the dependency-TLCI dispatch graph crossed the 25% proportional
-;; retention budget, seven first restored it. On the later combined
-;; optimizer/SPMD graph, seven retained 102,860,432 bytes (25.39%) while five
-;; retained 75,241,224 bytes (18.58%) with 815 additional arena pairs. The
-;; count cadence is alignment-sensitive -- six retained 130,882,560 bytes -- so
-;; five is the measured current knee. Three same-source Windows selfhosts kept
-;; median macro-walk time flat (1,985 ms versus 1,988 ms at seven) and emitted
-;; byte-identical assembly. #6318's combined source graph later shifted an
-;; unphased batch five to 111,472,912 / 417,176,320 non-output bytes (26.72%).
-;; Starting the ring with one four-declaration batch, then keeping steady-state
-;; batches at five, restored 78,932,232 / 405,167,800 (19.48%) without changing
-;; the 2,860 rotations. A global batch four retained 73,602,040 / 405,151,072
-;; (18.17%) but raised rotations to 3,574. Interleaved three-run Windows
-;; profile-selfhost medians were 14.686 s unphased, 14.966 s phase-shifted, and
-;; 14.986 s at global batch four.
-;;
-;; #6737 demonstrated that the one-time phase shift was not an invariant: an
-;; unrelated optimizer-local source change moved phase-shifted batch five back
-;; to 112,556,344 / 405,175,936 (27.78%), while restoring the original local
-;; declaration count did not change that result. Use the already-measured
-;; global batch four cadence; the current-source Windows rerun retained
-;; 73,601,960 / 405,151,936 bytes (18.17%) with the same 3,574 rotations. This
-;; leaves ordinary source growth room instead of silently retuning the ring
-;; across the 25% gate. #6470 then added 39 firing declarations and exposed
-;; the remaining count-alignment hazard: batch four retained 146,458,816 /
-;; 438,276,576 bytes (33.41%), and batch three retained 173,114,304 /
-;; 438,278,064 bytes (39.50%). The full batch-two gate retained 64,818,672 /
-;; 438,276,424 bytes (14.79%) with no measured macro-walk regression (2,312 ms
-;; versus 2,718 ms in the same Windows profile probe).
-;; Use that cadence for enough source-growth headroom that declaration ordering
-;; cannot immediately move a large batch back across the proportional gate.
+;; and a release syscall pair, so a batch of one pays that pair per firing
+;; declaration and slows the walk, while larger batches retain more superseded
+;; garbage. Retention is alignment-sensitive: which large declarations share a
+;; batch decides it, so an ordinary source change can push a mid-size batch
+;; across the proportional retention gate. Shifting the ring's phase (a smaller
+;; first batch) does not fix that; an unrelated source change moves it back.
+;; The batch of two set in `tc-macro-walk-state-new` leaves enough
+;; source-growth headroom that declaration ordering cannot immediately move a
+;; large batch back across the gate.
 ;;
 ;; Retention is bounded by one batch, not by the walk. Make `next` the live
 ;; generation and destroy the completed batch at this next-entry handoff.
@@ -85436,9 +81805,7 @@
         compile-profile
         (begin
           (compiler-tc-macro-retention-sample-generations! state)
-          (set!
-            compiler-tc-walk-decl-generation-rotations
-            (+ compiler-tc-walk-decl-generation-rotations 1))))
+          (counters.bump! tc-profile-decl-generation-rotations)))
       (tc-macro-walk-set! state macro-decl-generation-arena next)
       (tc-macro-walk-set! state macro-decl-generation-retired-arena 0)
       (if (= previous 0)
@@ -85489,8 +81856,8 @@
 ;; That is the cadence rule this packet is built on: A GENERATION'S DESTROY
 ;; CADENCE MUST BE THE RESET CADENCE OF THE CACHES THAT ALLOCATE INTO IT. The
 ;; declaration-generation batch ring destroys on a counter with no relation to
-;; the splice cadence, and putting the placeholder arm on it SIGSEGVs the
-;; linux-x86_64 self-compile between the 4th splice and the next.
+;; the splice cadence, and putting the placeholder arm on it crashes the
+;; self-compile.
 ;;
 ;; State that outlives the reset -- the two generated-module/decls memos, which
 ;; are per-RUN, not per-splice -- is not covered by the cadence argument and is
@@ -85505,9 +81872,7 @@
     unit
     (begin
       (if (ast.ast-node-pool-active-context-owned-by? generation)
-        (begin
-          (cfg compile-profile (compiler-tc-note-pool-context-reseat!))
-          (ast.ast-node-pool-active-context-reseat!))
+        (ast.ast-node-pool-active-context-reseat!)
         unit)
       (unsafe
         (arena.tl_arena_destroy generation)))))
@@ -85528,9 +81893,7 @@
             (+ compiler-tc-macro-splice-generation-rotations 1))
           (if (= previous 0)
             unit
-            (set!
-              compiler-tc-macro-retired-generation-rotations
-              (+ compiler-tc-macro-retired-generation-rotations 1)))))
+            (counters.bump! tc-profile-retired-generation-rotations))))
       (tc-macro-walk-set! state macro-splice-generation-arena next)
       (tc-macro-walk-set! state macro-splice-generation-retired-arena previous)
       (if (= retired 0)
@@ -85570,8 +81933,7 @@
 ;; `macro-generated-decls-memo-*`), and a later splice reads that entry -- and,
 ;; on a module-memo hit, SPLICES the recorded catalog straight into the program.
 ;; Those entries are built from the arena current at record time, so without
-;; this they are a use-after-free two splices later. It reproduces immediately
-;; as `tl: array index out of bounds` on the self-compile.
+;; this they are a use-after-free two splices later.
 ;;
 ;; The memo puts stay exactly where they are -- so a nested read inside the same
 ;; expansion still sees the entry it just wrote -- but they NOTE their key here,
@@ -85684,9 +82046,7 @@
         (tc-macro-walk-set! state macro-expand-scratch-arena scratch)
         (cfg
           compile-profile
-          (set!
-            compiler-tc-macro-expansion-scratch-creations
-            (+ compiler-tc-macro-expansion-scratch-creations 1)))
+          (counters.bump! tc-profile-expansion-scratch-creations))
         scratch))
     (tc-macro-walk-field state macro-expand-scratch-arena)))
 
@@ -86951,7 +83311,6 @@
     [cell : (__tl_dyn-array MacroProgramSegmentNodeData)
       (__tl_make-array MacroProgramSegmentNodeData 1)]
     (begin
-      (cfg compile-profile (compiler-tc-walk-segment-node-note!))
       (set! (array-ref cell 0) (MacroProgramSegmentNodeData decls paths next))
       (cast
         (unsafe
@@ -87285,7 +83644,11 @@
       (if clone-set-changed
         (tc-clone-able-cache-reset-for-job! state)
         unit)
-      (cfg compile-profile (compiler-tc-walk-segment-split-note! middle-count))
+      (cfg
+        compile-profile
+        (begin
+          (counters.bump! tc-profile-segment-splits)
+          (counters.add! tc-profile-segment-delta-decls middle-count)))
       (set! data.head next-head)
       (set! data.cursor 0)
       (set! data.queue-len (+ (- data.queue-len 1) middle-count))
@@ -87628,16 +83991,14 @@
 (define (macro-segmented-program-flatten-fallback
   [state : TcJobState]
   [_reason : i64]) : MacroSegmentedProgramFlatView
-  (begin
-    (cfg compile-profile (compiler-tc-walk-segment-fallback-flatten-start!))
-    (let
-      [out : MacroSegmentedProgramFlatView
-        (macro-segmented-program-flatten-raw state)]
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-walk-segment-fallback-flatten-finish! _reason))
-        out))))
+  (let
+    [out : MacroSegmentedProgramFlatView
+      (macro-segmented-program-flatten-raw state)]
+    (begin
+      (cfg
+        compile-profile
+        (compiler-tc-walk-segment-fallback-flatten-note! _reason))
+      out)))
 
 (define (macro-segmented-program-current-starts-module-import-placeholder?
   [state : TcJobState]) : bool
@@ -88879,9 +85240,8 @@
 ;; only an alias/marker import. The memo persists across the whole expansion run
 ;; (it is only reset at the per-program macro-expand entry and self-clears when the
 ;; intern generation changes), which is what makes the identity shortcut
-;; authoritative. This replaces the replay-compare/fingerprint
-;; machinery: a memoized module is never re-expanded, so there is nothing to
-;; compare.
+;; authoritative. A memoized module is never re-expanded, so there is nothing
+;; to replay or compare.
 (defenum MacroGeneratedCatalogClosure
   (Full))
 
@@ -92761,41 +89121,6 @@
           fallback)]
       [else fallback])))
 
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-hygiene-note-binding!) : unit
-    (set!
-      compiler-tc-macro-hygiene-env-bindings
-      (+ compiler-tc-macro-hygiene-env-bindings 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-hygiene-note-lookup!) : unit
-    (set!
-      compiler-tc-macro-hygiene-env-lookups
-      (+ compiler-tc-macro-hygiene-env-lookups 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-hygiene-note-lookup-step!) : unit
-    (set!
-      compiler-tc-macro-hygiene-env-lookup-steps
-      (+ compiler-tc-macro-hygiene-env-lookup-steps 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-hygiene-note-pattern-lookup!) : unit
-    (set!
-      compiler-tc-macro-hygiene-pattern-lookups
-      (+ compiler-tc-macro-hygiene-pattern-lookups 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-hygiene-note-pattern-lookup-step!) : unit
-    (set!
-      compiler-tc-macro-hygiene-pattern-lookup-steps
-      (+ compiler-tc-macro-hygiene-pattern-lookup-steps 1))))
-
 (define (macro-hygiene-env-bind-kind) : i64
   0)
 
@@ -92980,7 +89305,6 @@
       (set! (array-ref values index) value-id)
       (set! (array-ref parents index) (macro-hygiene-env-head env))
       (tc-macro-walk-set! state macro-hygiene-env-slot-count (+ index 1))
-      (cfg compile-profile (compiler-tc-macro-hygiene-note-binding!))
       (MacroHygieneEnv index state env.pools))))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
@@ -92994,13 +89318,10 @@
       (tc-macro-walk-field state macro-hygiene-env-parents)]
     [cursor : i64 (macro-hygiene-env-head env)]
     (begin
-      (cfg compile-profile (compiler-tc-macro-hygiene-note-lookup!))
       (while (>= cursor 0)
-        (begin
-          (cfg compile-profile (compiler-tc-macro-hygiene-note-lookup-step!))
-          (if (= (array-ref keys cursor) name-id)
-            (return (MacroMaybeHygieneName.Some (array-ref values cursor)))
-            (set! cursor (array-ref parents cursor)))))
+        (if (= (array-ref keys cursor) name-id)
+          (return (MacroMaybeHygieneName.Some (array-ref values cursor)))
+          (set! cursor (array-ref parents cursor))))
       (MacroMaybeHygieneName.No))))
 
 (define (macro-hygiene-env-lookup-pattern-name
@@ -93018,19 +89339,14 @@
       (tc-macro-walk-field state macro-hygiene-env-parents)]
     [cursor : i64 (macro-hygiene-env-head env)]
     (begin
-      (cfg compile-profile (compiler-tc-macro-hygiene-note-pattern-lookup!))
       (while (>= cursor 0)
-        (begin
-          (cfg
-            compile-profile
-            (compiler-tc-macro-hygiene-note-pattern-lookup-step!))
-          (if (and
-            (=
-              (bit-and (array-ref kinds cursor) (macro-hygiene-env-kind-mask))
-              (macro-hygiene-env-pattern-name-kind))
-            (= (array-ref keys cursor) name-id))
-            (return (MacroMaybeHygieneName.Some (array-ref values cursor)))
-            (set! cursor (array-ref parents cursor)))))
+        (if (and
+          (=
+            (bit-and (array-ref kinds cursor) (macro-hygiene-env-kind-mask))
+            (macro-hygiene-env-pattern-name-kind))
+          (= (array-ref keys cursor) name-id))
+          (return (MacroMaybeHygieneName.Some (array-ref values cursor)))
+          (set! cursor (array-ref parents cursor))))
       (MacroMaybeHygieneName.No))))
 
 (define (macro-hygiene-env-has-output-flat-import? [env : MacroHygieneEnv]) : bool
@@ -93655,7 +89971,7 @@
 
 ;; A transformer appends newly constructed syntax after its bound operands and
 ;; captured source syntax. Hygiene may therefore rewrite a fresh node in place
-;; when it has one reachable occurrence, while preserving the old copy path for
+;; when it has one reachable occurrence, while keeping the copy path for
 ;; source/captured nodes and DAG nodes reused in multiple lexical contexts.
 ;;
 ;; Refcounts are saturated at two. When a second path reaches a node, its whole
@@ -95280,12 +91596,8 @@
       (cfg
         compile-profile
         (if reuse?
-          (set!
-            compiler-tc-walk-hygiene-nodes-reused
-            (+ compiler-tc-walk-hygiene-nodes-reused 1))
-          (set!
-            compiler-tc-walk-hygiene-nodes-copied
-            (+ compiler-tc-walk-hygiene-nodes-copied 1))))
+          (counters.bump! tc-profile-hygiene-nodes-reused)
+          (counters.bump! tc-profile-hygiene-nodes-copied)))
       (cfg compile-profile (compiler-tc-walk-hygiene-finish!))
       out)))
 
@@ -96120,14 +92432,14 @@
     [_ (MacroMaybeDecl.No)]))
 
 ;; Resolve a macro decl from its symbol-table index in O(1). The symbols decls
-;; array is populated (compiler-symbols-index-decl!) at the SAME index that
+;; array is populated (compiler-symbols-index-decl) at the SAME index that
 ;; compiler-symbol-handle-index returns: build-compiler-symbol-list-in-module
 ;; writes the array slot and registers the handle with one shared `index`,
-;; skipping the identical Import/IncludeStr/IncludeBin/Export/Module/Test set
-;; that the old linear scan skipped. The array already stores the unwrapped decl
+;; skipping the Import/IncludeStr/IncludeBin/Export/Module/Test set. The array
+;; already stores the unwrapped decl
 ;; (compiler-symbol-indexed-decl peels AstDecl.Unsafe the same
 ;; way macro-decl-from-decl does), so direct module lookups return the identical
-;; MacroMaybeDecl.Some the previous O(decls) macro-find-decl-by-index walk produced.
+;; MacroMaybeDecl.Some an O(decls) declaration scan would produce.
 (define (macro-decl-owner-module-or
   [symbols : (& symbols csym.CompilerSymbols)]
   [target : i64]
@@ -96158,11 +92470,10 @@
         target)]
     [(parser.ResultAstDecl.Err _) (MacroMaybeDecl.No)]))
 
-;; The module accumulator and the current module compare as INTERN IDS: the
-;; previous String-based walk converted every AstDecl.Module's interned name
-;; back to a fresh String (`intern-str` allocates) and string-compared it, for
-;; every declaration walked, on every qualified-alias resolution -- 11.6% of
-;; the stage2 self-compile CPU profile. Import aliases still compare by
+;; The module accumulator and the current module compare as INTERN IDS, so a
+;; qualified-alias resolution never converts a walked AstDecl.Module's interned
+;; name back to a fresh String (`intern-str` allocates) to string-compare it.
+;; Import aliases still compare by
 ;; content, but only for imports declared in the current module.
 (define (macro-import-kind-module-alias? [kind : ast.AstImportKind]) : bool
   (match kind
@@ -96840,11 +93151,10 @@
                 (set! steps (+ steps 1)))))))
       unit)))
 
-;; One-pass eager build of every module's flat-import target list. Each
-;; per-module cache miss used to rescan the ENTIRE declaration list (with a
-;; ~100B AstDecl unwrap copy per declaration), and the cache resets at every
-;; in-pass splice rebuild, so a self-compile re-paid those whole-program scans
-;; per module per epoch. Lists are appended in program order, matching
+;; One-pass eager build of every module's flat-import target list. The cache
+;; resets at every in-pass splice rebuild, so a per-module miss that rescanned
+;; the whole declaration list would repeat that scan per module per epoch.
+;; Lists are appended in program order, matching
 ;; macro-flat-import-targets-from-list exactly. If the table's half-load insert
 ;; cap is hit, complete stays false and misses fall back to the exact scan, so
 ;; only memoization -- never correctness -- degrades.
@@ -97237,11 +93547,10 @@
 
 ;; One-pass eager index over the program's aliased imports: record every
 ;; (module, alias) -> target mapping in program order (first import wins,
-;; matching macro-import-alias-target-ids' first-match scan). Each per-pair
-;; cache miss used to rescan the ENTIRE declaration list -- and the cache is
-;; reset at every in-pass splice rebuild, so a self-compile re-paid those
-;; whole-program scans (with a ~100B AstDecl unwrap copy per declaration)
-;; hundreds of times. One pass makes every later query O(1); if the table's
+;; matching macro-import-alias-target-ids' first-match scan). The cache is
+;; reset at every in-pass splice rebuild, so a per-pair miss that rescanned the
+;; whole declaration list would repeat that scan after every splice. One pass
+;; makes every later query O(1); if the table's
 ;; half-load insert cap is ever hit, complete stays false and misses fall back
 ;; to the exact scan, so only memoization -- never correctness -- degrades.
 (define (macro-alias-cache-build!
@@ -100613,44 +96922,30 @@
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved _)
                 (cfg
                   compile-profile
-                  (set!
-                    compiler-tc-macro-stdlib-tlci-catalog-hits
-                    (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1)))]
+                  (counters.bump! tc-profile-stdlib-catalog-hits))]
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
                 (cfg
                   compile-profile
-                  (set!
-                    compiler-tc-macro-stdlib-tlci-catalog-hits
-                    (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1)))]
+                  (counters.bump! tc-profile-stdlib-catalog-hits))]
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
                 (cfg
                   compile-profile
-                  (set!
-                    compiler-tc-macro-stdlib-tlci-catalog-misses
-                    (+ compiler-tc-macro-stdlib-tlci-catalog-misses 1)))]
+                  (counters.bump! tc-profile-stdlib-catalog-misses))]
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
                 (cfg
                   compile-profile
-                  (set!
-                    compiler-tc-macro-stdlib-tlci-load-failures
-                    (+ compiler-tc-macro-stdlib-tlci-load-failures 1)))]))
+                  (counters.bump! tc-profile-stdlib-load-failures))]))
           (cfg
             (not embedded-stdlib-tlci)
             (cfg
               compile-profile
-              (set!
-                compiler-tc-macro-stdlib-tlci-load-failures
-                (+ compiler-tc-macro-stdlib-tlci-load-failures 1))))
+              (counters.bump! tc-profile-stdlib-load-failures)))
           (cfg
             compile-profile
-            (set!
-              compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-              (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1))))
+            (counters.bump! tc-profile-stdlib-interpreted-fallbacks)))
         (cfg
           compile-profile
-          (set!
-            compiler-tc-macro-stdlib-source-interpreted
-            (+ compiler-tc-macro-stdlib-source-interpreted 1)))))
+          (counters.bump! tc-profile-stdlib-source-interpreted))))
     unit))
 
 (defenum MacroNativeStdlibTlciResult
@@ -101040,35 +97335,20 @@
                                     catalog)
                                     unit
                                     (begin
-                                      (set!
-                                        compiler-tc-macro-stdlib-tlci-catalog-hits
-                                        (+
-                                          compiler-tc-macro-stdlib-tlci-catalog-hits
-                                          1))
-                                      (set!
-                                        compiler-tc-macro-stdlib-tlci-native-dispatches
-                                        (+
-                                          compiler-tc-macro-stdlib-tlci-native-dispatches
-                                          1))
+                                      (counters.bump!
+                                        tc-profile-stdlib-catalog-hits)
+                                      (counters.bump!
+                                        tc-profile-stdlib-native-dispatches)
                                       (if (tc-macro-result-module?
                                         (tc-global-shared-view ret))
-                                        (set!
-                                          compiler-tc-macro-stdlib-tlci-native-module-results
-                                          (+
-                                            compiler-tc-macro-stdlib-tlci-native-module-results
-                                            1))
+                                        (counters.bump!
+                                          tc-profile-stdlib-native-module-results)
                                         (if (tc-macro-result-decls?
                                           (tc-global-shared-view ret))
-                                          (set!
-                                            compiler-tc-macro-stdlib-tlci-native-decls-results
-                                            (+
-                                              compiler-tc-macro-stdlib-tlci-native-decls-results
-                                              1))
-                                          (set!
-                                            compiler-tc-macro-stdlib-tlci-native-expr-results
-                                            (+
-                                              compiler-tc-macro-stdlib-tlci-native-expr-results
-                                              1)))))))
+                                          (counters.bump!
+                                            tc-profile-stdlib-native-decls-results)
+                                          (counters.bump!
+                                            tc-profile-stdlib-native-expr-results))))))
                                 (if (tc-macro-result-module?
                                   (tc-global-shared-view ret))
                                   (macro-dependency-tlci-note-if!
@@ -101122,11 +97402,8 @@
                                     (if (macro-tlci-resolved-catalog-dependency?
                                       catalog)
                                       unit
-                                      (set!
-                                        compiler-tc-macro-stdlib-tlci-shell-learns
-                                        (+
-                                          compiler-tc-macro-stdlib-tlci-shell-learns
-                                          1))))
+                                      (counters.bump!
+                                        tc-profile-stdlib-shell-learns)))
                                   (macro-dependency-tlci-note-if!
                                     route-state
                                     catalog
@@ -101247,9 +97524,7 @@
               compile-profile
               (if (macro-tlci-resolved-catalog-dependency? catalog)
                 unit
-                (set!
-                  compiler-tc-macro-stdlib-tlci-shell-cache-hits
-                  (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1))))
+                (counters.bump! tc-profile-stdlib-shell-cache-hits)))
             MacroNativeStdlibTlciResult.No)]
         [(MacroTlciCatalogSelection.MetadataOnly)
           MacroNativeStdlibTlciResult.No]
@@ -101297,12 +97572,8 @@
       (cfg
         compile-profile
         (begin
-          (set!
-            compiler-tc-macro-stdlib-tlci-catalog-hits
-            (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
-          (set!
-            compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-            (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+          (counters.bump! tc-profile-stdlib-catalog-hits)
+          (counters.bump! tc-profile-stdlib-interpreted-fallbacks))
         unit))))
 
 (cfg
@@ -101314,15 +97585,9 @@
       (cfg
         compile-profile
         (begin
-          (set!
-            compiler-tc-macro-stdlib-tlci-catalog-hits
-            (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
-          (set!
-            compiler-tc-macro-stdlib-tlci-shell-cache-hits
-            (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1))
-          (set!
-            compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-            (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+          (counters.bump! tc-profile-stdlib-catalog-hits)
+          (counters.bump! tc-profile-stdlib-shell-cache-hits)
+          (counters.bump! tc-profile-stdlib-interpreted-fallbacks))
         unit))))
 
 (define (macro-note-embedded-tlci-missing-fallback! [dependency-slot : i64]) : unit
@@ -101331,12 +97596,8 @@
     (cfg
       compile-profile
       (begin
-        (set!
-          compiler-tc-macro-stdlib-tlci-catalog-misses
-          (+ compiler-tc-macro-stdlib-tlci-catalog-misses 1))
-        (set!
-          compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-          (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+        (counters.bump! tc-profile-stdlib-catalog-misses)
+        (counters.bump! tc-profile-stdlib-interpreted-fallbacks))
       unit)))
 
 (define (macro-note-embedded-tlci-unavailable-fallback! [dependency-slot : i64]) : unit
@@ -101345,12 +97606,8 @@
     (cfg
       compile-profile
       (begin
-        (set!
-          compiler-tc-macro-stdlib-tlci-load-failures
-          (+ compiler-tc-macro-stdlib-tlci-load-failures 1))
-        (set!
-          compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-          (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+        (counters.bump! tc-profile-stdlib-load-failures)
+        (counters.bump! tc-profile-stdlib-interpreted-fallbacks))
       unit)))
 
 ;; Expression position can resolve the catalog before binding. A native
@@ -101440,9 +97697,6 @@
                     (macro-hygiene-produced-eval-start-with-pools!
                       (tc-context-macro-state ctx)
                       (tc-global-shared-view syntax-pools))
-                    (cfg
-                      compile-profile
-                      (compiler-tc-walk-native-dispatch-start!))
                     (cfg compile-profile (compiler-tc-macro-profile-start))
                     (match (let
                       [native-result : MacroNativeStdlibTlciResult
@@ -101458,11 +97712,7 @@
                           (tc-global-shared-view operands)
                           count
                           true)]
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-tc-walk-native-dispatch-finish!))
-                        native-result))
+                      native-result)
                       [(MacroNativeStdlibTlciResult.Value value)
                         (begin
                           (tc-context-install-pools! ctx)
@@ -101472,11 +97722,8 @@
                               (if (macro-tlci-resolved-catalog-dependency?
                                 catalog)
                                 unit
-                                (set!
-                                  compiler-tc-macro-stdlib-tlci-direct-expr-results
-                                  (+
-                                    compiler-tc-macro-stdlib-tlci-direct-expr-results
-                                    1)))
+                                (counters.bump!
+                                  tc-profile-stdlib-direct-expr-results))
                               (compiler-tc-macro-profile-finish
                                 (tc-context-macro-state ctx)
                                 (ci.intern-composite-pair-id
@@ -101509,11 +97756,8 @@
                             tc-dependency-tlci-direct-shell-env-folds)
                           (cfg
                             compile-profile
-                            (set!
-                              compiler-tc-macro-stdlib-tlci-direct-shell-env-folds
-                              (+
-                                compiler-tc-macro-stdlib-tlci-direct-shell-env-folds
-                                1)))
+                            (counters.bump!
+                              tc-profile-stdlib-direct-shell-env-folds))
                           (MacroDirectStdlibTlciResult.PreparedEnv
                             (macro-fold-captured-operands-env
                               params
@@ -101663,7 +97907,6 @@
   [call-expr : ast.AstExpr]) : ResultMacroEnv
   (begin
     (macro-prepare-transformer-pools! ctx)
-    (cfg compile-profile (compiler-tc-walk-bind-params-start!))
     (let
       [bind-result : ResultMacroEnv
         (macro-bind-params
@@ -101682,7 +97925,7 @@
             macro-name-id)
           call-expr)]
       (begin
-        (cfg compile-profile (compiler-tc-walk-bind-params-finish!))
+        (cfg compile-profile (counters.bump! compiler-tc-walk-operand-captures))
         bind-result))))
 
 ;; Run a macro transformer via CTFE. Module/declaration macro expansion also
@@ -101728,7 +97971,6 @@
             macro-name-id
             (tc-global-shared-view params)))
         (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
-        (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
         (cfg compile-profile (compiler-tc-macro-profile-start))
         (match (let
           [native-result : MacroNativeStdlibTlciResult
@@ -101741,9 +97983,7 @@
               (tc-global-shared-view ret)
               (tc-global-shared-view env)
               call-expr)]
-          (begin
-            (cfg compile-profile (compiler-tc-walk-native-dispatch-finish!))
-            native-result))
+          native-result)
           [(MacroNativeStdlibTlciResult.Value value)
             (begin
               (macro-adopt-transformer-env-pools! ctx env)
@@ -102672,8 +98912,9 @@
       (ctfe_support.ctfe-result-may-contain-macro-for-state?
         (tc-macro-ctfe-state state)))
       (begin
-        (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
-        (cfg compile-profile (compiler-tc-walk-note-rewalk-provenance-skip!))
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-rewalk-provenance-skips))
         ;; Produced roots can belong to a transformer scratch pool. Match the
         ;; old value-entry no-fire path by copying the root into the active AST
         ;; pool before that scratch storage is released.
@@ -102684,20 +98925,18 @@
         (begin
           (cfg
             compile-profile
-            (compiler-tc-walk-note-rewalk-fire-decision! fires))
+            (if fires
+              unit
+              (counters.bump! tc-profile-rewalk-zero-fire-calls)))
           (if (or (not fires) (< (macro-expand-depth-limit) depth))
-            (begin
-              (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
-              (if (not fires)
-                (ResultMacroExpr.Ok (ast.ast-node-push expr))
-                (ResultMacroExpr.Err
-                  (box
-                    (ctfe_support.ctfe-diagnostic-at-expr
-                      expr
-                      "macro expansion exceeded depth limit")))))
-            (begin
-              (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
-              (macro-expand-expr-fire ctx env decls depth expr))))))))
+            (if (not fires)
+              (ResultMacroExpr.Ok (ast.ast-node-push expr))
+              (ResultMacroExpr.Err
+                (box
+                  (ctfe_support.ctfe-diagnostic-at-expr
+                    expr
+                    "macro expansion exceeded depth limit"))))
+            (macro-expand-expr-fire ctx env decls depth expr)))))))
 
 (define (macro-expand-call-unframed
   [ctx : TcContext]
@@ -102950,17 +99189,15 @@
   [expr-id : i64]
   [expr : ast.AstExpr]
   [fires : bool]) : ResultMacroExpr
-  (begin
-    (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
-    (if (or (not fires) (< (macro-expand-depth-limit) depth))
-      (if (not fires)
-        (ResultMacroExpr.Ok expr-id)
-        (ResultMacroExpr.Err
-          (box
-            (ctfe_support.ctfe-diagnostic-at-expr
-              expr
-              "macro expansion exceeded depth limit"))))
-      (macro-expand-expr-fire ctx env decls depth expr))))
+  (if (or (not fires) (< (macro-expand-depth-limit) depth))
+    (if (not fires)
+      (ResultMacroExpr.Ok expr-id)
+      (ResultMacroExpr.Err
+        (box
+          (ctfe_support.ctfe-diagnostic-at-expr
+            expr
+            "macro expansion exceeded depth limit"))))
+    (macro-expand-expr-fire ctx env decls depth expr)))
 
 (define (macro-expand-arms
   [ctx : TcContext]
@@ -103033,50 +99270,43 @@
                     (+ index 1)
                     out))]
               [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])
-            (begin
-              (cfg compile-profile (compiler-tc-walk-arm-bind-start!))
-              (let
-                [arm-env-result : ResultTcEnv
-                  (tc-bind-match-pattern
+            (let
+              [arm-env-result : ResultTcEnv
+                (tc-bind-match-pattern
+                  ctx
+                  env
+                  (tc-global-shared-view scrut-ty)
+                  (tc-global-shared-view pattern))]
+              (match arm-env-result
+                [(ResultTcEnv.Ok arm-env)
+                  (match (macro-expand-node-with-fire-decision
                     ctx
-                    env
-                    (tc-global-shared-view scrut-ty)
-                    (tc-global-shared-view pattern))]
-                (begin
-                  (cfg compile-profile (compiler-tc-walk-arm-bind-finish!))
-                  (match arm-env-result
-                    [(ResultTcEnv.Ok arm-env)
-                      (match (macro-expand-node-with-fire-decision
-                        ctx
-                        arm-env
-                        (tc-global-shared-view decls)
-                        depth
-                        body-box
-                        body
-                        true)
-                        [(ResultMacroExpr.Ok nbody)
-                          (begin
-                            (ast.ast-match-arm-list-push
-                              out
-                              (ast.ast-match-arm pattern nbody))
-                            (macro-expand-arms-into
-                              ctx
-                              env
-                              decls
-                              depth
-                              scrut-ty
-                              first-fire-index
-                              arms
-                              (+ index 1)
-                              out))]
-                        [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])]
-                    [(ResultTcEnv.Err message)
-                      (ResultMacroCheck.Err
-                        (box
-                          (tc-expr-diag
-                            (tc-context-expr-bases ctx)
-                            body
-                            message)))]))))))])))
+                    arm-env
+                    (tc-global-shared-view decls)
+                    depth
+                    body-box
+                    body
+                    true)
+                    [(ResultMacroExpr.Ok nbody)
+                      (begin
+                        (ast.ast-match-arm-list-push
+                          out
+                          (ast.ast-match-arm pattern nbody))
+                        (macro-expand-arms-into
+                          ctx
+                          env
+                          decls
+                          depth
+                          scrut-ty
+                          first-fire-index
+                          arms
+                          (+ index 1)
+                          out))]
+                    [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])]
+                [(ResultTcEnv.Err message)
+                  (ResultMacroCheck.Err
+                    (box
+                      (tc-expr-diag (tc-context-expr-bases ctx) body message)))]))))])))
 
 (define (macro-expand-bindings
   [ctx : TcContext]
@@ -103117,22 +99347,18 @@
       [(ast.AstLetBinding.Binding name maybe-ty init-box)
         (match (macro-expand-node ctx env decls depth init-box)
           [(ResultMacroExpr.Ok ninit)
-            (match (begin
-              (cfg compile-profile (compiler-tc-walk-let-bind-start!))
-              (let
-                [let-bind-result : ResultTcEnv
-                  (tc-let-bindings
-                    ctx
-                    env
-                    (ast.ast-let-binding-cons
-                      (ast.ast-let-binding-id
-                        name
-                        (tc-global-shared-view maybe-ty)
-                        ninit)
-                      (ast.ast-let-binding-list-new)))]
-                (begin
-                  (cfg compile-profile (compiler-tc-walk-let-bind-finish!))
-                  let-bind-result)))
+            (match (let
+              [let-bind-result : ResultTcEnv
+                (tc-let-bindings
+                  ctx
+                  env
+                  (ast.ast-let-binding-cons
+                    (ast.ast-let-binding-id
+                      name
+                      (tc-global-shared-view maybe-ty)
+                      ninit)
+                    (ast.ast-let-binding-list-new)))]
+              let-bind-result)
               [(ResultTcEnv.Ok next-env)
                 (begin
                   (ast.ast-let-binding-list-push
@@ -103353,23 +99579,21 @@
   [expr : ast.AstExpr]) : ResultMacroExpr
   ;; Value entry: for callers that hold only an expression value (synthesized
   ;; or unspanned forms). The no-fire arm must allocate a node for the value.
-  (begin
-    (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
-    (let
-      [fires : bool
-        (macro-expr-might-fire?
-          (tc-context-macro-state ctx)
-          (tc-context-expr-bases ctx)
-          (tc-global-shared-view expr))]
-      (if (or (not fires) (< (macro-expand-depth-limit) depth))
-        (if (not fires)
-          (ResultMacroExpr.Ok (ast.ast-node-push expr))
-          (ResultMacroExpr.Err
-            (box
-              (ctfe_support.ctfe-diagnostic-at-expr
-                expr
-                "macro expansion exceeded depth limit"))))
-        (macro-expand-expr-fire ctx env decls depth expr)))))
+  (let
+    [fires : bool
+      (macro-expr-might-fire?
+        (tc-context-macro-state ctx)
+        (tc-context-expr-bases ctx)
+        (tc-global-shared-view expr))]
+    (if (or (not fires) (< (macro-expand-depth-limit) depth))
+      (if (not fires)
+        (ResultMacroExpr.Ok (ast.ast-node-push expr))
+        (ResultMacroExpr.Err
+          (box
+            (ctfe_support.ctfe-diagnostic-at-expr
+              expr
+              "macro expansion exceeded depth limit"))))
+      (macro-expand-expr-fire ctx env decls depth expr))))
 
 ;; Node entry: walk recursion goes through here so a subtree in which no
 ;; macro can fire is shared into the output by its original node id instead
@@ -103401,8 +99625,8 @@
       expr
       fires)))
 
-;; One subtree scan per visit: the no-fire majority used to pay the scan
-;; twice (once in the branch condition, once to pick the no-fire arm).
+;; One subtree scan per visit: the caller's single `fires` answer both picks
+;; the no-fire arm and gates this call.
 (define (macro-expand-expr-fire
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -103593,37 +99817,31 @@
               [(ResultMacroExpr.Ok nscrut)
                 (if (< first-fire-index 0)
                   (ResultMacroExpr.Ok (ast.ast-expr-match nscrut arms))
-                  (begin
-                    (cfg compile-profile (compiler-tc-walk-scrut-tc-start!))
-                    (let
-                      [scrut-ty-result : ResultTcType
-                        (tc-expr ctx env (tc-context-expr-get ctx nscrut))]
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-tc-walk-scrut-tc-finish!))
-                        (match scrut-ty-result
-                          [(ResultTcType.Ok scrut-ty)
-                            (match (macro-expand-arms
-                              ctx
-                              env
-                              decls
-                              depth
-                              scrut-ty
-                              first-fire-index
-                              arms)
-                              [(ResultMacroArms.Ok narms)
-                                (ResultMacroExpr.Ok
-                                  (ast.ast-expr-match nscrut narms))]
-                              [(ResultMacroArms.Err diag)
-                                (ResultMacroExpr.Err diag)])]
-                          [(ResultTcType.Err message)
-                            (ResultMacroExpr.Err
-                              (box
-                                (tc-expr-diag
-                                  (tc-context-expr-bases ctx)
-                                  (tc-context-expr-get ctx nscrut)
-                                  message)))])))))]
+                  (let
+                    [scrut-ty-result : ResultTcType
+                      (tc-expr ctx env (tc-context-expr-get ctx nscrut))]
+                    (match scrut-ty-result
+                      [(ResultTcType.Ok scrut-ty)
+                        (match (macro-expand-arms
+                          ctx
+                          env
+                          decls
+                          depth
+                          scrut-ty
+                          first-fire-index
+                          arms)
+                          [(ResultMacroArms.Ok narms)
+                            (ResultMacroExpr.Ok
+                              (ast.ast-expr-match nscrut narms))]
+                          [(ResultMacroArms.Err diag)
+                            (ResultMacroExpr.Err diag)])]
+                      [(ResultTcType.Err message)
+                        (ResultMacroExpr.Err
+                          (box
+                            (tc-expr-diag
+                              (tc-context-expr-bases ctx)
+                              (tc-context-expr-get ctx nscrut)
+                              message)))])))]
               [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
     [(ast.AstExpr.While cond-box body-box)
       (match (macro-expand-node ctx env decls depth cond-box)
@@ -104657,11 +100875,11 @@
                 import-path)
               (cfg
                 compile-profile
-                (compiler-tc-macro-profile-note-generated-module-catalog-build)))
+                (counters.bump! tc-profile-generated-module-catalog-builds)))
             unit)
           (cfg
             compile-profile
-            (compiler-tc-macro-profile-note-generated-module-materialization)))]
+            (counters.bump! tc-profile-generated-module-materializations)))]
       [(ResultMacroDeclExpansion.Err _) unit])
     result))
 
@@ -105315,10 +101533,12 @@
                                       (begin
                                         (cfg
                                           compile-profile
-                                          (compiler-tc-macro-profile-note-generated-module-memo-hit))
+                                          (counters.bump!
+                                            tc-profile-generated-module-memo-hits))
                                         (cfg
                                           compile-profile
-                                          (compiler-tc-macro-profile-note-generated-module-catalog-hit))
+                                          (counters.bump!
+                                            tc-profile-generated-module-catalog-hits))
                                         (let
                                           [target-module : String
                                             (tc-env-key-name-text target-id)]
@@ -105743,9 +101963,9 @@
 ;; ids below it are pre-existing committed nodes that must not be copied (that
 ;; is what keeps the id map per-declaration sized instead of whole-pool sized),
 ;; and every node the expansion creates is at or above it. The in-place hygiene
-;; rewrite in `macro-hygiene-expr` only touches ids at or above
-;; `macro-hygiene-produced-floor`, which is itself taken during the expansion,
-;; so it can never mutate a shared node into the generation.
+;; rewrite in `macro-hygiene-expr` only touches ids at or above the
+;; `TcMacroHygieneProducedStateData` floor, which is itself taken during the
+;; expansion, so it can never mutate a shared node into the generation.
 ;;
 ;; The pool's base arena IS the enclosing arena here. Arena handles are stable
 ;; roots, so a type push can grow its physical chain without changing the
@@ -105815,18 +102035,16 @@
         (tc-context-macro-state ctx)
         macro-expand-scratch-enabled)
       (ast.ast-node-pool-has-active-context?)))
-    (begin
-      (cfg compile-profile (compiler-tc-walk-decl-generation-skip!))
-      (macro-expand-decl-with-path
-        ctx
-        top-env
-        local-env
-        orig-decls
-        module
-        module-id
-        decl
-        cfgs
-        decl-path))
+    (macro-expand-decl-with-path
+      ctx
+      top-env
+      local-env
+      orig-decls
+      module
+      module-id
+      decl
+      cfgs
+      decl-path)
     (let
       [macro-state : TcMacroState (tc-context-macro-state ctx)]
       [enclosing : i64 (arena.tl_arena_current)]
@@ -105835,12 +102053,7 @@
       [_profile-live-before-enter : i64
         (cfg compile-profile (profile.alloc-live) 0)]
       [_profile-captures-before : i64
-        (cfg
-          compile-profile
-          (+
-            compiler-tc-macro-walk-bind-params-calls
-            compiler-tc-macro-walk-direct-marshal-calls)
-          0)]
+        (cfg compile-profile compiler-tc-walk-operand-captures 0)]
       [generation : i64
         (if splice?
           (macro-splice-generation-enter! macro-state)
@@ -105879,11 +102092,7 @@
       [_profile-fired : bool
         (cfg
           compile-profile
-          (>
-            (+
-              compiler-tc-macro-walk-bind-params-calls
-              compiler-tc-macro-walk-direct-marshal-calls)
-            _profile-captures-before)
+          (> compiler-tc-walk-operand-captures _profile-captures-before)
           false)]
       [_profile-raw-end-live : i64 (cfg compile-profile (profile.alloc-live) 0)]
       [_profile-generation-raw-bytes : i64
@@ -105957,7 +102166,6 @@
             (ast.ast-compaction-profile-start! _profile-entry-type-len type-map)
             unit)
           unit)]
-      [_copy-start-len : i64 (ast.ast-node-pool-context-expr-len pools)]
       ;; Every existing type id is shared, so the copy-out and the escape pass
       ;; push no type node at all. Read once so both passes see the same base.
       [shared-type-base : i64 (ast.ast-node-pool-context-type-len pools)]
@@ -106011,10 +102219,7 @@
             unit)
           unit)]
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-walk-decl-generation-note!
-            (- (ast.ast-node-pool-context-expr-len pools) _copy-start-len)))
+        (cfg compile-profile (counters.bump! tc-profile-decl-generations))
         (unsafe
           (arena.tl_arena_set enclosing))
         (ast.ast-node-pool-context-install! pools)
@@ -106156,9 +102361,9 @@
 ;; Macro-expansion skip analysis. Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in
 ;; the program (all imported modules), which redundantly re-typechecks match
-;; scrutinees / let bindings and rebuilds the entire AST -- ~1.7GB and >1s on a
-;; self-compile. The vast majority of decls call no macro at all, so this work is
-;; pure waste. These predicates detect whether a decl actually contains a macro
+;; scrutinees / let bindings and rebuilds the entire AST. The vast majority of
+;; decls call no macro at all, so this work is pure waste. These predicates
+;; detect whether a decl actually contains a macro
 ;; (or `when`/`unless` compat) call using the SAME resolution as the expander
 ;; (`macro-call-decl`), so a decl with none can be shared unchanged. They are
 ;; conservative: any unrecognized expression variant returns `true` (expand), so
@@ -106577,9 +102782,7 @@
   [state : TcMacroState]
   [expr-bases : i64]
   [expr : ast.AstExpr]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-walk-note-fire-touch!))
-    (macro-expr-might-fire-uncounted? state expr-bases expr)))
+  (macro-expr-might-fire-uncounted? state expr-bases expr))
 
 (define (macro-expr-might-fire-uncounted?
   [state : TcMacroState]
@@ -107146,13 +103349,9 @@
   [state : TcMacroState]
   [expr-bases : i64]
   [decl : ast.AstDecl]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-walk-decl-gate-start!))
-    (let
-      [result : bool (macro-decl-cannot-fire? state expr-bases decl)]
-      (begin
-        (cfg compile-profile (compiler-tc-walk-decl-gate-finish!))
-        result))))
+  (let
+    [result : bool (macro-decl-cannot-fire? state expr-bases decl)]
+    result))
 
 ;; Whether the program contains any `(type T)` literal (AstExpr.TypeLiteral). ALL
 ;; CTFE reflection/layout queries (ctfe-reflect-resolve-type for a `(type T)`,
@@ -107549,9 +103748,8 @@
                     (begin
                       (cfg
                         compile-profile
-                        (set!
-                          compiler-tc-walk-splice-env-reresolve-candidates
-                          (+ compiler-tc-walk-splice-env-reresolve-candidates 1)))
+                        (counters.bump!
+                          tc-profile-splice-env-reresolve-candidates))
                       (if (ast.ast-type-eq?
                         before
                         (tc-global-shared-view after))
@@ -107560,11 +103758,8 @@
                           (set! (array-ref values value-slot) after)
                           (cfg
                             compile-profile
-                            (set!
-                              compiler-tc-walk-splice-env-reresolve-updates
-                              (+
-                                compiler-tc-walk-splice-env-reresolve-updates
-                                1)))))
+                            (counters.bump!
+                              tc-profile-splice-env-reresolve-updates))))
                       (if (tc-type-needs-resolution-for-context? ctx after)
                         (begin
                           (set!
@@ -107581,11 +103776,6 @@
                   (string.int->string (array-length values)))))
             (set! read-index (+ read-index 1)))))
       (set! (array-ref sidecar capacity) write-index)
-      (cfg
-        compile-profile
-        (set!
-          compiler-tc-walk-splice-env-reresolve-remaining
-          (+ compiler-tc-walk-splice-env-reresolve-remaining write-index)))
       write-index)))
 
 (define (tc-top-env-reresolve-caches! [ctx : TcContext] [env : TcTypeEnv]) : unit
@@ -107596,9 +103786,7 @@
     (begin
       (cfg
         compile-profile
-        (set!
-          compiler-tc-walk-splice-env-reresolve-calls
-          (+ compiler-tc-walk-splice-env-reresolve-calls 1)))
+        (counters.bump! tc-profile-splice-env-reresolve-calls))
       ;; A batch of consecutive module markers can leave a small raw prefix.
       ;; Skip it to the first explicit layer, then follow only partial `below`
       ;; links, exactly like the lookup chain being invalidated.
@@ -107782,8 +103970,7 @@
 ;; module placeholders resolve in this same pass. Generated *file* imports (a
 ;; generated module body importing a source file, or a generated module import
 ;; of a not-yet-loaded module) are loaded inline through the threaded loader
-;; context (stdlib-roots + cfgs) exactly as the retired fixed-point loop's
-;; macro-materialize-generated-imports step did -- there is no deferred
+;; context (stdlib-roots + cfgs) -- there is no deferred
 ;; fallback pass and no follow-up worklist.
 (define (macro-expand-decls
   [load-state : cload.CompilerLoadSessionState]
@@ -107837,20 +104024,15 @@
               (ast.ast-decl-list-new)))
             [(ast.AstDeclListStep.Nil)
               (let
-                [_final-flatten-start : unit
-                  (cfg
-                    compile-profile
-                    (compiler-tc-walk-segment-final-flatten-start!))]
                 [final-decls : ast.AstDeclList
                   (macro-decl-list-reverse (tc-global-shared-view out-rev))]
                 [final-paths : ast.AstDeclPathList
                   (macro-decl-path-list-reverse
                     (tc-global-shared-view out-paths-rev))]
-                [_final-flatten-finish : unit
+                (begin
                   (cfg
                     compile-profile
-                    (compiler-tc-walk-segment-final-flatten-finish!))]
-                (begin
+                    (counters.bump! tc-profile-segment-final-flattens))
                   (set!
                     result
                     (ResultMacroDeclsWithPaths.Ok final-decls final-paths))
@@ -107907,10 +104089,8 @@
                             compile-profile
                             (compiler-tc-walk-decl-sample-note! 3))
                           ;; R3-P2b: an import placeholder's expansion is
-                          ;; the single largest allocator left in the splice
-                          ;; family (measured 113.1 MB retained over 88 events
-                          ;; on the opt1 self-compile, 53% of the family) and
-                          ;; R3-P1 left it on the ambient arena. Run it in its
+                          ;; the single largest allocator in the splice
+                          ;; family. Run it in its
                           ;; own generation, on the SPLICE ring -- see
                           ;; macro-splice-generation-enter! for why the ring,
                           ;; and not R3-P1's batch ring, is the sound one.
@@ -107948,11 +104128,6 @@
                                             (& expanded-paths)
                                             cur-materialize-seen
                                             cur-module-id))]
-                                      [_sp-probe-copy-start : unit
-                                        (cfg
-                                          compile-profile
-                                          (compiler-tc-walk-sp-probe-start! 0)
-                                          unit)]
                                       [_segment-splice : unit
                                         (macro-segmented-program-splice-current!
                                           walk-state
@@ -107990,15 +104165,7 @@
                                       [defer-cache? : bool
                                         (macro-segmented-program-current-starts-module-import-placeholder?
                                           walk-state)]
-                                      [_sp-probe-copy-finish : unit
-                                        (cfg
-                                          compile-profile
-                                          (compiler-tc-walk-sp-probe-finish! 0)
-                                          unit)]
                                       (begin
-                                        (cfg
-                                          compile-profile
-                                          (compiler-tc-walk-sp-probe-start! 1))
                                         (match (let
                                           [extend-result : ResultTcEnv
                                             (macro-extend-top-env-with-module-marker
@@ -108009,12 +104176,7 @@
                                               expanded
                                               (tc-global-shared-view cur-module)
                                               cur-module-id)]
-                                          (begin
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-walk-sp-probe-finish!
-                                                1))
-                                            extend-result))
+                                          extend-result)
                                           [(ResultTcEnv.Ok next-top-env)
                                             (begin
                                               (tc-nominal-owner-cache-reset-for-job!
@@ -108039,27 +104201,17 @@
                                                       5))
                                                   (cfg
                                                     compile-profile
-                                                    (compiler-tc-walk-sp-probe-start!
-                                                      4))
+                                                    (compiler-tc-walk-reresolve-start!))
                                                   (tc-top-env-reresolve-caches!
                                                     cur-ctx
                                                     next-top-env)
                                                   (cfg
                                                     compile-profile
-                                                    (compiler-tc-walk-sp-probe-finish!
-                                                      4))
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-walk-sp-probe-start!
-                                                      2))
+                                                    (compiler-tc-walk-reresolve-finish!))
                                                   (set!
                                                     cur-top-env
                                                     (tc-env-with-cache-layer-over-explicit
-                                                      next-top-env))
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-walk-sp-probe-finish!
-                                                      2))))
+                                                      next-top-env))))
                                               unit)]
                                           [(ResultTcEnv.Err message)
                                             (begin
@@ -108163,17 +104315,10 @@
                                           (compiler-tc-walk-decl-sample-note! 6))
                                         (cfg
                                           compile-profile
-                                          (compiler-tc-walk-splice-flag-note!
-                                            (if incremental?
-                                              1
-                                              2))
-                                          unit)
-                                        (cfg
-                                          compile-profile
-                                          (if extend-ctfe-metadata?
-                                            (compiler-tc-walk-splice-flag-note!
-                                              3)
-                                            unit)
+                                          (if incremental?
+                                            unit
+                                            (counters.bump!
+                                              tc-profile-splice-registry-invalidated))
                                           unit)
                                         ;; Generated Module catalogs are usually
                                         ;; inert additions, but a full catalog can
@@ -108189,10 +104334,6 @@
                                         (if (macro-program-has-defmacro?
                                           (tc-global-shared-view expanded))
                                           (begin
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-walk-splice-flag-note!
-                                                5))
                                             (if incremental?
                                               unit
                                               (begin
@@ -108478,9 +104619,6 @@
                         (begin
                           (cfg
                             compile-profile
-                            (compiler-tc-macro-profile-note-walk-decl-shared))
-                          (cfg
-                            compile-profile
                             (compiler-tc-walk-decl-sample-note! 1))
                           (set!
                             out-rev
@@ -108501,9 +104639,6 @@
                             out-paths-rev))]
                       [else
                         (begin
-                          (cfg
-                            compile-profile
-                            (compiler-tc-macro-profile-note-walk-decl-expanded))
                           (cfg
                             compile-profile
                             (compiler-tc-walk-decl-sample-note! 2))
@@ -108789,18 +104924,12 @@
 
 (cfg
   compile-profile
-  (define (macro-profile-surface-prefix-hit [count : i64]) : unit
+  (define (macro-profile-surface-prefix-hit) : unit
     (cfg
       compile-profile-summary
       unit
-      (begin
-        (io.print-error
-          "compile-profile-detail|prelude.macro_walk_decl_visits|0\n")
-        (io.print-error
-          (str_cat.str-cat
-            "compile-profile-detail|prelude.macro_walk_skipped_decls|"
-            (string.int->string count)
-            "\n"))))))
+      (io.print-error
+        "compile-profile-detail|prelude.macro_walk_decl_visits|0\n"))))
 
 ;; Package imports are flattened at their source import sites, between
 ;; entry-owned module/alias markers. Provenance is the stable discriminator:
@@ -108892,7 +105021,7 @@
                 load-state
                 count)
               unit)
-            (cfg compile-profile (macro-profile-surface-prefix-hit count))
+            (cfg compile-profile (macro-profile-surface-prefix-hit))
             (MacroSurfacePrefixPlan.Hydrated
               (tc-decl-list-drop (tc-global-shared-view decls) count)
               (tc-decl-path-list-drop (tc-global-shared-view paths) count)
@@ -109150,10 +105279,6 @@
                                       (cfg
                                         compile-profile
                                         (compiler-tc-profile-start))
-                                      (cfg
-                                        compile-profile
-                                        (compiler-tc-macro-profile-note-walk-share-gate
-                                          true))
                                       (match (macro-expand-decls-with-surface-prefix
                                         load-state
                                         ctx
@@ -109174,8 +105299,7 @@
                                                 "macro_walk"))
                                             (cfg
                                               compile-profile
-                                              (compiler-tc-env-profile-emit-prefix
-                                                "macro_"))
+                                              (compiler-tc-env-profile-emit-macro-cache-entries))
                                             (cfg
                                               compile-profile
                                               (compiler-tc-macro-profile-emit))
@@ -109192,8 +105316,7 @@
                                                 "macro_walk"))
                                             (cfg
                                               compile-profile
-                                              (compiler-tc-env-profile-emit-prefix
-                                                "macro_"))
+                                              (compiler-tc-env-profile-emit-macro-cache-entries))
                                             (cfg
                                               compile-profile
                                               (compiler-tc-macro-profile-emit))
@@ -109618,9 +105741,7 @@
       ;; modules through the content-equivalence cache. Extra non-stdlib roots
       ;; (for example `src` during a self-compile) do not disable the route, while
       ;; modified/untrusted stdlib source never receives embedded provenance.
-      ;; #5926 exercised the real macro walk beyond the historical failure point
-      ;; and across five reset/release/remap cycles on hosted Linux and Windows,
-      ;; so production routing now uses this same policy on both hosts. The
+      ;; Production routing uses this same policy on every host. The
       ;; stress-only cfg controls durable telemetry, not route selection.
       (tc-macro-walk-set!
         (tc-job-state-macro-state job-state)
@@ -110609,8 +106730,8 @@
         (set! data.fn-return-arena 0)
         (tc-scratch-arena-state-data-set! state data)))))
 
-;; Function bodies dominate typecheck allocation (~96% of the phase's live
-;; delta) and the check returns only unit -- everything it allocates
+;; Function bodies dominate typecheck allocation and the check returns only
+;; unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
 ;; frees it. Run each body check through with-escape so the checker sees the
 ;; scratch extent and clones the error diagnostic out before rewinding (do NOT
@@ -111392,18 +107513,12 @@
 
 (cfg
   compile-profile
-  (define (tc-profile-surface-prefix-hit [count : i64]) : unit
+  (define (tc-profile-surface-prefix-hit) : unit
     (cfg
       compile-profile-summary
       unit
-      (begin
-        (io.print-error
-          "compile-profile-detail|prelude.typecheck_decl_checks|0\n")
-        (io.print-error
-          (str_cat.str-cat
-            "compile-profile-detail|prelude.typecheck_skipped_decls|"
-            (string.int->string count)
-            "\n"))))))
+      (io.print-error
+        "compile-profile-detail|prelude.typecheck_decl_checks|0\n"))))
 
 (define (tc-check-decls-with-surface-prefix-hit
   [ctx : TcContext]
@@ -111416,7 +107531,7 @@
   [facts : surface_facts.SurfaceTypecheckFacts]) : ResultCompilerTypecheck
   (begin
     (tc-clone-root-collection-apply-surface-facts! ctx)
-    (cfg compile-profile (tc-profile-surface-prefix-hit count))
+    (cfg compile-profile (tc-profile-surface-prefix-hit))
     (cfg
       compile-profile
       (compiler-tc-decl-profile-reset (tc-context-job-state ctx)))
@@ -111627,9 +107742,7 @@
   (No)
   (Some i64))
 
-;; Keep construction and append as ordinary declaration boundaries. Before the
-;; dotted-constructor cache-domain fix (#6451), these exact helpers changed the
-;; direct-mapped cache collision order and exposed #6324 during profile selfhost.
+;; Keep construction and append as ordinary declaration boundaries.
 (cfg
   compile-profile
   (define (tc-poison-name-list-new) : TcPoisonNameList
@@ -111744,34 +107857,27 @@
   [module : String]
   [module-id : i64]
   [cache : TcModuleLocalEnvCache]) : ResultCompilerTypecheck
-  (begin
-    (cfg compile-profile (compiler-tc-decl-profile-start-section))
-    (match (tc-module-local-env-cached-id
-      ctx
-      top-env
-      (tc-global-shared-view module)
-      module-id
-      cache)
-      [(ResultTcModuleLocalEnv.Ok local-env next-cache)
-        (begin
-          (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
-          (tc-check-decls-with-paths-in-module-env
-            ctx
-            top-env
-            decls
-            paths
-            summary
-            module
-            module-id
-            next-cache
-            local-env
-            (tc-hygiene-global-env local-env)))]
-      [(ResultTcModuleLocalEnv.Err message)
-        (begin
-          (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
-          (ResultCompilerTypecheck.Err
-            (box
-              (cdiag.compiler-diagnostic-list-single (tc-diag-at-start message)))))])))
+  (match (tc-module-local-env-cached-id
+    ctx
+    top-env
+    (tc-global-shared-view module)
+    module-id
+    cache)
+    [(ResultTcModuleLocalEnv.Ok local-env next-cache)
+      (tc-check-decls-with-paths-in-module-env
+        ctx
+        top-env
+        decls
+        paths
+        summary
+        module
+        module-id
+        next-cache
+        local-env
+        (tc-hygiene-global-env local-env))]
+    [(ResultTcModuleLocalEnv.Err message)
+      (ResultCompilerTypecheck.Err
+        (box (cdiag.compiler-diagnostic-list-single (tc-diag-at-start message))))]))
 
 (define (tc-check-decls-with-paths-in-module-env
   [ctx : TcContext]
@@ -111869,9 +107975,6 @@
               (match (tc-global-shared-view decl)
                 [(ast.AstDecl.Module next-module)
                   (begin
-                    (cfg
-                      compile-profile
-                      (compiler-tc-decl-profile-start-section))
                     (tc-context-capture-active-pools! ctx)
                     (match (tc-module-local-env-cached-id
                       ctx
@@ -111888,9 +107991,6 @@
                           (tc-global-shared-view cur-cache))
                           [(ResultTcModuleLocalEnv.Ok next-local-env-copy _)
                             (begin
-                              (cfg
-                                compile-profile
-                                (compiler-tc-decl-profile-add-local-env))
                               (set! cur-decls rest)
                               (set! cur-paths rest-paths)
                               (set!
@@ -111910,9 +108010,6 @@
                                   poison-names)))]
                           [(ResultTcModuleLocalEnv.Err message)
                             (begin
-                              (cfg
-                                compile-profile
-                                (compiler-tc-decl-profile-add-local-env))
                               (cdiag.compiler-diagnostic-list-push!
                                 (&mut diagnostics)
                                 (tc-typecheck-diag-with-rest-path
@@ -111927,9 +108024,6 @@
                               (set! done true))])]
                       [(ResultTcModuleLocalEnv.Err message)
                         (begin
-                          (cfg
-                            compile-profile
-                            (compiler-tc-decl-profile-add-local-env))
                           (cdiag.compiler-diagnostic-list-push!
                             (&mut diagnostics)
                             (tc-typecheck-diag-with-rest-path
@@ -112001,9 +108095,6 @@
                           unused-unsafe
                           (tc-global-shared-view decl-path))]
                       (begin
-                        (cfg
-                          compile-profile
-                          (compiler-tc-decl-profile-start-section))
                         (tc-context-capture-active-pools! decl-ctx)
                         (tc-poison-observation-reset!)
                         (match (tc-check-decl-with-global-env

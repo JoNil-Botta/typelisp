@@ -114,18 +114,8 @@ assembly, the compile-profile CLI). Consumers check that what they reuse
 exists and fail otherwise. Hosted CI runs the complete inventory in one job
 per host.
 
-`verify-cross-mode-differential.sh` reads
-`tests/cross-mode/corpus.tsv` after its producer gates have run. It reuses the
-integration, TLCI, SPMD, Windows COFF, and same-run bootstrap artifacts instead
-of rebuilding their exhaustive corpora. Every manifest row records its axes,
-observations, route metadata, producer gate (the gate ID it reuses, which this
-gate's row in `ci-gates.tsv` needs on the row's hosts), and host/ISA
-applicability; the gate
-writes the evaluated state to
-`target/cross-mode-differential/applicability.tsv`. Use `--case NAME` to
-reproduce the first reported difference with retained producer artifacts, or
-`--self-test` to run controlled observation and mode-selection perturbations
-without a compiler.
+`verify-cross-mode-differential.sh` and its manifest are described under
+[Cross-mode differential corpus](../docs/testing-and-bootstrap.md#cross-mode-differential-corpus).
 
 Linux memory limits (`lib-linux-memory-limit.sh`, used directly by the focused
 inline profile-summary and large CRLF formatter probes) need a usable
@@ -141,14 +131,9 @@ one-second timeout classification case and separately check descendant cleanup
 with delayed child creation and a ten-second bounded startup/cleanup deadline.
 Its stable key/value record
 distinguishes command failure, timeout, memory termination, wrapper/setup
-failure, and success. `verify-embedded-stdlib-tlci-resources.sh` applies an
-8192 MiB cap to the production image build, matched opt1/opt2 compiler builds,
-cold starts, and representative native/source expansions on both CI hosts.
-It writes informational measurements to
-`target/embedded-stdlib-tlci-resources/<host>/report.tsv`, while required
-identity, output, routing, and parity results live separately in
-`assertions.tsv`. Linux adds Cachegrind instruction evidence when available;
-no noisy time or instruction measurement is a regression ratchet.
+failure, and success. `verify-embedded-stdlib-tlci-resources.sh` runs its
+builds under that interface; `src/TESTING.md` (Embedded stdlib and TLCI gates)
+describes its caps and reports.
 
 On Linux, `TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE` is an invocation-local
 output destination for the limiting helper. The helper removes it from the

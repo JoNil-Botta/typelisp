@@ -1,6 +1,6 @@
 ;; format_rules.tl - TypeLisp-aware formatter rules.
 ;;
-;; `format_core.tl` stays syntax-neutral. This module adds deterministic
+;; The CST (`format_cst.tl`) stays syntax-neutral. This module adds deterministic
 ;; gofmt-like rules for common TypeLisp special forms and renders them directly
 ;; from the CST. `tests/format_golden/` and `format-rules-self-test` pin the
 ;; output.

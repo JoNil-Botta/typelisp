@@ -91859,7 +91859,6 @@
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
   (let
     [mark : i64 (reader.sp-node-pool-len)]
-    [sexpr-mark : i64 (reader.sexpr-node-pool-len)]
     (match (macro-expr-to-spanned-sexpr
       session
       expr
@@ -91869,17 +91868,14 @@
           [(ResultMacroParsedDecls.Ok decls)
             (begin
               (reader.sp-node-pool-truncate! mark)
-              (reader.sexpr-node-pool-truncate! sexpr-mark)
               (ResultMacroParsedDecls.Ok decls))]
           [(ResultMacroParsedDecls.Err diag)
             (begin
               (reader.sp-node-pool-truncate! mark)
-              (reader.sexpr-node-pool-truncate! sexpr-mark)
               (ResultMacroParsedDecls.Err diag))])]
       [(ResultMacroSexpr.Err diag)
         (begin
           (reader.sp-node-pool-truncate! mark)
-          (reader.sexpr-node-pool-truncate! sexpr-mark)
           (ResultMacroParsedDecls.Err diag))])))
 
 (define (macro-parse-decls-from-exprs

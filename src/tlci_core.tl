@@ -10,7 +10,6 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
 (import compiler_intern as ci)
-(import lex as lexer)
 (import read as reader)
 
 (defmacro (tlci-host-callback-name-shared-view [place : Expr]) : Expr
@@ -1958,7 +1957,7 @@
 (define (tlci-char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (tlci-string-ref text idx) : i64))
 
-(define (tlci-field-string-value [ftail : reader.Sexpr] [fname : String]) : ResultTlciString
+(define (tlci-field-string-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciString
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons vhead vrest)
       (match (reader.sexpr-view vhead)
@@ -1982,7 +1981,7 @@
       (ResultTlciString.Err
         (str_cat.str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
-(define (tlci-field-i64-value [ftail : reader.Sexpr] [fname : String]) : ResultTlciI64
+(define (tlci-field-i64-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciI64
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons vhead vrest)
       (match (reader.sexpr-view vhead)
@@ -2035,7 +2034,7 @@
             0))
         result))))
 
-(define (tlci-sexpr-list-length [items : reader.Sexpr]) : i64
+(define (tlci-sexpr-list-length [items : reader.SpannedSexpr]) : i64
   (match (reader.sexpr-view items)
     [(reader.SexprView.Nil) 0]
     [(reader.SexprView.Cons _ rest)
@@ -2047,22 +2046,28 @@
     [_ -1]))
 
 (define (tlci-signature-param-count [signature : String]) : i64
-  (match (reader.result (lexer.lex signature))
-    [(reader.ResultSexpr.Err _) -1]
-    [(reader.ResultSexpr.Ok form)
-      (match (reader.sexpr-view form)
-        [(reader.SexprView.Cons head rest)
-          (match (reader.sexpr-view head)
-            [(reader.SexprView.Sym arrow)
-              (if (string.eq (tlci-symbol-text arrow) "->")
-                (let
-                  [item-count : i64 (tlci-sexpr-list-length rest)]
-                  (if (> item-count 0)
-                    (- item-count 1)
-                    -1))
-                -1)]
-            [_ -1])]
-        [_ -1])]))
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [count : i64
+      (match (reader.data-result signature)
+        [(reader.ResultSexpr.Err _) -1]
+        [(reader.ResultSexpr.Ok form)
+          (match (reader.sexpr-view form)
+            [(reader.SexprView.Cons head rest)
+              (match (reader.sexpr-view head)
+                [(reader.SexprView.Sym arrow)
+                  (if (string.eq (tlci-symbol-text arrow) "->")
+                    (let
+                      [item-count : i64 (tlci-sexpr-list-length rest)]
+                      (if (> item-count 0)
+                        (- item-count 1)
+                        -1))
+                    -1)]
+                [_ -1])]
+            [_ -1])])]
+    (begin
+      (reader.sp-node-pool-truncate! mark)
+      count)))
 
 (define (tlci-spmd-args-valid? [args : (& args str)]) : bool
   (let
@@ -2284,7 +2289,7 @@
       error)))
 
 (define (tlci-spmd-specialization-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [abi : String]
   [has-abi : bool]
   [backend : String]
@@ -2533,7 +2538,7 @@
       (ResultTlciSpmdSpecialization.Err
         "tlci metadata: specialization fields must be lists")]))
 
-(define (tlci-spmd-specialization-from-field [fields : reader.Sexpr]) : ResultTlciSpmdSpecialization
+(define (tlci-spmd-specialization-from-field [fields : reader.SpannedSexpr]) : ResultTlciSpmdSpecialization
   (tlci-spmd-specialization-fields
     fields
     ""
@@ -2552,7 +2557,7 @@
     false))
 
 (define (tlci-spmd-helper-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [name : String]
   [has-name : bool]
   [signature : String]
@@ -2639,7 +2644,7 @@
     [_
       (ResultTlciSpmdCallable.Err "tlci metadata: helper fields must be lists")]))
 
-(define (tlci-spmd-helper-from-form [form : reader.Sexpr]) : ResultTlciSpmdCallable
+(define (tlci-spmd-helper-from-form [form : reader.SpannedSexpr]) : ResultTlciSpmdCallable
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view head)
@@ -2670,7 +2675,7 @@
         "tlci metadata: spmd-callables entries must be helper lists")]))
 
 (define (tlci-spmd-callables-from-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [items : TlciSpmdCallables]) : ResultTlciSpmdCallables
   (match (reader.sexpr-view fields)
     [(reader.SexprView.Nil) (ResultTlciSpmdCallables.Ok items)]
@@ -2686,7 +2691,7 @@
       (ResultTlciSpmdCallables.Err
         "tlci metadata: spmd-callables must contain helper lists")]))
 
-(define (tlci-spmd-callables-from-field [fields : reader.Sexpr]) : ResultTlciSpmdCallables
+(define (tlci-spmd-callables-from-field [fields : reader.SpannedSexpr]) : ResultTlciSpmdCallables
   (let
     [field-count : i64 (tlci-sexpr-list-length (clone fields))]
     (tlci-spmd-callables-from-fields
@@ -2697,7 +2702,7 @@
           field-count)))))
 
 (define (tlci-package-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [name : String]
   [has-name : bool]
   [version : String]
@@ -2763,11 +2768,11 @@
           (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")])]
     [_ (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")]))
 
-(define (tlci-package-from-field [ftail : reader.Sexpr]) : ResultTlciMetadata
+(define (tlci-package-from-field [ftail : reader.SpannedSexpr]) : ResultTlciMetadata
   (tlci-package-fields ftail "" false "" false))
 
 (define (tlci-metadata-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [version : String]
   [has-version : bool]
   [package-name : String]
@@ -2873,7 +2878,7 @@
         [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")])]
     [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")]))
 
-(define (tlci-metadata-from-form [form : reader.Sexpr]) : ResultTlciMetadata
+(define (tlci-metadata-from-form [form : reader.SpannedSexpr]) : ResultTlciMetadata
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view head)
@@ -2901,10 +2906,16 @@
         "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
 
 (define (tlci-metadata-parse [source : String]) : ResultTlciMetadata
-  (match (reader.result (lexer.lex source))
-    [(reader.ResultSexpr.Err message)
-      (ResultTlciMetadata.Err (str_cat.str-cat "tlci metadata: " message))]
-    [(reader.ResultSexpr.Ok form) (tlci-metadata-from-form form)]))
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [result : ResultTlciMetadata
+      (match (reader.data-result source)
+        [(reader.ResultSexpr.Err message)
+          (ResultTlciMetadata.Err (str_cat.str-cat "tlci metadata: " message))]
+        [(reader.ResultSexpr.Ok form) (tlci-metadata-from-form form)])]
+    (begin
+      (reader.sp-node-pool-truncate! mark)
+      result)))
 
 (define (tlci-quote-text) : String
   "\"")

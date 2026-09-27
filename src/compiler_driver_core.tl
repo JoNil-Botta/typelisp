@@ -501,16 +501,6 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         (owned_view.compiler-owned-shared-view phase)
-        "reader-sexpr-pool"
-        (compiler_load.compiler-load-reader-sexpr-pool-arena-handle))
-      (allocation_profile.compiler-allocation-profile-control!
-        2
-        (owned_view.compiler-owned-shared-view phase)
-        "reader-sexpr-builder"
-        (compiler_load.compiler-load-reader-sexpr-builder-arena-handle))
-      (allocation_profile.compiler-allocation-profile-control!
-        2
-        (owned_view.compiler-owned-shared-view phase)
         "typecheck-aggregate-layout-cache"
         (compiler_typecheck_core.tc-agg-layout-cache-storage-arena-handle-value-for-job
           typecheck-state))
@@ -1355,10 +1345,6 @@
     354))
 (cfg
   (any compile-profile test)
-  (define compiler-driver-load-profile-sexpr-start-metric : i64
-    355))
-(cfg
-  (any compile-profile test)
   (define compiler-driver-load-profile-origin-start-metric : i64
     356))
 (cfg
@@ -1749,15 +1735,6 @@
 
 (cfg
   compile-profile
-  (define (compiler-driver-profile-sexpr-bytes) : i64
-    (+
-      (compiler-driver-profile-arena-bytes
-        (compiler_load.compiler-load-reader-sexpr-pool-arena-handle))
-      (compiler-driver-profile-arena-bytes
-        (compiler_load.compiler-load-reader-sexpr-builder-arena-handle)))))
-
-(cfg
-  compile-profile
   (define (compiler-driver-profile-owner-delta [owner : i64] [start : i64]) : i64
     (compiler-driver-profile-nonnegative
       (- (compiler-driver-profile-arena-bytes owner) start))))
@@ -1790,10 +1767,6 @@
         compiler-driver-load-profile-token-start-metric
         (compiler-driver-profile-arena-bytes
           (compiler_load.compiler-load-lex-token-buffer-arena-handle)))
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-load-profile-sexpr-start-metric
-        (compiler-driver-profile-sexpr-bytes))
       (compiler-driver-profile-set!
         state
         compiler-driver-load-profile-origin-start-metric
@@ -1870,13 +1843,6 @@
           (compiler-driver-profile-value
             state
             compiler-driver-load-profile-token-start-metric))]
-      [sexprs : i64
-        (compiler-driver-profile-nonnegative
-          (-
-            (compiler-driver-profile-sexpr-bytes)
-            (compiler-driver-profile-value
-              state
-              compiler-driver-load-profile-sexpr-start-metric)))]
       [origins : i64
         (compiler-driver-profile-owner-delta
           (compiler_load.compiler-load-reader-node-pool-arena-handle)
@@ -1942,10 +1908,8 @@
           (+
             tokens
             (+
-              sexprs
-              (+
-                origins
-                (+ pool-base (+ expr-pool (+ type-pool (+ surface interns))))))))]
+              origins
+              (+ pool-base (+ expr-pool (+ type-pool (+ surface interns)))))))]
       [remainder : i64 (- live-delta named)]
       (with-scratch
         (begin
@@ -1980,14 +1944,6 @@
               "scan-scratch"
               cumulative-alloc
               tokens
-              peak-delta))
-          (io.print-error
-            (compiler-driver-profile-lifetime-line
-              (owned_view.compiler-owned-shared-view boundary)
-              "reader-sexpr-storage"
-              "scan-scratch"
-              cumulative-alloc
-              sexprs
               peak-delta))
           (io.print-error
             (compiler-driver-profile-lifetime-line

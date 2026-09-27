@@ -1,4 +1,4 @@
-;; compiler_parse_core.tl - reader.Sexpr -> real compiler AST parser.
+;; compiler_parse_core.tl - reader.SpannedSexpr -> real compiler AST parser.
 ;;
 ;; This module targets `compiler_ast_types.tl`, not the smaller
 ;; compile_smoke AST. It stays parser-only: the later selfhost passes consume
@@ -1965,7 +1965,7 @@
         (__tl_array-data compiler-parse-default-state)
         : (Ptr CompilerParseState)))))
 
-(define (sexpr-colon? [s : reader.Sexpr]) : bool
+(define (sexpr-colon? [s : reader.SpannedSexpr]) : bool
   (match (reader.sexpr-view s)
     [(reader.SexprView.Sym name-id)
       (= (ci.intern-syntax-id-value name-id) cbi.compiler-builtin-id-fix-colon)]
@@ -3920,7 +3920,7 @@
 (define (parse-ast-type-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstTypeList)]) : ResultAstTypeListBuild
   (match (reader.sexpr-view s)
     [(reader.SexprView.Nil) (ResultAstTypeListBuild.Ok)]
@@ -3938,7 +3938,7 @@
 (define (parse-ast-type-list-result
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]) : ResultAstTypeList
+  [s : reader.SpannedSexpr]) : ResultAstTypeList
   (let
     [out : ast.AstTypeList (ast.ast-type-list-new)]
     (match (parse-ast-type-list dispatch pools s (&mut out))
@@ -3963,7 +3963,7 @@
 (define (parse-ast-lifetime-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [message : String]
   [out : (&mut out ast.AstLifetimeList)]) : ResultAstLifetimeListBuild
   (match (reader.sexpr-view s)
@@ -3983,7 +3983,7 @@
 (define (parse-ast-lifetime-list-result
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [message : String]) : ResultAstLifetimeList
   (let
     [out : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
@@ -3995,7 +3995,7 @@
 (define (parse-ast-lifetime-list-nonempty
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [message : String]) : ResultAstLifetimeList
   (match (reader.sexpr-view (compiler-parse-place-shared-view s))
     [(reader.SexprView.Nil) (ResultAstLifetimeList.Err message)]
@@ -4005,7 +4005,7 @@
   (Ok ast.AstCFunctionMode)
   (Err String))
 
-(define (parse-ast-c-function-mode [node : reader.Sexpr]) : ResultAstCFunctionMode
+(define (parse-ast-c-function-mode [node : reader.SpannedSexpr]) : ResultAstCFunctionMode
   (match (reader.sexpr-view node)
     [(reader.SexprView.Sym name)
       (let
@@ -4035,7 +4035,7 @@
 (define (parse-ast-c-function-type
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [rest : reader.Sexpr]) : ResultAstType
+  [rest : reader.SpannedSexpr]) : ResultAstType
   (match (reader.sexpr-view rest)
     [(reader.SexprView.Cons mode-node signature-tail)
       (match (parse-ast-c-function-mode mode-node)
@@ -4072,7 +4072,7 @@
 (define (parse-ast-func-type-parts
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]) : ResultAstFuncTypeParts
+  [s : reader.SpannedSexpr]) : ResultAstFuncTypeParts
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons arg rest)
       (match (reader.sexpr-view (compiler-parse-place-shared-view rest))
@@ -4118,7 +4118,7 @@
 (define (parse-ast-resolved-nominal-type
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [rest : reader.Sexpr]
+  [rest : reader.SpannedSexpr]
   [is-struct : bool]) : ResultAstType
   (match (reader.sexpr-view rest)
     [(reader.SexprView.Cons name-node lifetimes-box)
@@ -4164,7 +4164,7 @@
 (define (parse-ast-reference-type
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [rest : reader.Sexpr]
+  [rest : reader.SpannedSexpr]
   [mutable : bool]) : ResultAstType
   (match (reader.sexpr-view rest)
     [(reader.SexprView.Cons first tail)
@@ -4228,7 +4228,7 @@
 (define (parse-ast-type
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]) : ResultAstType
+  [s : reader.SpannedSexpr]) : ResultAstType
   (match (reader.sexpr-view s)
     [(reader.SexprView.Sym name)
       (let
@@ -4276,7 +4276,7 @@
       (match (reader.sexpr-view head-node)
         [(reader.SexprView.Sym head)
           (let
-            [rest : reader.Sexpr rest-box]
+            [rest : reader.SpannedSexpr rest-box]
             [head-id : i64 (ci.intern-syntax-id-value head)]
             [tag : i64 (compiler-parse-dispatch-tag-id dispatch head-id)]
             (cond
@@ -4605,10 +4605,7 @@
   [s : reader.SpannedSexpr]) : ResultAstType
   (let
     [result : ResultAstType
-      (parse-ast-type
-        dispatch
-        pools
-        (reader.spanned-sexpr-form (compiler-parse-place-shared-view s)))]
+      (parse-ast-type dispatch pools (compiler-parse-place-shared-view s))]
     (match (& result)
       [(ResultAstType.Err _)
         (begin
@@ -4623,7 +4620,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [name : ci.InternSyntaxId]
   [ty : ast.AstType]
-  [end : reader.Sexpr]) : ResultAstParam
+  [end : reader.SpannedSexpr]) : ResultAstParam
   (match (reader.sexpr-view (compiler-parse-place-shared-view end))
     [(reader.SexprView.Nil)
       (ResultAstParam.Ok
@@ -4632,7 +4629,7 @@
 
 (define (parse-ast-param-metadata-error
   [dispatch : sym_i64_env.SymI64Env]
-  [end : reader.Sexpr]) : String
+  [end : reader.SpannedSexpr]) : String
   (match (reader.sexpr-view end)
     [(reader.SexprView.Cons metadata-node _)
       (match (reader.sexpr-view metadata-node)
@@ -4660,7 +4657,7 @@
 (define (parse-ast-param
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]) : ResultAstParam
+  [s : reader.SpannedSexpr]) : ResultAstParam
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons first rest)
       (match (reader.sexpr-view first)
@@ -4799,7 +4796,7 @@
     detail))
 
 (define (parse-ast-macro-type-kind-sexpr-contains-id?
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [kind : ci.InternSyntaxId]) : bool
   (match (reader.sexpr-view s)
     [(reader.SexprView.Nil) false]
@@ -4815,7 +4812,7 @@
 (define (parse-ast-macro-type-kind-list-count
   [dispatch : sym_i64_env.SymI64Env]
   [operand-name : String]
-  [s : reader.Sexpr]) : ResultAstMacroTypeKindCount
+  [s : reader.SpannedSexpr]) : ResultAstMacroTypeKindCount
   (match (reader.sexpr-view s)
     [(reader.SexprView.Nil) (ResultAstMacroTypeKindCount.Ok 0)]
     [(reader.SexprView.Cons head tail)
@@ -4858,7 +4855,7 @@
 
 (define (parse-ast-macro-type-kind-list-fill!
   [out : (&mut out ast.AstMacroTypeKindList)]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [index : i64]) : unit
   (match (reader.sexpr-view s)
     [(reader.SexprView.Nil) unit]
@@ -4877,7 +4874,7 @@
 (define (parse-ast-macro-type-kind-list
   [dispatch : sym_i64_env.SymI64Env]
   [operand-name : String]
-  [s : reader.Sexpr]) : ResultAstMacroTypeKindList
+  [s : reader.SpannedSexpr]) : ResultAstMacroTypeKindList
   (match (parse-ast-macro-type-kind-list-count
     dispatch
     operand-name
@@ -4895,7 +4892,7 @@
 (define (parse-ast-macro-type-kind-constraint
   [dispatch : sym_i64_env.SymI64Env]
   [operand-name : String]
-  [s : reader.Sexpr]) : ResultAstMacroTypeKindList
+  [s : reader.SpannedSexpr]) : ResultAstMacroTypeKindList
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons head tail)
       (match (reader.sexpr-view head)
@@ -4936,7 +4933,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [name : ci.InternSyntaxId]
   [parsed-ty : ast.AstType]
-  [rest : reader.Sexpr]) : ResultAstMacroParam
+  [rest : reader.SpannedSexpr]) : ResultAstMacroParam
   (let
     [name-id : i64 (ci.intern-syntax-id-value name)]
     [name-text : String (compiler-parse-dispatch-syntax-id-text dispatch name)]
@@ -5012,7 +5009,7 @@
 (define (parse-ast-macro-param
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]) : ResultAstMacroParam
+  [s : reader.SpannedSexpr]) : ResultAstMacroParam
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons name-node rest)
       (match (reader.sexpr-view name-node)
@@ -5046,7 +5043,7 @@
 (define (parse-ast-macro-param-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]) : ResultAstMacroParamList
+  [s : reader.SpannedSexpr]) : ResultAstMacroParamList
   (let
     [out : ast.AstMacroParamList (ast.ast-macro-param-list-new)]
     (match (parse-ast-macro-param-list-into dispatch pools s (&mut out))
@@ -5057,7 +5054,7 @@
 (define (parse-ast-macro-param-list-into
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstMacroParamList)]) : ResultAstMacroParamListBuild
   (match (reader.sexpr-view s)
     [(reader.SexprView.Nil) ResultAstMacroParamListBuild.Ok]
@@ -5090,7 +5087,7 @@
 (define (parse-ast-param-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]) : ResultAstParamList
+  [s : reader.SpannedSexpr]) : ResultAstParamList
   (let
     [out : ast.AstParamList (ast.ast-param-list-new)]
     (match (parse-ast-param-list-into dispatch pools s (&mut out))
@@ -5100,7 +5097,7 @@
 (define (parse-ast-param-list-into
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstParamList)]) : ResultAstParamListBuild
   (match (reader.sexpr-view s)
     [(reader.SexprView.Nil) ResultAstParamListBuild.Ok]
@@ -5118,7 +5115,7 @@
   [items : reader.SpannedSexpr]) : unit
   (match (reader.spanned-sexpr-view items)
     [(reader.SpannedSexprView.Cons head tail _)
-      (if (sexpr-colon? (reader.spanned-sexpr-form head))
+      (if (sexpr-colon? head)
         (match (reader.spanned-sexpr-view tail)
           [(reader.SpannedSexprView.Cons ty-node _ _)
             (compiler-parse-semantic-type-origins! dispatch ty-node)]
@@ -5147,7 +5144,7 @@
 
 (define (parse-ast-field-cleanup
   [dispatch : sym_i64_env.SymI64Env]
-  [s : reader.Sexpr]) : ResultAstFieldCleanup
+  [s : reader.SpannedSexpr]) : ResultAstFieldCleanup
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons key-node tail)
       (match (reader.sexpr-view key-node)
@@ -5196,7 +5193,7 @@
 
 (define (parse-ast-variant-payload-cleanup
   [dispatch : sym_i64_env.SymI64Env]
-  [s : reader.Sexpr]) : ResultAstVariantPayloadCleanup
+  [s : reader.SpannedSexpr]) : ResultAstVariantPayloadCleanup
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons key-node tail)
       (match (reader.sexpr-view key-node)
@@ -5250,7 +5247,7 @@
 (define (parse-ast-field-def
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [allow-cleanup : bool]) : ResultAstFieldDef
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons name-node tail)
@@ -5310,7 +5307,7 @@
 (define (parse-ast-aggregate-lifetimes-tail
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [tail : reader.Sexpr]) : ResultAstLifetimeList
+  [tail : reader.SpannedSexpr]) : ResultAstLifetimeList
   (parse-ast-lifetime-list-nonempty
     dispatch
     pools
@@ -5319,7 +5316,7 @@
 
 (define (parse-ast-defstruct-repr-tail
   [dispatch : sym_i64_env.SymI64Env]
-  [tail : reader.Sexpr]) : ResultAstStructRepr
+  [tail : reader.SpannedSexpr]) : ResultAstStructRepr
   (match (reader.sexpr-view tail)
     [(reader.SexprView.Cons name-node end)
       (match (reader.sexpr-view end)
@@ -5342,7 +5339,7 @@
         [_ (ResultAstStructRepr.Err "parse: malformed :repr metadata")])]
     [_ (ResultAstStructRepr.Err "parse: malformed :repr metadata")]))
 
-(define (parse-ast-defstruct-cleanup-tail [tail : reader.Sexpr]) : ResultAstStructCleanup
+(define (parse-ast-defstruct-cleanup-tail [tail : reader.SpannedSexpr]) : ResultAstStructCleanup
   (match (reader.sexpr-view tail)
     [(reader.SexprView.Cons cleanup-node end)
       (match (reader.sexpr-view end)
@@ -5361,7 +5358,7 @@
       (ResultAstStructCleanup.Err
         "parse: malformed defstruct :cleanup metadata")]))
 
-(define (parse-ast-defenum-cleanup-tail [tail : reader.Sexpr]) : ResultAstEnumCleanup
+(define (parse-ast-defenum-cleanup-tail [tail : reader.SpannedSexpr]) : ResultAstEnumCleanup
   (match (reader.sexpr-view tail)
     [(reader.SexprView.Cons cleanup-node end)
       (match (reader.sexpr-view end)
@@ -5413,7 +5410,7 @@
   (match (parse-ast-field-def
     dispatch
     pools
-    (reader.spanned-sexpr-form (compiler-parse-place-shared-view head))
+    (compiler-parse-place-shared-view head)
     (ast.ast-struct-cleanup? cleanup))
     [(ResultAstFieldDef.Ok parsed-field)
       (let
@@ -5463,8 +5460,7 @@
     [(reader.SpannedSexprView.Nil _)
       (ResultAstStructDefParts.Ok lifetimes repr cleanup markers fields)]
     [(reader.SpannedSexprView.Cons head tail _)
-      (match (reader.sexpr-view
-        (reader.spanned-sexpr-form (compiler-parse-place-shared-view head)))
+      (match (reader.sexpr-view (compiler-parse-place-shared-view head))
         [(reader.SexprView.Cons key-node after-key)
           (match (reader.sexpr-view key-node)
             [(reader.SexprView.Sym key)
@@ -5644,7 +5640,7 @@
 
 (define (compiler-parse-metadata-sexpr?
   [dispatch : sym_i64_env.SymI64Env]
-  [s : reader.Sexpr]) : bool
+  [s : reader.SpannedSexpr]) : bool
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons key-node _)
       (match (reader.sexpr-view key-node)
@@ -5655,7 +5651,7 @@
 (define (parse-ast-variant-payload-parts
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [allow-cleanup : bool]) : ResultAstVariantPayloadParts
   (match (reader.sexpr-view s)
     [(reader.SexprView.Nil)
@@ -5664,8 +5660,8 @@
         (ast.ast-variant-payload-cleanup-list-new))]
     [(reader.SexprView.Cons ty-node rest)
       (let
-        [ty-form : reader.Sexpr ty-node]
-        [rest-form : reader.Sexpr rest]
+        [ty-form : reader.SpannedSexpr ty-node]
+        [rest-form : reader.SpannedSexpr rest]
         (if (compiler-parse-metadata-sexpr?
           dispatch
           (compiler-parse-place-shared-view ty-form))
@@ -5686,7 +5682,7 @@
                       (ast.ast-variant-payload-cleanup-list-new)))]
                 [(reader.SexprView.Cons cleanup-node after-cleanup)
                   (let
-                    [cleanup-form : reader.Sexpr cleanup-node]
+                    [cleanup-form : reader.SpannedSexpr cleanup-node]
                     (if (compiler-parse-metadata-sexpr?
                       dispatch
                       (compiler-parse-place-shared-view cleanup-form))
@@ -5745,7 +5741,7 @@
 (define (parse-ast-variant-def
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [allow-cleanup : bool]) : ResultAstVariantDef
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons name-node fields)
@@ -5873,7 +5869,7 @@
       (begin
         (if (compiler-parse-metadata-sexpr?
           dispatch
-          (reader.spanned-sexpr-form (compiler-parse-place-shared-view head)))
+          (compiler-parse-place-shared-view head))
           unit
           (compiler-parse-semantic-type-origins! dispatch head))
         (compiler-parse-semantic-variant-payload-origins! dispatch tail))]
@@ -5892,7 +5888,7 @@
   (match (parse-ast-variant-def
     dispatch
     pools
-    (reader.spanned-sexpr-form (compiler-parse-place-shared-view head))
+    (compiler-parse-place-shared-view head)
     (ast.ast-enum-cleanup? cleanup))
     [(ResultAstVariantDef.Ok parsed-variant)
       (begin
@@ -5956,8 +5952,7 @@
         markers
         (ast.ast-variant-def-list-new))]
     [(reader.SpannedSexprView.Cons head tail _)
-      (match (reader.sexpr-view
-        (reader.spanned-sexpr-form (compiler-parse-place-shared-view head)))
+      (match (reader.sexpr-view (compiler-parse-place-shared-view head))
         [(reader.SexprView.Cons key-node after-key)
           (match (reader.sexpr-view key-node)
             [(reader.SexprView.Sym key)
@@ -6072,7 +6067,7 @@
 (define (parse-ast-pattern-list-into
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]
+  [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstPatternList)]) : ResultAstPatternListBuild
   (match (reader.sexpr-view s)
     [(reader.SexprView.Nil) (ResultAstPatternListBuild.Ok)]
@@ -6088,7 +6083,7 @@
 (define (parse-ast-pattern-list
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]) : ResultAstPatternList
+  [s : reader.SpannedSexpr]) : ResultAstPatternList
   (let
     [out : ast.AstPatternList (ast.ast-pattern-list-new)]
     (match (parse-ast-pattern-list-into dispatch pools s (&mut out))
@@ -6099,7 +6094,7 @@
 (define (parse-ast-pattern
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [s : reader.Sexpr]) : ResultAstPattern
+  [s : reader.SpannedSexpr]) : ResultAstPattern
   (match (reader.sexpr-view s)
     [(reader.SexprView.Int n text)
       (ResultAstPattern.Ok (ast.AstPattern.Literal (ast.AstLiteral.Int n text)))]
@@ -6761,7 +6756,7 @@
             [(reader.SpannedSexprView.Cons ty end _)
               (match (reader.spanned-sexpr-view end)
                 [(reader.SpannedSexprView.Nil _)
-                  (if (sexpr-colon? (reader.spanned-sexpr-form colon))
+                  (if (sexpr-colon? colon)
                     (match (parse-ast-expr-with-pools dispatch pools expr)
                       [(ResultAstExpr.Ok parsed-expr)
                         (match (parse-ast-type-spanned dispatch pools ty)
@@ -6816,8 +6811,7 @@
                         [(reader.SpannedSexprView.Cons value end _)
                           (match (reader.spanned-sexpr-view end)
                             [(reader.SpannedSexprView.Nil _)
-                              (if (sexpr-colon?
-                                (reader.spanned-sexpr-form second))
+                              (if (sexpr-colon? second)
                                 (match (parse-ast-type-spanned
                                   dispatch
                                   pools
@@ -6947,7 +6941,7 @@
       (match (parse-ast-param-list
         dispatch
         pools
-        (reader.spanned-sexpr-form (compiler-parse-place-shared-view params)))
+        (compiler-parse-place-shared-view params))
         [(ResultAstParamList.Ok parsed-params)
           (begin
             (compiler-parse-semantic-param-list-origins! dispatch params)
@@ -6957,7 +6951,7 @@
               (match (reader.spanned-sexpr-view
                 (compiler-parse-place-shared-view tail))
                 [(reader.SpannedSexprView.Cons first rest-tail _)
-                  (if (sexpr-colon? (reader.spanned-sexpr-form first))
+                  (if (sexpr-colon? first)
                     (match (reader.spanned-sexpr-view rest-tail)
                       [(reader.SpannedSexprView.Cons ret body-tail _)
                         (match (parse-ast-type-spanned dispatch pools ret)
@@ -7471,8 +7465,7 @@
                         [(reader.SpannedSexprView.Cons end finish _)
                           (match (reader.spanned-sexpr-view finish)
                             [(reader.SpannedSexprView.Nil _)
-                              (if (sexpr-colon?
-                                (reader.spanned-sexpr-form colon))
+                              (if (sexpr-colon? colon)
                                 (match (parse-ast-type-spanned
                                   dispatch
                                   pools
@@ -7528,7 +7521,7 @@
                     [(reader.SpannedSexprView.Cons init finish _)
                       (match (reader.spanned-sexpr-view finish)
                         [(reader.SpannedSexprView.Nil _)
-                          (if (sexpr-colon? (reader.spanned-sexpr-form colon))
+                          (if (sexpr-colon? colon)
                             (match (parse-ast-type-spanned dispatch pools ty)
                               [(ResultAstType.Ok parsed-ty)
                                 (ResultParseAstSpmdStateBinding.Ok
@@ -7979,7 +7972,7 @@
         [(reader.SpannedSexprView.Cons ty end _)
           (match (reader.spanned-sexpr-view end)
             [(reader.SpannedSexprView.Nil _)
-              (if (sexpr-colon? (reader.spanned-sexpr-form colon))
+              (if (sexpr-colon? colon)
                 (match (parse-ast-type-spanned dispatch pools ty)
                   [(ResultAstType.Ok parsed-ty)
                     (ResultAstExpr.Ok
@@ -8013,7 +8006,7 @@
         [(reader.SpannedSexprView.Cons ty end _)
           (match (reader.spanned-sexpr-view end)
             [(reader.SpannedSexprView.Nil _)
-              (if (sexpr-colon? (reader.spanned-sexpr-form colon))
+              (if (sexpr-colon? colon)
                 (match (parse-ast-type-spanned dispatch pools ty)
                   [(ResultAstType.Ok parsed-ty)
                     (ResultAstExpr.Ok
@@ -8149,7 +8142,7 @@
             [(reader.SpannedSexprView.Cons ty end _)
               (match (reader.spanned-sexpr-view end)
                 [(reader.SpannedSexprView.Nil _)
-                  (if (sexpr-colon? (reader.spanned-sexpr-form colon))
+                  (if (sexpr-colon? colon)
                     (match (parse-ast-expr-with-pools dispatch pools expr)
                       [(ResultAstExpr.Ok parsed-expr)
                         (match (parse-ast-type-spanned dispatch pools ty)
@@ -8592,8 +8585,7 @@
               (match (parse-ast-pattern
                 dispatch
                 pools
-                (reader.spanned-sexpr-form
-                  (compiler-parse-place-shared-view pattern)))
+                (compiler-parse-place-shared-view pattern))
                 [(ResultAstPattern.Ok parsed-pattern)
                   (begin
                     (compiler-parse-semantic-pattern-origins!
@@ -8684,8 +8676,7 @@
                         [(reader.SpannedSexprView.Cons end finish _)
                           (match (reader.spanned-sexpr-view finish)
                             [(reader.SpannedSexprView.Nil _)
-                              (if (sexpr-colon?
-                                (reader.spanned-sexpr-form colon))
+                              (if (sexpr-colon? colon)
                                 (match (parse-ast-type-spanned
                                   dispatch
                                   pools
@@ -9077,7 +9068,7 @@
           (match (reader.spanned-sexpr-view
             (compiler-parse-place-shared-view rest))
             [(reader.SpannedSexprView.Cons first _ _)
-              (if (sexpr-colon? (reader.spanned-sexpr-form first))
+              (if (sexpr-colon? first)
                 (parse-ast-init dispatch pools rest)
                 (parse-ast-call dispatch pools head rest))]
             [(reader.SpannedSexprView.Nil _)
@@ -9276,7 +9267,7 @@
             [(reader.SpannedSexprView.Cons value end _)
               (match (reader.spanned-sexpr-view end)
                 [(reader.SpannedSexprView.Nil _)
-                  (if (sexpr-colon? (reader.spanned-sexpr-form first))
+                  (if (sexpr-colon? first)
                     (match (parse-ast-type-spanned dispatch pools ty)
                       [(ResultAstType.Ok parsed-ty)
                         (match (parse-ast-expr-with-pools dispatch pools value)
@@ -9296,7 +9287,7 @@
     [_ (ResultAstDecl.Err "parse: malformed value definition")]))
 
 (define (parse-ast-spmd-param-classes
-  [items : reader.Sexpr]
+  [items : reader.SpannedSexpr]
   [out : ast.AstSpmdParamClassList]) : ResultAstSpmdParamClassList
   (match (reader.sexpr-view items)
     [(reader.SexprView.Nil) (ResultAstSpmdParamClassList.Ok out)]
@@ -9330,7 +9321,7 @@
       (ResultAstSpmdParamClassList.Err
         "parse: malformed :spmd-callable args field")]))
 
-(define (parse-ast-spmd-result-class [tail : reader.Sexpr]) : ResultAstSpmdResultClass
+(define (parse-ast-spmd-result-class [tail : reader.SpannedSexpr]) : ResultAstSpmdResultClass
   (match (reader.sexpr-view tail)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view rest)
@@ -9363,7 +9354,7 @@
       (ResultAstSpmdResultClass.Err
         "parse: malformed :spmd-callable result field")]))
 
-(define (parse-ast-spmd-index-param [tail : reader.Sexpr]) : ResultAstSpmdIndexParam
+(define (parse-ast-spmd-index-param [tail : reader.SpannedSexpr]) : ResultAstSpmdIndexParam
   (match (reader.sexpr-view tail)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view rest)
@@ -9393,7 +9384,7 @@
 
 (define (parse-ast-spmd-specialization-fields
   [dispatch : sym_i64_env.SymI64Env]
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [state : AstSpmdSpecializationParseState]) : ResultAstSpmdSpecializationParseState
   (match (reader.sexpr-view fields)
     [(reader.SexprView.Nil) (ResultAstSpmdSpecializationParseState.Ok state)]
@@ -9524,7 +9515,7 @@
 
 (define (parse-ast-spmd-specialization
   [dispatch : sym_i64_env.SymI64Env]
-  [tail : reader.Sexpr]
+  [tail : reader.SpannedSexpr]
   [param-count : i64]) : ResultAstSpmdSpecialization
   (match (parse-ast-spmd-specialization-fields
     dispatch
@@ -9629,7 +9620,7 @@
 
 (define (parse-ast-spmd-specializations
   [dispatch : sym_i64_env.SymI64Env]
-  [items : reader.Sexpr]
+  [items : reader.SpannedSexpr]
   [param-count : i64]
   [out : ast.AstSpmdSpecializationList]) : ResultAstSpmdCallable
   (match (reader.sexpr-view items)
@@ -9682,7 +9673,7 @@
 
 (define (parse-ast-define-fn-spmd-callable-tail
   [dispatch : sym_i64_env.SymI64Env]
-  [tail : reader.Sexpr]
+  [tail : reader.SpannedSexpr]
   [param-count : i64]) : ResultAstSpmdCallable
   (parse-ast-spmd-specializations
     dispatch
@@ -9692,7 +9683,7 @@
 
 (define (parse-ast-define-fn-export-tail
   [dispatch : sym_i64_env.SymI64Env]
-  [tail : reader.Sexpr]) : ResultAstFnExport
+  [tail : reader.SpannedSexpr]) : ResultAstFnExport
   (match (reader.sexpr-view tail)
     [(reader.SexprView.Cons value-node end)
       (match (reader.sexpr-view end)
@@ -9718,7 +9709,7 @@
 (define (parse-ast-define-fn-metadata?
   [dispatch : sym_i64_env.SymI64Env]
   [item : reader.SpannedSexpr]) : bool
-  (match (reader.sexpr-view (reader.spanned-sexpr-form item))
+  (match (reader.sexpr-view item)
     [(reader.SexprView.Cons key-node _)
       (match (reader.sexpr-view key-node)
         [(reader.SexprView.Sym key) (compiler-parse-metadata-key? dispatch key)]
@@ -9779,8 +9770,7 @@
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view rest))
     [(reader.SpannedSexprView.Cons first tail _)
-      (if (sexpr-colon?
-        (reader.spanned-sexpr-form (compiler-parse-place-shared-view first)))
+      (if (sexpr-colon? (compiler-parse-place-shared-view first))
         (match (reader.spanned-sexpr-view tail)
           [(reader.SpannedSexprView.Cons ret body-tail _)
             (match (parse-ast-type-spanned dispatch pools ret)
@@ -9804,7 +9794,7 @@
         (if (parse-ast-define-fn-metadata?
           dispatch
           (compiler-parse-place-shared-view first))
-          (match (reader.sexpr-view (reader.spanned-sexpr-form first))
+          (match (reader.sexpr-view first)
             [(reader.SexprView.Cons key-node after-key)
               (match (reader.sexpr-view key-node)
                 [(reader.SexprView.Sym key)
@@ -9888,7 +9878,7 @@
   (match (parse-ast-param-list
     dispatch
     pools
-    (reader.spanned-sexpr-form (compiler-parse-place-shared-view params)))
+    (compiler-parse-place-shared-view params))
     [(ResultAstParamList.Ok parsed-params)
       (begin
         (compiler-parse-semantic-param-list-origins! dispatch params)
@@ -9948,13 +9938,11 @@
                         [(reader.SpannedSexprView.Cons body end _)
                           (match (reader.spanned-sexpr-view end)
                             [(reader.SpannedSexprView.Nil _)
-                              (if (sexpr-colon?
-                                (reader.spanned-sexpr-form colon))
+                              (if (sexpr-colon? colon)
                                 (match (parse-ast-macro-param-list
                                   dispatch
                                   pools
-                                  (reader.spanned-sexpr-form
-                                    (compiler-parse-place-shared-view params)))
+                                  (compiler-parse-place-shared-view params))
                                   [(ResultAstMacroParamList.Ok parsed-params)
                                     (begin
                                       (compiler-parse-semantic-param-list-origins!
@@ -10030,9 +10018,10 @@
     (parse-ast-type
       dispatch
       pools
-      (reader.Sexpr.Sym
+      (reader.SpannedSexpr.Sym
         (ci.intern-syntax-id-from-raw
-          (parse-ast-extern-varargs-tail-id dispatch name-id))))
+          (parse-ast-extern-varargs-tail-id dispatch name-id))
+        (token.SourceSpan 0 0 0 0)))
     (ResultAstType.Err "parse: expected typed extern varargs tail")))
 
 (define (parse-ast-extern-head-fixed-param
@@ -10042,7 +10031,7 @@
   (match (parse-ast-param
     dispatch
     pools
-    (reader.spanned-sexpr-form (compiler-parse-place-shared-view item)))
+    (compiler-parse-place-shared-view item))
     [(ResultAstParam.Ok param)
       (begin
         (compiler-parse-semantic-param-origin! dispatch item)
@@ -10067,7 +10056,7 @@
             [(reader.SpannedSexprView.Cons ty-node end _)
               (match (reader.spanned-sexpr-view end)
                 [(reader.SpannedSexprView.Nil _)
-                  (if (sexpr-colon? (reader.spanned-sexpr-form colon))
+                  (if (sexpr-colon? colon)
                     (match (reader.spanned-sexpr-view ty-node)
                       [(reader.SpannedSexprView.Sym ty-name ty-span)
                         (if (parse-ast-extern-varargs-open? ty-name)
@@ -10197,7 +10186,7 @@
 
 (define (parse-ast-extern-abi-tail
   [dispatch : sym_i64_env.SymI64Env]
-  [tail : reader.Sexpr]) : ResultAstExternAbi
+  [tail : reader.SpannedSexpr]) : ResultAstExternAbi
   (match (reader.sexpr-view tail)
     [(reader.SexprView.Cons name-node rest)
       (match (reader.sexpr-view name-node)
@@ -10246,7 +10235,7 @@
 (define (parse-ast-extern-string-tail
   [dispatch : sym_i64_env.SymI64Env]
   [key : String]
-  [tail : reader.Sexpr]) : ResultAstExternSymbol
+  [tail : reader.SpannedSexpr]) : ResultAstExternSymbol
   (match (reader.sexpr-view tail)
     [(reader.SexprView.Cons value-node end)
       (match (reader.sexpr-view end)
@@ -10272,7 +10261,7 @@
 
 (define (parse-ast-extern-symbol-tail
   [dispatch : sym_i64_env.SymI64Env]
-  [tail : reader.Sexpr]) : ResultAstExternSymbol
+  [tail : reader.SpannedSexpr]) : ResultAstExternSymbol
   (parse-ast-extern-string-tail dispatch ":symbol" tail))
 
 (define (parse-ast-extern-abi-combine
@@ -10297,8 +10286,7 @@
   [seen-symbol : bool]) : ResultAstExternParts
   (match (reader.spanned-sexpr-view items)
     [(reader.SpannedSexprView.Cons head tail _)
-      (if (sexpr-colon?
-        (reader.spanned-sexpr-form (compiler-parse-place-shared-view head)))
+      (if (sexpr-colon? (compiler-parse-place-shared-view head))
         (match (reader.spanned-sexpr-view tail)
           [(reader.SpannedSexprView.Cons ty end _)
             (match (reader.spanned-sexpr-view end)
@@ -10310,7 +10298,7 @@
                     (ResultAstExternParts.Err message)])]
               [_ (ResultAstExternParts.Err "parse: malformed extern")])]
           [_ (ResultAstExternParts.Err "parse: malformed extern")])
-        (match (reader.sexpr-view (reader.spanned-sexpr-form head))
+        (match (reader.sexpr-view head)
           [(reader.SexprView.Cons key-node after-key)
             (match (reader.sexpr-view key-node)
               [(reader.SexprView.Sym key)
@@ -10467,7 +10455,7 @@
         param-types
         ret)]
     [(reader.SpannedSexprView.Cons head tail _)
-      (match (reader.sexpr-view (reader.spanned-sexpr-form head))
+      (match (reader.sexpr-view head)
         [(reader.SexprView.Cons key-node after-key)
           (match (reader.sexpr-view key-node)
             [(reader.SexprView.Sym key)
@@ -10615,8 +10603,7 @@
   [param-types : ast.AstTypeList]) : ResultAstExternParts
   (match (reader.spanned-sexpr-view items)
     [(reader.SpannedSexprView.Cons head tail _)
-      (if (sexpr-colon?
-        (reader.spanned-sexpr-form (compiler-parse-place-shared-view head)))
+      (if (sexpr-colon? (compiler-parse-place-shared-view head))
         (match (reader.spanned-sexpr-view tail)
           [(reader.SpannedSexprView.Cons ret end _)
             (match (reader.spanned-sexpr-view
@@ -10650,7 +10637,7 @@
                   [(ResultAstType.Err message)
                     (ResultAstExternParts.Err message)])])]
           [_ (ResultAstExternParts.Err "parse: malformed extern")])
-        (match (reader.sexpr-view (reader.spanned-sexpr-form head))
+        (match (reader.sexpr-view head)
           [(reader.SexprView.Cons key-node after-key)
             (match (reader.sexpr-view key-node)
               [(reader.SexprView.Sym key)
@@ -11625,7 +11612,7 @@
 (define (parse-ast-test-metadata-form?
   [dispatch : sym_i64_env.SymI64Env]
   [item : reader.SpannedSexpr]) : bool
-  (match (reader.sexpr-view (reader.spanned-sexpr-form item))
+  (match (reader.sexpr-view item)
     [(reader.SexprView.Cons key-node _)
       (match (reader.sexpr-view key-node)
         [(reader.SexprView.Sym key) (compiler-parse-metadata-key? dispatch key)]
@@ -11659,7 +11646,7 @@
       (if (parse-ast-test-metadata-form?
         dispatch
         (compiler-parse-place-shared-view item))
-        (match (reader.sexpr-view (reader.spanned-sexpr-form item))
+        (match (reader.sexpr-view item)
           [(reader.SexprView.Cons key-node after-key)
             (match (reader.sexpr-view key-node)
               [(reader.SexprView.Sym key)
@@ -12389,7 +12376,6 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgram
   (begin
-    (reader.sexpr-node-pool-reset!)
     (compiler-parse-semantic-origin-capture-end!)
     (let
       [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -12493,7 +12479,6 @@
   [pools : ast.AstNodePoolContext]) : ResultAstReplItem
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (reader.sexpr-node-pool-reset!)
     (let
       [mark : i64 (reader.sp-node-pool-len)]
       (match (lexer.spanned-result src)
@@ -12761,7 +12746,6 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramRecovery
   (begin
-    (reader.sexpr-node-pool-reset!)
     (let
       [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [base-dispatch : sym_i64_env.SymI64Env
@@ -12980,7 +12964,6 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramDiagnostic
   (begin
-    (reader.sexpr-node-pool-reset!)
     (let
       [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [base-dispatch : sym_i64_env.SymI64Env

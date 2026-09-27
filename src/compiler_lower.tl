@@ -22458,20 +22458,22 @@
           (tc_core.tc-context-type-get ctx elem-ty))
         ty)]
     [(ast.AstType.Tuple elem-tys)
-      (lower-capture-snapshot-tuple-value
+      (lower-copy-tuple-value
         ctx
         state
         env
         type-env
+        (LowerCopyMode.Snapshot)
         value
         (deref elem-tys)
         ty)]
     [(ast.AstType.Array elem-ty count)
-      (lower-capture-snapshot-fixed-array-value
+      (lower-copy-fixed-array-value
         ctx
         state
         env
         type-env
+        (LowerCopyMode.Snapshot)
         value
         (tc_core.tc-type-without-regions
           (tc_core.tc-context-type-get ctx elem-ty))
@@ -22633,31 +22635,56 @@
                       buf-var
                       result-ty)])]))])]))
 
-(define (lower-capture-snapshot-type-list
+;; The two deep copies of an aggregate into fresh heap storage: `(clone x)`,
+;; and the snapshot a capturing lambda takes of a captured value. Tuples and
+;; fixed arrays copy element by element the same way in both; only the copy
+;; of each element differs.
+(defenum LowerCopyMode
+  (Clone)
+  (Snapshot))
+
+(define (lower-copy-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [copy-mode : LowerCopyMode]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : ResultLowerExpr
+  (match copy-mode
+    [(LowerCopyMode.Clone)
+      (lower-clone-dispatch ctx state env type-env value ty)]
+    [(LowerCopyMode.Snapshot)
+      (lower-capture-snapshot-value ctx state env type-env value ty)]))
+
+(define (lower-copy-type-list
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [copy-mode : LowerCopyMode]
   [src : ir.CompilerIrValue]
   [dst : ir.CompilerIrValue]
   [types : ast.AstTypeList]
   [cursor : i64]) : ResultLowerState
-  (lower-capture-snapshot-type-list-at
+  (lower-copy-type-list-at
     ctx
     state
     env
     type-env
+    copy-mode
     src
     dst
     (& types)
     cursor
     0))
 
-(define (lower-capture-snapshot-type-list-at
+(define (lower-copy-type-list-at
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [copy-mode : LowerCopyMode]
   [src : ir.CompilerIrValue]
   [dst : ir.CompilerIrValue]
   [types : (& types ast.AstTypeList)]
@@ -22685,50 +22712,54 @@
           offset
           (lower-global-shared-view resolved))
           [(LowerExpr.Expr load-state field-value _)
-            (match (lower-capture-snapshot-value
+            (match (lower-copy-value
               ctx
               load-state
               env
               type-env
+              copy-mode
               field-value
               (lower-global-shared-view resolved))
-              [(ResultLowerExpr.Ok snap)
-                (match snap
-                  [(LowerExpr.Expr snap-state snap-value _)
-                    (lower-capture-snapshot-type-list-at
+              [(ResultLowerExpr.Ok copied)
+                (match copied
+                  [(LowerExpr.Expr copy-state copy-value _)
+                    (lower-copy-type-list-at
                       ctx
                       (lower-store-inline-value-at-offset
                         ctx
-                        snap-state
+                        copy-state
                         (lower-global-shared-view dst)
                         offset
-                        snap-value
+                        copy-value
                         resolved
                         size)
                       env
                       type-env
+                      copy-mode
                       src
                       dst
                       types
                       (+ offset size)
                       (+ index 1))])]
               [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
-        (lower-capture-snapshot-type-list-at
+        (lower-copy-type-list-at
           ctx
           state
           env
           type-env
+          copy-mode
           src
           dst
           types
           (+ offset size)
           (+ index 1))))))
 
-(define (lower-capture-snapshot-tuple-value
+(define (lower-copy-tuple-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [copy-mode : LowerCopyMode]
   [value : ir.CompilerIrValue]
   [elem-tys : ast.AstTypeList]
   [result-ty : ast.AstType]) : ResultLowerExpr
@@ -22737,11 +22768,12 @@
     (lower-type-list-storage-size ctx (lower-global-shared-view elem-tys))
     (lower-global-shared-view result-ty))
     [(LowerExpr.Expr dst-state dst _)
-      (match (lower-capture-snapshot-type-list
+      (match (lower-copy-type-list
         ctx
         dst-state
         env
         type-env
+        copy-mode
         value
         (lower-global-shared-view dst)
         elem-tys
@@ -22750,11 +22782,12 @@
           (ResultLowerExpr.Ok (LowerExpr.Expr done-state dst result-ty))]
         [(ResultLowerState.Err message) (ResultLowerExpr.Err message)])]))
 
-(define (lower-capture-snapshot-fixed-array-elems
+(define (lower-copy-fixed-array-elems
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [copy-mode : LowerCopyMode]
   [src : ir.CompilerIrValue]
   [dst : ir.CompilerIrValue]
   [elem-ty : ast.AstType]
@@ -22773,28 +22806,30 @@
           offset
           (lower-global-shared-view elem-ty))
           [(LowerExpr.Expr load-state elem-value _)
-            (match (lower-capture-snapshot-value
+            (match (lower-copy-value
               ctx
               load-state
               env
               type-env
+              copy-mode
               elem-value
               (lower-global-shared-view elem-ty))
-              [(ResultLowerExpr.Ok snap)
-                (match snap
-                  [(LowerExpr.Expr snap-state snap-value _)
-                    (lower-capture-snapshot-fixed-array-elems
+              [(ResultLowerExpr.Ok copied)
+                (match copied
+                  [(LowerExpr.Expr copy-state copy-value _)
+                    (lower-copy-fixed-array-elems
                       ctx
                       (lower-store-inline-value-at-offset
                         ctx
-                        snap-state
+                        copy-state
                         (lower-global-shared-view dst)
                         offset
-                        snap-value
+                        copy-value
                         (lower-global-shared-view elem-ty)
                         elem-size)
                       env
                       type-env
+                      copy-mode
                       src
                       dst
                       elem-ty
@@ -22802,11 +22837,12 @@
                       (+ index 1)
                       count)])]
               [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
-        (lower-capture-snapshot-fixed-array-elems
+        (lower-copy-fixed-array-elems
           ctx
           state
           env
           type-env
+          copy-mode
           src
           dst
           elem-ty
@@ -22814,11 +22850,12 @@
           (+ index 1)
           count)))))
 
-(define (lower-capture-snapshot-fixed-array-value
+(define (lower-copy-fixed-array-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [copy-mode : LowerCopyMode]
   [value : ir.CompilerIrValue]
   [elem-ty : ast.AstType]
   [count : i64]
@@ -22833,11 +22870,12 @@
         count)
       (lower-global-shared-view result-ty))
       [(LowerExpr.Expr dst-state dst _)
-        (match (lower-capture-snapshot-fixed-array-elems
+        (match (lower-copy-fixed-array-elems
           ctx
           dst-state
           env
           type-env
+          copy-mode
           value
           (lower-global-shared-view dst)
           elem-ty
@@ -22878,11 +22916,12 @@
               (lower-global-shared-view field-types))
             (lower-global-shared-view result-ty))
             [(LowerExpr.Expr dst-state dst _)
-              (match (lower-capture-snapshot-type-list
+              (match (lower-copy-type-list
                 ctx
                 dst-state
                 env
                 type-env
+                (LowerCopyMode.Snapshot)
                 value
                 (lower-global-shared-view dst)
                 field-types
@@ -22942,11 +22981,12 @@
                         variant-label)]
                     (match variant
                       [(ast.AstVariantDef.Def _ fields _)
-                        (match (lower-capture-snapshot-type-list
+                        (match (lower-copy-type-list
                           ctx
                           branch-state
                           env
                           type-env
+                          (LowerCopyMode.Snapshot)
                           (lower-global-shared-view src)
                           (lower-global-shared-view dst)
                           fields
@@ -24113,6 +24153,7 @@
   [ctx : tc_core.TcContext]
   [cleanup-marker-id : i64]
   [region-reset-marker-id : i64]
+  [stop-id : i64]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]) : ResultLowerState
@@ -24133,13 +24174,15 @@
           [(tc_core.TcTypeEnvSpineStep.Cache rest-env) (set! cur-env rest-env)]
           [(tc_core.TcTypeEnvSpineStep.Bind key ty rest-env)
             (begin
-              ;; The hygiene global boundary closes the function-local scope:
-              ;; cleanup/region-reset markers are only ever bound above it by
-              ;; body forms (with-resource/with-arena), never in the module or
-              ;; top env below. Stop there instead of walking the whole
-              ;; program spine (~24.6k binds per return on a self-compile).
+              ;; A return stops at the hygiene global boundary, which closes
+              ;; the function-local scope: cleanup/region-reset markers are
+              ;; only ever bound above it by body forms (with-resource/
+              ;; with-arena), never in the module or top env below. Stopping
+              ;; there avoids walking the whole program spine (~24.6k binds per
+              ;; return on a self-compile). A break or continue stops at the
+              ;; innermost loop target.
               ;; lint-allow: nested-if-ladder
-              (if (= key (tc_core.tc-hygiene-global-boundary-id))
+              (if (= key stop-id)
                 (begin
                   (set! result (ResultLowerState.Ok cur-state))
                   (set! done true))
@@ -24199,6 +24242,7 @@
     ctx
     (cis.intern-lower-private-identity-raw (lower-cleanup-marker-id state))
     (cis.intern-lower-private-identity-raw (lower-region-reset-marker-id state))
+    (tc_core.tc-hygiene-global-boundary-id)
     state
     env
     type-env))
@@ -24299,89 +24343,12 @@
         [_ (lower-loop-target-missing ctx origin form)])]
     [(ast.AstMaybeType.No) (lower-loop-target-missing ctx origin form)]))
 
-(define (lower-emit-active-loop-exits-with
-  [ctx : tc_core.TcContext]
-  [cleanup-marker-id : i64]
-  [region-reset-marker-id : i64]
-  [loop-target-id : i64]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]) : ResultLowerState
-  (let
-    [cur-env : tc_core.TcTypeEnv type-env]
-    [cur-state : LowerState state]
-    [result : ResultLowerState
-      (ResultLowerState.Err
-        (box (lower-diagnostic "lower: internal active-loop-exits walk")))]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (match (tc_core.tc-type-env-spine-step cur-env)
-          [(tc_core.TcTypeEnvSpineStep.Done)
-            (begin
-              (set! result (ResultLowerState.Ok cur-state))
-              (set! done true))]
-          [(tc_core.TcTypeEnvSpineStep.Cache rest-env) (set! cur-env rest-env)]
-          [(tc_core.TcTypeEnvSpineStep.Bind key ty rest-env)
-            (begin
-              ;; lint-allow: nested-if-ladder
-              (if (= key loop-target-id)
-                (begin
-                  (set! result (ResultLowerState.Ok cur-state))
-                  (set! done true))
-                (if (= key cleanup-marker-id)
-                  (match ty
-                    [(ast.AstType.Tuple types)
-                      (match (lower-emit-cleanup-marker-tuple
-                        ctx
-                        cur-state
-                        env
-                        (deref types))
-                        [(ResultLowerState.Ok next-state)
-                          (set! cur-state next-state)]
-                        [(ResultLowerState.Err message)
-                          (begin
-                            (set! result (ResultLowerState.Err message))
-                            (set! done true))])]
-                    [_ unit])
-                  (if (= key region-reset-marker-id)
-                    (match ty
-                      [(ast.AstType.Var hidden-name)
-                        (match (lower-emit-region-reset
-                          cur-state
-                          env
-                          hidden-name)
-                          [(ResultLowerState.Ok next-state)
-                            (set! cur-state next-state)]
-                          [(ResultLowerState.Err message)
-                            (begin
-                              (set! result (ResultLowerState.Err message))
-                              (set! done true))])]
-                      [(ast.AstType.Tuple types)
-                        (match (lower-emit-arena-restore-marker-tuple
-                          ctx
-                          cur-state
-                          env
-                          (deref types))
-                          [(ResultLowerState.Ok next-state)
-                            (set! cur-state next-state)]
-                          [(ResultLowerState.Err message)
-                            (begin
-                              (set! result (ResultLowerState.Err message))
-                              (set! done true))])]
-                      [_ unit])
-                    unit)))
-              (if done
-                unit
-                (set! cur-env rest-env)))]))
-      result)))
-
 (define (lower-emit-active-loop-exits
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]) : ResultLowerState
-  (lower-emit-active-loop-exits-with
+  (lower-emit-active-exits-with
     ctx
     (cis.intern-lower-private-identity-raw (lower-cleanup-marker-id state))
     (cis.intern-lower-private-identity-raw (lower-region-reset-marker-id state))
@@ -25311,212 +25278,6 @@
       [(ast.AstType.EnumArgs _ _) (lower-type-register-resident? ctx clone-ty)]
       [_ (lower-clone-scalar-type? clone-ty)])))
 
-(define (lower-clone-type-list
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [src : ir.CompilerIrValue]
-  [dst : ir.CompilerIrValue]
-  [types : ast.AstTypeList]
-  [cursor : i64]) : ResultLowerState
-  (lower-clone-type-list-at ctx state env type-env src dst (& types) cursor 0))
-
-(define (lower-clone-type-list-at
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [src : ir.CompilerIrValue]
-  [dst : ir.CompilerIrValue]
-  [types : (& types ast.AstTypeList)]
-  [cursor : i64]
-  [index : i64]) : ResultLowerState
-  (if (>= index (ast.ast-type-list-len types))
-    (ResultLowerState.Ok state)
-    (let
-      [ty : ast.AstType
-        (tc_core.tc-context-type-get
-          ctx
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      [resolved : ast.AstType
-        (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-      [offset : i64
-        (lower-align-up
-          cursor
-          (lower-type-align ctx (lower-global-shared-view resolved)))]
-      [size : i64 (lower-type-size ctx (lower-global-shared-view resolved))]
-      (if (> size 0)
-        (match (lower-load-inline-value-at-offset
-          ctx
-          state
-          (lower-global-shared-view src)
-          offset
-          (lower-global-shared-view resolved))
-          [(LowerExpr.Expr load-state field-value _)
-            (match (lower-clone-dispatch
-              ctx
-              load-state
-              env
-              type-env
-              field-value
-              (lower-global-shared-view resolved))
-              [(ResultLowerExpr.Ok cloned)
-                (match cloned
-                  [(LowerExpr.Expr clone-state clone-value _)
-                    (lower-clone-type-list-at
-                      ctx
-                      (lower-store-inline-value-at-offset
-                        ctx
-                        clone-state
-                        (lower-global-shared-view dst)
-                        offset
-                        clone-value
-                        resolved
-                        size)
-                      env
-                      type-env
-                      src
-                      dst
-                      types
-                      (+ offset size)
-                      (+ index 1))])]
-              [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
-        (lower-clone-type-list-at
-          ctx
-          state
-          env
-          type-env
-          src
-          dst
-          types
-          (+ offset size)
-          (+ index 1))))))
-
-(define (lower-clone-tuple-value
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [value : ir.CompilerIrValue]
-  [elem-tys : ast.AstTypeList]
-  [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-reserve-heap-storage
-    state
-    (lower-type-list-storage-size ctx (lower-global-shared-view elem-tys))
-    (lower-global-shared-view result-ty))
-    [(LowerExpr.Expr dst-state dst _)
-      (match (lower-clone-type-list
-        ctx
-        dst-state
-        env
-        type-env
-        value
-        (lower-global-shared-view dst)
-        elem-tys
-        0)
-        [(ResultLowerState.Ok done-state)
-          (ResultLowerExpr.Ok (LowerExpr.Expr done-state dst result-ty))]
-        [(ResultLowerState.Err message) (ResultLowerExpr.Err message)])]))
-
-(define (lower-clone-fixed-array-elems
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [src : ir.CompilerIrValue]
-  [dst : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]
-  [elem-size : i64]
-  [index : i64]
-  [count : i64]) : ResultLowerState
-  (if (>= index count)
-    (ResultLowerState.Ok state)
-    (let
-      [offset : i64 (* index elem-size)]
-      (if (> elem-size 0)
-        (match (lower-load-inline-value-at-offset
-          ctx
-          state
-          (lower-global-shared-view src)
-          offset
-          (lower-global-shared-view elem-ty))
-          [(LowerExpr.Expr load-state elem-value _)
-            (match (lower-clone-dispatch
-              ctx
-              load-state
-              env
-              type-env
-              elem-value
-              (lower-global-shared-view elem-ty))
-              [(ResultLowerExpr.Ok cloned)
-                (match cloned
-                  [(LowerExpr.Expr clone-state clone-value _)
-                    (lower-clone-fixed-array-elems
-                      ctx
-                      (lower-store-inline-value-at-offset
-                        ctx
-                        clone-state
-                        (lower-global-shared-view dst)
-                        offset
-                        clone-value
-                        (lower-global-shared-view elem-ty)
-                        elem-size)
-                      env
-                      type-env
-                      src
-                      dst
-                      elem-ty
-                      elem-size
-                      (+ index 1)
-                      count)])]
-              [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])])
-        (lower-clone-fixed-array-elems
-          ctx
-          state
-          env
-          type-env
-          src
-          dst
-          elem-ty
-          elem-size
-          (+ index 1)
-          count)))))
-
-(define (lower-clone-fixed-array-value
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [value : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]
-  [count : i64]
-  [result-ty : ast.AstType]) : ResultLowerExpr
-  (let
-    [elem-size : i64 (lower-type-size ctx (lower-global-shared-view elem-ty))]
-    (match (lower-reserve-heap-storage
-      state
-      (lower-fixed-array-storage-size
-        ctx
-        (lower-global-shared-view elem-ty)
-        count)
-      (lower-global-shared-view result-ty))
-      [(LowerExpr.Expr dst-state dst _)
-        (match (lower-clone-fixed-array-elems
-          ctx
-          dst-state
-          env
-          type-env
-          value
-          (lower-global-shared-view dst)
-          elem-ty
-          elem-size
-          0
-          count)
-          [(ResultLowerState.Ok done-state)
-            (ResultLowerExpr.Ok (LowerExpr.Expr done-state dst result-ty))]
-          [(ResultLowerState.Err message) (ResultLowerExpr.Err message)])])))
-
 (define (lower-clone-dynarray-advance
   [state : LowerState]
   [index-var : i64]
@@ -25880,20 +25641,22 @@
     (match (lower-global-shared-view clone-ty)
       [(ast.AstType.String) (lower-capture-snapshot-string-value state value)]
       [(ast.AstType.Tuple elem-tys)
-        (lower-clone-tuple-value
+        (lower-copy-tuple-value
           ctx
           state
           env
           type-env
+          (LowerCopyMode.Clone)
           value
           (deref elem-tys)
           clone-ty)]
       [(ast.AstType.Array elem-ty count)
-        (lower-clone-fixed-array-value
+        (lower-copy-fixed-array-value
           ctx
           state
           env
           type-env
+          (LowerCopyMode.Clone)
           value
           (tc_core.tc-type-without-regions
             (tc_core.tc-context-type-get ctx elem-ty))
@@ -52811,6 +52574,73 @@
                 (ir.CompilerIrValue.Var reduced-var)
                 elem-ty))]))]))
 
+;; Folds one chunk of lanes into the reduction and advances the index.
+(define (lower-avx2-reduce-vector-chunk
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [op : ast.AstReduceOp]
+  [index-var : i64]
+  [next-index : ir.CompilerIrValue]
+  [acc-var : i64]
+  [vector-acc-var : i64]
+  [chunk-vec : ir.CompilerIrValue]
+  [vector-op : ir.CompilerIrVectorReduceOp]
+  [elem-ty : ast.AstType]
+  [lanes : i64]) : ResultLowerExpr
+  (if (lower-spmd-reduce-vector-accumulator? (lower-global-shared-view elem-ty))
+    (ResultLowerExpr.Ok
+      (LowerExpr.Expr
+        (lower-state-emit
+          (lower-spmd-reduce-vector-accumulate
+            state
+            vector-op
+            vector-acc-var
+            chunk-vec
+            lanes
+            elem-ty)
+          (ir.CompilerIrInstr.Mov index-var next-index (ast.AstType.I64)))
+        ir.CompilerIrValue.Unit
+        (ast.AstType.Unit)))
+    (match (lower-spmd-reduce-chunk
+      state
+      op
+      vector-op
+      chunk-vec
+      lanes
+      (lower-global-shared-view elem-ty))
+      [(LowerExpr.Expr reduce-state reduced _)
+        (match reduced
+          [(ir.CompilerIrValue.Var reduced-var)
+            (let
+              [update-lowered : LowerExpr
+                (try
+                  (lower-spmd-reduce-apply-update
+                    ctx
+                    reduce-state
+                    env
+                    type-env
+                    op
+                    acc-var
+                    elem-ty
+                    reduced-var))]
+              (match update-lowered
+                [(LowerExpr.Expr update-state _ _)
+                  (ResultLowerExpr.Ok
+                    (LowerExpr.Expr
+                      (lower-state-emit
+                        update-state
+                        (ir.CompilerIrInstr.Mov
+                          index-var
+                          next-index
+                          (ast.AstType.I64)))
+                      ir.CompilerIrValue.Unit
+                      (ast.AstType.Unit)))]))]
+          [_
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic "lower: invalid vector reduce result")))])])))
+
 (define (lower-avx2-reduce-vector-body
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -52833,58 +52663,20 @@
     lanes
     (lower-global-shared-view elem-ty))
     [(LowerExpr.Expr load-state chunk-vec _)
-      (if (lower-spmd-reduce-vector-accumulator?
-        (lower-global-shared-view elem-ty))
-        (ResultLowerExpr.Ok
-          (LowerExpr.Expr
-            (lower-state-emit
-              (lower-spmd-reduce-vector-accumulate
-                load-state
-                vector-op
-                vector-acc-var
-                chunk-vec
-                lanes
-                elem-ty)
-              (ir.CompilerIrInstr.Mov index-var next-index (ast.AstType.I64)))
-            ir.CompilerIrValue.Unit
-            (ast.AstType.Unit)))
-        (match (lower-spmd-reduce-chunk
-          load-state
-          op
-          vector-op
-          chunk-vec
-          lanes
-          (lower-global-shared-view elem-ty))
-          [(LowerExpr.Expr reduce-state reduced _)
-            (match reduced
-              [(ir.CompilerIrValue.Var reduced-var)
-                (let
-                  [update-lowered : LowerExpr
-                    (try
-                      (lower-spmd-reduce-apply-update
-                        ctx
-                        reduce-state
-                        env
-                        type-env
-                        op
-                        acc-var
-                        elem-ty
-                        reduced-var))]
-                  (match update-lowered
-                    [(LowerExpr.Expr update-state _ _)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          (lower-state-emit
-                            update-state
-                            (ir.CompilerIrInstr.Mov
-                              index-var
-                              next-index
-                              (ast.AstType.I64)))
-                          ir.CompilerIrValue.Unit
-                          (ast.AstType.Unit)))]))]
-              [_
-                (ResultLowerExpr.Err
-                  (box (lower-diagnostic "lower: invalid vector reduce result")))])]))]))
+      (lower-avx2-reduce-vector-chunk
+        ctx
+        load-state
+        env
+        type-env
+        op
+        index-var
+        next-index
+        acc-var
+        vector-acc-var
+        chunk-vec
+        vector-op
+        elem-ty
+        lanes)]))
 
 (define (lower-avx2-reduce-vector-value-body
   [ctx : tc_core.TcContext]
@@ -52911,58 +52703,20 @@
     (LowerVectorMapEmitMode.Full)
     preheader-cache)
     [(LowerVectorMapCachedEmit.Emit value-state chunk-vec _)
-      (if (lower-spmd-reduce-vector-accumulator?
-        (lower-global-shared-view elem-ty))
-        (ResultLowerExpr.Ok
-          (LowerExpr.Expr
-            (lower-state-emit
-              (lower-spmd-reduce-vector-accumulate
-                value-state
-                vector-op
-                vector-acc-var
-                chunk-vec
-                lanes
-                elem-ty)
-              (ir.CompilerIrInstr.Mov index-var next-index (ast.AstType.I64)))
-            ir.CompilerIrValue.Unit
-            (ast.AstType.Unit)))
-        (match (lower-spmd-reduce-chunk
-          value-state
-          op
-          vector-op
-          chunk-vec
-          lanes
-          (lower-global-shared-view elem-ty))
-          [(LowerExpr.Expr reduce-state reduced _)
-            (match reduced
-              [(ir.CompilerIrValue.Var reduced-var)
-                (let
-                  [update-lowered : LowerExpr
-                    (try
-                      (lower-spmd-reduce-apply-update
-                        ctx
-                        reduce-state
-                        env
-                        type-env
-                        op
-                        acc-var
-                        elem-ty
-                        reduced-var))]
-                  (match update-lowered
-                    [(LowerExpr.Expr update-state _ _)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          (lower-state-emit
-                            update-state
-                            (ir.CompilerIrInstr.Mov
-                              index-var
-                              next-index
-                              (ast.AstType.I64)))
-                          ir.CompilerIrValue.Unit
-                          (ast.AstType.Unit)))]))]
-              [_
-                (ResultLowerExpr.Err
-                  (box (lower-diagnostic "lower: invalid vector reduce result")))])]))]))
+      (lower-avx2-reduce-vector-chunk
+        ctx
+        value-state
+        env
+        type-env
+        op
+        index-var
+        next-index
+        acc-var
+        vector-acc-var
+        chunk-vec
+        vector-op
+        elem-ty
+        lanes)]))
 
 (define (lower-spmd-reduce-scalar-tail-body
   [ctx : tc_core.TcContext]

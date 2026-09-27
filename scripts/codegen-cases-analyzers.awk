@@ -288,6 +288,19 @@ function frame_size(   v) {
     return (v == "") ? 0 : v
 }
 
+# "ok" when the last `addq $N, %rsp` releases the first `subq $N, %rsp`.
+function frame_release(   i, v, sub_, add_) {
+    sub_ = first_stack_sub()
+    for (i = 1; i <= NR; i++)
+        if (L[i] ~ /^[[:space:]]*addq \$[0-9]+, %rsp$/) {
+            v = L[i]
+            gsub(/[^0-9]/, "", v)
+            add_ = v
+        }
+    if (sub_ == "" || add_ == "") return "subq-" sub_ "-addq-" add_
+    return (sub_ == add_) ? "ok" : "subq-" sub_ "-addq-" add_
+}
+
 # A read-modify-write of CELL that kept the load before it or the store after it.
 function rmw_fold_staging(cell,   i, n, pending, prev) {
     for (i = 1; i <= NR; i++) {
@@ -469,6 +482,16 @@ function window_after(re,   i, inblk) {
     }
 }
 
+# The body of the symbol ARG: the lines after `ARG:` up to the next
+# column-0 symbol label (local `.L` labels do not end it).
+function window_symbol(label,   i, inblk) {
+    for (i = 1; i <= NR; i++) {
+        if (inblk && L[i] ~ /^[A-Za-z_][A-Za-z0-9_]*:$/) return
+        if (inblk) print L[i]
+        if (L[i] == label ":") inblk = 1
+    }
+}
+
 # The first line matching the ERE ARG and everything after it.
 function window_from(re,   i, inblk) {
     for (i = 1; i <= NR; i++) {
@@ -541,6 +564,7 @@ END {
     else if (analyzer == "dead-slot-region") print dead_slot_region()
     else if (analyzer == "stack-frame") print stack_frame()
     else if (analyzer == "frame-size") print frame_size()
+    else if (analyzer == "frame-release") print frame_release()
     else if (analyzer == "rmw-fold-staging") print rmw_fold_staging(arg)
     else if (analyzer == "frame-homed-fold-accumulators") print frame_homed_fold_accumulators()
     else if (analyzer == "memory-order") print memory_order()
@@ -554,6 +578,7 @@ END {
     else if (analyzer == "window-fast-self-loop") window_fast_self_loop(arg)
     else if (analyzer == "window-fast-region") window_fast_region(arg)
     else if (analyzer == "window-after") window_after(arg)
+    else if (analyzer == "window-symbol") window_symbol(arg)
     else if (analyzer == "window-from") window_from(arg)
     else if (analyzer == "window-block-after") window_block_after(arg)
     else if (analyzer == "window-ranges") window_ranges(arg)

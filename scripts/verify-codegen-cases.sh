@@ -75,6 +75,7 @@ set -eu
 #   exit N | nonzero | MODE=N...    exit status of the last step (default: 0);
 #                                   MODE=N words pick by backend mode
 #   contains TEXT / not-contains TEXT
+#   is TEXT                         the subject is exactly the line TEXT
 #   contains-any TEXT || TEXT...    at least one TEXT
 #   order TEXT || TEXT...           each TEXT's first line is after the previous one's
 #   match ERE / not-match ERE / match-i ERE / not-match-i ERE
@@ -698,6 +699,16 @@ a_contains() {
     grep -F -- "$_ac" "$CV_SUBJECT" >/dev/null 2>&1 || cc_fail "$1" "missing text: $_ac"
 }
 
+a_is() {
+    cc_row || return 0
+    cc_need_subject "$1" || return 0
+    _ai=$(cc_expand "$2")
+    printf '%s\n' "$_ai" | cmp -s - "$CV_SUBJECT" || {
+        cc_fail "$1" "expected exactly: $_ai"
+        cc_quote_lines "$CV_SUBJECT"
+    }
+}
+
 a_not_contains() {
     cc_row || return 0
     cc_need_subject "$1" || return 0
@@ -981,6 +992,7 @@ cc_translate() {
             if (step_open) step_exit = 1; else has_exit = 1
             body("a_exit " NR " " sq(rest))
         } else if (kw == "contains") body("a_contains " NR " " sq(rest))
+        else if (kw == "is") body("a_is " NR " " sq(rest))
         else if (kw == "not-contains") body("a_not_contains " NR " " sq(rest))
         else if (kw == "contains-any") body("a_contains_any " NR alts(rest))
         else if (kw == "order") body("a_order " NR alts(rest))

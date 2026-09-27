@@ -246,6 +246,12 @@ plugin_ispc_driver() {
     echo "[codegen-cases] ISPC $2 driver passed"
 }
 
+# cc_link_static ASM BIN: assemble ASM and link BIN statically at _tl_start
+# with GNU as/ld, for `sh` rows.
+cc_link_static() {
+    as "$1" -o "$2.o" && ld "$2.o" -o "$2" -static -e _tl_start
+}
+
 # cc_dir_link LINK TARGET / cc_dir_unlink LINK: a directory symlink (a junction
 # on Windows), for `sh` rows.
 cc_dir_link() {

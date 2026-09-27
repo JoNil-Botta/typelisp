@@ -52,7 +52,7 @@ should use a `benchmark-`, `measure-`, or `analyze-` name.
 | Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog) |
 | Check public CLI behavior | `verify-public-tools.sh`, `verify-selfhost-cli-build-run.sh` (CLI transcripts in `tests/cli/`, run by `verify-codegen-cases.sh`), `check-stage1-wrapper.sh` |
 | Check TLCI containers and package catalogs | `verify-tlci-corpus.sh`, `verify-tlci-native-route-stress.sh`, `verify-stdlib-tlci-identity-differential.sh` (all embedded identities; called by compile-profile), `verify-embedded-stdlib-tlci-resources.sh`, `verify-package-metadata-tlci.sh`, `verify-package-native-tlci.sh`, `verify-package-surface-tlci.sh` |
-| Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh`, `verify-native-link-windows.sh`, `verify-fs-rooted-linux.sh`, `verify-process-runtime-linux.sh` |
+| Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh` (`tests/codegen/native-link.cases`), `verify-native-link-windows.sh`, `verify-fs-rooted-linux.sh`, `verify-process-runtime-linux.sh` |
 | Check codegen shape and parity | `verify-cross-mode-differential.sh` (budgeted cross-gate semantic/ABI witnesses), `verify-codegen-cases.sh` (table-driven compile/run/asm-shape cases and CLI transcripts in `tests/codegen/` and `tests/cli/`), `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
 | Check SPMD behavior | `verify-spmd-simd.sh`, `verify-spmd-runtime-dispatch.sh`, `verify-spmd-package-calls.sh`, `verify-codegen-cases.sh tests/spmd/gang-width.cases` |
 | Check ISPC corpus contracts | `verify-codegen-cases.sh tests/codegen/ispc.cases` (one gate per case) |

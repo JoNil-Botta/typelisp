@@ -61851,6 +61851,11 @@
   (No)
   (Some OptUnrollPhiList))
 
+;; `step` is the counter's literal step, negative for a descending counter.
+;; `mode` is the latch predicate:
+;;   0 -- `inext < bound`
+;;   1 -- `inext >= floor` (or its reversal `floor <= inext`)
+;;   2 -- `inext > floor`  (or its reversal `floor < inext`)
 (defstruct OptUnrollShape
   (loop-label i64)
   (pred-label i64)
@@ -61863,6 +61868,8 @@
   (inext i64)
   (ity ast.AstType)
   (bound ir.CompilerIrValue)
+  (step i64)
+  (mode i64)
   (others OptUnrollPhiList))
 
 (defenum OptUnrollMaybeShape
@@ -62647,61 +62654,103 @@
       (= (opt-unroll-resolve-copy instrs phi-count last id 16) inext)]
     [_ false]))
 
-;; --- the counter's DIRECTION, read back off the IR ----------------------------
+;; --- the counter of a counted self-loop --------------------------------------
 ;;
-;; UNR-2. The rewrite needs three things the recognizer already decided: which
-;; way the counter steps, which end of its range the invariant `bound` is, and
-;; how strict the latch compare is. None of them is carried on OptUnrollShape,
-;; because the bce versioner builds that same record and derives its own
-;; direction the same way (`opt-bce-version-shape-step-value`); one derivation
-;; from one source -- the loop's own instructions -- is what keeps the two
-;; passes from drifting apart.
-;;
-;; `mode`, the three-way code every clause below speaks:
-;;   0 -- ascending, latch `inext < bound`
-;;   1 -- descending, latch `inext >= floor` (or its reversal `floor <= inext`)
-;;   2 -- descending, latch `inext > floor`  (or its reversal `floor < inext`)
-(define (opt-unroll-step-descending?
-  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [phi-count : i64]
-  [last : i64]
-  [inext : i64]) : bool
-  (let
-    [index : i64 (opt-unroll-def-index slots phi-count last inext)]
-    (if (< index 0)
-      false
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
-        [(ir.CompilerIrInstr.BinOp _ step-op _ step-rhs _)
-          (match step-op
-            ;; The recognizer admits `Sub` only at a literal 1 and only under a
-            ;; descending latch, so a `Sub` here IS the descending counter.
-            [(ir.CompilerIrBinOp.Sub) true]
-            [(ir.CompilerIrBinOp.Add)
-              (match step-rhs
-                [(ir.CompilerIrValue.I64 step) (< step 0)]
-                [_ false])]
-            [_ false])]
-        [_ false]))))
+;; The unroller, the single-block versioner and the loop-call rewrites read one
+;; counter off a self-loop `B: phis...; body...; c = cmp; branch c B EXIT`. The
+;; latch compare names `inext` (through same-block copies); `inext` is
+;; `src + step` or `src - step` for a literal step; `src` resolves to a phi of
+;; the prefix; and that phi carries `inext` back from B and a seed in from one
+;; other predecessor. Each pass keeps its own admission policy on top. In the
+;; step, `sub?` says `inext` is `src - step`; otherwise it is `src + step`.
+(defstruct OptSelfLoopStep
+  (sub? bool)
+  (step i64)
+  (ity ast.AstType)
+  (iphi i64))
 
-(define (opt-unroll-latch-mode
-  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+(defenum OptSelfLoopMaybeStep
+  (No)
+  ;; an `Add`/`Sub` defining `inext` whose operands are not `var, literal`,
+  ;; and whether it is the `Sub`
+  (Form bool)
+  (Some OptSelfLoopStep))
+
+;; `inext`'s definition in the body as `src +/- literal`, with `src` resolved
+;; through same-block copies to the counter phi it should name.
+(define (opt-self-loop-step
+  [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
-  [cond-index : i64]
-  [inext : i64]) : i64
-  (if (opt-unroll-step-descending? slots instrs phi-count last inext)
-    (match (ir.compiler-ir-instr-seq-ref instrs cond-index)
-      [(ir.CompilerIrInstr.BinOp _ cmp-op _ _ _)
-        (match cmp-op
-          ;; `inext >= floor` and its reversal `floor <= inext`.
-          [(ir.CompilerIrBinOp.Ge) 1]
-          [(ir.CompilerIrBinOp.Le) 1]
-          ;; `inext > floor` and its reversal `floor < inext`.
-          [_ 2])]
-      [_ 1])
-    0))
+  [inext : i64]) : OptSelfLoopMaybeStep
+  (let
+    [index : i64
+      (opt-unroll-def-index
+        (compiler-opt-global-shared-view instrs.slots)
+        phi-count
+        last
+        inext)]
+    (if (< index 0)
+      (OptSelfLoopMaybeStep.No)
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.BinOp _ op lhs rhs ity)
+          (let
+            ;; 1 for `Add`, 2 for `Sub`, 0 for any other op.
+            [kind : i64
+              (match op
+                [(ir.CompilerIrBinOp.Add) 1]
+                [(ir.CompilerIrBinOp.Sub) 2]
+                [_ 0])]
+            (if (= kind 0)
+              (OptSelfLoopMaybeStep.No)
+              (match lhs
+                [(ir.CompilerIrValue.Var src)
+                  (match rhs
+                    [(ir.CompilerIrValue.I64 step)
+                      (OptSelfLoopMaybeStep.Some
+                        (OptSelfLoopStep
+                          (= kind 2)
+                          step
+                          ity
+                          (opt-unroll-resolve-copy instrs phi-count last src 16)))]
+                    [_ (OptSelfLoopMaybeStep.Form (= kind 2))])]
+                [_ (OptSelfLoopMaybeStep.Form (= kind 2))])))]
+        [_ (OptSelfLoopMaybeStep.No)]))))
+
+;; The counter phi `iphi = phi [seed, pred], [back, B]` of the prefix: its type,
+;; seed and outside predecessor, when `back` resolves to `inext` and `pred` is
+;; not B itself.
+(defenum OptSelfLoopMaybePhi
+  (No)
+  (Some ast.AstType ir.CompilerIrValue i64))
+
+(define (opt-self-loop-phi
+  [instrs : ir.CompilerIrInstrSeq]
+  [label : i64]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [inext : i64]) : OptSelfLoopMaybePhi
+  (let
+    [index : i64
+      (opt-unroll-def-index
+        (compiler-opt-global-shared-view instrs.slots)
+        0
+        phi-count
+        iphi)]
+    (if (< index 0)
+      (OptSelfLoopMaybePhi.No)
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.Phi _ inputs iphi-ty)
+          (match (opt-unroll-split-phi-inputs inputs label)
+            [(OptUnrollPhiSplit.Split seed back pred-label)
+              (if (and
+                (not (= pred-label label))
+                (opt-unroll-back-resolves-to? instrs phi-count last back inext))
+                (OptSelfLoopMaybePhi.Some iphi-ty seed pred-label)
+                (OptSelfLoopMaybePhi.No))]
+            [(OptUnrollPhiSplit.No) (OptSelfLoopMaybePhi.No)])]
+        [_ (OptSelfLoopMaybePhi.No)]))))
 
 ;; What the guard asks of `seed`, and the unrolled group's own latch asks of
 ;; its end-of-group counter: exactly the loop's own latch predicate, against
@@ -62895,6 +62944,7 @@
   [ity : ast.AstType]
   [bound : ir.CompilerIrValue]
   [pred-label : i64]
+  [step : i64]
   [mode : i64]) : OptUnrollMaybeShape
   (let
     [copies : i64
@@ -62965,55 +63015,11 @@
               inext
               ity
               bound
+              step
+              mode
               others))]
         [(OptUnrollMaybePhis.No)
           (opt-unroll-trace-refuse (opt-unroll-reason-counter-phi))]))))
-
-(define (opt-unroll-shape-phi
-  [blocks : ir.CompilerIrBlockList]
-  [label : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [phi-count : i64]
-  [last : i64]
-  [cond-index : i64]
-  [cond-var : i64]
-  [inext : i64]
-  [ity : ast.AstType]
-  [bound : ir.CompilerIrValue]
-  [iphi : i64]
-  [mode : i64]) : OptUnrollMaybeShape
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (compiler-opt-global-shared-view instrs.slots)]
-    [iphi-index : i64 (opt-unroll-def-index slots 0 phi-count iphi)]
-    (if (< iphi-index 0)
-      (opt-unroll-trace-refuse (opt-unroll-reason-counter-phi))
-      (match (ir.compiler-ir-instr-seq-ref instrs iphi-index)
-        [(ir.CompilerIrInstr.Phi _ inputs iphi-ty)
-          (match (opt-unroll-split-phi-inputs inputs label)
-            [(OptUnrollPhiSplit.Split seed back pred-label)
-              (if (and
-                (not (= pred-label label))
-                (opt-unroll-back-resolves-to? instrs phi-count last back inext))
-                (opt-unroll-shape-finish
-                  blocks
-                  label
-                  instrs
-                  phi-count
-                  cond-index
-                  cond-var
-                  iphi
-                  iphi-ty
-                  seed
-                  inext
-                  ity
-                  bound
-                  pred-label
-                  mode)
-                (opt-unroll-trace-refuse (opt-unroll-reason-counter-phi)))]
-            [(OptUnrollPhiSplit.No)
-              (opt-unroll-trace-refuse (opt-unroll-reason-counter-phi))])]
-        [_ (opt-unroll-trace-refuse (opt-unroll-reason-counter-phi))]))))
 
 ;; The counter's step, SIGNED: `+1` is the ascending counter, `-1` the
 ;; descending one. Three clauses, each a soundness condition of the guard the
@@ -63041,11 +63047,10 @@
   [cond-var : i64]
   [cond-index : i64]
   [inext : i64]
-  [ity : ast.AstType]
   [bound : ir.CompilerIrValue]
   [mode : i64]
-  [add-src : i64]
-  [signed-step : i64]) : OptUnrollMaybeShape
+  [signed-step : i64]
+  [counter : OptSelfLoopStep]) : OptUnrollMaybeShape
   (cond
     [(not (or (= signed-step 1) (= signed-step (- 0 1))))
       (opt-unroll-trace-refuse (opt-unroll-reason-step-not-unit))]
@@ -63055,23 +63060,36 @@
       (opt-unroll-trace-refuse (opt-unroll-reason-step-direction))]
     [(not
         (if (> mode 0)
-          (opt-signed-integer-type? ity)
-          (opt-integer-type? ity)))
+          (opt-signed-integer-type? counter.ity)
+          (opt-integer-type? counter.ity)))
       (opt-unroll-trace-refuse (opt-unroll-reason-counter-type))]
     [else
-      (opt-unroll-shape-phi
-        blocks
-        label
+      (match (opt-self-loop-phi
         (compiler-opt-global-shared-view instrs)
+        label
         phi-count
         last
-        cond-index
-        cond-var
-        inext
-        ity
-        bound
-        (opt-unroll-resolve-copy instrs phi-count last add-src 16)
-        mode)]))
+        counter.iphi
+        inext)
+        [(OptSelfLoopMaybePhi.Some iphi-ty seed pred-label)
+          (opt-unroll-shape-finish
+            blocks
+            label
+            instrs
+            phi-count
+            cond-index
+            cond-var
+            counter.iphi
+            iphi-ty
+            seed
+            inext
+            counter.ity
+            bound
+            pred-label
+            signed-step
+            mode)]
+        [(OptSelfLoopMaybePhi.No)
+          (opt-unroll-trace-refuse (opt-unroll-reason-counter-phi))])]))
 
 (define (opt-unroll-shape-step
   [blocks : ir.CompilerIrBlockList]
@@ -63084,67 +63102,41 @@
   [inext : i64]
   [bound : ir.CompilerIrValue]
   [mode : i64]) : OptUnrollMaybeShape
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (compiler-opt-global-shared-view instrs.slots)]
-    [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
-    (if (< inext-index 0)
-      (opt-unroll-trace-refuse (opt-unroll-reason-step-form))
-      (match (ir.compiler-ir-instr-seq-ref instrs inext-index)
-        [(ir.CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
-          (match add-op
-            [(ir.CompilerIrBinOp.Add)
-              (match add-lhs
-                [(ir.CompilerIrValue.Var add-src)
-                  (match add-rhs
-                    [(ir.CompilerIrValue.I64 step)
-                      (opt-unroll-shape-step-admit
-                        blocks
-                        label
-                        instrs
-                        phi-count
-                        last
-                        cond-var
-                        cond-index
-                        inext
-                        ity
-                        bound
-                        mode
-                        add-src
-                        step)]
-                    [_ (opt-unroll-trace-refuse (opt-unroll-reason-step-form))])]
-                [_ (opt-unroll-trace-refuse (opt-unroll-reason-step-form))])]
-            ;; UNR-2. `i = i - 1`, the spelling the front end emits for
-            ;; `(set! cursor (- cursor 1))`. Admitted only under a descending
-            ;; latch, so the ascending class keeps exactly its own instruction
-            ;; sequences: a `Sub` of a NEGATIVE literal is an ascending step
-            ;; in disguise and stays refused here.
-            [(ir.CompilerIrBinOp.Sub)
-              (if (< mode 1)
-                (opt-unroll-trace-refuse (opt-unroll-reason-step-direction))
-                (match add-lhs
-                  [(ir.CompilerIrValue.Var add-src)
-                    (match add-rhs
-                      [(ir.CompilerIrValue.I64 step)
-                        (opt-unroll-shape-step-admit
-                          blocks
-                          label
-                          instrs
-                          phi-count
-                          last
-                          cond-var
-                          cond-index
-                          inext
-                          ity
-                          bound
-                          mode
-                          add-src
-                          (- 0 step))]
-                      [_
-                        (opt-unroll-trace-refuse (opt-unroll-reason-step-form))])]
-                  [_ (opt-unroll-trace-refuse (opt-unroll-reason-step-form))]))]
-            [_ (opt-unroll-trace-refuse (opt-unroll-reason-step-form))])]
-        [_ (opt-unroll-trace-refuse (opt-unroll-reason-step-form))]))))
+  (match (opt-self-loop-step
+    (compiler-opt-global-shared-view instrs)
+    phi-count
+    last
+    inext)
+    [(OptSelfLoopMaybeStep.Some counter)
+      ;; UNR-2. `i = i - 1`, the spelling the front end emits for
+      ;; `(set! cursor (- cursor 1))`. Admitted only under a descending latch,
+      ;; so the ascending class keeps exactly its own instruction sequences: a
+      ;; `Sub` of a NEGATIVE literal is an ascending step in disguise and stays
+      ;; refused here.
+      (if (and counter.sub? (< mode 1))
+        (opt-unroll-trace-refuse (opt-unroll-reason-step-direction))
+        (opt-unroll-shape-step-admit
+          blocks
+          label
+          instrs
+          phi-count
+          last
+          cond-var
+          cond-index
+          inext
+          bound
+          mode
+          (if counter.sub?
+            (- 0 counter.step)
+            counter.step)
+          counter))]
+    [(OptSelfLoopMaybeStep.Form sub?)
+      (opt-unroll-trace-refuse
+        (if (and sub? (< mode 1))
+          (opt-unroll-reason-step-direction)
+          (opt-unroll-reason-step-form)))]
+    [(OptSelfLoopMaybeStep.No)
+      (opt-unroll-trace-refuse (opt-unroll-reason-step-form))]))
 
 ;; One admission arm of the latch. `counter` is the side of the compare that
 ;; must resolve to the stepped counter, `bound` the loop-invariant end it is
@@ -63262,7 +63254,7 @@
               ;; compiler's own tables runs -- the register allocator's live
               ;; unions, the interval lists, the sorted segment vectors. It is
               ;; the same clause ALIAS-1 admits in the versioner
-              ;; (opt-bce-version-shape-counter's `Ge` arm), so a loop the
+              ;; (opt-bce-version-shape-counter's `Ge` latch), so a loop the
               ;; versioner already stripped the checks off is exactly the loop
               ;; this pass sees.
               [(ir.CompilerIrBinOp.Ge)
@@ -64008,13 +64000,7 @@
           ;; an ascending bound, and there is no descending spelling of it to
           ;; recognise; asking it about a descending loop would be reading the
           ;; two ends of the range the wrong way round.
-          (not
-            (opt-unroll-step-descending?
-              instrs.slots
-              instrs
-              shape.phi-count
-              (- count 1)
-              shape.inext))
+          (> shape.step 0)
           (<= copies (opt-unroll-cascade-copies))
           (opt-unroll-short-remainder-seed? blocks shape.seed shape.bound)))]))
 
@@ -65382,17 +65368,8 @@
         [bound : ir.CompilerIrValue shape.bound]
         [others : OptUnrollPhiList shape.others]
         [pred-label : i64 shape.pred-label]
-        ;; UNR-2. Which way the counter runs, and how strict the latch is,
-        ;; re-derived from the loop's own instructions rather than carried on
-        ;; the shape record -- see opt-unroll-latch-mode for why.
-        [latch-mode : i64
-          (opt-unroll-latch-mode
-            (compiler-opt-global-shared-view instrs.slots)
-            instrs
-            phi-count
-            last
-            cond-index
-            inext)]
+        ;; UNR-2. Which way the counter runs, and how strict the latch is.
+        [latch-mode : i64 shape.mode]
         [descending? : bool (> latch-mode 0)]
         ;; Which vars are array/string descriptor HANDLES: the premise the
         ;; bound's length-load rule rests on (see the bound oracle above).
@@ -65951,6 +65928,14 @@
 
 ;; `inext = iphi + 1`. Step 1 is what makes the visited index set exactly
 ;; [seed, bound) -- the contiguous run `rep stosq` writes.
+;;
+;; The counter phi's other edge must seed LITERAL 0. Seed 0 is required rather
+;; than merely handled. It is what makes the count `bound - 0 = bound`, and a
+;; rotated `while (< i bound)` whose counter starts at 0 can only be entered
+;; when `0 < bound` held -- the rotation guard tests exactly that expression --
+;; so the trip count is >= 1 independently of the version guard's own
+;; `seed < bound` condition. Both facts point the same way; requiring the
+;; literal keeps the second one available.
 (define (opt-loop-call-shape-step
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
@@ -65960,97 +65945,47 @@
   [exit-label : i64]
   [inext : i64]
   [bound : ir.CompilerIrValue]) : OptLoopCallMaybeShape
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (compiler-opt-global-shared-view instrs.slots)]
-    [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
-    (if (< inext-index 0)
-      (OptLoopCallMaybeShape.No)
-      (match (ir.compiler-ir-instr-seq-ref instrs inext-index)
-        [(ir.CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
-          (match add-op
-            [(ir.CompilerIrBinOp.Add)
-              (match add-lhs
-                [(ir.CompilerIrValue.Var add-src)
-                  (match add-rhs
-                    [(ir.CompilerIrValue.I64 step)
-                      (if (and (= step 1) (opt-integer-type? ity))
-                        (opt-loop-call-shape-phi
-                          label
-                          (compiler-opt-global-shared-view instrs)
-                          phi-count
-                          last
-                          cond-var
-                          exit-label
-                          (opt-unroll-resolve-copy
-                            instrs
-                            phi-count
-                            last
-                            add-src
-                            16)
-                          inext
-                          ity
-                          bound)
-                        (OptLoopCallMaybeShape.No))]
-                    [_ (OptLoopCallMaybeShape.No)])]
-                [_ (OptLoopCallMaybeShape.No)])]
-            [_ (OptLoopCallMaybeShape.No)])]
-        [_ (OptLoopCallMaybeShape.No)]))))
-
-;; The counter phi: exactly two inputs, the back edge carrying `inext` and the
-;; single other edge seeding LITERAL 0.
-;;
-;; Seed 0 is required rather than merely handled. It is what makes the count
-;; `bound - 0 = bound`, and a rotated `while (< i bound)` whose counter starts
-;; at 0 can only be entered when `0 < bound` held -- the rotation guard tests
-;; exactly that expression -- so the trip count is >= 1 independently of the
-;; version guard's own `seed < bound` condition. Both facts point the same way;
-;; requiring the literal keeps the second one available.
-(define (opt-loop-call-shape-phi
-  [label : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [phi-count : i64]
-  [last : i64]
-  [cond-var : i64]
-  [exit-label : i64]
-  [iphi : i64]
-  [inext : i64]
-  [ity : ast.AstType]
-  [bound : ir.CompilerIrValue]) : OptLoopCallMaybeShape
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (compiler-opt-global-shared-view instrs.slots)]
-    [iphi-index : i64 (opt-unroll-def-index slots 0 phi-count iphi)]
-    (if (< iphi-index 0)
-      (OptLoopCallMaybeShape.No)
-      (match (ir.compiler-ir-instr-seq-ref instrs iphi-index)
-        [(ir.CompilerIrInstr.Phi _ inputs _)
-          (match (opt-unroll-split-phi-inputs inputs label)
-            [(OptUnrollPhiSplit.Split seed back pred-label)
-              (if (and
-                (not (= pred-label label))
-                (opt-loop-call-zero-seed? seed)
-                (opt-unroll-back-resolves-to? instrs phi-count last back inext)
-                (opt-loop-call-other-phis-ok?
-                  instrs
-                  0
-                  phi-count
-                  label
+  (match (opt-self-loop-step
+    (compiler-opt-global-shared-view instrs)
+    phi-count
+    last
+    inext)
+    [(OptSelfLoopMaybeStep.Some counter)
+      (if (and
+        (not counter.sub?)
+        (= counter.step 1)
+        (opt-integer-type? counter.ity))
+        (match (opt-self-loop-phi
+          (compiler-opt-global-shared-view instrs)
+          label
+          phi-count
+          last
+          counter.iphi
+          inext)
+          [(OptSelfLoopMaybePhi.Some _ seed pred-label)
+            (if (and
+              (opt-loop-call-zero-seed? seed)
+              (opt-loop-call-other-phis-ok?
+                instrs
+                0
+                phi-count
+                label
+                pred-label
+                counter.iphi))
+              (OptLoopCallMaybeShape.Some
+                (OptLoopCallShape
                   pred-label
-                  iphi))
-                (OptLoopCallMaybeShape.Some
-                  (OptLoopCallShape
-                    pred-label
-                    exit-label
-                    phi-count
-                    iphi
-                    inext
-                    cond-var
-                    ity
-                    bound))
-                (OptLoopCallMaybeShape.No))]
-            [(OptUnrollPhiSplit.No) (OptLoopCallMaybeShape.No)])]
-        [_ (OptLoopCallMaybeShape.No)]))))
+                  exit-label
+                  phi-count
+                  counter.iphi
+                  inext
+                  cond-var
+                  counter.ity
+                  bound))
+              (OptLoopCallMaybeShape.No))]
+          [(OptSelfLoopMaybePhi.No) (OptLoopCallMaybeShape.No)])
+        (OptLoopCallMaybeShape.No))]
+    [_ (OptLoopCallMaybeShape.No)]))
 
 (define (opt-loop-call-zero-seed? [seed : ir.CompilerIrValue]) : bool
   (match seed
@@ -76185,62 +76120,6 @@
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
           (OptBceVersionGuardOut.Some guard-instrs guard-value state.keep)]))))
 
-;; The counter's positive literal step, re-derived from the back-edge add the
-;; shape scan already verified: `inext = iphi + literal` in this block. 0 on
-;; any mismatch -- impossible after opt-bce-version-shape-step admitted the
-;; loop, and rejected by the caller before any guard is built, so a stale
-;; shape can never sneak a step-1 assumption past the no-wrap condition.
-(define (opt-bce-version-shape-step-value
-  [instrs : ir.CompilerIrInstrSeq]
-  [phi-count : i64]
-  [last : i64]
-  [iphi : i64]
-  [inext : i64]) : i64
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (compiler-opt-global-shared-view instrs.slots)]
-    [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
-    (if (< inext-index 0)
-      0
-      (match (ir.compiler-ir-instr-seq-ref instrs inext-index)
-        [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
-          (match op
-            [(ir.CompilerIrBinOp.Add)
-              (match lhs
-                [(ir.CompilerIrValue.Var src)
-                  (match rhs
-                    [(ir.CompilerIrValue.I64 step)
-                      (if (and
-                        (> step 0)
-                        (=
-                          (opt-bce-version-resolve instrs phi-count last src 16)
-                          iphi))
-                        step
-                        0)]
-                    [_ 0])]
-                [_ 0])]
-            ;; ALIAS-1. A DESCENDING counter reports its step NEGATED. The two
-            ;; callers read the sign: the shape scan admits only a unit
-            ;; magnitude down (see opt-bce-version-shape-step), and
-            ;; opt-bce-version-apply-wired turns the sign into the ascending
-            ;; RANGE the guard derivations are stated over.
-            [(ir.CompilerIrBinOp.Sub)
-              (match lhs
-                [(ir.CompilerIrValue.Var src)
-                  (match rhs
-                    [(ir.CompilerIrValue.I64 step)
-                      (if (and
-                        (> step 0)
-                        (=
-                          (opt-bce-version-resolve instrs phi-count last src 16)
-                          iphi))
-                        (- 0 step)
-                        0)]
-                    [_ 0])]
-                [_ 0])]
-            [_ 0])]
-        [_ 0]))))
-
 ;; --- shape scan ---------------------------------------------------------------
 (define (opt-bce-version-shape-phi
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -76251,77 +76130,68 @@
   [cond-index : i64]
   [cond-var : i64]
   [inext : i64]
-  [ity : ast.AstType]
   [bound : ir.CompilerIrValue]
-  [iphi : i64]) : OptUnrollMaybeShape
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (compiler-opt-global-shared-view instrs.slots)]
-    [iphi-index : i64 (opt-unroll-def-index slots 0 phi-count iphi)]
-    (if (< iphi-index 0)
-      (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))
-      (match (ir.compiler-ir-instr-seq-ref instrs iphi-index)
-        [(ir.CompilerIrInstr.Phi _ inputs iphi-ty)
-          (match (opt-unroll-split-phi-inputs inputs label)
-            [(OptUnrollPhiSplit.Split seed back pred-label)
-              (let
-                [reason : i64
-                  (cond
-                    [(= pred-label label) (opt-bce-reason-counter-phi)]
-                    [(not
-                        (opt-unroll-back-resolves-to?
-                          instrs
-                          phi-count
-                          last
-                          back
-                          inext))
-                      (opt-bce-reason-counter-phi)]
-                    [(opt-cfg-block-exists?
-                        blocks
-                        (ir.compiler-ir-label
-                          (str_cat.str-cat
-                            (ir.compiler-ir-label-text label)
-                            "__bce_guard")))
-                      (opt-bce-reason-already-versioned)]
-                    [(opt-cfg-block-exists?
-                        blocks
-                        (ir.compiler-ir-label
-                          (str_cat.str-cat
-                            (ir.compiler-ir-label-text label)
-                            "__bce_fast")))
-                      (opt-bce-reason-already-versioned)]
-                    [(not (opt-unroll-pred-retargetable? blocks pred-label))
-                      (opt-bce-reason-counter-phi)]
-                    [else (opt-bce-reason-ok)])]
-                (if (= reason (opt-bce-reason-ok))
-                  (match (opt-unroll-collect-other-phis
-                    instrs
-                    0
-                    phi-count
-                    label
-                    pred-label
-                    iphi)
-                    [(OptUnrollMaybePhis.Some others)
-                      (OptUnrollMaybeShape.Some
-                        (OptUnrollShape
-                          label
-                          pred-label
-                          phi-count
-                          cond-index
-                          cond-var
-                          iphi
-                          iphi-ty
-                          seed
-                          inext
-                          ity
-                          bound
-                          others))]
-                    [(OptUnrollMaybePhis.No)
-                      (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))])
-                  (opt-bce-trace-refuse-shape reason)))]
-            [(OptUnrollPhiSplit.No)
-              (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))])]
-        [_ (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))]))))
+  [mode : i64]
+  [signed-step : i64]
+  [counter : OptSelfLoopStep]) : OptUnrollMaybeShape
+  (match (opt-self-loop-phi
+    (compiler-opt-global-shared-view instrs)
+    label
+    phi-count
+    last
+    counter.iphi
+    inext)
+    [(OptSelfLoopMaybePhi.Some iphi-ty seed pred-label)
+      (let
+        [reason : i64
+          (cond
+            [(opt-cfg-block-exists?
+                blocks
+                (ir.compiler-ir-label
+                  (str_cat.str-cat
+                    (ir.compiler-ir-label-text label)
+                    "__bce_guard")))
+              (opt-bce-reason-already-versioned)]
+            [(opt-cfg-block-exists?
+                blocks
+                (ir.compiler-ir-label
+                  (str_cat.str-cat
+                    (ir.compiler-ir-label-text label)
+                    "__bce_fast")))
+              (opt-bce-reason-already-versioned)]
+            [(not (opt-unroll-pred-retargetable? blocks pred-label))
+              (opt-bce-reason-counter-phi)]
+            [else (opt-bce-reason-ok)])]
+        (if (= reason (opt-bce-reason-ok))
+          (match (opt-unroll-collect-other-phis
+            instrs
+            0
+            phi-count
+            label
+            pred-label
+            counter.iphi)
+            [(OptUnrollMaybePhis.Some others)
+              (OptUnrollMaybeShape.Some
+                (OptUnrollShape
+                  label
+                  pred-label
+                  phi-count
+                  cond-index
+                  cond-var
+                  counter.iphi
+                  iphi-ty
+                  seed
+                  inext
+                  counter.ity
+                  bound
+                  signed-step
+                  mode
+                  others))]
+            [(OptUnrollMaybePhis.No)
+              (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))])
+          (opt-bce-trace-refuse-shape reason)))]
+    [(OptSelfLoopMaybePhi.No)
+      (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))]))
 
 (define (opt-bce-version-shape-step
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -76332,104 +76202,69 @@
   [cond-var : i64]
   [cond-index : i64]
   [inext : i64]
-  [bound : ir.CompilerIrValue]) : OptUnrollMaybeShape
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (compiler-opt-global-shared-view instrs.slots)]
-    [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
-    (if (< inext-index 0)
-      (opt-bce-trace-refuse-shape (opt-bce-reason-step))
-      (match (ir.compiler-ir-instr-seq-ref instrs inext-index)
-        [(ir.CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
-          (match add-op
-            [(ir.CompilerIrBinOp.Add)
-              (match add-lhs
-                [(ir.CompilerIrValue.Var add-src)
-                  (match add-rhs
-                    [(ir.CompilerIrValue.I64 step)
-                      (if (and
-                        ;; Any positive literal step: every derivation reasons
-                        ;; about the set of executed-trip counter values (a
-                        ;; subset of [seed, bound-1] for any positive step),
-                        ;; and the guard's no-wrap condition
-                        ;; (opt-bce-version-guard-finish) covers steps > 1.
-                        (> step 0)
-                        ;; I64 only: the guard reasons in SIGNED 64-bit
-                        ;; arithmetic, so narrow (wrapping) and unsigned
-                        ;; counters are out of scope.
-                        (match (compiler-opt-global-shared-view ity)
-                          [(ast.AstType.I64) true]
-                          [_ false]))
-                        (opt-bce-version-shape-phi
-                          blocks
-                          label
-                          (compiler-opt-global-shared-view instrs)
-                          phi-count
-                          last
-                          cond-index
-                          cond-var
-                          inext
-                          ity
-                          bound
-                          (opt-unroll-resolve-copy
-                            instrs
-                            phi-count
-                            last
-                            add-src
-                            16))
-                        (opt-bce-trace-refuse-shape (opt-bce-reason-step)))]
-                    [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
-                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
-            ;; ALIAS-1. The DESCENDING counter: `i = i - 1`, latched by the
-            ;; `Ge`/`Gt` arm of opt-bce-version-shape-counter. A shift loop
-            ;; copying `a[i+k] = a[i]` downward has this shape and no other, so
-            ;; the whole derivation tree is unreachable for it while the scan
-            ;; admits only `Add`.
-            ;;
-            ;; UNIT MAGNITUDE ONLY, and the restriction is a soundness one
-            ;; rather than a budget. Every guard here is a statement about the
-            ;; SET of counter values the body executes at, and
-            ;; opt-bce-version-apply-wired hands the derivations that set as the
-            ;; ascending interval [bound, seed]. For a unit step the executed
-            ;; values ARE that interval. For a magnitude m > 1 they are
-            ;; {seed, seed-m, ...}, which is NOT a subset of
-            ;; {bound, bound+m, ...} -- the ascending reading of the same
-            ;; interval -- so a guard derived from the ascending walk would
-            ;; prove nothing about the values the loop really visits.
-            [(ir.CompilerIrBinOp.Sub)
-              (match add-lhs
-                [(ir.CompilerIrValue.Var add-src)
-                  (match add-rhs
-                    [(ir.CompilerIrValue.I64 step)
-                      (if (not (= step 1))
-                        (opt-bce-trace-refuse-shape
-                          (opt-bce-reason-step-not-unit))
-                        (if (match (compiler-opt-global-shared-view ity)
-                          [(ast.AstType.I64) true]
-                          [_ false])
-                          (opt-bce-version-shape-phi
-                            blocks
-                            label
-                            (compiler-opt-global-shared-view instrs)
-                            phi-count
-                            last
-                            cond-index
-                            cond-var
-                            inext
-                            ity
-                            bound
-                            (opt-unroll-resolve-copy
-                              instrs
-                              phi-count
-                              last
-                              add-src
-                              16))
-                          (opt-bce-trace-refuse-shape (opt-bce-reason-step))))]
-                    [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
-                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
-            [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
-        [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))]))))
+  [bound : ir.CompilerIrValue]
+  [mode : i64]) : OptUnrollMaybeShape
+  (match (opt-self-loop-step
+    (compiler-opt-global-shared-view instrs)
+    phi-count
+    last
+    inext)
+    [(OptSelfLoopMaybeStep.Some counter)
+      (cond
+        ;; ALIAS-1. The DESCENDING counter: `i = i - 1`, latched by the
+        ;; `Ge`/`Gt` latch of opt-bce-version-shape-counter. A shift loop copying
+        ;; `a[i+k] = a[i]` downward has this shape and no other, so the whole
+        ;; derivation tree is unreachable for it while the scan admits only
+        ;; `Add`.
+        ;;
+        ;; UNIT MAGNITUDE ONLY, and the restriction is a soundness one rather
+        ;; than a budget. Every guard here is a statement about the SET of
+        ;; counter values the body executes at, and opt-bce-version-apply-wired
+        ;; hands the derivations that set as the ascending interval
+        ;; [bound, seed]. For a unit step the executed values ARE that
+        ;; interval. For a magnitude m > 1 they are {seed, seed-m, ...}, which
+        ;; is NOT a subset of {bound, bound+m, ...} -- the ascending reading of
+        ;; the same interval -- so a guard derived from the ascending walk would
+        ;; prove nothing about the values the loop really visits.
+        [(and counter.sub? (not (= counter.step 1)))
+          (opt-bce-trace-refuse-shape (opt-bce-reason-step-not-unit))]
+        [(and
+            ;; Any positive literal step up: every derivation reasons about the
+            ;; set of executed-trip counter values (a subset of [seed, bound-1]
+            ;; for any positive step), and the guard's no-wrap condition
+            ;; (opt-bce-version-guard-finish) covers steps > 1.
+            (or counter.sub? (> counter.step 0))
+            ;; I64 only: the guard reasons in SIGNED 64-bit arithmetic, so
+            ;; narrow (wrapping) and unsigned counters are out of scope.
+            (opt-induction-i64-type? counter.ity))
+          (opt-bce-version-shape-phi
+            blocks
+            label
+            (compiler-opt-global-shared-view instrs)
+            phi-count
+            last
+            cond-index
+            cond-var
+            inext
+            bound
+            mode
+            (if counter.sub?
+              (- 0 counter.step)
+              counter.step)
+            counter)]
+        [else (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
+    [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))]))
 
+;; The latch `inext < bound`, or ALIAS-1's two latch forms of a DESCENDING
+;; counter, `next >= floor` and `next > floor`, all in the operand order
+;; `counter <op> invariant`. `bound` still names the invariant the latch
+;; compares against; what changes is which END of the counter range it is, and
+;; opt-bce-version-apply-wired is where that is read -- there the range is
+;; handed to the derivations as the ascending interval [bound, seed].
+;;
+;; `Gt` is admitted with the SAME interval as `Ge`: it executes at
+;; [bound + 1, seed], a subset, so a guard derived over [bound, seed] is
+;; stronger than necessary and never weaker.
 (define (opt-bce-version-shape-counter
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : i64]
@@ -76446,8 +76281,15 @@
       (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
       (match (ir.compiler-ir-instr-seq-ref instrs cond-index)
         [(ir.CompilerIrInstr.BinOp _ cmp-op cmp-lhs cmp-rhs _)
-          (match cmp-op
-            [(ir.CompilerIrBinOp.Lt)
+          (let
+            [mode : i64
+              (match cmp-op
+                [(ir.CompilerIrBinOp.Lt) 0]
+                [(ir.CompilerIrBinOp.Ge) 1]
+                [(ir.CompilerIrBinOp.Gt) 2]
+                [_ (- 0 1)])]
+            (if (< mode 0)
+              (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
               (match cmp-lhs
                 [(ir.CompilerIrValue.Var cmp-src)
                   (if (opt-unroll-invariant-bound? defs cmp-rhs)
@@ -76460,56 +76302,11 @@
                       cond-var
                       cond-index
                       (opt-unroll-resolve-copy instrs phi-count last cmp-src 16)
-                      cmp-rhs)
+                      cmp-rhs
+                      mode)
                     (opt-bce-trace-refuse-shape
                       (opt-bce-reason-bound-not-invariant)))]
-                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])]
-            ;; ALIAS-1. The two latch forms of a DESCENDING counter,
-            ;; `next >= floor` and `next > floor`, in the same operand order the
-            ;; ascending `Lt` arm demands. `bound` still names the invariant the
-            ;; latch compares against; what changes is which END of the counter
-            ;; range it is, and opt-bce-version-apply-wired is where that is
-            ;; read -- there the range is handed to the derivations as the
-            ;; ascending interval [bound, seed].
-            ;;
-            ;; `Gt` is admitted with the SAME interval as `Ge`: it executes at
-            ;; [bound + 1, seed], a subset, so a guard derived over [bound, seed]
-            ;; is stronger than necessary and never weaker.
-            [(ir.CompilerIrBinOp.Ge)
-              (match cmp-lhs
-                [(ir.CompilerIrValue.Var cmp-src)
-                  (if (opt-unroll-invariant-bound? defs cmp-rhs)
-                    (opt-bce-version-shape-step
-                      blocks
-                      label
-                      (compiler-opt-global-shared-view instrs)
-                      phi-count
-                      last
-                      cond-var
-                      cond-index
-                      (opt-unroll-resolve-copy instrs phi-count last cmp-src 16)
-                      cmp-rhs)
-                    (opt-bce-trace-refuse-shape
-                      (opt-bce-reason-bound-not-invariant)))]
-                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])]
-            [(ir.CompilerIrBinOp.Gt)
-              (match cmp-lhs
-                [(ir.CompilerIrValue.Var cmp-src)
-                  (if (opt-unroll-invariant-bound? defs cmp-rhs)
-                    (opt-bce-version-shape-step
-                      blocks
-                      label
-                      (compiler-opt-global-shared-view instrs)
-                      phi-count
-                      last
-                      cond-var
-                      cond-index
-                      (opt-unroll-resolve-copy instrs phi-count last cmp-src 16)
-                      cmp-rhs)
-                    (opt-bce-trace-refuse-shape
-                      (opt-bce-reason-bound-not-invariant)))]
-                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])]
-            [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])]
+                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])))]
         [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))]))))
 
 ;; The body clauses of the single-block shape, as the code of the FIRST one
@@ -76918,16 +76715,10 @@
             (opt_i64_i64_map.with-capacity 64)
             blocks
             label)]
-        ;; The guard's no-wrap condition needs the exact literal step; the
-        ;; shape scan verified this add but did not record it. ALIAS-1: the
-        ;; sign is the counter's DIRECTION -- see opt-bce-version-down-range.
-        [signed-step : i64
-          (opt-bce-version-shape-step-value
-            (compiler-opt-global-shared-view instrs)
-            phi-count
-            last
-            iphi
-            inext)]
+        ;; The guard's no-wrap condition needs the exact literal step. ALIAS-1:
+        ;; its sign is the counter's DIRECTION -- see
+        ;; opt-bce-version-down-range.
+        [signed-step : i64 shape.step]
         [down? : bool (< signed-step 0)]
         [step : i64
           (if down?
@@ -76969,7 +76760,6 @@
           (cond
             [(= exit-label label) (opt-bce-reason-latch-form)]
             [(= exit-label pred-label) (opt-bce-reason-latch-form)]
-            [(<= step 0) (opt-bce-reason-step)]
             [(not range-ok?) (opt-bce-reason-bound-range)]
             [(opt-bce-version-defs-escape?
                 (compiler-opt-global-shared-view

@@ -57445,40 +57445,18 @@
                           instrs))]))])]))
       unit)))
 
-;; The number of predecessors a block has, straight off the CFG index rows.
-;; Is `child-id` entered ONLY through the edge from `parent-id`? Every other
-;; reachable predecessor must sit inside the child's own dominator subtree, which
-;; makes it a backedge: control only got there by passing through the child, and
-;; therefore through the parent's edge, already. Unreachable predecessors carry no
-;; path at all. A loop header satisfies this -- its preds are the guard block and
+;; Is `child-id` entered ONLY through the edge from `parent-id`? That edge must
+;; be its sole entry (opt-bounds-dom-sole-entry-pred): every other reachable
+;; predecessor sits inside the child's own dominator subtree, which makes it a
+;; backedge. A loop header satisfies this -- its preds are the guard block and
 ;; its own latch -- which is what lets a loop-invariant guard fact reach the body.
+;; A reachable block always has an entry predecessor, so for a dominator child
+;; this is exactly "no entry predecessor but the parent".
 (define (opt-bounds-dom-child-entered-only-via?
   [env : (& env OptBoundsDomEnv)]
   [parent-id : i64]
   [child-id : i64]) : bool
-  (let
-    [preds : OptCfgCsr env.index.preds]
-    [offsets : (__tl_dyn-array i64) preds.offsets]
-    [edges : (__tl_dyn-array i64) preds.edges]
-    (if (or (< child-id 0) (>= (+ child-id 1) (array-length offsets)))
-      false
-      (let
-        [edge : i64 (array-ref offsets child-id)]
-        [end : i64 (array-ref offsets (+ child-id 1))]
-        [only : bool true]
-        (begin
-          (while (< edge end)
-            (begin
-              (let
-                [pred : i64 (array-ref edges edge)]
-                (if (or
-                  (= pred parent-id)
-                  (not (array-ref env.index.reachable pred))
-                  (opt-dom-info-dominates-id? env.doms child-id pred))
-                  unit
-                  (set! only false)))
-              (set! edge (+ edge 1))))
-          only)))))
+  (= (opt-bounds-dom-sole-entry-pred env child-id) parent-id))
 
 ;; Facts to carry into one dominator child: the parent's branch decides its
 ;; condition for a target the branch is the ONLY way into. A target reachable

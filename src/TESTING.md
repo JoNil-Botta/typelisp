@@ -655,6 +655,16 @@ owner retires. The native register-allocation smoke also needs
 `--cfg test` to exercise its post-plan trace journal and liveness-census checks;
 that flag alone does not run source-local inline test declarations.
 
+Backend, register-allocator and liveness fixtures state their IR as the
+`typelisp-ir v1` text that `--dump-ir` prints, read back by
+`compiler_ir_text.tl` (`irt.instr`, `irt.instrs`, `irt.blocks`, `irt.func`).
+Backend fixtures give register assignments as one-line `reg-homes` specs such
+as `"%4=%xmm3 %6=spill:-16 %7=%r12/%r13"`, and check emitted assembly with
+`asm-has?`, `asm-lacks?` and `asm-ok?`. Fixtures the text cannot express stay
+hand-built: symbols interned outside the IR symbol table (runtime builtins,
+globals), total-enum switches and char values. Test-only helpers belong in these
+test modules, not in the production modules they exercise.
+
 The Linux build-invariance gate reuses its freshly built opt1 compiler for two
 complete opt2 workloads: the existing singleton batch compilation of
 `compiler_codegen_smoke_suite.tl` and a standalone build of

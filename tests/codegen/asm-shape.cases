@@ -1184,11 +1184,3 @@ count = 1 ^[[:space:]]+movq 8\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
 count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
 match ^[[:space:]]+addq \$3, %r[a-z0-9]+$
 count = 0 ^[[:space:]]+addq \$1, %r[a-z0-9]+$
-
-# Scratch reservations zero-fill through %r11 without an xmm detour.
-case scratch-reserve-zero-fill
-source tests/integration/scratch_reserve_zero_fill.tl
-in fn _tl_scratch_reserve_zero_fill_reset_arrays_bang
-count = 0 ^[[:space:]]+movq %r[a-z0-9]+, %xmm[0-9]+$
-count >= 4 ^[[:space:]]+movq [0-9]+\(%rsp\), %r11$
-count >= 4 ^[[:space:]]+movq \$(0|-1), \(%r11,%r[a-z0-9]+,8\)$

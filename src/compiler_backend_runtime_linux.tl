@@ -2,11 +2,10 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_x64_executable_template as x64_template)
 (import compiler_x64_executable_template_catalog as x64_catalog)
-(cfg (any compiler-arena-debug test) (import stdlib.string))
 (import stdlib.str_cat_runtime as str_cat)
 
 (define (compiler-backend-runtime-arena-data
-  [_arena-debug : bool]
+  [arena-debug : bool]
   [backtrace : bool]) : String
   (str_cat.str-cat
     "    .section .tbss,\"awT\",@nobits
@@ -24,25 +23,8 @@ tl_backtrace_stack_high:
     .zero 8
 "
       "")
-    "
-    .section .bss
-    .balign 8
-.L_tl_arena_poison_enabled:
-    .zero 8
-
-"
-    (cfg
-      (any compiler-arena-debug test)
-      (if _arena-debug
-        "    .balign 8
-.L_tl_arena_debug_roots:
-    .zero 32768
-
-"
-        "")
-      "")
-    ""
-    ""))
+    "\n"
+    (runtime_common.compiler-backend-runtime-arena-poison-data arena-debug)))
 
 (define (compiler-backend-current-arena-load [dst : String]) : String
   (str_cat.str-cat "    movq %fs:tl_current_arena@tpoff, " dst "\n"))
@@ -82,10 +64,13 @@ tl_backtrace_stack_high:
   (runtime_common.compiler-backend-runtime-common-data
     features
     (compiler-backend-runtime-arena-data
-      (runtime_common.compiler-backend-runtime-features-arena-debug? features)
-      (runtime_common.compiler-backend-runtime-features-backtrace? features))))
+      (runtime_common.compiler-backend-runtime-arena-debug-text?
+        features.arena-debug)
+      features.backtrace)))
 
-(define (compiler-backend-runtime-linux-alloc-functions-base [profile : bool]) : String
+(define (compiler-backend-runtime-linux-alloc-functions-base
+  [profile : bool]
+  [arena-debug : bool]) : String
   (let
     [fast-profile : String
       (runtime_common.compiler-backend-runtime-profile-alloc-account
@@ -224,7 +209,8 @@ tl_alloc:
     movq %r8, %rax
 "]
     [ordinary-new-asm : String
-      "    ret
+      (str_cat.str-cat
+        "    ret
 .L_tl_alloc_new_arena:
     movq $0x4000000, %rdx
     movq %rsi, %rcx
@@ -257,7 +243,9 @@ tl_alloc:
     movq 56(%r9), %r10
     jmp .L_tl_alloc_root_ready
 .L_tl_alloc_root_self:
-    xorq %r10, %r10
+"
+        (compiler-backend-runtime-linux-register-root-hook arena-debug)
+        "    xorq %r10, %r10
     movq %rax, %r9
 .L_tl_alloc_root_ready:
     movq %r10, 0(%rax)
@@ -273,7 +261,7 @@ tl_alloc:
     movq %rcx, 16(%rax)
     movq %r9, %fs:tl_current_arena@tpoff
     movq %r8, %rax
-"]
+")]
     ;; `.L_tl_alloc_abort` is tl_alloc's own out-of-line stub, so the symbol
     ;; extent closes after it -- the last byte this block emits.
     [tail-asm : String
@@ -297,7 +285,8 @@ tl_alloc:
       tail-asm)))
 
 (define (compiler-backend-runtime-linux-aligned-alloc-functions-base
-  [profile : bool]) : String
+  [profile : bool]
+  [arena-debug : bool]) : String
   (let
     [ordinary-profile : String
       (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
@@ -532,7 +521,19 @@ tl_alloc_aligned:
     movq 56(%r8), %r9
     jmp .L_tl_alloc_aligned_root_ready
 .L_tl_alloc_aligned_root_self:
-    xorq %r9, %r9
+"
+          (if arena-debug
+            "    pushq %rdx
+    pushq %r11
+    pushq %rdi
+    movq %rax, %rdi
+    call .L_tl_arena_debug_register_root
+    popq %rdi
+    popq %r11
+    popq %rdx
+"
+            "")
+          "    xorq %r9, %r9
     movq %rax, %r8
 .L_tl_alloc_aligned_root_ready:
     movq %r9, 0(%rax)
@@ -564,68 +565,11 @@ tl_alloc_aligned:
     jmp tl_oom_abort
     .size tl_alloc_aligned, . - tl_alloc_aligned
 
-"
-          "")
-        "")
-      "")))
+")))))
 
-(define (compiler-backend-runtime-linux-alloc-functions
+(define (compiler-backend-runtime-linux-arena-functions-base
   [profile : bool]
-  [_arena-debug : bool]) : String
-  (let
-    [base : String
-      (compiler-backend-runtime-linux-alloc-functions-base profile)]
-    [aligned : String
-      (compiler-backend-runtime-linux-aligned-alloc-functions-base profile)]
-    (cfg
-      (any compiler-arena-debug test)
-      (if _arena-debug
-        (str_cat.str-cat
-          (string.replace
-            base
-            ".L_tl_alloc_root_self:
-    xorq %r10, %r10
-    movq %rax, %r9
-.L_tl_alloc_root_ready:
-"
-            ".L_tl_alloc_root_self:
-    movq %rax, %rdi
-    subq $8, %rsp
-    call .L_tl_arena_debug_register_root
-    addq $8, %rsp
-    xorq %r10, %r10
-    movq %rax, %r9
-.L_tl_alloc_root_ready:
-")
-          (string.replace
-            aligned
-            ".L_tl_alloc_aligned_root_self:
-    xorq %r9, %r9
-    movq %rax, %r8
-.L_tl_alloc_aligned_root_ready:
-"
-            ".L_tl_alloc_aligned_root_self:
-    pushq %rdx
-    pushq %r11
-    pushq %rdi
-    movq %rax, %rdi
-    call .L_tl_arena_debug_register_root
-    popq %rdi
-    popq %r11
-    popq %rdx
-    xorq %r9, %r9
-    movq %rax, %r8
-.L_tl_alloc_aligned_root_ready:
-")
-          ""
-          "")
-        (str_cat.str-cat base aligned "" ""))
-      (str_cat.str-cat base aligned "" ""))))
-
-(define (compiler-backend-runtime-linux-libc-shim-functions) : String
-  "")
-
-(define (compiler-backend-runtime-linux-arena-functions-base [profile : bool]) : String
+  [arena-debug : bool]) : String
   (str_cat.str-cat
     "    .globl tl_thread_init
     .type tl_thread_init,@function
@@ -718,7 +662,9 @@ tl_arena_make_small:
     movq %rax, %rcx
     addq %rsi, %rcx
     movq %rcx, 24(%rax)
-    ret
+"
+    (compiler-backend-runtime-linux-register-root-hook arena-debug)
+    "    ret
 .L_tl_arena_make_abort:
     movq $60, %rax
     movq $134, %rdi
@@ -749,7 +695,9 @@ tl_arena_make_atomic:
     movq %rax, %rcx
     addq $0x4000000, %rcx
     movq %rcx, 24(%rax)
-    ret
+"
+    (compiler-backend-runtime-linux-register-root-hook arena-debug)
+    "    ret
 .L_tl_arena_make_atomic_abort:
     movq $60, %rax
     movq $134, %rdi
@@ -768,7 +716,17 @@ tl_arena_destroy:
     movq 40(%rbx), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_loop
-    movq 56(%r12), %rbx
+"
+    (if arena-debug
+      "    testq $8, 48(%r12)
+    jnz tl_arena_debug_destroy_abort
+    movq %r12, %rdi
+    subq $8, %rsp
+    call .L_tl_arena_debug_unregister_root
+    addq $8, %rsp
+"
+      "")
+    "    movq 56(%r12), %rbx
     testq %rbx, %rbx
     jnz .L_tl_arena_destroy_head_ready
     movq %r12, %rbx
@@ -834,167 +792,35 @@ tl_arena_destroy:
 
 "))
 
-(define (compiler-backend-runtime-linux-arena-debug-functions) : String
-  ".L_tl_arena_debug_register_root:
-    leaq .L_tl_arena_debug_roots(%rip), %r8
-    xorq %rcx, %rcx
-.L_tl_arena_debug_register_root_loop:
-    cmpq $4096, %rcx
-    jae .L_tl_arena_debug_protect_invalid
-    xorq %rax, %rax
-    lock cmpxchgq %rdi, (%r8,%rcx,8)
-    je .L_tl_arena_debug_register_root_done
-    cmpq %rdi, %rax
-    je .L_tl_arena_debug_register_root_done
-    incq %rcx
-    jmp .L_tl_arena_debug_register_root_loop
-.L_tl_arena_debug_register_root_done:
-    movq %rdi, %rax
-    ret
-
-.L_tl_arena_debug_unregister_root:
-    leaq .L_tl_arena_debug_roots(%rip), %r8
-    xorq %rcx, %rcx
-.L_tl_arena_debug_unregister_root_loop:
-    cmpq $4096, %rcx
-    jae .L_tl_arena_debug_unregister_root_done
-    movq (%r8,%rcx,8), %rax
-    cmpq %rdi, %rax
-    jne .L_tl_arena_debug_unregister_root_next
-    xorq %r9, %r9
-    lock cmpxchgq %r9, (%r8,%rcx,8)
-    jne .L_tl_arena_debug_unregister_root_loop
-    ret
-.L_tl_arena_debug_unregister_root_next:
-    incq %rcx
-    jmp .L_tl_arena_debug_unregister_root_loop
-.L_tl_arena_debug_unregister_root_done:
-    ret
-
-    .globl tl_arena_debug_protect_never_reset
-    .type tl_arena_debug_protect_never_reset,@function
-tl_arena_debug_protect_never_reset:
-    testq %rdi, %rdi
-    jz .L_tl_arena_debug_protect_invalid
-    leaq .L_tl_arena_debug_roots(%rip), %r8
-    xorq %rcx, %rcx
-.L_tl_arena_debug_protect_find:
-    cmpq $4096, %rcx
-    jae .L_tl_arena_debug_protect_invalid
-    cmpq %rdi, (%r8,%rcx,8)
-    je .L_tl_arena_debug_protect_found
-    incq %rcx
-    jmp .L_tl_arena_debug_protect_find
-.L_tl_arena_debug_protect_found:
-    cmpq %rdi, 40(%rdi)
-    jne .L_tl_arena_debug_protect_invalid
-    testq $1, 48(%rdi)
-    jnz .L_tl_arena_debug_protect_invalid
-    orq $8, 48(%rdi)
-    ret
-.L_tl_arena_debug_protect_invalid:
-    jmp tl_arena_debug_protect_abort
-    .size tl_arena_debug_protect_never_reset, . - tl_arena_debug_protect_never_reset
-
-    .globl tl_arena_debug_retire_protected
-tl_arena_debug_retire_protected:
-    testq %rdi, %rdi
-    jz .L_tl_arena_debug_protect_invalid
-    leaq .L_tl_arena_debug_roots(%rip), %r8
-    xorq %rcx, %rcx
-.L_tl_arena_debug_retire_find:
-    cmpq $4096, %rcx
-    jae .L_tl_arena_debug_protect_invalid
-    cmpq %rdi, (%r8,%rcx,8)
-    je .L_tl_arena_debug_retire_found
-    incq %rcx
-    jmp .L_tl_arena_debug_retire_find
-.L_tl_arena_debug_retire_found:
-    cmpq %rdi, 40(%rdi)
-    jne .L_tl_arena_debug_protect_invalid
-    testq $8, 48(%rdi)
-    jz .L_tl_arena_debug_protect_invalid
-    andq $-9, 48(%rdi)
-    jmp tl_arena_destroy
-
-    .globl tl_arena_debug_assert_pool_install
-    .type tl_arena_debug_assert_pool_install,@function
-tl_arena_debug_assert_pool_install:
-    testq %rdi, %rdi
-    jz .L_tl_arena_debug_pool_install_done
-    movq 40(%rdi), %rax
-    testq %rax, %rax
-    jz .L_tl_arena_debug_pool_install_done
-    testq $8, 48(%rax)
-    jnz tl_arena_debug_pool_install_abort
-.L_tl_arena_debug_pool_install_done:
-    ret
-    .size tl_arena_debug_assert_pool_install, . - tl_arena_debug_assert_pool_install
-
-")
-
 (define (compiler-backend-runtime-linux-arena-functions
   [profile : bool]
-  [_arena-debug : bool]) : String
-  (let
-    [base : String
-      (compiler-backend-runtime-linux-arena-functions-base profile)]
-    (cfg
-      (any compiler-arena-debug test)
-      (if _arena-debug
-        (str_cat.str-cat
-          (compiler-backend-runtime-linux-arena-debug-functions)
-          (string.replace
-            (string.replace
-              (string.replace
-                base
-                "    movq %rcx, 24(%rax)
-    ret
-.L_tl_arena_make_abort:
-"
-                "    movq %rcx, 24(%rax)
-    movq %rax, %rdi
+  [arena-debug : bool]) : String
+  (str_cat.str-cat
+    (if arena-debug
+      (runtime_common.compiler-backend-runtime-arena-debug-functions
+        "%rdi"
+        "%rcx"
+        ""
+        true)
+      "")
+    (compiler-backend-runtime-linux-arena-functions-base profile arena-debug)))
+
+;; The arena-debug root registration after a fresh arena is mapped (%rax).
+(define (compiler-backend-runtime-linux-register-root-hook [arena-debug : bool]) : String
+  (if arena-debug
+    "    movq %rax, %rdi
     subq $8, %rsp
     call .L_tl_arena_debug_register_root
     addq $8, %rsp
-    ret
-.L_tl_arena_make_abort:
-")
-              "    movq %rcx, 24(%rax)
-    ret
-.L_tl_arena_make_atomic_abort:
 "
-              "    movq %rcx, 24(%rax)
-    movq %rax, %rdi
-    subq $8, %rsp
-    call .L_tl_arena_debug_register_root
-    addq $8, %rsp
-    ret
-.L_tl_arena_make_atomic_abort:
-")
-            "    movq 40(%rbx), %r12
-    testq %r12, %r12
-    jz .L_tl_arena_destroy_loop
-    movq 56(%r12), %rbx
-"
-            "    movq 40(%rbx), %r12
-    testq %r12, %r12
-    jz .L_tl_arena_destroy_loop
-    testq $8, 48(%r12)
-    jnz tl_arena_debug_destroy_abort
-    movq %r12, %rdi
-    subq $8, %rsp
-    call .L_tl_arena_debug_unregister_root
-    addq $8, %rsp
-    movq 56(%r12), %rbx
-"))
-        base)
-      base)))
+    ""))
 
 ;; Rewinding a non-atomic arena marks it as reused with flags bit 2 (bit 0 is
 ;; the atomic flag, which runs a 1/3 lock protocol and is left untouched);
 ;; tl_array_zero consults that bit to skip its fill only for virgin arenas.
-(define (compiler-backend-runtime-region-reset-functions-base [profile : bool]) : String
+(define (compiler-backend-runtime-region-reset-functions
+  [profile : bool]
+  [arena-debug : bool]) : String
   (str_cat.str-cat
     "    .globl tl_region_reset
     .type tl_region_reset,@function
@@ -1007,7 +833,13 @@ tl_region_reset:
     movq %fs:tl_current_arena@tpoff, %r8
     testq %r8, %r8
     jz .L_tl_region_reset_invalid
-    movq %r8, %r12
+"
+    (if arena-debug
+      "    testq $8, 48(%r8)
+    jnz tl_arena_debug_reset_abort
+"
+      "")
+    "    movq %r8, %r12
     movq 56(%r12), %r8
 .L_tl_region_reset_find:
     movq 8(%r8), %r9
@@ -1083,7 +915,24 @@ tl_region_reset:
     ret
 .L_tl_region_reset_all:
     movq %fs:tl_current_arena@tpoff, %r8
-    movq $0, %fs:tl_current_arena@tpoff
+"
+    (if arena-debug
+      "    testq %r8, %r8
+    jz .L_tl_region_reset_all_debug_guard_done
+    movq %r8, %r10
+    testq $8, 48(%r10)
+    jnz tl_arena_debug_reset_abort
+.L_tl_region_reset_all_debug_guard_done:
+    testq %r8, %r8
+    jz .L_tl_region_reset_all_debug_unregister_done
+    pushq %r8
+    movq %r10, %rdi
+    call .L_tl_arena_debug_unregister_root
+    popq %r8
+.L_tl_region_reset_all_debug_unregister_done:
+"
+      "")
+    "    movq $0, %fs:tl_current_arena@tpoff
     xorq %rbx, %rbx
     testq %r8, %r8
     jz .L_tl_region_reset_done
@@ -1153,54 +1002,6 @@ tl_region_reset:
     .size tl_region_reset, . - tl_region_reset
 
 "))
-
-(define (compiler-backend-runtime-region-reset-functions
-  [profile : bool]
-  [_arena-debug : bool]) : String
-  (let
-    [base : String
-      (compiler-backend-runtime-region-reset-functions-base profile)]
-    (cfg
-      (any compiler-arena-debug test)
-      (if _arena-debug
-        (string.replace
-          (string.replace
-            base
-            "    movq %fs:tl_current_arena@tpoff, %r8
-    testq %r8, %r8
-    jz .L_tl_region_reset_invalid
-    movq %r8, %r12
-    movq 56(%r12), %r8
-"
-            "    movq %fs:tl_current_arena@tpoff, %r8
-    testq %r8, %r8
-    jz .L_tl_region_reset_invalid
-    testq $8, 48(%r8)
-    jnz tl_arena_debug_reset_abort
-    movq %r8, %r12
-    movq 56(%r12), %r8
-")
-          "    movq %fs:tl_current_arena@tpoff, %r8
-    movq $0, %fs:tl_current_arena@tpoff
-"
-          "    movq %fs:tl_current_arena@tpoff, %r8
-    testq %r8, %r8
-    jz .L_tl_region_reset_all_debug_guard_done
-    movq %r8, %r10
-    testq $8, 48(%r10)
-    jnz tl_arena_debug_reset_abort
-.L_tl_region_reset_all_debug_guard_done:
-    testq %r8, %r8
-    jz .L_tl_region_reset_all_debug_unregister_done
-    pushq %r8
-    movq %r10, %rdi
-    call .L_tl_arena_debug_unregister_root
-    popq %r8
-.L_tl_region_reset_all_debug_unregister_done:
-    movq $0, %fs:tl_current_arena@tpoff
-")
-        base)
-      base)))
 
 ;; `tl_memcpy` is memmove: it copies BACKWARD when the destination overlaps and
 ;; sits above the source. `tl_mem_copy_fwd` is deliberately NOT that. It is the
@@ -1560,50 +1361,63 @@ tl_backtrace_stack_set:
 
 ")
 
+(define (compiler-backend-runtime-linux-render
+  [enabled : bool]
+  [id : x64_template.CompilerX64ExecutableTemplateId]
+  [text : String]) : String
+  (if enabled
+    (x64_catalog.compiler-x64-template-render-assembly
+      id
+      (x64_template.CompilerX64TemplateTarget.LinuxX64)
+      text)
+    ""))
+
 (define (compiler-backend-runtime-functions
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
   (let
-    [profile : bool
-      (runtime_common.compiler-backend-runtime-features-profile? features)]
-    [arena-debug : bool
-      (runtime_common.compiler-backend-runtime-features-arena-debug? features)]
-    [alloc-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-alloc? features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_catalog.compiler-x64-template-select-four
-            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAlloc)
-            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocDebug)
-            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfile)
-            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfileDebug)
-            profile
-            arena-debug)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-linux-alloc-functions profile arena-debug))
-        "")]
-    [region-mark-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-region-mark?
-        features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionMark)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-region-mark-functions))
-        "")]
-    [region-reset-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-region-reset?
-        features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_catalog.compiler-x64-template-select-four
-            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionReset)
-            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetDebug)
-            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfile)
-            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfileDebug)
-            profile
-            arena-debug)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-region-reset-functions profile arena-debug))
-        "")]
-    [arena-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
+    [profile : bool features.profile]
+    [arena-debug : bool features.arena-debug]
+    [debug-text : bool
+      (runtime_common.compiler-backend-runtime-arena-debug-text? arena-debug)]
+    (str_cat.str-cat
+      (compiler-backend-runtime-linux-render
+        true
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemcpy)
+        (compiler-backend-runtime-memcpy-functions))
+      (compiler-backend-runtime-linux-render
+        (runtime_common.compiler-backend-runtime-features-leaf? features 4)
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopyFwd)
+        (compiler-backend-runtime-copy-fwd-functions))
+      (compiler-backend-runtime-linux-render
+        (runtime_common.compiler-backend-runtime-features-leaf? features 8)
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopy8Fwd)
+        (compiler-backend-runtime-copy8-fwd-functions))
+      (compiler-backend-runtime-linux-render
+        (runtime_common.compiler-backend-runtime-features-leaf? features 1)
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)
+        (compiler-backend-runtime-memchr-functions))
+      (compiler-backend-runtime-linux-render
+        true
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArrayZero)
+        (compiler-backend-runtime-array-zero-functions))
+      (compiler-backend-runtime-linux-render
+        (runtime_common.compiler-backend-runtime-features-leaf? features 16)
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)
+        (compiler-backend-runtime-mem-fill8-functions))
+      (compiler-backend-runtime-linux-render
+        (runtime_common.compiler-backend-runtime-features-leaf? features 2)
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)
+        (compiler-backend-runtime-tlci-entry-functions))
+      (compiler-backend-runtime-linux-render
+        features.tlci-macro-entry
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciMacro)
+        (compiler-backend-runtime-tlci-macro-entry-functions))
+      (compiler-backend-runtime-linux-render
+        features.backtrace
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeBacktrace)
+        (compiler-backend-runtime-backtrace-functions))
+      (compiler-backend-runtime-linux-render
+        true
         (x64_catalog.compiler-x64-template-select-four
           (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArena)
           (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaDebug)
@@ -1611,104 +1425,45 @@ tl_backtrace_stack_set:
           (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfileDebug)
           profile
           arena-debug)
-        (x64_template.CompilerX64TemplateTarget.LinuxX64)
-        (compiler-backend-runtime-linux-arena-functions profile arena-debug))]
-    [profile-asm : String
-      (if profile
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.CommonProfile)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (runtime_common.compiler-backend-runtime-profile-functions))
-        "")]
-    [startup-profile-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-startup-profile?
-        features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.CommonStartupProfile)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (runtime_common.compiler-backend-runtime-startup-profile-functions
-            true))
-        "")]
-    [memcpy-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemcpy)
-        (x64_template.CompilerX64TemplateTarget.LinuxX64)
-        (compiler-backend-runtime-memcpy-functions))]
-    [copy-fwd-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-leaf? features 4)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopyFwd)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-copy-fwd-functions))
-        "")]
-    [copy8-fwd-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-leaf? features 8)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopy8Fwd)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-copy8-fwd-functions))
-        "")]
-    [memchr-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-leaf? features 1)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-memchr-functions))
-        "")]
-    [array-zero-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArrayZero)
-        (x64_template.CompilerX64TemplateTarget.LinuxX64)
-        (compiler-backend-runtime-array-zero-functions))]
-    [mem-fill8-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-leaf? features 16)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-mem-fill8-functions))
-        "")]
-    [tlci-entry-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-leaf? features 2)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-tlci-entry-functions))
-        "")]
-    [tlci-macro-entry-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-tlci-macro-entry?
-        features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciMacro)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-tlci-macro-entry-functions))
-        "")]
-    [backtrace-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-backtrace? features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeBacktrace)
-          (x64_template.CompilerX64TemplateTarget.LinuxX64)
-          (compiler-backend-runtime-backtrace-functions))
-        "")]
-    [runtime-front-asm : String
-      (str_cat.str-cat
-        (str_cat.str-cat memcpy-asm copy-fwd-asm copy8-fwd-asm "")
-        memchr-asm
-        array-zero-asm
-        mem-fill8-asm
-        tlci-entry-asm
-        tlci-macro-entry-asm
-        backtrace-asm
-        arena-asm
-        profile-asm
+        (compiler-backend-runtime-linux-arena-functions profile debug-text))
+      (compiler-backend-runtime-linux-render
+        profile
+        (x64_template.CompilerX64ExecutableTemplateId.CommonProfile)
+        (runtime_common.compiler-backend-runtime-profile-functions))
+      (compiler-backend-runtime-linux-render
+        features.startup-profile
+        (x64_template.CompilerX64ExecutableTemplateId.CommonStartupProfile)
+        (runtime_common.compiler-backend-runtime-startup-profile-functions true))
+      (compiler-backend-runtime-linux-render
+        features.alloc
+        (x64_catalog.compiler-x64-template-select-four
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAlloc)
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocDebug)
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfile)
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfileDebug)
+          profile
+          arena-debug)
         (str_cat.str-cat
-          startup-profile-asm
-          alloc-asm
-          region-mark-asm
-          region-reset-asm))]
-    [libc-shims-asm : String
-      (compiler-backend-runtime-linux-libc-shim-functions)]
-    [thread-asm : String ""]
-    (str_cat.str-cat runtime-front-asm thread-asm libc-shims-asm "")))
+          (compiler-backend-runtime-linux-alloc-functions-base
+            profile
+            debug-text)
+          (compiler-backend-runtime-linux-aligned-alloc-functions-base
+            profile
+            debug-text)))
+      (compiler-backend-runtime-linux-render
+        features.region-mark
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionMark)
+        (compiler-backend-runtime-region-mark-functions))
+      (compiler-backend-runtime-linux-render
+        features.region-reset
+        (x64_catalog.compiler-x64-template-select-four
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionReset)
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetDebug)
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfile)
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfileDebug)
+          profile
+          arena-debug)
+        (compiler-backend-runtime-region-reset-functions profile debug-text)))))
 
 (define (compiler-backend-runtime-externs
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String

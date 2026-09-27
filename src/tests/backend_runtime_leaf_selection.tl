@@ -115,7 +115,6 @@
     false
     false
     false
-    false
     mask))
 
 (test

@@ -59,11 +59,6 @@
 (define (ok? [message : (& message str)]) : bool
   (string.eq message ""))
 
-;; Numeric code point of a char, used only when a code value is intentionally
-;; observed.
-(define (code [c : char]) : i64
-  (cast c : i64))
-
 ;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
   (and (>= c '0') (<= c '9')))

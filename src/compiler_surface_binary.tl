@@ -42,17 +42,3 @@
           (set! index (+ index 1))))
       (unsafe
         (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) length)))))
-
-(cfg
-  compiler-surface-producer
-  (define (surface-binary-copy [bytes : (& bytes (__tl_dyn-array u8))]) : (__tl_dyn-array
-      u8)
-    (let
-      [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
-      [index : i64 0]
-      (begin
-        (while (< index (array-length bytes))
-          (begin
-            (set! (array-ref out index) (array-ref bytes index))
-            (set! index (+ index 1))))
-        out))))

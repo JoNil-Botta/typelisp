@@ -35,7 +35,6 @@ Options:
   --clang-opt OPT  clang optimization flag (default: TYPELISP_BENCH_CLANG_OPT or -O3)
   --tl-opt-level N  In correctness mode, compile TypeLisp cases with --opt-level N
   --selfhost       In timing mode, compile through src/main.tl `compile` (default)
-  --rust-stage0    In timing mode, compile through typelisp compile
   -h, --help       Show this help
 EOF
 }
@@ -88,10 +87,6 @@ while [ "$#" -gt 0 ]; do
             ;;
         --selfhost)
             USE_SELFHOST=1
-            shift
-            ;;
-        --rust-stage0)
-            USE_SELFHOST=0
             shift
             ;;
         -h | --help)

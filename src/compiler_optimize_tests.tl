@@ -22278,7 +22278,7 @@
 ;; `sccp-rewrite-phi` into `sccp-rewrite-rows` is the shape at benchmark size,
 ;; and it stays out there on SIZE: the in-loop tier's own gates refuse it, see
 ;; the `sccp-rewrite-phi-import-*` cases in tests/codegen/asm-shape.cases.)
-(define (compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?) : bool
+(define (compiler-optimize-inline-hot-loop-leaf-recursive-caller-admission-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]

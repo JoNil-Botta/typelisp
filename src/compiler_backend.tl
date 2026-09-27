@@ -6205,11 +6205,7 @@
         assignments
         (compiler-backend-global-shared-view base))]
     (if (string.eq home "")
-      (compiler-backend-emit-load-value-with-plan
-        assignments
-        base
-        base-reg
-        backend-state)
+      (compiler-backend-emit-load-value assignments base base-reg backend-state)
       (if (string.eq home base-reg)
         (ResultCompilerBackend.Ok "")
         (ResultCompilerBackend.Ok
@@ -6285,7 +6281,7 @@
             backend-state)
             [(ResultCompilerBackend.Ok base-asm)
               (if (string.eq index-home "")
-                (match (compiler-backend-emit-load-value-with-plan
+                (match (compiler-backend-emit-load-value
                   assignments
                   index
                   (compiler-backend-global-shared-view index-reg)
@@ -6491,7 +6487,7 @@
             backend-state)]
         (match (compiler-backend-global-shared-view elem-ty)
           [(compiler_ast_types.AstType.F64)
-            (match (compiler-backend-emit-load-float-value-with-plan
+            (match (compiler-backend-emit-load-float-value
               assignments
               value
               elem-ty
@@ -6503,7 +6499,7 @@
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.F32)
-            (match (compiler-backend-emit-load-float-value-with-plan
+            (match (compiler-backend-emit-load-float-value
               assignments
               value
               elem-ty
@@ -6515,7 +6511,7 @@
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.I32)
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               value
               gp-reg
@@ -6532,7 +6528,7 @@
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.U32)
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               value
               gp-reg
@@ -6549,7 +6545,7 @@
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.I16)
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               value
               gp-reg
@@ -6568,7 +6564,7 @@
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.U16)
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               value
               gp-reg
@@ -6587,7 +6583,7 @@
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.I8)
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               value
               gp-reg
@@ -6606,7 +6602,7 @@
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.U8)
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               value
               gp-reg
@@ -6625,7 +6621,7 @@
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [_
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               value
               (compiler-backend-global-shared-view gp-reg)
@@ -9347,7 +9343,7 @@
                           dst-scratch
                           program-index.backend-state)
                           [(ResultBackendReg.Ok dst-reg)
-                            (match (compiler-backend-emit-load-value-with-plan
+                            (match (compiler-backend-emit-load-value
                               assignments
                               active-lanes
                               (compiler-backend-global-shared-view active-reg)
@@ -9995,7 +9991,7 @@
       (compiler-backend-reg-part (compiler-backend-global-shared-view gp-reg) 4)]
     [gp8 : String
       (compiler-backend-reg-part (compiler-backend-global-shared-view gp-reg) 1)]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       carry
       (compiler-backend-global-shared-view gp-reg)
@@ -10071,7 +10067,7 @@
               (match (& elem-ty)
                 [(compiler_ast_types.AstType.I32) 4]
                 [_ 8]))]
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             carry
             gp-reg
@@ -10576,7 +10572,7 @@
               (compiler-backend-mask-spill-scratch 0)
               backend-state)
               [(ResultBackendReg.Ok dst-reg)
-                (match (compiler-backend-emit-load-value-with-plan
+                (match (compiler-backend-emit-load-value
                   assignments
                   carry
                   (compiler-backend-global-shared-view carry-gp)
@@ -10956,13 +10952,13 @@
     [mask-gpr : String (compiler-backend-avx512-mask-gpr-part mask-reg lanes)]
     (match (if (string.eq index-reg index-home)
       (ResultCompilerBackend.Ok "")
-      (compiler-backend-emit-load-value-with-plan
+      (compiler-backend-emit-load-value
         assignments
         index
         (compiler-backend-global-shared-view index-reg)
         backend-state))
       [(ResultCompilerBackend.Ok index-asm)
-        (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-emit-load-value
           assignments
           end-value
           (compiler-backend-global-shared-view count-reg)
@@ -11938,7 +11934,7 @@
                 [store-asm : String
                   (str_cat.str-cat
                     "    movzbl %al, %eax\n"
-                    (compiler-backend-emit-store-var-with-plan
+                    (compiler-backend-emit-store-var
                       assignments
                       dst
                       "%rax"
@@ -12385,7 +12381,7 @@
               [store-asm : String
                 (str_cat.str-cat
                   "    movzbl %al, %eax\n"
-                  (compiler-backend-emit-store-var-with-plan
+                  (compiler-backend-emit-store-var
                     assignments
                     dst
                     "%rax"
@@ -12522,11 +12518,7 @@
   [value : compiler_ir_types.CompilerIrValue]
   [reg : String]
   [backend-state : CompilerBackendState]) : String
-  (match (compiler-backend-emit-load-value-with-plan
-    assignments
-    value
-    reg
-    backend-state)
+  (match (compiler-backend-emit-load-value assignments value reg backend-state)
     [(ResultCompilerBackend.Ok asm) asm]
     [(ResultCompilerBackend.Err _) ""]))
 
@@ -12680,7 +12672,7 @@
             (compiler-backend-global-shared-view result-reg)
             cmov-ty)
           "\n"
-          (compiler-backend-emit-store-var-with-plan
+          (compiler-backend-emit-store-var
             assignments
             dst
             result-reg
@@ -13018,7 +13010,7 @@
                 (compiler-backend-global-shared-view result-reg)
                 cmov-ty)
               "\n"
-              (compiler-backend-emit-store-var-with-plan
+              (compiler-backend-emit-store-var
                 assignments
                 dst
                 result-reg
@@ -13760,13 +13752,13 @@
       "%ymm14"
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
-        (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-emit-load-value
           assignments
           index
           "%r8"
           backend-state)
           [(ResultCompilerBackend.Ok index-asm)
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               end-value
               "%r9"
@@ -15261,16 +15253,6 @@
     [(compiler_ast_types.AstType.F32) "f32"]
     [_ "f64"]))
 
-(define (compiler-backend-emit-store-float-var
-  [var-id : i64]
-  [reg : String]
-  [ty : compiler_ast_types.AstType]
-  [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
-    (str_cat.str-cat "    " (compiler-backend-float-move ty) " " reg ", ")
-    (compiler-backend-slot-with-backend-state backend-state var-id)
-    "\n"))
-
 (define (compiler-backend-forwarded-addr-of-src
   [backend-state : CompilerBackendState]
   [var-id : i64]) : i64
@@ -15289,7 +15271,7 @@
         (- 0 1))
       (- 0 1))))
 
-(define (compiler-backend-emit-load-var-with-plan-into
+(define (compiler-backend-emit-load-var-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
@@ -15374,7 +15356,7 @@
             reg
             "\n")]))))
 
-(define (compiler-backend-emit-store-var-with-plan-into
+(define (compiler-backend-emit-store-var-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
@@ -15434,7 +15416,7 @@
         (compiler-backend-slot-with-backend-state backend-state var-id)
         "\n")]))
 
-(define (compiler-backend-emit-store-var-with-plan
+(define (compiler-backend-emit-store-var
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
@@ -15444,7 +15426,7 @@
       (compiler-backend-asm-buf-with-capacity
         compiler-backend-asm-line-capacity)]
     (begin
-      (compiler-backend-emit-store-var-with-plan-into
+      (compiler-backend-emit-store-var-into
         (&mut line)
         assignments
         var-id
@@ -15452,7 +15434,7 @@
         backend-state)
       (compiler-backend-asm-buf-finish (& line)))))
 
-(define (compiler-backend-emit-load-float-var-with-plan
+(define (compiler-backend-emit-load-float-var
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [ty : compiler_ast_types.AstType]
@@ -15499,7 +15481,7 @@
           reg
           "\n")])))
 
-(define (compiler-backend-emit-store-float-var-with-plan
+(define (compiler-backend-emit-store-float-var
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
@@ -15536,7 +15518,14 @@
           ;; A rematerialised value is never float-class; unreachable.
           [(compiler_regalloc.CompilerRegLocation.Remat _) ""])]
       [(compiler_regalloc.CompilerRegMaybeLocation.No)
-        (compiler-backend-emit-store-float-var var-id reg ty backend-state)])))
+        (str_cat.str-cat
+          "    "
+          mov
+          " "
+          reg
+          ", "
+          (compiler-backend-slot-with-backend-state backend-state var-id)
+          "\n")])))
 
 ;; On-demand callee-save: the scavenge may use a FREE callee-saved register even
 ;; when the allocator did not home a value there. Record which callee-saved regs
@@ -18442,7 +18431,7 @@
 (define (compiler-backend-f32-sign-bit-label) : String
   ".L_tl_f32_sign_bit")
 
-(define (compiler-backend-emit-load-float-value-with-plan
+(define (compiler-backend-emit-load-float-value
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : (& ty compiler_ast_types.AstType)]
@@ -18455,7 +18444,7 @@
     (match value
       [(compiler_ir_types.CompilerIrValue.Var id)
         (ResultCompilerBackend.Ok
-          (compiler-backend-emit-load-float-var-with-plan
+          (compiler-backend-emit-load-float-var
             assignments
             id
             ty
@@ -18695,7 +18684,7 @@
       (compiler-backend-emit-load-i64-immediate-into (&mut line) n reg)
       (compiler-backend-asm-buf-finish (& line)))))
 
-(define (compiler-backend-emit-load-value-with-plan-into
+(define (compiler-backend-emit-load-value-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
@@ -18704,7 +18693,7 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Var id)
       (begin
-        (compiler-backend-emit-load-var-with-plan-into
+        (compiler-backend-emit-load-var-into
           out
           assignments
           id
@@ -18813,7 +18802,7 @@
   [ty : compiler_ast_types.AstType]
   [reg : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-float-value-with-plan
+  (match (compiler-backend-emit-load-float-value
     assignments
     value
     ty
@@ -18828,7 +18817,7 @@
 ;; String-returning shim for the emitters that still hand their text back to a
 ;; caller instead of appending. One scalar load is one line, so the line buffer
 ;; is sized for it and `finish` publishes it with no copy: a single allocation.
-(define (compiler-backend-emit-load-value-with-plan
+(define (compiler-backend-emit-load-value
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [reg : String]
@@ -18837,7 +18826,7 @@
     [line : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity
         compiler-backend-asm-line-capacity)]
-    (match (compiler-backend-emit-load-value-with-plan-into
+    (match (compiler-backend-emit-load-value-into
       (&mut line)
       assignments
       value
@@ -18847,7 +18836,7 @@
         (ResultCompilerBackend.Ok (compiler-backend-asm-buf-finish (& line)))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-load-typed-var-to-reg-with-plan
+(define (compiler-backend-emit-load-typed-var-to-reg
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [id : i64]
@@ -19000,7 +18989,7 @@
         avoid
         allow-rbp)]
     (if (string.eq home "")
-      (match (compiler-backend-emit-load-value-with-plan
+      (match (compiler-backend-emit-load-value
         assignments
         value
         (compiler-backend-global-shared-view fallback-reg)
@@ -19376,7 +19365,7 @@
     [(compiler_ast_types.AstType.U64) true]
     [_ false]))
 
-(define (compiler-backend-emit-vmovq-xmm-to-var-with-plan
+(define (compiler-backend-emit-vmovq-xmm-to-var
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [xmm-reg : String]
@@ -19428,13 +19417,13 @@
   [xmm-reg : String]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-i64-u64-type? elem-ty)
-    (compiler-backend-emit-vmovq-xmm-to-var-with-plan
+    (compiler-backend-emit-vmovq-xmm-to-var
       assignments
       dst
       xmm-reg
       backend-state)
     (if (compiler-backend-float-type? elem-ty)
-      (compiler-backend-emit-store-typed-var-with-plan
+      (compiler-backend-emit-store-typed-var
         assignments
         dst
         xmm-reg
@@ -19449,7 +19438,7 @@
             elem-ty
             xmm-reg
             (compiler-backend-global-shared-view gp-reg))
-          (compiler-backend-emit-store-typed-var-with-plan
+          (compiler-backend-emit-store-typed-var
             assignments
             dst
             gp-reg
@@ -20218,7 +20207,7 @@
       elem-ty
       lanes)))
 
-(define (compiler-backend-emit-store-typed-var-with-plan-into
+(define (compiler-backend-emit-store-typed-var-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
@@ -20230,37 +20219,33 @@
   (if (compiler-backend-float-type? ty)
     (compiler-backend-asm-append
       out
-      (compiler-backend-emit-store-float-var-with-plan
+      (compiler-backend-emit-store-float-var
         assignments
         var-id
         reg
         ty
         backend-state))
-    (compiler-backend-emit-store-var-with-plan-into
+    (compiler-backend-emit-store-var-into
       out
       assignments
       var-id
       reg
       backend-state)))
 
-(define (compiler-backend-emit-store-typed-var-with-plan
+(define (compiler-backend-emit-store-typed-var
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [ty : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-float-type? ty)
-    (compiler-backend-emit-store-float-var-with-plan
+    (compiler-backend-emit-store-float-var
       assignments
       var-id
       reg
       ty
       backend-state)
-    (compiler-backend-emit-store-var-with-plan
-      assignments
-      var-id
-      reg
-      backend-state)))
+    (compiler-backend-emit-store-var assignments var-id reg backend-state)))
 
 ;; Backend emission for multi-word register-resident aggregate groups.
 ;; CompilerIrInstr.Pack/CompilerIrInstr.Word are only produced once the size-16 register-resident
@@ -20339,17 +20324,13 @@
   (if sse?
     (let
       [ty (compiler_ast_types.AstType.F64)]
-      (compiler-backend-emit-load-float-value-with-plan
+      (compiler-backend-emit-load-float-value
         assignments
         word
         ty
         reg
         backend-state))
-    (compiler-backend-emit-load-value-with-plan
-      assignments
-      word
-      reg
-      backend-state)))
+    (compiler-backend-emit-load-value assignments word reg backend-state)))
 
 (define (compiler-backend-pack-word-dst-register? [dst : (& dst str)]) : bool
   (and (> (string.string-length dst) 0) (= (string.string-ref dst 0) '%')))
@@ -20753,7 +20734,7 @@
           [(ResultCompilerBackend.Ok operand)
             (ResultCompilerBackend.Ok
               (if (compiler-backend-peephole-register-operand? operand)
-                (compiler-backend-emit-store-typed-var-with-plan
+                (compiler-backend-emit-store-typed-var
                   assignments
                   dst
                   operand
@@ -20803,7 +20784,7 @@
                           operand
                           scratch
                           is-float)
-                        (compiler-backend-emit-store-typed-var-with-plan
+                        (compiler-backend-emit-store-typed-var
                           assignments
                           dst
                           scratch
@@ -21074,7 +21055,7 @@
 ;; Use the split-register sequence when its second register is free. A true
 ;; cross-word alias loads both words before either store; the
 ;; sequential case remains correct when scavenging must choose another register.
-(define (compiler-backend-emit-group-copy-with-plan
+(define (compiler-backend-emit-group-copy
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -21568,7 +21549,7 @@
                 ""
                 "backend: too many params")))]))))
 
-(define (compiler-backend-emit-load-typed-value-with-plan
+(define (compiler-backend-emit-load-typed-value
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
@@ -21588,7 +21569,7 @@
             "%xmm0"
             "\n"))]
       [_
-        (compiler-backend-emit-load-float-value-with-plan
+        (compiler-backend-emit-load-float-value
           assignments
           value
           ty
@@ -21597,7 +21578,7 @@
     (match (compiler-backend-global-shared-view value)
       [(compiler_ir_types.CompilerIrValue.Var id)
         (ResultCompilerBackend.Ok
-          (compiler-backend-emit-load-typed-var-to-reg-with-plan
+          (compiler-backend-emit-load-typed-var-to-reg
             type-segment-bases
             assignments
             id
@@ -21631,13 +21612,13 @@
             ""
             ""))]
       [_
-        (compiler-backend-emit-load-value-with-plan
+        (compiler-backend-emit-load-value
           assignments
           value
           "%rax"
           backend-state)])))
 
-(define (compiler-backend-emit-load-typed-value-to-reg-with-plan
+(define (compiler-backend-emit-load-typed-value-to-reg
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
@@ -21657,7 +21638,7 @@
             reg
             "\n"))]
       [_
-        (compiler-backend-emit-load-float-value-with-plan
+        (compiler-backend-emit-load-float-value
           assignments
           value
           ty
@@ -21666,7 +21647,7 @@
     (match (compiler-backend-global-shared-view value)
       [(compiler_ir_types.CompilerIrValue.Var id)
         (ResultCompilerBackend.Ok
-          (compiler-backend-emit-load-typed-var-to-reg-with-plan
+          (compiler-backend-emit-load-typed-var-to-reg
             type-segment-bases
             assignments
             id
@@ -21702,7 +21683,7 @@
             reg
             "\n"))]
       [_
-        (compiler-backend-emit-load-value-with-plan
+        (compiler-backend-emit-load-value
           assignments
           value
           reg
@@ -22158,7 +22139,7 @@
           "1:\n")
         "    jne 1f\n    call tl_div_abort\n1:\n"))))
 
-(define (compiler-backend-div-overflow-guard-asm-with-plan
+(define (compiler-backend-div-overflow-guard-asm
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]
   [divisor-reg : String]
@@ -22216,7 +22197,7 @@
           "\n    jne 1f\n    call tl_div_abort\n1:\n")))
     ""))
 
-(define (compiler-backend-divmod-guard-asm-with-plan
+(define (compiler-backend-divmod-guard-asm
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]
   [divisor-reg : String]
@@ -22229,7 +22210,7 @@
       (compiler-backend-global-shared-view ty)
       (compiler-backend-global-shared-view divisor-reg)
       backend-state)
-    (compiler-backend-div-overflow-guard-asm-with-plan
+    (compiler-backend-div-overflow-guard-asm
       type-segment-bases
       ty
       divisor-reg
@@ -22281,7 +22262,7 @@
             "    movq %rdx, %rax\n"
             ""))])))
 
-(define (compiler-backend-binop-divmod-asm-with-plan
+(define (compiler-backend-binop-divmod-asm
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]
   [want-remainder : bool]
@@ -22290,7 +22271,7 @@
   [planned-neg : String]
   [backend-state : CompilerBackendState]) : String
   (str_cat.str-cat
-    (compiler-backend-divmod-guard-asm-with-plan
+    (compiler-backend-divmod-guard-asm
       type-segment-bases
       (compiler-backend-global-shared-view ty)
       (compiler-backend-global-shared-view divisor-reg)
@@ -25098,7 +25079,7 @@
 ;; (unless M-F supplies the magic) plus one SRC copy because the legacy entry to
 ;; this wrapper has the dividend in fixed %rax.  There is no saved-dividend +
 ;; sign-mask pair.  Unsigned and narrow paths retain their existing lowering.
-(define (compiler-backend-binop-literal-divmod-asm-dst-with-plan
+(define (compiler-backend-binop-literal-divmod-asm-dst
   [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -25240,7 +25221,7 @@
 ;; Same, but at the current emit point (no dst -- tail-return position). The magic
 ;; register is scavenged at the return point, so a pooled %r8 live across the fused
 ;; return is not clobbered by the constant-divmod sequence.
-(define (compiler-backend-binop-literal-divmod-asm-here-with-plan
+(define (compiler-backend-binop-literal-divmod-asm-here
   [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -25622,7 +25603,7 @@
         lhs
         "\n"))))
 
-(define (compiler-backend-binop-asm-with-plan
+(define (compiler-backend-binop-asm
   [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [ty : compiler_ast_types.AstType]
@@ -25656,7 +25637,7 @@
           (str_cat.str-cat "    imulq " rhs-reg ", " staging-reg "\n")
           (compiler-backend-binop-reg-asm type-segment-bases "imul" ty rhs lhs))]
       [(compiler_ir_types.CompilerIrBinOp.Div)
-        (compiler-backend-binop-divmod-asm-with-plan
+        (compiler-backend-binop-divmod-asm
           type-segment-bases
           ty
           false
@@ -25665,7 +25646,7 @@
           planned-neg
           backend-state)]
       [(compiler_ir_types.CompilerIrBinOp.Mod)
-        (compiler-backend-binop-divmod-asm-with-plan
+        (compiler-backend-binop-divmod-asm
           type-segment-bases
           ty
           true
@@ -26118,14 +26099,10 @@
             (compiler-backend-global-shared-view ty))
           rhs-address))]
     (match (if rhs-load-needed
-      (compiler-backend-emit-load-value-with-plan
-        assignments
-        rhs
-        scav-rhs
-        backend-state)
+      (compiler-backend-emit-load-value assignments rhs scav-rhs backend-state)
       (ResultCompilerBackend.Ok ""))
       [(ResultCompilerBackend.Ok rhs-asm)
-        (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-emit-load-value
           assignments
           lhs
           (compiler-backend-global-shared-view dst-home)
@@ -26171,7 +26148,7 @@
             "sar"
             "shr")]
         [_ ""])]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       lhs
       (compiler-backend-global-shared-view dst-home)
@@ -26247,13 +26224,13 @@
         backend-state)]
     (match (if rhs-in-rcx?
       (ResultCompilerBackend.Ok "")
-      (compiler-backend-emit-load-value-with-plan
+      (compiler-backend-emit-load-value
         assignments
         rhs
         (compiler-backend-global-shared-view count-reg)
         backend-state))
       [(ResultCompilerBackend.Ok rhs-asm)
-        (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-emit-load-value
           assignments
           lhs
           (compiler-backend-global-shared-view result-reg)
@@ -26276,7 +26253,7 @@
                         operand-ty)
                       count-reg
                       backend-state)
-                    (compiler-backend-emit-store-typed-var-with-plan
+                    (compiler-backend-emit-store-typed-var
                       assignments
                       dst
                       result-reg
@@ -26633,7 +26610,7 @@
   [rhs-operand : String]
   [fty : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-float-value-with-plan
+  (match (compiler-backend-emit-load-float-value
     assignments
     lhs
     fty
@@ -26705,7 +26682,7 @@
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
               asm
-              (compiler-backend-emit-store-float-var-with-plan
+              (compiler-backend-emit-store-float-var
                 assignments
                 dst
                 result-reg
@@ -26775,7 +26752,7 @@
         (ResultCompilerBackend.Ok
           (str_cat.str-cat
             asm
-            (compiler-backend-emit-store-typed-var-with-plan
+            (compiler-backend-emit-store-typed-var
               assignments
               dst
               result-reg
@@ -26832,7 +26809,7 @@
           dst-home)]
       [store-result : String
         (if (string.eq dst-home "")
-          (compiler-backend-emit-store-typed-var-with-plan
+          (compiler-backend-emit-store-typed-var
             assignments
             dst
             (compiler-backend-global-shared-view result-reg)
@@ -26851,14 +26828,14 @@
               1
               "%xmm3"
               backend-state)]
-          (match (compiler-backend-emit-load-float-value-with-plan
+          (match (compiler-backend-emit-load-float-value
             assignments
             rhs
             fty
             (compiler-backend-global-shared-view rhs-temp)
             backend-state)
             [(ResultCompilerBackend.Ok rhs-asm)
-              (match (compiler-backend-emit-load-float-value-with-plan
+              (match (compiler-backend-emit-load-float-value
                 assignments
                 lhs
                 fty
@@ -26880,7 +26857,7 @@
                   (ResultCompilerBackend.Err message)])]
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)]))
-        (match (compiler-backend-emit-load-float-value-with-plan
+        (match (compiler-backend-emit-load-float-value
           assignments
           lhs
           fty
@@ -26938,7 +26915,7 @@
                 1
                 "%xmm3"
                 backend-state)]
-            (match (compiler-backend-emit-load-float-value-with-plan
+            (match (compiler-backend-emit-load-float-value
               assignments
               rhs
               fty
@@ -26958,7 +26935,7 @@
                       (str_cat.str-cat
                         rhs-asm
                         asm
-                        (compiler-backend-emit-store-float-var-with-plan
+                        (compiler-backend-emit-store-float-var
                           assignments
                           dst
                           result-reg
@@ -26980,7 +26957,7 @@
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   asm
-                  (compiler-backend-emit-store-float-var-with-plan
+                  (compiler-backend-emit-store-float-var
                     assignments
                     dst
                     result-reg
@@ -27659,7 +27636,7 @@
         [(CompilerBackendMaybeAsm.Some lea-asm)
           (ResultCompilerBackend.Ok lea-asm)]
         [(CompilerBackendMaybeAsm.No)
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             lhs
             (compiler-backend-global-shared-view dst-home)
@@ -27758,14 +27735,14 @@
         (ResultCompilerBackend.Ok
           (str_cat.str-cat
             lea-asm
-            (compiler-backend-emit-store-typed-var-with-plan
+            (compiler-backend-emit-store-typed-var
               assignments
               dst
               result-reg
               result-ty
               backend-state)))]
       [(CompilerBackendMaybeAsm.No)
-        (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-emit-load-value
           assignments
           lhs
           (compiler-backend-global-shared-view result-reg)
@@ -27786,7 +27763,7 @@
                   (str_cat.str-cat
                     lhs-asm
                     op-asm
-                    (compiler-backend-emit-store-typed-var-with-plan
+                    (compiler-backend-emit-store-typed-var
                       assignments
                       dst
                       result-reg
@@ -27878,7 +27855,7 @@
         6)]
     [result-reg : String
       (compiler-backend-scavenge-reg dst exclude exclude-n "%r8" backend-state)]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       lhs
       (compiler-backend-global-shared-view result-reg)
@@ -27910,7 +27887,7 @@
             (str_cat.str-cat
               lhs-asm
               op-asm
-              (compiler-backend-emit-store-typed-var-with-plan
+              (compiler-backend-emit-store-typed-var
                 assignments
                 dst
                 result-reg
@@ -28044,7 +28021,7 @@
 ;; loads there directly and keeps its ordinary home intact. Otherwise the
 ;; destination home, when available, is the natural one-copy SRC; only a
 ;; fixed/memory/live dividend needs a scavenged source register.
-(define (compiler-backend-emit-signed-literal-divmod-dst-with-plan
+(define (compiler-backend-emit-signed-literal-divmod-dst
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -28147,7 +28124,7 @@
           ;; staging a spilled store there avoids a fixed-register hop.
           "%rax")
         dst-home)]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       lhs
       (compiler-backend-global-shared-view src)
@@ -28167,7 +28144,7 @@
                 load-asm
                 op-asm
                 (if (string.eq dst-home "")
-                  (compiler-backend-emit-store-typed-var-with-plan
+                  (compiler-backend-emit-store-typed-var
                     assignments
                     dst
                     result-reg
@@ -28182,7 +28159,7 @@
                   "backend: signed literal divmod shape unavailable")))])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-signed-literal-divmod-here-with-plan
+(define (compiler-backend-emit-signed-literal-divmod-here
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -28229,7 +28206,7 @@
             (compiler-backend-global-shared-view magic))
           5
           backend-state))]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       lhs
       (compiler-backend-global-shared-view src)
@@ -28253,7 +28230,7 @@
                   "backend: signed literal divmod shape unavailable")))])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-binop-with-plan
+(define (compiler-backend-emit-binop
   [type-segment-bases : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
@@ -28634,7 +28611,7 @@
                           ;; reload (rhs lives in memory, so loading lhs into dst-home cannot
                           ;; clobber it). rhs-reg==dst-home still falls through to the reload
                           ;; (rhs must be saved before lhs overwrites dst-home).
-                          (match (compiler-backend-emit-load-value-with-plan
+                          (match (compiler-backend-emit-load-value
                             assignments
                             (compiler-backend-global-shared-view lhs)
                             (compiler-backend-global-shared-view dst-home)
@@ -28669,13 +28646,13 @@
                                 7
                                 "%r8"
                                 backend-state)]
-                            (match (compiler-backend-emit-load-value-with-plan
+                            (match (compiler-backend-emit-load-value
                               assignments
                               (compiler-backend-global-shared-view rhs)
                               (compiler-backend-global-shared-view scav-rhs)
                               backend-state)
                               [(ResultCompilerBackend.Ok rhs-asm)
-                                (match (compiler-backend-emit-load-value-with-plan
+                                (match (compiler-backend-emit-load-value
                                   assignments
                                   lhs
                                   (compiler-backend-global-shared-view dst-home)
@@ -28709,7 +28686,7 @@
             op
             (compiler-backend-global-shared-view rhs)
             (compiler-backend-global-shared-view operand-ty))
-            (compiler-backend-emit-signed-literal-divmod-dst-with-plan
+            (compiler-backend-emit-signed-literal-divmod-dst
               assignments
               dst
               op
@@ -28737,13 +28714,13 @@
                       7
                       "%rax"
                       backend-state)])]
-              (match (compiler-backend-emit-load-value-with-plan
+              (match (compiler-backend-emit-load-value
                 assignments
                 (compiler-backend-global-shared-view lhs)
                 (compiler-backend-global-shared-view staging)
                 backend-state)
                 [(ResultCompilerBackend.Ok lhs-asm)
-                  (match (compiler-backend-binop-literal-divmod-asm-dst-with-plan
+                  (match (compiler-backend-binop-literal-divmod-asm-dst
                     type-segment-bases
                     (compiler-backend-global-shared-view op)
                     (compiler-backend-global-shared-view rhs)
@@ -28755,7 +28732,7 @@
                         (str_cat.str-cat
                           lhs-asm
                           op-asm
-                          (compiler-backend-emit-store-typed-var-with-plan
+                          (compiler-backend-emit-store-typed-var
                             assignments
                             dst
                             staging
@@ -28780,7 +28757,7 @@
                                 (str_cat.str-cat
                                   lhs-asm
                                   op-asm
-                                  (compiler-backend-emit-store-typed-var-with-plan
+                                  (compiler-backend-emit-store-typed-var
                                     assignments
                                     dst
                                     (compiler-backend-global-shared-view
@@ -28798,7 +28775,7 @@
                                     7
                                     "%r8"
                                     backend-state)]
-                                (match (compiler-backend-emit-load-value-with-plan
+                                (match (compiler-backend-emit-load-value
                                   assignments
                                   (compiler-backend-global-shared-view rhs)
                                   (compiler-backend-global-shared-view scav-rhs)
@@ -28808,7 +28785,7 @@
                                       (str_cat.str-cat
                                         lhs-asm
                                         rhs-asm
-                                        (compiler-backend-binop-asm-with-plan
+                                        (compiler-backend-binop-asm
                                           type-segment-bases
                                           (compiler-backend-global-shared-view
                                             op)
@@ -28819,7 +28796,7 @@
                                           ""
                                           ""
                                           backend-state)
-                                        (compiler-backend-emit-store-typed-var-with-plan
+                                        (compiler-backend-emit-store-typed-var
                                           assignments
                                           dst
                                           (compiler-backend-global-shared-view
@@ -28852,7 +28829,7 @@
                                     (str_cat.str-cat
                                       lhs-asm
                                       op-asm
-                                      (compiler-backend-emit-store-typed-var-with-plan
+                                      (compiler-backend-emit-store-typed-var
                                         assignments
                                         dst
                                         (compiler-backend-global-shared-view
@@ -28870,7 +28847,7 @@
                                         7
                                         "%r8"
                                         backend-state)]
-                                    (match (compiler-backend-emit-load-value-with-plan
+                                    (match (compiler-backend-emit-load-value
                                       assignments
                                       (compiler-backend-global-shared-view rhs)
                                       (compiler-backend-global-shared-view
@@ -28881,7 +28858,7 @@
                                           (str_cat.str-cat
                                             lhs-asm
                                             rhs-asm
-                                            (compiler-backend-binop-asm-with-plan
+                                            (compiler-backend-binop-asm
                                               type-segment-bases
                                               (compiler-backend-global-shared-view
                                                 op)
@@ -28894,7 +28871,7 @@
                                               ""
                                               ""
                                               backend-state)
-                                            (compiler-backend-emit-store-typed-var-with-plan
+                                            (compiler-backend-emit-store-typed-var
                                               assignments
                                               dst
                                               (compiler-backend-global-shared-view
@@ -28959,7 +28936,7 @@
                                       (str_cat.str-cat
                                         lhs-asm
                                         op-asm
-                                        (compiler-backend-emit-store-typed-var-with-plan
+                                        (compiler-backend-emit-store-typed-var
                                           assignments
                                           dst
                                           (compiler-backend-global-shared-view
@@ -28986,7 +28963,7 @@
                                           7
                                           "%r8"
                                           backend-state)]
-                                      (match (compiler-backend-emit-load-value-with-plan
+                                      (match (compiler-backend-emit-load-value
                                         assignments
                                         rhs
                                         (compiler-backend-global-shared-view
@@ -28998,7 +28975,7 @@
                                               (str_cat.str-cat
                                                 rhs-asm
                                                 lhs-asm
-                                                (compiler-backend-binop-asm-with-plan
+                                                (compiler-backend-binop-asm
                                                   type-segment-bases
                                                   op
                                                   operand-ty
@@ -29008,7 +28985,7 @@
                                                   ""
                                                   ""
                                                   backend-state)
-                                                (compiler-backend-emit-store-typed-var-with-plan
+                                                (compiler-backend-emit-store-typed-var
                                                   assignments
                                                   dst
                                                   (compiler-backend-global-shared-view
@@ -29018,7 +28995,7 @@
                                               (str_cat.str-cat
                                                 lhs-asm
                                                 rhs-asm
-                                                (compiler-backend-binop-asm-with-plan
+                                                (compiler-backend-binop-asm
                                                   type-segment-bases
                                                   op
                                                   operand-ty
@@ -29028,7 +29005,7 @@
                                                   ""
                                                   ""
                                                   backend-state)
-                                                (compiler-backend-emit-store-typed-var-with-plan
+                                                (compiler-backend-emit-store-typed-var
                                                   assignments
                                                   dst
                                                   staging
@@ -29075,7 +29052,7 @@
   [store-result : bool]
   [backend-state : CompilerBackendState]) : String
   (if store-result
-    (compiler-backend-emit-store-typed-var-with-plan
+    (compiler-backend-emit-store-typed-var
       assignments
       dst
       "%rax"
@@ -29100,7 +29077,7 @@
         5
         "%r8"
         backend-state)]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       rhs
       (compiler-backend-global-shared-view scratch)
@@ -29109,7 +29086,7 @@
         (ResultCompilerBackend.Ok
           (str_cat.str-cat
             rhs-asm
-            (compiler-backend-binop-asm-with-plan
+            (compiler-backend-binop-asm
               type-segment-bases
               op
               operand-ty
@@ -29144,7 +29121,7 @@
           result-ty
           store-result
           backend-state)]
-      (match (compiler-backend-binop-literal-divmod-asm-dst-with-plan
+      (match (compiler-backend-binop-literal-divmod-asm-dst
         type-segment-bases
         op
         rhs
@@ -29211,7 +29188,7 @@
               ;; idiv/div lowering. The RAX-forwarded path already has the
               ;; dividend in %rax, so stage only the divisor and reuse the two
               ;; remaining modeled homes for signed overflow guards.
-              (match (compiler-backend-emit-load-value-with-plan
+              (match (compiler-backend-emit-load-value
                 assignments
                 rhs
                 (compiler-backend-global-shared-view scav-rhs)
@@ -29221,7 +29198,7 @@
                     (str_cat.str-cat
                       rhs-asm
                       (str_cat.str-cat
-                        (compiler-backend-binop-asm-with-plan
+                        (compiler-backend-binop-asm
                           type-segment-bases
                           op
                           operand-ty
@@ -29296,7 +29273,7 @@
           (compiler-backend-global-shared-view lhs)
           (compiler-backend-global-shared-view rhs)
           (compiler-backend-global-shared-view ty))]
-      (match (compiler-backend-emit-load-value-with-plan
+      (match (compiler-backend-emit-load-value
         assignments
         lhs
         "%rax"
@@ -29318,7 +29295,7 @@
               (ResultCompilerBackend.Err message)])]
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackend.Err message)]))
-    (compiler-backend-emit-binop-with-plan
+    (compiler-backend-emit-binop
       type-segment-bases
       types
       global-types
@@ -29388,7 +29365,7 @@
             ty
             store-result
             backend-state)
-          (compiler-backend-emit-binop-with-plan
+          (compiler-backend-emit-binop
             type-segment-bases
             types
             global-types
@@ -29399,7 +29376,7 @@
             rhs
             ty
             backend-state))))
-    (compiler-backend-emit-binop-with-plan
+    (compiler-backend-emit-binop
       type-segment-bases
       types
       global-types
@@ -29428,7 +29405,7 @@
         "%xmm0"
         backend-state)]
     (if (not (string.eq rhs-operand ""))
-      (match (compiler-backend-emit-load-float-value-with-plan
+      (match (compiler-backend-emit-load-float-value
         assignments
         lhs
         fty
@@ -29466,14 +29443,14 @@
             exclude-n
             "%xmm2"
             backend-state)]
-        (match (compiler-backend-emit-load-float-value-with-plan
+        (match (compiler-backend-emit-load-float-value
           assignments
           rhs
           fty
           (compiler-backend-global-shared-view rhs-temp)
           backend-state)
           [(ResultCompilerBackend.Ok rhs-asm)
-            (match (compiler-backend-emit-load-float-value-with-plan
+            (match (compiler-backend-emit-load-float-value
               assignments
               lhs
               fty
@@ -29577,14 +29554,14 @@
                   rhs-temp-exclude-n
                   "%xmm3"
                   backend-state)]
-              (match (compiler-backend-emit-load-float-value-with-plan
+              (match (compiler-backend-emit-load-float-value
                 assignments
                 rhs
                 fty
                 (compiler-backend-global-shared-view rhs-temp)
                 backend-state)
                 [(ResultCompilerBackend.Ok rhs-asm)
-                  (match (compiler-backend-emit-load-float-value-with-plan
+                  (match (compiler-backend-emit-load-float-value
                     assignments
                     lhs
                     fty
@@ -29606,7 +29583,7 @@
                       (ResultCompilerBackend.Err message)])]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))
-            (match (compiler-backend-emit-load-float-value-with-plan
+            (match (compiler-backend-emit-load-float-value
               assignments
               lhs
               fty
@@ -29707,7 +29684,7 @@
           return-tail))
       ;; Otherwise the RHS remains loadable after staging the LHS. Preserve the
       ;; LHS in memory, load RHS into %rax, and reverse the comparison.
-      (match (compiler-backend-emit-load-value-with-plan
+      (match (compiler-backend-emit-load-value
         assignments
         rhs
         "%rax"
@@ -29736,7 +29713,7 @@
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackend.Err message)]))))
 
-(define (compiler-backend-emit-binop-return-with-plan
+(define (compiler-backend-emit-binop-return
   [type-segment-bases : i64]
   [backend-state : CompilerBackendState]
   [source-function : i64]
@@ -29803,7 +29780,7 @@
           op
           (compiler-backend-global-shared-view rhs)
           (compiler-backend-global-shared-view operand-ty))
-          (match (compiler-backend-emit-signed-literal-divmod-here-with-plan
+          (match (compiler-backend-emit-signed-literal-divmod-here
             assignments
             op
             (compiler-backend-global-shared-view lhs)
@@ -29841,7 +29818,7 @@
               ;; RHS has no home, stage the RHS in the fixed accumulator and
               ;; reverse the predicate.  This keeps the comparison within x86's
               ;; one-memory-operand constraint without another scratch.
-              (match (compiler-backend-emit-load-value-with-plan
+              (match (compiler-backend-emit-load-value
                 assignments
                 (compiler-backend-global-shared-view rhs)
                 "%rax"
@@ -29865,13 +29842,13 @@
                       return-tail))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)])
-              (match (compiler-backend-emit-load-value-with-plan
+              (match (compiler-backend-emit-load-value
                 assignments
                 (compiler-backend-global-shared-view lhs)
                 "%rax"
                 backend-state)
                 [(ResultCompilerBackend.Ok lhs-asm)
-                  (match (compiler-backend-binop-literal-divmod-asm-here-with-plan
+                  (match (compiler-backend-binop-literal-divmod-asm-here
                     type-segment-bases
                     (compiler-backend-global-shared-view op)
                     (compiler-backend-global-shared-view rhs)
@@ -29927,7 +29904,7 @@
                                     lhs-asm
                                     return-tail
                                     backend-state)
-                                  (match (compiler-backend-emit-load-value-with-plan
+                                  (match (compiler-backend-emit-load-value
                                     assignments
                                     rhs
                                     (compiler-backend-global-shared-view
@@ -29972,7 +29949,7 @@
                                               rhs-reg))
                                             rhs-asm
                                             lhs-asm)
-                                          (compiler-backend-binop-asm-with-plan
+                                          (compiler-backend-binop-asm
                                             type-segment-bases
                                             (compiler-backend-global-shared-view
                                               op)
@@ -30039,7 +30016,7 @@
                                     lhs-asm
                                     return-tail
                                     backend-state)
-                                  (match (compiler-backend-emit-load-value-with-plan
+                                  (match (compiler-backend-emit-load-value
                                     assignments
                                     rhs
                                     (compiler-backend-global-shared-view
@@ -30081,7 +30058,7 @@
                                               rhs-reg))
                                             rhs-asm
                                             lhs-asm)
-                                          (compiler-backend-binop-asm-with-plan
+                                          (compiler-backend-binop-asm
                                             type-segment-bases
                                             op
                                             operand-ty
@@ -30257,7 +30234,7 @@
           (compiler-backend-slot-with-backend-state backend-state var-id)
           "\n")])))
 
-(define (compiler-backend-emit-load-test-branch-with-plan
+(define (compiler-backend-emit-load-test-branch
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [cond : compiler_ir_types.CompilerIrValue]
@@ -30272,7 +30249,7 @@
         5
         "%rax"
         backend-state)]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       cond
       (compiler-backend-global-shared-view test-reg)
@@ -30290,7 +30267,7 @@
               backend-state)))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-branch-with-plan
+(define (compiler-backend-emit-branch
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [cond : compiler_ir_types.CompilerIrValue]
@@ -30317,7 +30294,7 @@
         [test-asm : String
           (compiler-backend-branch-test-var-asm assignments id backend-state)]
         (if (string.eq test-asm "")
-          (compiler-backend-emit-load-test-branch-with-plan
+          (compiler-backend-emit-load-test-branch
             assignments
             function
             cond
@@ -30337,7 +30314,7 @@
     [_
       (match (compiler-backend-value-as-i64 cond)
         [(option_i64.Some value)
-          (compiler-backend-emit-branch-with-plan
+          (compiler-backend-emit-branch
             assignments
             function
             (compiler_ir_types.CompilerIrValue.Bool (not (= value 0)))
@@ -30353,7 +30330,7 @@
                 5
                 "%rax"
                 backend-state)]
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               cond
               (compiler-backend-global-shared-view test-reg)
@@ -30910,7 +30887,7 @@
         (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
         "%r8"
         backend-state)]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       rhs
       (compiler-backend-global-shared-view rhs-reg)
@@ -31103,7 +31080,7 @@
                   5
                   "%rax"
                   backend-state)]
-              (match (compiler-backend-emit-load-value-with-plan
+              (match (compiler-backend-emit-load-value
                 assignments
                 lhs
                 (compiler-backend-global-shared-view lhs-stage)
@@ -31168,7 +31145,7 @@
     rhs
     (compiler-backend-copy-address 0 base)))
 
-(define (compiler-backend-emit-load-compare-branch-with-plan
+(define (compiler-backend-emit-load-compare-branch
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [ptr : compiler_ir_types.CompilerIrValue]
@@ -31206,7 +31183,7 @@
               "%r10"
               backend-state)
             base-home)]
-        (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-emit-load-value
           assignments
           ptr
           (compiler-backend-global-shared-view scav-base)
@@ -31265,7 +31242,7 @@
                           6
                           "%r8"
                           backend-state)]
-                      (match (compiler-backend-emit-load-value-with-plan
+                      (match (compiler-backend-emit-load-value
                         assignments
                         rhs
                         (compiler-backend-global-shared-view scav-rhs)
@@ -31292,7 +31269,7 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])))))
 
-(define (compiler-backend-emit-gep-load-compare-branch-with-plan
+(define (compiler-backend-emit-gep-load-compare-branch
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
@@ -31365,7 +31342,7 @@
                   disp
                   (compiler-backend-global-shared-view scav-base)))]
             (match (if (string.eq rip "")
-              (compiler-backend-emit-load-value-with-plan
+              (compiler-backend-emit-load-value
                 assignments
                 base
                 (compiler-backend-global-shared-view scav-base)
@@ -31428,7 +31405,7 @@
                               6
                               "%r8"
                               backend-state)]
-                          (match (compiler-backend-emit-load-value-with-plan
+                          (match (compiler-backend-emit-load-value
                             assignments
                             rhs
                             (compiler-backend-global-shared-view scav-rhs)
@@ -31666,7 +31643,7 @@
                 ok-symbol
                 plan
                 program-index))
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               length
               (compiler-backend-global-shared-view scav-len)
@@ -31683,7 +31660,7 @@
                     program-index))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)]))
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             index
             (compiler-backend-global-shared-view index-operand)
@@ -31706,7 +31683,7 @@
                       ok-symbol
                       plan
                       program-index))
-                  (match (compiler-backend-emit-load-value-with-plan
+                  (match (compiler-backend-emit-load-value
                     assignments
                     length
                     (compiler-backend-global-shared-view scav-len)
@@ -31743,7 +31720,7 @@
               ok-symbol
               plan
               program-index))
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             length
             (compiler-backend-global-shared-view scav-len)
@@ -31774,7 +31751,7 @@
       [dst-home : String
         (compiler-backend-var-register-home backend-state assignments dst)]
       (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
-        (match (compiler-backend-emit-load-float-value-with-plan
+        (match (compiler-backend-emit-load-float-value
           assignments
           src
           ty
@@ -31796,7 +31773,7 @@
               0
               "%xmm2"
               backend-state)]
-          (match (compiler-backend-emit-load-float-value-with-plan
+          (match (compiler-backend-emit-load-float-value
             assignments
             src
             ty
@@ -31812,7 +31789,7 @@
                     (str_cat.str-cat
                       src-asm
                       op-asm
-                      (compiler-backend-emit-store-float-var-with-plan
+                      (compiler-backend-emit-store-float-var
                         assignments
                         dst
                         result-reg
@@ -31834,7 +31811,7 @@
               5
               "%r8"
               backend-state)]
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             src
             (compiler-backend-global-shared-view result-reg)
@@ -31847,14 +31824,14 @@
                     op
                     ty
                     (compiler-backend-global-shared-view result-reg))
-                  (compiler-backend-emit-store-var-with-plan
+                  (compiler-backend-emit-store-var
                     assignments
                     dst
                     result-reg
                     backend-state)))]
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)]))
-        (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-emit-load-value
           assignments
           src
           (compiler-backend-global-shared-view dst-home)
@@ -31933,7 +31910,7 @@
                   backend-state)]
               (str_cat.str-cat
                 (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
-                (compiler-backend-emit-store-var-with-plan
+                (compiler-backend-emit-store-var
                   assignments
                   dst
                   addr-reg
@@ -32264,7 +32241,7 @@
                 2
                 "%r10"
                 backend-state))]
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             base
             (compiler-backend-global-shared-view result-reg)
@@ -32281,7 +32258,7 @@
                         offset-asm
                         (if use-dst-home?
                           ""
-                          (compiler-backend-emit-store-var-with-plan
+                          (compiler-backend-emit-store-var
                             assignments
                             dst
                             result-reg
@@ -32298,7 +32275,7 @@
                         3
                         "%r8"
                         backend-state)]
-                    (match (compiler-backend-emit-load-value-with-plan
+                    (match (compiler-backend-emit-load-value
                       assignments
                       offset
                       (compiler-backend-global-shared-view scav-idx)
@@ -32317,7 +32294,7 @@
                                   scav-idx)
                                 (if use-dst-home?
                                   ""
-                                  (compiler-backend-emit-store-var-with-plan
+                                  (compiler-backend-emit-store-var
                                     assignments
                                     dst
                                     result-reg
@@ -32391,7 +32368,7 @@
                 3
                 "%r8"
                 backend-state))]
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             base
             (compiler-backend-global-shared-view result-reg)
@@ -32399,7 +32376,7 @@
             [(ResultCompilerBackend.Ok base-asm)
               (match (if direct-index?
                 (ResultCompilerBackend.Ok "")
-                (compiler-backend-emit-load-value-with-plan
+                (compiler-backend-emit-load-value
                   assignments
                   offset
                   (compiler-backend-global-shared-view scav-idx)
@@ -32418,7 +32395,7 @@
                             scav-idx)
                           (if use-dst-home?
                             ""
-                            (compiler-backend-emit-store-var-with-plan
+                            (compiler-backend-emit-store-var
                               assignments
                               dst
                               result-reg
@@ -32510,7 +32487,7 @@
                       dst-home)]
                   [store-asm : String
                     (if (string.eq dst-home "")
-                      (compiler-backend-emit-store-float-var-with-plan
+                      (compiler-backend-emit-store-float-var
                         assignments
                         dst
                         (compiler-backend-global-shared-view load-reg)
@@ -32561,7 +32538,7 @@
     (str_cat.str-cat
       (compiler-backend-emit-load-float-memory addr load-reg ty)
       (if (string.eq dst-home "")
-        (compiler-backend-emit-store-float-var-with-plan
+        (compiler-backend-emit-store-float-var
           assignments
           dst
           load-reg
@@ -32650,7 +32627,7 @@
               addr
               ty
               (compiler-backend-global-shared-view load-reg)))
-          (compiler-backend-emit-store-var-with-plan-into
+          (compiler-backend-emit-store-var-into
             (&mut seq)
             assignments
             dst
@@ -33168,7 +33145,7 @@
             backend-state)
           dst-home)]
       (match (if (string.eq dst-home "")
-        (compiler-backend-emit-load-value-with-plan
+        (compiler-backend-emit-load-value
           assignments
           dst
           (compiler-backend-global-shared-view dst-reg)
@@ -33220,7 +33197,7 @@
                   backend-state)
                 "")]
             (match (if (string.eq src-home "")
-              (compiler-backend-emit-load-value-with-plan
+              (compiler-backend-emit-load-value
                 assignments
                 src
                 (compiler-backend-global-shared-view src-reg)
@@ -33538,7 +33515,7 @@
           backend-state)
         base-home)]
     (match (if (string.eq base-home "")
-      (match (compiler-backend-emit-load-value-with-plan
+      (match (compiler-backend-emit-load-value
         assignments
         base
         (compiler-backend-global-shared-view dst-reg)
@@ -33590,7 +33567,7 @@
                 backend-state)
               "")]
           (match (if (string.eq src-home "")
-            (compiler-backend-emit-load-value-with-plan
+            (compiler-backend-emit-load-value
               assignments
               src
               (compiler-backend-global-shared-view src-reg)
@@ -33737,7 +33714,7 @@
                     backend-state)
                   "")]
               (match (if (string.eq src-home "")
-                (compiler-backend-emit-load-value-with-plan
+                (compiler-backend-emit-load-value
                   assignments
                   src
                   (compiler-backend-global-shared-view src-reg)
@@ -33935,7 +33912,7 @@
           backend-state)
         dst-home)]
     (match (if (string.eq dst-home "")
-      (compiler-backend-emit-load-value-with-plan
+      (compiler-backend-emit-load-value
         assignments
         dst
         (compiler-backend-global-shared-view dst-reg)
@@ -34016,7 +33993,7 @@
           backend-state)
         src-home)]
     (match (if (string.eq src-home "")
-      (compiler-backend-emit-load-value-with-plan
+      (compiler-backend-emit-load-value
         assignments
         src
         (compiler-backend-global-shared-view src-reg)
@@ -34087,7 +34064,7 @@
         ", "
         scav-base
         "\n"))
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       base
       (compiler-backend-global-shared-view scav-base)
@@ -34120,7 +34097,7 @@
                 (+ 2 protect-n)
                 "%r8"
                 backend-state)]
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               offset
               (compiler-backend-global-shared-view scav-idx)
@@ -34161,7 +34138,7 @@
           0
           "%xmm2"
           backend-state))]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       value
       (compiler-backend-global-shared-view src-reg)
@@ -34214,7 +34191,7 @@
         ;; loads so the 2nd doesn't reload).
         ;; M-C2: a register-homed base is used DIRECTLY as the addressing base --
         ;; the constant-offset form only READS it, so no staging copy or scavenge
-        ;; is needed (emit-load-value-with-plan then elides the self-move). A dst
+        ;; is needed (emit-load-value then elides the self-move). A dst
         ;; home equal to the base home is legal: `movq off(%rX), %rX` reads the
         ;; address before writing, and home equality means the allocator proved
         ;; the base value dead after this load.
@@ -34244,7 +34221,7 @@
               disp
               (compiler-backend-global-shared-view base-reg)))]
         (match (if (string.eq rip "")
-          (compiler-backend-emit-load-value-with-plan
+          (compiler-backend-emit-load-value
             assignments
             base
             (compiler-backend-global-shared-view base-reg)
@@ -34351,7 +34328,7 @@
             addr)]
         (match (if use-base-home?
           (ResultCompilerBackend.Ok "")
-          (compiler-backend-emit-load-value-with-plan
+          (compiler-backend-emit-load-value
             assignments
             base
             (compiler-backend-global-shared-view base-reg)
@@ -34359,7 +34336,7 @@
           [(ResultCompilerBackend.Ok base-asm)
             (match (if use-offset-home?
               (ResultCompilerBackend.Ok "")
-              (compiler-backend-emit-load-value-with-plan
+              (compiler-backend-emit-load-value
                 assignments
                 offset
                 (compiler-backend-global-shared-view index-reg)
@@ -34444,7 +34421,7 @@
             (compiler-backend-base-address
               disp
               (compiler-backend-global-shared-view base-reg))]
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             base
             (compiler-backend-global-shared-view base-reg)
@@ -34684,7 +34661,7 @@
           [base-mem : String
             (compiler-backend-base-deref
               (compiler-backend-global-shared-view base))]
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             ptr
             (compiler-backend-global-shared-view base)
@@ -34757,7 +34734,7 @@
                 backend-state)
               src-home)]
           (match (if (string.eq src-home "")
-            (compiler-backend-emit-load-typed-value-to-reg-with-plan
+            (compiler-backend-emit-load-typed-value-to-reg
               type-segment-bases
               assignments
               src
@@ -34790,7 +34767,7 @@
                 backend-state)
               src-home)]
           (match (if (string.eq src-home "")
-            (compiler-backend-emit-load-typed-value-to-reg-with-plan
+            (compiler-backend-emit-load-typed-value-to-reg
               type-segment-bases
               assignments
               src
@@ -35055,7 +35032,7 @@
       [(ResultCompilerBackendAddressBase.Ok base-plan)
         (match (if direct-index?
           (ResultCompilerBackend.Ok "")
-          (compiler-backend-emit-load-value-with-plan
+          (compiler-backend-emit-load-value
             assignments
             offset
             (compiler-backend-global-shared-view scav-idx)
@@ -35398,7 +35375,7 @@
     [dst-home : String
       (compiler-backend-var-register-home backend-state assignments dst)]
     (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
-      (match (compiler-backend-emit-load-float-value-with-plan
+      (match (compiler-backend-emit-load-float-value
         assignments
         src
         from-ty
@@ -35422,7 +35399,7 @@
             0
             "%xmm2"
             backend-state)]
-        (match (compiler-backend-emit-load-float-value-with-plan
+        (match (compiler-backend-emit-load-float-value
           assignments
           src
           from-ty
@@ -35436,7 +35413,7 @@
                   from-ty
                   to-ty
                   tmp-reg)
-                (compiler-backend-emit-store-float-var-with-plan
+                (compiler-backend-emit-store-float-var
                   assignments
                   dst
                   tmp-reg
@@ -35494,7 +35471,7 @@
               "%xmm2"
               backend-state)]
           (match (if (string.eq src-reg "")
-            (compiler-backend-emit-load-typed-value-to-reg-with-plan
+            (compiler-backend-emit-load-typed-value-to-reg
               type-segment-bases
               assignments
               src
@@ -35510,7 +35487,7 @@
                     src-tmp
                     to-ty
                     dst-tmp)
-                  (compiler-backend-emit-store-float-var-with-plan
+                  (compiler-backend-emit-store-float-var
                     assignments
                     dst
                     dst-tmp
@@ -35545,7 +35522,7 @@
                 0
                 "%xmm2"
                 backend-state))]
-          (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+          (match (compiler-backend-emit-load-typed-value-to-reg
             type-segment-bases
             assignments
             src
@@ -35564,7 +35541,7 @@
                     value-reg
                     result-reg
                     scratch-reg)
-                  (compiler-backend-emit-store-float-var-with-plan
+                  (compiler-backend-emit-store-float-var
                     assignments
                     dst
                     result-reg
@@ -35632,7 +35609,7 @@
               "%r8"
               backend-state))]
         (match (if (or unsigned-u64? (string.eq src-reg ""))
-          (compiler-backend-emit-load-float-value-with-plan
+          (compiler-backend-emit-load-float-value
             assignments
             src
             from-ty
@@ -35655,7 +35632,7 @@
                     from-ty
                     src-tmp
                     dst-reg))
-                (compiler-backend-emit-store-typed-var-with-plan
+                (compiler-backend-emit-store-typed-var
                   assignments
                   dst
                   dst-reg
@@ -35742,7 +35719,7 @@
                   ;; typed sign/zero-extension load while skipping the
                   ;; %rax store round-trip.
                   (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-load-typed-var-to-reg-with-plan
+                    (compiler-backend-emit-load-typed-var-to-reg
                       type-segment-bases
                       assignments
                       src-id
@@ -35750,7 +35727,7 @@
                       dst-home
                       backend-state))]
                 [_
-                  (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                  (match (compiler-backend-emit-load-typed-value-to-reg
                     type-segment-bases
                     assignments
                     (compiler-backend-global-shared-view src)
@@ -35771,7 +35748,7 @@
                 ;; skipping the %rax round-trip. Width-changing casts keep
                 ;; the typed load+store below so sign/zero extension is
                 ;; applied.
-                (compiler-backend-emit-load-value-with-plan
+                (compiler-backend-emit-load-value
                   assignments
                   src
                   dst-home
@@ -35786,7 +35763,7 @@
                         "%r8"
                         backend-state)
                       dst-home)]
-                  (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                  (match (compiler-backend-emit-load-typed-value-to-reg
                     type-segment-bases
                     assignments
                     src
@@ -35797,7 +35774,7 @@
                       (ResultCompilerBackend.Ok
                         (str_cat.str-cat
                           load
-                          (compiler-backend-emit-store-typed-var-with-plan
+                          (compiler-backend-emit-store-typed-var
                             assignments
                             dst
                             cast-reg
@@ -35978,7 +35955,7 @@
                     "%r8"
                     backend-state))]
               (match (if (string.eq src-reg "")
-                (compiler-backend-emit-load-float-value-with-plan
+                (compiler-backend-emit-load-float-value
                   assignments
                   src
                   from-ty
@@ -35993,7 +35970,7 @@
                         from-ty
                         src-tmp
                         (compiler-backend-global-shared-view dst-reg))
-                      (compiler-backend-emit-store-typed-var-with-plan
+                      (compiler-backend-emit-store-typed-var
                         assignments
                         dst
                         dst-reg
@@ -36038,7 +36015,7 @@
                     "%xmm2"
                     backend-state))]
               (match (if (string.eq src-reg "")
-                (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                (compiler-backend-emit-load-typed-value-to-reg
                   type-segment-bases
                   assignments
                   src
@@ -36054,7 +36031,7 @@
                         to-ty
                         src-tmp
                         dst-tmp)
-                      (compiler-backend-emit-store-float-var-with-plan
+                      (compiler-backend-emit-store-float-var
                         assignments
                         dst
                         dst-tmp
@@ -36077,7 +36054,7 @@
                 0
                 "%r8"
                 backend-state))]
-          (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+          (match (compiler-backend-emit-load-typed-value-to-reg
             type-segment-bases
             assignments
             src
@@ -36088,7 +36065,7 @@
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   load
-                  (compiler-backend-emit-store-typed-var-with-plan
+                  (compiler-backend-emit-store-typed-var
                     assignments
                     dst
                     tmp-reg
@@ -36109,7 +36086,7 @@
                 0
                 "%xmm2"
                 backend-state))]
-          (match (compiler-backend-emit-load-float-value-with-plan
+          (match (compiler-backend-emit-load-float-value
             assignments
             src
             from-ty
@@ -36119,7 +36096,7 @@
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   load
-                  (compiler-backend-emit-store-float-var-with-plan
+                  (compiler-backend-emit-store-float-var
                     assignments
                     dst
                     tmp-reg
@@ -39733,7 +39710,7 @@
           (let
             [scav : String
               (compiler-backend-stack-call-arg-stage backend-state)]
-            (match (compiler-backend-emit-load-value-with-plan-into
+            (match (compiler-backend-emit-load-value-into
               out
               assignments
               value
@@ -40064,7 +40041,7 @@
               (compiler_abi.compiler-abi-register-spelling dest)
               "\n"))]
         [(BackendArgMoveValue value)
-          (compiler-backend-emit-load-value-with-plan
+          (compiler-backend-emit-load-value
             assignments
             value
             (compiler_abi.compiler-abi-register-spelling dest)
@@ -40776,7 +40753,7 @@
                   arg-ty
                   reg
                   backend-state)
-                (compiler-backend-emit-load-value-with-plan-into
+                (compiler-backend-emit-load-value-into
                   out
                   arg-assignments
                   value
@@ -41517,7 +41494,7 @@
           (let
             [scav : String
               (compiler-backend-stack-call-arg-stage backend-state)]
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               value
               (compiler-backend-global-shared-view scav)
@@ -41610,13 +41587,13 @@
           (compiler-backend-target-arg-reg-for-banks target int-idx position))
           [(ResultBackendReg.Ok reg)
             (match (if is-float
-              (compiler-backend-emit-load-float-value-with-plan
+              (compiler-backend-emit-load-float-value
                 assignments
                 value
                 arg-ty
                 reg
                 backend-state)
-              (compiler-backend-emit-load-value-with-plan
+              (compiler-backend-emit-load-value
                 assignments
                 value
                 reg
@@ -42890,7 +42867,7 @@
     ;; block layout pass) plus the edge's dst-home mask -- and drops the bracket
     ;; when they hold, leaving the 2-instruction register-staged copy. See
     ;; compiler-backend-phi-staged-copy-proven?.
-    (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+    (match (compiler-backend-emit-load-typed-value-to-reg
       type-segment-bases
       assignments
       value
@@ -42905,7 +42882,7 @@
                 [copy : String
                   (str_cat.str-cat
                     load
-                    (compiler-backend-emit-store-typed-var-with-plan
+                    (compiler-backend-emit-store-typed-var
                       assignments
                       dst
                       (compiler-backend-global-shared-view reg)
@@ -42932,7 +42909,7 @@
                 (compiler-backend-phi-staged-copy-proven? backend-state reg))
                 (str_cat.str-cat
                   load
-                  (compiler-backend-emit-store-typed-var-with-plan
+                  (compiler-backend-emit-store-typed-var
                     assignments
                     dst
                     reg
@@ -42942,7 +42919,7 @@
                   [copy : String
                     (str_cat.str-cat
                       load
-                      (compiler-backend-emit-store-typed-var-with-plan
+                      (compiler-backend-emit-store-typed-var
                         assignments
                         dst
                         (compiler-backend-global-shared-view reg)
@@ -43229,7 +43206,7 @@
                 [(CompilerBackendMaybeAsm.Some asm)
                   (ResultCompilerBackend.Ok asm)]
                 [(CompilerBackendMaybeAsm.No)
-                  (compiler-backend-emit-group-copy-with-plan
+                  (compiler-backend-emit-group-copy
                     type-segment-bases
                     assignments
                     dst
@@ -43239,7 +43216,7 @@
                     program-index
                     backend-state)])]
             [_
-              (compiler-backend-emit-group-copy-with-plan
+              (compiler-backend-emit-group-copy
                 type-segment-bases
                 assignments
                 dst
@@ -44249,7 +44226,7 @@
   [false-jcc : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (string.eq true-jcc "")
-    (compiler-backend-emit-branch-with-plan
+    (compiler-backend-emit-branch
       assignments
       function
       cond
@@ -44342,7 +44319,7 @@
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackendBranchEdges.Err message)]))
 
-(define (compiler-backend-emit-branch-with-phi-copies-with-plan
+(define (compiler-backend-emit-branch-with-phi-copies
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
@@ -44481,7 +44458,7 @@
       [(ResultCompilerBackendBranchEdges.Err message)
         (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
+(define (compiler-backend-emit-load-compare-branch-with-phi-copies
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
@@ -44501,7 +44478,7 @@
       (compiler-backend-state-function-state program-index.backend-state)
       true-label
       false-label))
-    (compiler-backend-emit-load-compare-branch-with-plan
+    (compiler-backend-emit-load-compare-branch
       assignments
       function
       ptr
@@ -44523,7 +44500,7 @@
       program-index
       vars)
       [(ResultCompilerBackendBranchEdges.Ok edges)
-        (match (compiler-backend-emit-load-compare-branch-with-plan
+        (match (compiler-backend-emit-load-compare-branch
           assignments
           (compiler-backend-global-shared-view function)
           ptr
@@ -44551,7 +44528,7 @@
       [(ResultCompilerBackendBranchEdges.Err message)
         (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
+(define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
@@ -44573,7 +44550,7 @@
       (compiler-backend-state-function-state program-index.backend-state)
       true-label
       false-label))
-    (compiler-backend-emit-gep-load-compare-branch-with-plan
+    (compiler-backend-emit-gep-load-compare-branch
       type-segment-bases
       assignments
       function
@@ -44598,7 +44575,7 @@
       program-index
       vars)
       [(ResultCompilerBackendBranchEdges.Ok edges)
-        (match (compiler-backend-emit-gep-load-compare-branch-with-plan
+        (match (compiler-backend-emit-gep-load-compare-branch
           type-segment-bases
           assignments
           (compiler-backend-global-shared-view function)
@@ -45036,7 +45013,7 @@
                     return-count)))]
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)])
-          (match (compiler-backend-emit-load-typed-value-with-plan
+          (match (compiler-backend-emit-load-typed-value
             type-segment-bases
             assignments
             v
@@ -45634,7 +45611,7 @@
             [(compiler_regalloc.CompilerRegMaybeLocation.No) ""]))]
       [_ ""])))
 
-(define (compiler-backend-emit-class-correct-mov-with-plan
+(define (compiler-backend-emit-class-correct-mov
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -45757,7 +45734,7 @@
         (compiler-backend-global-shared-view ty)
         dst
         (compiler-backend-global-shared-view src))
-      (compiler-backend-emit-group-copy-with-plan
+      (compiler-backend-emit-group-copy
         type-segment-bases
         assignments
         dst
@@ -45800,7 +45777,7 @@
               "%xmm2"
               backend-state)
             dst-home)]
-        (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+        (match (compiler-backend-emit-load-typed-value-to-reg
           type-segment-bases
           assignments
           (compiler-backend-global-shared-view src)
@@ -45812,7 +45789,7 @@
               (if (string.eq dst-home "")
                 (str_cat.str-cat
                   load
-                  (compiler-backend-emit-store-typed-var-with-plan
+                  (compiler-backend-emit-store-typed-var
                     assignments
                     dst
                     reg
@@ -45833,13 +45810,13 @@
             [dst-home : String
               (compiler-backend-var-register-home backend-state assignments dst)]
             ;; Load src straight into the destination register home (a plain movq
-            ;; / leaq), skipping the %rax staging store. emit-load-value-with-plan
+            ;; / leaq), skipping the %rax staging store. emit-load-value
             ;; handles var/global/global-addr sources and elides the move when src
             ;; already lives in dst's home.
             ;;
             ;; A var source can always take this path regardless of `ty`
             ;; width. Register and spill homes always hold the full normalized
-            ;; 64-bit value (emit-store-var-with-plan stores every scalar with a
+            ;; 64-bit value (emit-store-var stores every scalar with a
             ;; bare `movq`, and narrowing/extension happens when the value is first
             ;; produced), so a `movq src-home, dst-home` copy needs no per-type
             ;; reload. Non-var sources (globals/global-addr loaded from memory)
@@ -45849,7 +45826,7 @@
               (match (compiler-backend-global-shared-view src)
                 [(compiler_ir_types.CompilerIrValue.Var _) true]
                 [_ (= (compiler-backend-type-size type-segment-bases ty) 8)]))
-              (compiler-backend-emit-load-value-with-plan
+              (compiler-backend-emit-load-value
                 assignments
                 (compiler-backend-global-shared-view src)
                 dst-home
@@ -45881,7 +45858,7 @@
                 ;; registers are touched than the plan reserved.
                 (if (and (string.eq dst-home "") (not (string.eq src-home "")))
                   (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-store-typed-var-with-plan
+                    (compiler-backend-emit-store-typed-var
                       assignments
                       dst
                       src-home
@@ -45904,7 +45881,7 @@
                         exclude-n
                         "%r8"
                         backend-state)]
-                    (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                    (match (compiler-backend-emit-load-typed-value-to-reg
                       type-segment-bases
                       assignments
                       src
@@ -45915,7 +45892,7 @@
                         (ResultCompilerBackend.Ok
                           (str_cat.str-cat
                             load
-                            (compiler-backend-emit-store-typed-var-with-plan
+                            (compiler-backend-emit-store-typed-var
                               assignments
                               dst
                               reg
@@ -45961,7 +45938,7 @@
     ""
     (str_cat.str-cat
       (compiler-backend-call-result-normalize normalize? reg ty)
-      (compiler-backend-emit-store-typed-var-with-plan
+      (compiler-backend-emit-store-typed-var
         assignments
         dst
         reg
@@ -46079,7 +46056,7 @@
             "%rax")]
         (str_cat.str-cat
           (compiler-backend-call-result-normalize normalize? reg ty)
-          (compiler-backend-emit-store-typed-var-with-plan
+          (compiler-backend-emit-store-typed-var
             assignments
             dst
             reg
@@ -46136,7 +46113,7 @@
           (compiler-backend-asm-append
             out
             (compiler-backend-call-result-normalize normalize? reg ty))
-          (compiler-backend-emit-store-typed-var-with-plan-into
+          (compiler-backend-emit-store-typed-var-into
             out
             assignments
             dst
@@ -46582,7 +46559,7 @@
                 "\n"
                 ""
                 ""))
-            (compiler-backend-emit-store-typed-var-with-plan
+            (compiler-backend-emit-store-typed-var
               assignments
               dst
               "%rax"
@@ -47737,7 +47714,7 @@
   (let
     [base-reg : String
       (compiler-backend-scavenge-c-abi-return-base-save-reg backend-state)]
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       assignments
       base
       (compiler-backend-global-shared-view base-reg)
@@ -47825,7 +47802,7 @@
           "(%rip), "
           scratch-reg
           "\n")
-        (compiler-backend-emit-store-typed-var-with-plan
+        (compiler-backend-emit-store-typed-var
           assignments
           dst
           scratch-reg
@@ -47917,7 +47894,7 @@
                 (str_cat.str-cat "    movq %rbx, " scav "\n    cpuid\n")
                 (compiler-backend-cpuid-result-move reg-index)
                 (str_cat.str-cat "    movq " scav ", %rbx\n")
-                (compiler-backend-emit-store-typed-var-with-plan
+                (compiler-backend-emit-store-typed-var
                   assignments
                   dst
                   "%rax"
@@ -47930,7 +47907,7 @@
   [dst : i64]
   [index : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan
+  (match (compiler-backend-emit-load-value
     assignments
     index
     "%rcx"
@@ -47940,7 +47917,7 @@
         (str_cat.str-cat
           index-asm
           "    xgetbv\n    shlq $32, %rdx\n    orq %rdx, %rax\n"
-          (compiler-backend-emit-store-typed-var-with-plan
+          (compiler-backend-emit-store-typed-var
             assignments
             dst
             "%rax"
@@ -47968,7 +47945,7 @@
 ;; (compiler-backend-emit-arg-move-list) resolves any source/dest conflict. The arg
 ;; positions (1..n) come FIRST and the number (position 0 -> %rax) LAST: with no
 ;; register source/dest conflict the solver emits the moves in this list order
-;; through emit-load-value-with-plan.
+;; through emit-load-value.
 (define (compiler-backend-syscall-arg-moves-build-from
   [args : compiler_ir_types.CompilerIrCallArgs]
   [index : i64]
@@ -48867,7 +48844,7 @@
         (compiler-backend-scavenge-reg-here table-exclude 1 "%r9" backend-state))]
     [index-load : ResultCompilerBackend
       (if need-index-scratch
-        (compiler-backend-emit-load-value-with-plan
+        (compiler-backend-emit-load-value
           assignments
           index
           (compiler-backend-global-shared-view index-reg)
@@ -49292,7 +49269,7 @@
     (match instr
       [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
         (compiler-backend-with-instr-diagnostic
-          (compiler-backend-emit-class-correct-mov-with-plan
+          (compiler-backend-emit-class-correct-mov
             ctx.type-segment-bases
             ctx.assignments
             ctx.blocks
@@ -49413,7 +49390,7 @@
           instr-diag)]
       [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
         (compiler-backend-with-instr-diagnostic
-          (compiler-backend-emit-binop-with-plan
+          (compiler-backend-emit-binop
             ctx.type-segment-bases
             ctx.types
             ctx.global-types
@@ -50089,7 +50066,7 @@
             (compiler-backend-instr-error-from instr-diag message)])]
       [(compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label)
         (compiler-backend-with-instr-diagnostic
-          (compiler-backend-emit-branch-with-phi-copies-with-plan
+          (compiler-backend-emit-branch-with-phi-copies
             ctx.type-segment-bases
             ctx.assignments
             ctx.function
@@ -51238,7 +51215,7 @@
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (begin
-    (compiler-backend-emit-store-typed-var-with-plan-into
+    (compiler-backend-emit-store-typed-var-into
       out
       ctx.assignments
       rax-var
@@ -51326,7 +51303,7 @@
                 rest
                 out)
               (begin
-                (compiler-backend-emit-store-typed-var-with-plan-into
+                (compiler-backend-emit-store-typed-var-into
                   out
                   ctx.assignments
                   dst
@@ -51387,7 +51364,7 @@
             index
             out)]))
     (begin
-      (compiler-backend-emit-store-typed-var-with-plan-into
+      (compiler-backend-emit-store-typed-var-into
         out
         ctx.assignments
         rax-var
@@ -51506,7 +51483,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
+  (match (compiler-backend-emit-load-compare-branch-with-phi-copies
     ctx.type-segment-bases
     ctx.assignments
     (compiler-backend-global-shared-view ctx.function)
@@ -51550,7 +51527,7 @@
   ;; `not src` branches to its false successor when src is true. Emit the
   ;; source branch directly with reversed successors, including the matching
   ;; phi-edge copies, instead of materializing the inverted boolean.
-  (match (compiler-backend-emit-branch-with-phi-copies-with-plan
+  (match (compiler-backend-emit-branch-with-phi-copies
     ctx.type-segment-bases
     ctx.assignments
     (compiler-backend-global-shared-view ctx.function)
@@ -51604,7 +51581,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
+  (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies
     ctx.type-segment-bases
     ctx.assignments
     (compiler-backend-global-shared-view ctx.function)
@@ -52540,13 +52517,13 @@
             (compiler-backend-base-address
               disp
               (compiler-backend-global-shared-view base-reg))]
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             base
             base-reg
             backend-state)
             [(ResultCompilerBackend.Ok base-asm)
-              (match (compiler-backend-emit-load-value-with-plan
+              (match (compiler-backend-emit-load-value
                 assignments
                 x
                 (compiler-backend-global-shared-view dst-home)
@@ -52626,7 +52603,7 @@
               addr)]
           (match (if use-base-home?
             (ResultCompilerBackend.Ok "")
-            (compiler-backend-emit-load-value-with-plan
+            (compiler-backend-emit-load-value
               assignments
               base
               base-reg
@@ -52634,13 +52611,13 @@
             [(ResultCompilerBackend.Ok base-asm)
               (match (if use-offset-home?
                 (ResultCompilerBackend.Ok "")
-                (compiler-backend-emit-load-value-with-plan
+                (compiler-backend-emit-load-value
                   assignments
                   offset
                   index-reg
                   backend-state))
                 [(ResultCompilerBackend.Ok offset-asm)
-                  (match (compiler-backend-emit-load-value-with-plan
+                  (match (compiler-backend-emit-load-value
                     assignments
                     x
                     (compiler-backend-global-shared-view dst-home)
@@ -53299,7 +53276,7 @@
       index-operand
       ok-label
       bounds-instr)
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       ctx.assignments
       staged-value
       staged-base
@@ -53981,7 +53958,7 @@
 ;; M6-E: the folded compare sets the flags its branch consumes, so successor
 ;; phi-edge copies cannot sit between them -- they have to run ON the edge,
 ;; behind the jcc. That is exactly the shape
-;; compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
+;; compiler-backend-emit-gep-load-compare-branch-with-phi-copies
 ;; already builds for the unfolded compare: each edge's copies become their own
 ;; block, the branch jumps to the edge labels instead of the real successors,
 ;; and the edge blocks are appended behind the branch. Reusing it costs nothing
@@ -54093,7 +54070,7 @@
       true-label
       false-label
       branch-fallthrough)
-    (match (compiler-backend-emit-load-value-with-plan
+    (match (compiler-backend-emit-load-value
       ctx.assignments
       staged-value
       staged-base
@@ -54132,7 +54109,7 @@
         dst-reg)]
     (if (string.eq staged-base "")
       (ResultCompilerBackend.Ok load-asm)
-      (match (compiler-backend-emit-load-value-with-plan
+      (match (compiler-backend-emit-load-value
         ctx.assignments
         staged-value
         staged-base
@@ -55965,7 +55942,7 @@
                           (compiler-backend-global-shared-view func)
                           args
                           backend-state)]
-                      (match (compiler-backend-emit-load-value-with-plan
+                      (match (compiler-backend-emit-load-value
                         assignments
                         func
                         (compiler-backend-global-shared-view scav-clo)
@@ -56118,7 +56095,7 @@
         (let
           [clo-reg : String
             (compiler-backend-scavenge-tail-call-target-reg backend-state)]
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-emit-load-value
             assignments
             func
             (compiler-backend-global-shared-view clo-reg)
@@ -56283,7 +56260,7 @@
           (let
             [call-reg : String
               (compiler-backend-stack-call-arg-stage backend-state)]
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-emit-load-value
               assignments
               func
               (compiler-backend-global-shared-view call-reg)
@@ -56508,7 +56485,7 @@
             (let
               [call-reg : String
                 (compiler-backend-stack-call-arg-stage backend-state)]
-              (match (compiler-backend-emit-load-value-with-plan
+              (match (compiler-backend-emit-load-value
                 assignments
                 func
                 (compiler-backend-global-shared-view call-reg)
@@ -56965,7 +56942,6 @@
     (cond
       [own-src? lhs-home]
       [dst-src? dst-home]
-      [(compiler-backend-divmod-src-register? "") ""]
       [else
         (compiler-backend-scavenge-divmod-src-reg
           scavenge-dst
@@ -56981,7 +56957,7 @@
           ctx.backend-state)])))
 
 ;; Resolve the materialisation register with the same point, exclusions, and
-;; fallback as emit-signed-literal-divmod-dst-with-plan, but without reserving an
+;; fallback as emit-signed-literal-divmod-dst, but without reserving an
 ;; emergency slot.  Admission needs the exact physical write set before deciding
 ;; whether a following direct store can remain inside the divmod save region.
 (define (compiler-backend-divmod-polish-magic-here
@@ -58321,7 +58297,7 @@
 ;; never a compare operand.
 ;;
 ;; Windows spells a global read identically -- the `Global` arm of
-;; `compiler-backend-emit-load-value-with-plan-into` is target-independent --
+;; `compiler-backend-emit-load-value-into` is target-independent --
 ;; so the fold needs no target split. The streaming peephole reads the emitted
 ;; `cmpq g(%rip), %rax` through `compiler-backend-peephole-cmp-or-test-token?`,
 ;; which classifies compares as flag-only and leaves the reload-elision owner
@@ -58510,7 +58486,7 @@
                     ;; its scratch requirements at lookahead point 2. The
                     ;; plan-less wrapper would make pressured div/mod
                     ;; destinations query the Mov's empty scratch site.
-                    (match (compiler-backend-emit-binop-with-plan
+                    (match (compiler-backend-emit-binop
                       ctx.type-segment-bases
                       ctx.types
                       (compiler-backend-global-shared-view ctx.global-types)
@@ -58580,7 +58556,7 @@
                 ;; the eliminated Mov. Select the BinOp's point-one scratch
                 ;; ordinals explicitly so high-pressure spill paths remain
                 ;; modeled.
-                (match (compiler-backend-emit-binop-with-plan
+                (match (compiler-backend-emit-binop
                   ctx.type-segment-bases
                   ctx.types
                   (compiler-backend-global-shared-view ctx.global-types)
@@ -59576,7 +59552,7 @@
           ctx.assignments
           mask-var)
         "")
-        (compiler-backend-emit-load-typed-var-to-reg-with-plan
+        (compiler-backend-emit-load-typed-var-to-reg
           ctx.type-segment-bases
           ctx.assignments
           mask-var
@@ -60112,7 +60088,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-branch-with-phi-copies-with-plan
+  (match (compiler-backend-emit-branch-with-phi-copies
     ctx.type-segment-bases
     ctx.assignments
     (compiler-backend-global-shared-view ctx.function)
@@ -60337,7 +60313,7 @@
                   [(compiler_ir_types.CompilerIrMaybeValue.Some value)
                     (if (compiler-backend-branch-uses-var? value dst)
                       (compiler-backend-emit-terminator-into
-                        (compiler-backend-emit-binop-return-with-plan
+                        (compiler-backend-emit-binop-return
                           ctx.type-segment-bases
                           ctx.backend-state
                           ctx.source-function
@@ -62088,7 +62064,7 @@
                   position))
                 [(ResultBackendReg.Ok reg)
                   (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-store-typed-var-with-plan
+                    (compiler-backend-emit-store-typed-var
                       assignments
                       var-id
                       reg
@@ -62218,7 +62194,7 @@
           ", "
           scratch
           "\n"
-          (compiler-backend-emit-store-var-with-plan
+          (compiler-backend-emit-store-var
             assignments
             var-id
             scratch
@@ -62569,7 +62545,7 @@
                       [(ResultCompilerBackend.Ok tail)
                         (ResultCompilerBackend.Ok
                           (str_cat.str-cat
-                            (compiler-backend-emit-store-typed-var-with-plan
+                            (compiler-backend-emit-store-typed-var
                               assignments
                               var-id
                               reg
@@ -76947,7 +76923,7 @@
         "%r11"
         backend-state)]
     (match (if (string.eq src-home "")
-      (compiler-backend-emit-load-value-with-plan
+      (compiler-backend-emit-load-value
         assignments
         value
         (compiler-backend-global-shared-view src-reg)
@@ -79164,7 +79140,7 @@
                             compile-profile
                             (compiler-backend-profile-finish
                               profile-state
-                              "(compiler-backend-global-shared-view globals)"))
+                              "globals"))
                           (cfg
                             compile-profile
                             (compiler-backend-profile-start profile-state))
@@ -79201,7 +79177,7 @@
                             compile-profile
                             (compiler-backend-profile-finish
                               profile-state
-                              "(compiler-backend-global-shared-view globals)"))
+                              "globals"))
                           (ResultCompilerBackendBuffer.Err message))])))])))]
       [(ResultBackendRuntimePlanWithIndex.Err message)
         (begin

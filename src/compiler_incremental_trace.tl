@@ -50,8 +50,6 @@
   8)
 (define compiler-trace-miss-child : i64
   9)
-(define compiler-trace-miss-corrupt : i64
-  10)
 (define compiler-trace-miss-schema : i64
   11)
 (define compiler-trace-miss-limit : i64

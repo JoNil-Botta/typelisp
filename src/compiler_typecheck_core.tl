@@ -108499,12 +108499,6 @@
     job-state
     true))
 
-;; Serial/test compatibility adapter. Production lowering owns and supplies a
-;; job state so cache invalidation remains isolated between compiler requests.
-(define (compiler-typecheck-clear-macro-expanded-source-caches!) : unit
-  (compiler-typecheck-clear-macro-expanded-source-caches-for-job!
-    (tc-serial-job-state)))
-
 (define (compiler-typecheck-reset-file-state!) : unit
   (compiler-typecheck-reset-file-state-for-job! (tc-serial-job-state)))
 

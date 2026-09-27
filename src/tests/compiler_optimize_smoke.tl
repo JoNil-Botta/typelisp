@@ -3497,9 +3497,9 @@
     "a loop-free caller takes the loop leaf at a straight-line site: no caller loop is there to tax"))
 
 (test
-  inline-hot-loop-leaf-recursive-caller-refusal
+  inline-hot-loop-leaf-recursive-caller-admission
   (test.assert-true
-    (ot.compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?)
+    (ot.compiler-optimize-inline-hot-loop-leaf-recursive-caller-admission-ok?)
     "the same leaf at the same sites of SELF-RECURSIVE callers is taken at every site: the tailrec rewrite runs before the inliner, so the caller's loop is there and the in-loop tier admits the leaf into it"))
 
 (test

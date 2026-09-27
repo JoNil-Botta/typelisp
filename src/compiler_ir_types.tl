@@ -500,13 +500,6 @@
     (compiler-ir-symbol-domain? symbol)
     (< (compiler-ir-symbol-slot-unchecked symbol) compiler-ir-symbol-count)))
 
-;: Dense index of a symbol this table minted, for callers keeping a side table;
-;: malformed, foreign-domain and unallocated ids fail closed.
-(define (compiler-ir-symbol-slot [symbol : i64]) : i64
-  (if (compiler-ir-symbol-owned? symbol)
-    (compiler-ir-symbol-slot-unchecked symbol)
-    -1))
-
 (defenum CompilerIrValue
   (Var i64)
   (Global i64)
@@ -4276,9 +4269,7 @@
 (define (compiler-ir-spmd-private-param-shape-error
   [abi : CompilerIrSpmdPrivateAbi]
   [index : i64]) : String
-  (match (compiler-ir-spmd-private-param-seq-ref
-    abi.params
-    index)
+  (match (compiler-ir-spmd-private-param-seq-ref abi.params index)
     [(CompilerIrSpmdPrivateParam.Param ordinal role ty)
       (cond
         [(not (= ordinal index))
@@ -5466,13 +5457,6 @@
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ false]))
 
-(define (compiler-ir-instr-seq-return?
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : bool
-  (match (& (array-ref instrs.slots index))
-    [(CompilerIrInstr.Return _) true]
-    [_ false]))
-
 (define (compiler-ir-instr-seq-phi? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
   (match (& (array-ref instrs.slots index))
     [(CompilerIrInstr.Phi _ _ _) true]
@@ -5640,9 +5624,6 @@
   (match (compiler-ir-global-shared-view blocks)
     [(CompilerIrBlockList.Array _) blocks]
     [_ (CompilerIrBlockList.Array (compiler-ir-block-seq-from-list blocks))]))
-
-(define (compiler-ir-block-list-compact-reversed [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (CompilerIrBlockList.Array (compiler-ir-block-seq-from-reversed-list blocks)))
 
 (define (compiler-ir-function-compact-blocks [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -7022,7 +7003,8 @@
     args
     0))
 
-(define (compiler-ir-spmd-call-arg-seq-count [args : (& CompilerIrSpmdCallArgSeq)]) : i64
+(define (compiler-ir-spmd-call-arg-seq-count
+  [args : (& CompilerIrSpmdCallArgSeq)]) : i64
   args.len)
 
 (define (compiler-ir-spmd-result-render
@@ -9271,10 +9253,6 @@
               (set! index (+ index 1))))
           total))]))
 
-(define (compiler-ir-function-abi [func : CompilerIrFunction]) : CompilerIrFunctionAbi
-  (match func
-    [(CompilerIrFunction.Function _ _ _ _ _ function-abi) (clone function-abi)]))
-
 (define (compiler-ir-function-block-count [func : CompilerIrFunction]) : i64
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks _)
@@ -9473,8 +9451,7 @@
         (compiler-ir-function-seq-count
           (compiler-ir-global-shared-view functions))
         (compiler-ir-extern-seq-count externs)
-        (compiler-ir-function-seq-block-count
-          functions)
+        (compiler-ir-function-seq-block-count functions)
         (compiler-ir-function-seq-instruction-count
           (compiler-ir-global-shared-view functions))
         (compiler-ir-function-seq-var-count

@@ -452,10 +452,7 @@
       (compiler-ir-smoke-function-seq-first-name?
         (compiler_ir_types.compiler-ir-global-shared-view compact)
         "first")
-      (=
-        (compiler_ir_types.compiler-ir-function-seq-block-count
-          compact)
-        2)
+      (= (compiler_ir_types.compiler-ir-function-seq-block-count compact) 2)
       (=
         (compiler_ir_types.compiler-ir-function-seq-instruction-count compact)
         4)
@@ -486,10 +483,9 @@
             first-block
             compiler_ir_types.CompilerIrBlockList.Nil)))]
     [compact-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-list-compact-reversed
-        reversed-blocks)]
+      (compiler-ir-block-list-compact-reversed reversed-blocks)]
     [array-reversed-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-list-compact-reversed
+      (compiler-ir-block-list-compact-reversed
         (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))]
     [first-func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
@@ -1331,7 +1327,7 @@
           (compiler_ir_types.compiler-ir-global-shared-view seq)
           0))
       (not
-        (compiler_ir_types.compiler-ir-instr-seq-return?
+        (compiler-ir-instr-seq-return?
           (compiler_ir_types.compiler-ir-global-shared-view seq)
           0))
       (not
@@ -1341,7 +1337,7 @@
       (compiler_ir_types.compiler-ir-instr-seq-bounds-check?
         (compiler_ir_types.compiler-ir-global-shared-view seq)
         1)
-      (compiler_ir_types.compiler-ir-instr-seq-return?
+      (compiler-ir-instr-seq-return?
         (compiler_ir_types.compiler-ir-global-shared-view seq)
         3)
       (match (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -1552,7 +1548,7 @@
       (unless (= second (+ first 1)) (set! ok false))
       (unless (< second domain-limit) (set! ok false))
       (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot first) (- first base))
+        (= (compiler-ir-symbol-slot first) (- first base))
         (set! ok false))
       (unless
         (compiler_ir_types.compiler-ir-symbol-owned? first)
@@ -1572,9 +1568,7 @@
             (set! ok false)
             unit)
           (unless
-            (=
-              (compiler_ir_types.compiler-ir-symbol-slot logical-source-handle)
-              -1)
+            (= (compiler-ir-symbol-slot logical-source-handle) -1)
             (set! ok false))
           (set! logical-source-handle (+ logical-source-handle 1))))
       (unless (< old-collision-base compact-limit) (set! ok false))
@@ -1582,7 +1576,7 @@
         (not (compiler_ir_types.compiler-ir-symbol-owned? old-collision-base))
         (set! ok false))
       (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot old-collision-base) -1)
+        (= (compiler-ir-symbol-slot old-collision-base) -1)
         (set! ok false))
       (unless
         (string.eq
@@ -1605,7 +1599,7 @@
               (set! ok false)
               unit)
             (unless
-              (= (compiler_ir_types.compiler-ir-symbol-slot unallocated) -1)
+              (= (compiler-ir-symbol-slot unallocated) -1)
               (set! ok false))
             (unless
               (string.eq
@@ -1616,17 +1610,11 @@
       ;; Adjacent identity domains, the compact-u32 limit, and sentinels also
       ;; fail closed rather than indexing or reaching intern-str.
       (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot (- compact-limit 1)) -1)
+        (= (compiler-ir-symbol-slot (- compact-limit 1)) -1)
         (set! ok false))
-      (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot cfg-base) -1)
-        (set! ok false))
-      (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot current-cfg-key) -1)
-        (set! ok false))
-      (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot structural-base) -1)
-        (set! ok false))
+      (unless (= (compiler-ir-symbol-slot cfg-base) -1) (set! ok false))
+      (unless (= (compiler-ir-symbol-slot current-cfg-key) -1) (set! ok false))
+      (unless (= (compiler-ir-symbol-slot structural-base) -1) (set! ok false))
       ;; Unminted ids in the IR domain, other tags, and the negative sentinel
       ;; render empty rather than aborting: diagnostics reach this path with
       ;; whatever the IR is holding.
@@ -2396,8 +2384,7 @@
       (let
         [functions : compiler_ir_types.CompilerIrFunctionSeq
           (compiler_ir_types.compiler-ir-function-builder-to-seq builder)]
-        (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
-          functions)))))
+        (compiler_ir_types.compiler-ir-spmd-private-abi-program-error functions)))))
 
 (define (pabi-program-rejects?
   [helper : compiler_ir_types.CompilerIrFunction]
@@ -2418,7 +2405,7 @@
 
 (define (pabi-function-private-abi
   [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrSpmdPrivateAbi
-  (match (compiler_ir_types.compiler-ir-function-abi func)
+  (match (compiler-ir-function-abi func)
     [(compiler_ir_types.CompilerIrFunctionAbi.SpmdPrivate private-box)
       (deref private-box)]
     [(compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
@@ -3668,6 +3655,30 @@
     [(= index 53) " D10 | dst -1 | succ 72 70 71"]
     [(= index 54) " D10 | dst -1 | succ 72 73 70 71"]
     [else ""]))
+
+;; Dense index of a symbol this table minted, for callers keeping a side table;
+;; malformed, foreign-domain and unallocated ids fail closed.
+(define (compiler-ir-symbol-slot [symbol : i64]) : i64
+  (if (compiler_ir_types.compiler-ir-symbol-owned? symbol)
+    (compiler_ir_types.compiler-ir-symbol-slot-unchecked symbol)
+    -1))
+
+(define (compiler-ir-instr-seq-return?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (match (& (array-ref instrs.slots index))
+    [(compiler_ir_types.CompilerIrInstr.Return _) true]
+    [_ false]))
+
+(define (compiler-ir-block-list-compact-reversed
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.CompilerIrBlockList.Array
+    (compiler_ir_types.compiler-ir-block-seq-from-reversed-list blocks)))
+
+(define (compiler-ir-function-abi [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionAbi
+  (match func
+    [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ _ function-abi)
+      (clone function-abi)]))
 
 (defenum CompilerIrMaybeDescriptorPairKind
   (No)

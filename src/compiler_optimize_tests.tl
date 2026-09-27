@@ -48852,6 +48852,8 @@
       (opt-cfg-dominators (opt.compiler-opt-global-shared-view loop-blocks))]
     [loop-frontier : opt.OptLabelSet
       (opt-cfg-dominance-frontier loop-blocks (ir.compiler-ir-label "loop"))]
+    [irreducible-doms : opt.OptDomInfo
+      (opt-cfg-dominators (opt-natural-loop-irreducible-blocks))]
     [unreachable-index : opt.OptCfgIndex
       (opt.opt-cfg-index-build (opt-ssa-unreachable-blocks))]
     [unreachable-order : ir.CompilerIrBlockList
@@ -49059,6 +49061,30 @@
             0))
         27]
       [(not (opt-label-set-persistent-branch-self-test)) 60]
+      ;; Irreducible entry: left and right each enter the cycle, so neither
+      ;; dominates the other; right is exit's only predecessor.
+      [(not
+          (opt.opt-dom-dominates?
+            irreducible-doms
+            (ir.compiler-ir-label "entry")
+            (ir.compiler-ir-label "right")))
+        28]
+      [(not
+          (opt.opt-dom-dominates?
+            irreducible-doms
+            (ir.compiler-ir-label "right")
+            (ir.compiler-ir-label "exit")))
+        29]
+      [(opt.opt-dom-dominates?
+          irreducible-doms
+          (ir.compiler-ir-label "left")
+          (ir.compiler-ir-label "right"))
+        30]
+      [(opt.opt-dom-dominates?
+          irreducible-doms
+          (ir.compiler-ir-label "right")
+          (ir.compiler-ir-label "left"))
+        31]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function constructed-diamond)))
         36]
       [(not (= (opt-count-phi-blocks constructed-diamond-blocks) 1)) 37]

@@ -28,6 +28,8 @@ contains|call _tl_eval
 end
 
 case|integration_clone_macro_handoff|tests/integration/clone_macro_handoff.tl|assembly|exactly-one|direct
+contains|_tl_clone_macro_handoff_clone_u24CloneMacroUsed:
+contains|_tl_clone_macro_handoff_clone_u24CloneMacroChoice:
 not-contains|_tl_clone_macro_handoff_clone_u24CloneMacroUnused
 end
 

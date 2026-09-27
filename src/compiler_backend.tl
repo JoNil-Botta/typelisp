@@ -5156,7 +5156,7 @@
 
 ;; Per-function dense operand-home view for emission.
 ;; compiler-backend-emit-function installs the function's FINAL (post-coloring)
-;; assignment table after every re-plan stage (caller-save, loop-split, remat,
+;; assignment table after every re-plan stage (caller-save,
 ;; slot coloring) has been folded into it, so each operand-home
 ;; query is an O(1) array read. `active` gates the function-state view; callers
 ;; of emit helpers outside whole-function emission (unit tests, closure-entry
@@ -14642,7 +14642,7 @@
 
 ;; "Does this function's plan home a value in register R" is a per-function,
 ;; per-REGISTER constant: the emitted assignment table is fixed before body
-;; emission (every re-plan stage -- caller-save, loop-split, remat, slot
+;; emission (every re-plan stage -- caller-save and slot
 ;; coloring -- is already folded into it, exactly as for the dense operand
 ;; view above). The prologue/epilogue, frame layout, callee-save and FPO paths
 ;; ask it tens of times per function, and each ask used to re-walk the whole
@@ -71433,7 +71433,7 @@
   (Some i64 i64))
 
 ;; Ordinal-indexed (walk-order) per-gep tables: the register pipeline's later
-;; IR rewrites (caller-save spills, loop-split region remaps, remat) RENAME
+;; IR rewrites (caller-save spills and region remaps) RENAME
 ;; vars inside loop regions but never create, delete, or reorder Gep
 ;; instructions, so the n-th Gep the emitter walks is the n-th Gep the
 ;; pre-pass saw. Each entry carries the byte displacement plus the gep's
@@ -71774,221 +71774,6 @@
                 (set! j (+ j 1)))))
           (set! b (+ b 1))))
       total)))
-
-;; R5 ORDINAL RESYNC. The GAP9 displacement table is indexed by the ORDINAL of
-;; a `Gep` in walk order, and it is built before register allocation. The remat
-;; rewrite runs after the plan and edits that sequence: it mints recipe geps at
-;; recomputed use sites and retires the address gep of a load whose every use
-;; was recomputed. Re-thread the table onto the final block list rather than let
-;; the emitter consume shifted entries -- a recipe gep is minted with a var id
-;; at or above `pre-vars` and folds nothing, so it takes a fresh zero entry;
-;; every surviving gep keeps the entry it was given, matched by its destination
-;; in the (order-preserving) old sequence. Anything that fails to line up
-;; poisons the function, which is the same loud error the audit already raises.
-(define (compiler-backend-gep-fold-collect-dsts
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [dsts : (__tl_dyn-array i64)]) : i64
-  (let
-    [seq : compiler_ir_types.CompilerIrBlockSeq
-      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
-    [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-    [b : i64 0]
-    [total : i64 0]
-    (begin
-      (while (< b block-count)
-        (begin
-          (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
-            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-              (let
-                [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
-                [j : i64 0]
-                (while (< j n)
-                  (begin
-                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
-                      instrs
-                      j)
-                      [(compiler_ir_types.CompilerIrInstr.Gep dst _ _ _)
-                        (begin
-                          (if (< total (array-length dsts))
-                            (set! (array-ref dsts total) dst)
-                            unit)
-                          (set! total (+ total 1)))]
-                      [_ unit])
-                    (set! j (+ j 1)))))])
-          (set! b (+ b 1))))
-      total)))
-
-(define (compiler-backend-gep-fold-count-blocks-geps
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
-  (compiler-backend-gep-fold-collect-dsts blocks (__tl_make-array i64 0)))
-
-(define (compiler-backend-gep-fold-resync!
-  [function-state : CompilerBackendFunctionState]
-  [type-segment-bases : i64]
-  [old-blocks : compiler_ir_types.CompilerIrBlockList]
-  [new-blocks : compiler_ir_types.CompilerIrBlockList]
-  [pre-vars : i64]) : unit
-  (if (not
-    (compiler-backend-function-state-bool?
-      function-state
-      compiler-backend-function-bool-gep-fold-ready))
-    unit
-    (let
-      [old-count : i64
-        (compiler-backend-gep-fold-count-blocks-geps
-          (compiler-backend-global-shared-view old-blocks))]
-      [new-count : i64
-        (compiler-backend-gep-fold-count-blocks-geps
-          (compiler-backend-global-shared-view new-blocks))]
-      ;; Equal counts do NOT mean the sequence is untouched (one retired gep and
-      ;; one minted recipe gep balance), so the re-thread runs whenever the
-      ;; table is live and the function has any gep at all.
-      (if (= old-count 0)
-        unit
-        (compiler-backend-gep-fold-resync-tables!
-          function-state
-          type-segment-bases
-          old-blocks
-          new-blocks
-          pre-vars
-          old-count
-          new-count)))))
-
-(define (compiler-backend-gep-fold-resync-tables!
-  [function-state : CompilerBackendFunctionState]
-  [type-segment-bases : i64]
-  [old-blocks : compiler_ir_types.CompilerIrBlockList]
-  [new-blocks : compiler_ir_types.CompilerIrBlockList]
-  [pre-vars : i64]
-  [old-count : i64]
-  [new-count : i64]) : unit
-  (let
-    [old-disp : (__tl_dyn-array i64)
-      (compiler-backend-function-state-i64-array
-        function-state
-        compiler-backend-function-i64-array-gep-fold-disp-table)]
-    [old-kind : (__tl_dyn-array i64)
-      (compiler-backend-function-state-i64-array
-        function-state
-        compiler-backend-function-i64-array-gep-fold-kind-table)]
-    [old-scale : (__tl_dyn-array i64)
-      (compiler-backend-function-state-i64-array
-        function-state
-        compiler-backend-function-i64-array-gep-fold-scale-table)]
-    [old-dsts : (__tl_dyn-array i64)
-      (__tl_make-array
-        i64
-        (if (< old-count 1)
-          1
-          old-count))]
-    [_collect : i64
-      (compiler-backend-gep-fold-collect-dsts
-        old-blocks
-        (compiler-backend-global-shared-view old-dsts))]
-    [disp : (__tl_dyn-array i64)
-      (__tl_make-array
-        i64
-        (if (< new-count 1)
-          1
-          new-count))]
-    [kind : (__tl_dyn-array i64)
-      (__tl_make-array
-        i64
-        (if (< new-count 1)
-          1
-          new-count))]
-    [scale : (__tl_dyn-array i64)
-      (__tl_make-array
-        i64
-        (if (< new-count 1)
-          1
-          new-count))]
-    [seq : compiler_ir_types.CompilerIrBlockSeq
-      (compiler_liveness.compiler-live-ir-block-list-to-seq new-blocks)]
-    [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-    [b : i64 0]
-    [out : i64 0]
-    [cursor : i64 0]
-    [failed : bool false]
-    (begin
-      (if (not (= (array-length old-disp) old-count))
-        (set! failed true)
-        unit)
-      (while (< b block-count)
-        (begin
-          (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
-            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-              (let
-                [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
-                [j : i64 0]
-                (while (< j n)
-                  (begin
-                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
-                      instrs
-                      j)
-                      [(compiler_ir_types.CompilerIrInstr.Gep
-                          dst
-                          _
-                          offset
-                          elem-ty)
-                        (if (>= out new-count)
-                          (set! failed true)
-                          (if (>= dst pre-vars)
-                            (begin
-                              (set! (array-ref disp out) 0)
-                              (set!
-                                (array-ref kind out)
-                                (compiler-backend-gep-fold-offset-kind offset))
-                              (set!
-                                (array-ref scale out)
-                                (compiler-backend-type-size
-                                  type-segment-bases
-                                  elem-ty))
-                              (set! out (+ out 1)))
-                            (begin
-                              (while (and
-                                (< cursor old-count)
-                                (not (= (array-ref old-dsts cursor) dst)))
-                                (set! cursor (+ cursor 1)))
-                              (if (>= cursor old-count)
-                                (set! failed true)
-                                (begin
-                                  (set!
-                                    (array-ref disp out)
-                                    (array-ref old-disp cursor))
-                                  (set!
-                                    (array-ref kind out)
-                                    (array-ref old-kind cursor))
-                                  (set!
-                                    (array-ref scale out)
-                                    (array-ref old-scale cursor))
-                                  (set! cursor (+ cursor 1))
-                                  (set! out (+ out 1)))))))]
-                      [_ unit])
-                    (set! j (+ j 1)))))])
-          (set! b (+ b 1))))
-      (if (or failed (not (= out new-count)))
-        (compiler-backend-function-state-set-bool!
-          function-state
-          compiler-backend-function-bool-gep-fold-drift
-          true)
-        (begin
-          (compiler-backend-function-state-set-i64-array!
-            function-state
-            compiler-backend-function-i64-array-gep-fold-disp-table
-            disp)
-          (compiler-backend-function-state-set-i64-array!
-            function-state
-            compiler-backend-function-i64-array-gep-fold-kind-table
-            kind)
-          (compiler-backend-function-state-set-i64-array!
-            function-state
-            compiler-backend-function-i64-array-gep-fold-scale-table
-            scale)
-          (compiler-backend-function-state-set-i64!
-            function-state
-            compiler-backend-function-i64-gep-fold-cursor
-            0))))))
 
 (define (compiler-backend-gep-fold-count-defs
   [defs : (&mut defs (__tl_dyn-array i64))]
@@ -76091,10 +75876,6 @@
               (or target-policy.linux target-policy.windows)
               (compiler-backend-mode-scalar? mode)
               scalar-registers-enabled))]
-        ;; SCR-1: the scratch-reserve flag is per function; the round below
-        ;; sets it only when its replan won.
-        [_scratch-reserve-flag : unit
-          (compiler_regalloc.compiler-reg-set-scratch-reserve-enabled! false)]
         [fn-abi : compiler_abi.CompilerRegTargetAbi target-policy.abi]
         [_fn-abi : unit
           (compiler-backend-set-current-fn-abi!
@@ -76230,61 +76011,31 @@
               hole-reg-plan
               hole-types
               hole-temp-start))]
-        ;; SCR-1: a plan whose backend scratch would BORROW a live register is
-        ;; replanned with %r11 reserved for scratch, and the reserved plan is
-        ;; kept only when the estimated cost (memory references, prologue, and
-        ;; the save/restore each borrowed scratch costs per execution) is
-        ;; strictly lower. Declines to its input like the two rounds above.
-        [scratch-reserve-split : compiler_regalloc.CompilerRegCallHoleSplit
-          (if scalar-plan?
-            (compiler_regalloc.compiler-reg-scratch-reserve-rewrite-function
-              type-segment-bases
-              fn-abi
-              (compiler_regalloc.compiler-reg-call-hole-split-function
-                (compiler-backend-global-shared-view loop-park-split))
-              (compiler_regalloc.compiler-reg-call-hole-split-types
-                (compiler-backend-global-shared-view loop-park-split))
-              (compiler_regalloc.compiler-reg-call-hole-split-plan
-                (compiler-backend-global-shared-view loop-park-split))
-              (compiler_regalloc.compiler-reg-call-hole-split-temp-start
-                loop-park-split)
-              cold-call-split?)
-            loop-park-split)]
         ;; Everything downstream of the initial plan consumes the SPLIT view:
-        ;; the leaf-CSR round, its replan, the carrier self-check, the
-        ;; caller-save/loop-split/remat rewrites, storage coloring and emission.
-        ;; When every round declines, these are the pre-split values unchanged.
-        [split-func : compiler_ir_types.CompilerIrFunction
-          (compiler_regalloc.compiler-reg-call-hole-split-function
-            (compiler-backend-global-shared-view scratch-reserve-split))]
+        ;; the caller-save rewrite, the carrier self-check, storage coloring and
+        ;; emission. When every round declines, these are the pre-split values
+        ;; unchanged.
         [split-blocks : compiler_ir_types.CompilerIrBlockList
           (compiler_regalloc.compiler-reg-call-hole-split-blocks
-            (compiler-backend-global-shared-view scratch-reserve-split))]
+            (compiler-backend-global-shared-view loop-park-split))]
         [split-vars : i64
           (compiler_regalloc.compiler-reg-call-hole-split-vars
-            (compiler-backend-global-shared-view scratch-reserve-split))]
+            (compiler-backend-global-shared-view loop-park-split))]
         [split-types : compiler_regalloc.CompilerRegVarTypes
           (compiler_regalloc.compiler-reg-call-hole-split-types
-            (compiler-backend-global-shared-view scratch-reserve-split))]
+            (compiler-backend-global-shared-view loop-park-split))]
         [split-reg-plan : compiler_regalloc.CompilerRegPlan
           (compiler_regalloc.compiler-reg-call-hole-split-plan
-            (compiler-backend-global-shared-view scratch-reserve-split))]
-        [split-temp-start : i64
-          (compiler_regalloc.compiler-reg-call-hole-split-temp-start
-            scratch-reserve-split)]
-        ;; A call-free natural loop can leave one volatile register dead before
-        ;; the loop and another dead inside it while the whole-range greedy pays
-        ;; for a callee-saved home. Detect that shape against the initial plan,
-        ;; split the read-only range in IR, then REPLAN the rewritten function.
-        ;; Replanning is essential: both physical pieces receive ordinary exact
-        ;; intervals, so scratch occupancy and frame coloring never see the
-        ;; conservative interval-less homes used by post-allocation rescues.
-        [leaf-csr-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (if scalar-plan?
-            (compiler_regalloc.compiler-reg-leaf-csr-split-rewrite-one
-              type-segment-bases
-              fn-abi
-              split-func
+            (compiler-backend-global-shared-view loop-park-split))]
+        ;; The caller-save rewrite runs whenever scalar register allocation is
+        ;; enabled.
+        [call-save-enabled : bool
+          (if (compiler-backend-mode-scalar? mode)
+            scalar-registers-enabled
+            false)]
+        [call-save-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
+          (if call-save-enabled
+            (compiler_regalloc.compiler-reg-caller-save-rewrite-blocks
               split-blocks
               split-vars
               split-types
@@ -76295,97 +76046,14 @@
               split-vars
               (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
-        [alloc-blocks : compiler_ir_types.CompilerIrBlockList
-          (match (compiler-backend-global-shared-view leaf-csr-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                out-blocks
-                _
-                _
-                _
-                _)
-              out-blocks])]
-        [alloc-vars : i64
-          (match (compiler-backend-global-shared-view leaf-csr-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                out-vars
-                _
-                _)
-              out-vars])]
-        [alloc-func : compiler_ir_types.CompilerIrFunction
-          (compiler_ir_types.CompilerIrFunction.Function
-            name
-            (compiler-backend-global-shared-view params)
-            (compiler-backend-global-shared-view ret-ty)
-            alloc-vars
-            (compiler-backend-global-shared-view alloc-blocks)
-            (compiler-backend-global-shared-view function-abi))]
-        [alloc-types : compiler_regalloc.CompilerRegVarTypes
-          (if (= alloc-vars split-vars)
-            split-types
-            (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-              (compiler-backend-global-shared-view alloc-func)
-              (compiler-backend-state-metrics program-index.backend-state)))]
-        [alloc-preassignments : compiler_regalloc.CompilerRegAssignmentTable
-          (match leaf-csr-rewrite
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                _
-                assignments
-                _)
-              assignments])]
-        [raw-alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars split-vars)
-            split-reg-plan
-            ;; The leaf-CSR round only admits functions with NO kind-0 clobber
-            ;; and the call-hole round only fires on functions that have one, so
-            ;; this replan never sees call-hole carriers -- but it still forces
-            ;; whatever carrier range exists to memory, and it passes the
-            ;; cold-call CLAIM separately from that threshold.
-            (compiler_regalloc.compiler-reg-plan-function-scalar-forced-spill-with-types
-              type-segment-bases
-              fn-abi
-              alloc-func
-              split-temp-start
-              cold-call-split?
-              alloc-types
-              alloc-preassignments))]
-        [alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars split-vars)
-            raw-alloc-reg-plan
-            (compiler_regalloc.compiler-reg-plan-hide-leaf-csr-phantoms
-              raw-alloc-reg-plan
-              alloc-preassignments
-              split-vars))]
-        [call-save-enabled : bool
-          (if (compiler-backend-mode-scalar? mode)
-            scalar-registers-enabled
-            false)]
-        ;; The caller-save / loop-split / remat IR-mutating rewrites run whenever
-        ;; scalar register allocation is enabled.
-        [non-split-passes-enabled : bool call-save-enabled]
-        [call-save-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (if non-split-passes-enabled
-            (compiler_regalloc.compiler-reg-caller-save-rewrite-blocks
-              alloc-blocks
-              alloc-vars
-              alloc-types
-              (compiler-backend-global-shared-view alloc-reg-plan))
-            (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-              alloc-blocks
-              alloc-vars
-              alloc-vars
-              (compiler_regalloc.compiler-reg-assignment-table-empty)
-              (compiler_regalloc.compiler-reg-var-types-empty)))]
-        [call-save-reg-plan : compiler_regalloc.CompilerRegPlan
+        ;; The final pipeline plan, blocks and vars.
+        [rewritten-reg-plan : compiler_regalloc.CompilerRegPlan
           (if call-save-enabled
             (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
-              (compiler-backend-global-shared-view alloc-reg-plan)
+              (compiler-backend-global-shared-view split-reg-plan)
               (compiler-backend-global-shared-view call-save-rewrite))
-            alloc-reg-plan)]
-        [call-save-blocks : compiler_ir_types.CompilerIrBlockList
+            split-reg-plan)]
+        [rewritten-blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view call-save-rewrite)
             [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
                 out-blocks
@@ -76394,7 +76062,7 @@
                 _
                 _)
               out-blocks])]
-        [call-save-vars : i64
+        [rewritten-vars : i64
           (match call-save-rewrite
             [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
                 _
@@ -76403,118 +76071,6 @@
                 _
                 _)
               out-vars])]
-        [loop-split-func : compiler_ir_types.CompilerIrFunction
-          (compiler_ir_types.CompilerIrFunction.Function
-            name
-            (compiler-backend-global-shared-view params)
-            (compiler-backend-global-shared-view ret-ty)
-            call-save-vars
-            (compiler-backend-global-shared-view call-save-blocks)
-            (compiler-backend-global-shared-view function-abi))]
-        [loop-split-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (if non-split-passes-enabled
-            (compiler_regalloc.compiler-reg-loop-split-rewrite-blocks
-              type-segment-bases
-              (compiler-backend-global-shared-view loop-split-func)
-              call-save-blocks
-              call-save-vars
-              (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-                loop-split-func
-                (compiler-backend-state-metrics program-index.backend-state))
-              (compiler-backend-global-shared-view call-save-reg-plan))
-            (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-              call-save-blocks
-              call-save-vars
-              call-save-vars
-              (compiler_regalloc.compiler-reg-assignment-table-empty)
-              (compiler_regalloc.compiler-reg-var-types-empty)))]
-        [rewrite-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if call-save-enabled
-            (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
-              call-save-reg-plan
-              (compiler-backend-global-shared-view loop-split-rewrite))
-            alloc-reg-plan)]
-        [rewritten-blocks : compiler_ir_types.CompilerIrBlockList
-          (match (compiler-backend-global-shared-view loop-split-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                out-blocks
-                _
-                _
-                _
-                _)
-              out-blocks])]
-        [rewritten-vars : i64
-          (match loop-split-rewrite
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                out-vars
-                _
-                _)
-              out-vars])]
-        ;; Pipeline order: caller-save -> loop-split -> REMAT. The remat output
-        ;; (`remat-*`) is the final pipeline blocks/vars/plan.
-        [remat-func : compiler_ir_types.CompilerIrFunction
-          (compiler_ir_types.CompilerIrFunction.Function
-            name
-            (compiler-backend-global-shared-view params)
-            (compiler-backend-global-shared-view ret-ty)
-            rewritten-vars
-            (compiler-backend-global-shared-view rewritten-blocks)
-            (compiler-backend-global-shared-view function-abi))]
-        [remat-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (if call-save-enabled
-            (compiler_regalloc.compiler-reg-remat-rewrite-blocks
-              type-segment-bases
-              (compiler-backend-global-shared-view remat-func)
-              (compiler-backend-global-shared-view rewritten-blocks)
-              rewritten-vars
-              (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-                remat-func
-                (compiler-backend-state-metrics program-index.backend-state))
-              (compiler-backend-global-shared-view rewrite-reg-plan))
-            (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-              (compiler-backend-global-shared-view rewritten-blocks)
-              rewritten-vars
-              rewritten-vars
-              (compiler_regalloc.compiler-reg-assignment-table-empty)
-              (compiler_regalloc.compiler-reg-var-types-empty)))]
-        [remat-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if call-save-enabled
-            (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
-              rewrite-reg-plan
-              (compiler-backend-global-shared-view remat-rewrite))
-            rewrite-reg-plan)]
-        [remat-blocks : compiler_ir_types.CompilerIrBlockList
-          (match (compiler-backend-global-shared-view remat-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                out-blocks
-                _
-                _
-                _
-                _)
-              out-blocks])]
-        [remat-vars : i64
-          (match remat-rewrite
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                out-vars
-                _
-                _)
-              out-vars])]
-        ;; R5: the remat rewrite is the only stage that edits the `Gep`
-        ;; sequence after the GAP9 displacement table was built, so re-thread
-        ;; the table onto its output before emission consumes the ordinals.
-        [_gep-fold-resync : unit
-          (if call-save-enabled
-            (compiler-backend-gep-fold-resync!
-              function-state
-              type-segment-bases
-              rewritten-blocks
-              (compiler-backend-global-shared-view remat-blocks)
-              rewritten-vars)
-            unit)]
         ;; Scratch pseudos are no longer published as ordinary assignments.
         ;; Keep storage coloring on the ordinary plan, then build the scratch
         ;; plan below from the FINAL remapped IR and assignment table. Planning
@@ -76524,11 +76080,11 @@
         ;; no modeled slot (#5808).
         [scratch-vars : i64
           (compiler_regalloc.compiler-reg-plan-var-count
-            (compiler-backend-global-shared-view remat-reg-plan)
-            remat-vars)]
+            (compiler-backend-global-shared-view rewritten-reg-plan)
+            rewritten-vars)]
         [plan-types : compiler_regalloc.CompilerRegVarTypes
           (compiler_regalloc.compiler-reg-plan-types
-            (compiler-backend-global-shared-view remat-reg-plan))]
+            (compiler-backend-global-shared-view rewritten-reg-plan))]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
         ;; costly to repeat).
@@ -76540,7 +76096,7 @@
               (compiler-backend-global-shared-view params)
               (compiler-backend-global-shared-view ret-ty)
               scratch-vars
-              (compiler-backend-global-shared-view remat-blocks)
+              (compiler-backend-global-shared-view rewritten-blocks)
               (compiler-backend-global-shared-view function-abi))
             plan-types)]
         [has-group-vars : bool
@@ -76551,9 +76107,9 @@
         [fusion-pinned-vars : compiler_liveness.CompilerLiveI64Set
           (compiler-backend-gep-fusion-pinned-vars
             scratch-vars
-            (compiler-backend-global-shared-view remat-blocks)
+            (compiler-backend-global-shared-view rewritten-blocks)
             (compiler_regalloc.compiler-reg-plan-assignments
-              (compiler-backend-global-shared-view remat-reg-plan))
+              (compiler-backend-global-shared-view rewritten-reg-plan))
             (and
               (compiler-backend-mode-scalar? mode)
               (not scalar-registers-enabled)))]
@@ -76592,12 +76148,12 @@
             compiler_regalloc.CompilerRegColoring.None
             (compiler_regalloc.compiler-reg-color-stack-slots-with-stack-only
               type-segment-bases
-              (compiler-backend-global-shared-view remat-reg-plan)
+              (compiler-backend-global-shared-view rewritten-reg-plan)
               (compiler-backend-global-shared-view fn-group-vars)
               (compiler-backend-global-shared-view params)
-              (compiler-backend-global-shared-view remat-blocks)
+              (compiler-backend-global-shared-view rewritten-blocks)
               scratch-vars
-              remat-vars
+              rewritten-vars
               coloring-pinned-vars
               (and
                 (compiler-backend-mode-scalar? mode)
@@ -76619,15 +76175,15 @@
           (match (compiler-backend-global-shared-view coloring)
             [(compiler_regalloc.CompilerRegColoring.None)
               (compiler_regalloc.compiler-reg-plan-assignments
-                (compiler-backend-global-shared-view remat-reg-plan))]
+                (compiler-backend-global-shared-view rewritten-reg-plan))]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
                 remap
                 scratch-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
-                  (compiler-backend-global-shared-view remat-reg-plan)))])]
+                  (compiler-backend-global-shared-view rewritten-reg-plan)))])]
         ;; Install the final authoritative table for direct operand-home lookup
-        ;; in large functions. Caller-save / loop-split / remat /
+        ;; in large functions. Caller-save and
         ;; slot-coloring re-plans are all folded into this table, so no emission
         ;; view can go stale. Small functions read the same table directly from
         ;; their emission context and avoid the state-wrapper setup.
@@ -76671,17 +76227,21 @@
           ;; entire function and force unrelated sites into emergency saves.
           (match (compiler-backend-global-shared-view coloring)
             [(compiler_regalloc.CompilerRegColoring.None)
-              (compiler_regalloc.compiler-reg-plan-assignments remat-reg-plan)]
+              (compiler_regalloc.compiler-reg-plan-assignments
+                rewritten-reg-plan)]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
                 remap
                 scratch-vars
-                (compiler_regalloc.compiler-reg-plan-assignments remat-reg-plan))])]
+                (compiler_regalloc.compiler-reg-plan-assignments
+                  rewritten-reg-plan))])]
         [colored-blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view coloring)
-            [(compiler_regalloc.CompilerRegColoring.None) remat-blocks]
+            [(compiler_regalloc.CompilerRegColoring.None) rewritten-blocks]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
-              (compiler_regalloc.compiler-reg-remap-blocks remap remat-blocks)])]
+              (compiler_regalloc.compiler-reg-remap-blocks
+                remap
+                rewritten-blocks)])]
         ;; #block-placement: the last word on layout. Every view below --
         ;; scavenge intervals, const-hoist, #jump-forward, phi targets, the
         ;; emission walk itself -- is derived from THIS list, so choosing the
@@ -76712,7 +76272,7 @@
             ;; by the emitted IR. When stack coloring is unavailable, retain
             ;; the real rewritten var count so scratch planning cannot grow
             ;; the frame merely by numbering temporary register intervals.
-            [(compiler_regalloc.CompilerRegColoring.None) remat-vars]
+            [(compiler_regalloc.CompilerRegColoring.None) rewritten-vars]
             [(compiler_regalloc.CompilerRegColoring.Remap _ slots) slots])]
         [scavenge-selection
           : compiler_regalloc.CompilerRegIntervalSelection

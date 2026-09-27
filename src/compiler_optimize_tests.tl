@@ -42754,17 +42754,17 @@
 ;; --- shape probes -------------------------------------------------------------
 (define (opt-flag-exit-test-last-instr
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [label : String]) : opt.OptFlagExitMaybeInstr
+  [label : String]) : opt.OptMaybeInstr
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
-    [(opt.OptMaybeBlock.No) (opt.OptFlagExitMaybeInstr.No)]
+    [(opt.OptMaybeBlock.No) (opt.OptMaybeInstr.No)]
     [(opt.OptMaybeBlock.Some block)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (let
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
             (if (= count 0)
-              (opt.OptFlagExitMaybeInstr.No)
-              (opt.OptFlagExitMaybeInstr.Some
+              (opt.OptMaybeInstr.No)
+              (opt.OptMaybeInstr.Some
                 (ir.compiler-ir-instr-seq-ref instrs (- count 1)))))])]))
 
 ;; The label a block's terminating Jump targets; -1 when it does not end in one.
@@ -42772,8 +42772,8 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : i64
   (match (opt-flag-exit-test-last-instr blocks label)
-    [(opt.OptFlagExitMaybeInstr.No) (- 0 1)]
-    [(opt.OptFlagExitMaybeInstr.Some instr)
+    [(opt.OptMaybeInstr.No) (- 0 1)]
+    [(opt.OptMaybeInstr.Some instr)
       (match instr
         [(ir.CompilerIrInstr.Jump target) target]
         [_ (- 0 1)])]))
@@ -43159,8 +43159,8 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : ir.CompilerIrValue
   (match (opt-flag-exit-test-last-instr blocks label)
-    [(opt.OptFlagExitMaybeInstr.No) ir.CompilerIrValue.Unit]
-    [(opt.OptFlagExitMaybeInstr.Some instr)
+    [(opt.OptMaybeInstr.No) ir.CompilerIrValue.Unit]
+    [(opt.OptMaybeInstr.Some instr)
       (match instr
         [(ir.CompilerIrInstr.Branch cond _ _) cond]
         [_ ir.CompilerIrValue.Unit])]))
@@ -43609,8 +43609,8 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : i64
   (match (opt-flag-exit-test-last-instr blocks label)
-    [(opt.OptFlagExitMaybeInstr.No) (- 0 1)]
-    [(opt.OptFlagExitMaybeInstr.Some instr)
+    [(opt.OptMaybeInstr.No) (- 0 1)]
+    [(opt.OptMaybeInstr.Some instr)
       (match instr
         [(ir.CompilerIrInstr.Branch _ _ false-label) false-label]
         [_ (- 0 1)])]))
@@ -43619,8 +43619,8 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : i64
   (match (opt-flag-exit-test-last-instr blocks label)
-    [(opt.OptFlagExitMaybeInstr.No) (- 0 1)]
-    [(opt.OptFlagExitMaybeInstr.Some instr)
+    [(opt.OptMaybeInstr.No) (- 0 1)]
+    [(opt.OptMaybeInstr.Some instr)
       (match instr
         [(ir.CompilerIrInstr.Branch _ true-label _) true-label]
         [_ (- 0 1)])]))

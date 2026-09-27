@@ -12037,6 +12037,41 @@
     [(ir.CompilerIrInstr.CallIndirectC dst _ _ _) (option_i64.Some dst)]
     [_ (option_i64.None)]))
 
+(defenum OptMaybeInstr
+  (No)
+  (Some ir.CompilerIrInstr))
+
+;; The instruction defining `var` anywhere in `blocks`: the first one, which in
+;; SSA form is the only one.
+(define (opt-find-def-in-seq
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : OptMaybeInstr
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (OptMaybeInstr.No)
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        [(option_i64.Some dst)
+          (if (= dst var)
+            (OptMaybeInstr.Some instr)
+            (opt-find-def-in-seq instrs (+ index 1) var))]
+        [(option_i64.None) (opt-find-def-in-seq instrs (+ index 1) var)]))))
+
+(define (opt-find-def [blocks : (& blocks ir.CompilerIrBlockList)] [var : i64]) : OptMaybeInstr
+  (match (owned_view.compiler-owned-reference-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) (OptMaybeInstr.No)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (match (opt-find-def-in-seq instrs 0 var)
+            [(OptMaybeInstr.Some instr) (OptMaybeInstr.Some instr)]
+            [(OptMaybeInstr.No) (opt-find-def (deref rest) var)])])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [blocks (ir.compiler-ir-block-seq-to-list seq)]
+        (opt-find-def blocks var))]))
+
 (define (opt-instr-def-position [instr : ir.CompilerIrInstr] [pos : i64]) : i64
   (match instr
     [(ir.CompilerIrInstr.Phi _ _ _) 0]
@@ -32072,10 +32107,6 @@
                 100
                 "flag-exit oldest target stays last"))])))))
 
-(defenum OptFlagExitMaybeInstr
-  (No)
-  (Some ir.CompilerIrInstr))
-
 ;; gate label, the arm inside the loop, the arm outside it, and the dst of the
 ;; helper (`not f'`, `eq f' <bool>`) the gate block may hold between its phis
 ;; and its branch -- -1 when the branch tests a closure var directly.
@@ -32477,24 +32508,24 @@
 (define (opt-flag-exit-instr-at-scan
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
-  [dst : i64]) : OptFlagExitMaybeInstr
+  [dst : i64]) : OptMaybeInstr
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptFlagExitMaybeInstr.No)
+    (OptMaybeInstr.No)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some found)
           (if (= found dst)
-            (OptFlagExitMaybeInstr.Some instr)
+            (OptMaybeInstr.Some instr)
             (opt-flag-exit-instr-at-scan instrs (+ index 1) dst))]
         [(option_i64.None) (opt-flag-exit-instr-at-scan instrs (+ index 1) dst)]))))
 
 (define (opt-flag-exit-instr-at
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : i64]
-  [dst : i64]) : OptFlagExitMaybeInstr
+  [dst : i64]) : OptMaybeInstr
   (match (opt-cfg-find-block blocks label)
-    [(OptMaybeBlock.No) (OptFlagExitMaybeInstr.No)]
+    [(OptMaybeBlock.No) (OptMaybeInstr.No)]
     [(OptMaybeBlock.Some block)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
@@ -32580,8 +32611,8 @@
             (begin
               (set! (array-ref web var) 3)
               (match (opt-flag-exit-instr-at blocks label var)
-                [(OptFlagExitMaybeInstr.No) false]
-                [(OptFlagExitMaybeInstr.Some instr)
+                [(OptMaybeInstr.No) false]
+                [(OptMaybeInstr.Some instr)
                   (match instr
                     [(ir.CompilerIrInstr.Phi _ inputs _)
                       (opt-flag-exit-web-inputs?
@@ -32755,11 +32786,11 @@
       (let
         [label : i64 (array-ref def-label var)]
         (match (opt-flag-exit-instr-at blocks label var)
-          [(OptFlagExitMaybeInstr.No)
+          [(OptMaybeInstr.No)
             (begin
               (set! (array-ref bad 0) 1)
               acc)]
-          [(OptFlagExitMaybeInstr.Some instr)
+          [(OptMaybeInstr.Some instr)
             (begin
               (set! (array-ref closure var) 1)
               (match instr
@@ -33048,9 +33079,9 @@
           (if (or (< label 0) (opt-loop-body-label-member? body index label))
             (owned_view.compiler-owned-reference-shared-view value)
             (match (opt-flag-exit-instr-at blocks label (deref var))
-              [(OptFlagExitMaybeInstr.No)
+              [(OptMaybeInstr.No)
                 (owned_view.compiler-owned-reference-shared-view value)]
-              [(OptFlagExitMaybeInstr.Some instr)
+              [(OptMaybeInstr.Some instr)
                 (match instr
                   [(ir.CompilerIrInstr.Mov _ src _)
                     (if (opt-flag-exit-decidable-value? src)
@@ -33272,8 +33303,8 @@
           (> (array-ref uses dst) 1))
           (OptFlagExitGateCond.No)
           (match (opt-flag-exit-instr-at-scan instrs 0 dst)
-            [(OptFlagExitMaybeInstr.No) (OptFlagExitGateCond.No)]
-            [(OptFlagExitMaybeInstr.Some instr)
+            [(OptMaybeInstr.No) (OptFlagExitGateCond.No)]
+            [(OptMaybeInstr.Some instr)
               (opt-flag-exit-gate-cond-of
                 blocks
                 def-label
@@ -34624,8 +34655,8 @@
                 (ir.CompilerIrMaybeValue.Some value)
                 (ir.CompilerIrMaybeValue.No))
               (match (opt-flag-exit-instr-at blocks def var)
-                [(OptFlagExitMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
-                [(OptFlagExitMaybeInstr.Some instr)
+                [(OptMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
+                [(OptMaybeInstr.Some instr)
                   (match instr
                     [(ir.CompilerIrInstr.Phi _ inputs _)
                       (match (opt-thread-phi-input-value
@@ -34761,8 +34792,8 @@
     (if (not (= (array-ref mint var) 1))
       (opt-flag-exit-mint-seeds blocks def-label mint (+ var 1) next-var acc)
       (match (opt-flag-exit-instr-at blocks (array-ref def-label var) var)
-        [(OptFlagExitMaybeInstr.No) (OptFlagExitMaybeMints.No)]
-        [(OptFlagExitMaybeInstr.Some instr)
+        [(OptMaybeInstr.No) (OptFlagExitMaybeMints.No)]
+        [(OptMaybeInstr.Some instr)
           (match (opt-bce-mb-def-type instr)
             [(OptMaybeAstType.No) (OptFlagExitMaybeMints.No)]
             [(OptMaybeAstType.Some ty)
@@ -36998,8 +37029,8 @@
         (>= label 0)
         (opt-loop-body-label-member? body index label)
         (match (opt-flag-exit-instr-at blocks label var)
-          [(OptFlagExitMaybeInstr.No) false]
-          [(OptFlagExitMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) false]
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.Phi _ _ _) true]
               [(ir.CompilerIrInstr.Mov _ src _)
@@ -37228,10 +37259,7 @@
 ;; pair -- so retiring it before them would silently remove their input.
 ;; Running here leaves both untouched and hands the retired form to
 ;; affine-fold/GVN and the backend.
-(defenum OptLftrMaybeInstr
-  (No)
-  (Some ir.CompilerIrInstr))
-
+;;
 ;; Counter phi var, `i + 1` destination var, the phi's latch-input var (equal
 ;; to the increment when SSA renaming left no copy hop), and the seed: a small
 ;; literal, or (LFTR-SUM) the preheader var the phi starts from -- invariant by
@@ -37320,38 +37348,6 @@
   (match plan
     [(OptLftrPlan.Plan _ _ _ _ _ _ frame) frame]))
 
-(define (opt-lftr-def-instr-seq-from
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [var : i64]) : OptLftrMaybeInstr
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptLftrMaybeInstr.No)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
-        [(option_i64.Some dst)
-          (if (= dst var)
-            (OptLftrMaybeInstr.Some instr)
-            (opt-lftr-def-instr-seq-from instrs (+ index 1) var))]
-        [(option_i64.None) (opt-lftr-def-instr-seq-from instrs (+ index 1) var)]))))
-
-(define (opt-lftr-def-instr-blocks
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [var : i64]) : OptLftrMaybeInstr
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil) (OptLftrMaybeInstr.No)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (match (opt-lftr-def-instr-seq-from instrs 0 var)
-            [(OptLftrMaybeInstr.Some instr) (OptLftrMaybeInstr.Some instr)]
-            [(OptLftrMaybeInstr.No)
-              (opt-lftr-def-instr-blocks (deref rest) var)])])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [blocks (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-lftr-def-instr-blocks blocks var))]))
-
 ;; The index of `var`'s definition inside one block, or -1 when it is not
 ;; defined there.
 (define (opt-lftr-def-index-seq-from
@@ -37417,9 +37413,9 @@
   [phi-var : i64]
   [seed : ir.CompilerIrValue]
   [back : i64]) : OptLftrMaybeCounter
-  (match (opt-lftr-def-instr-blocks body-blocks back)
-    [(OptLftrMaybeInstr.No) (OptLftrMaybeCounter.No)]
-    [(OptLftrMaybeInstr.Some instr)
+  (match (opt-find-def body-blocks back)
+    [(OptMaybeInstr.No) (OptLftrMaybeCounter.No)]
+    [(OptMaybeInstr.Some instr)
       (if (opt-lftr-unit-increment? instr phi-var)
         (OptLftrMaybeCounter.Some
           (OptLftrCounter.Counter phi-var back back seed))
@@ -37427,9 +37423,9 @@
           [source : i64 (opt-lftr-mov-source instr)]
           (if (< source 0)
             (OptLftrMaybeCounter.No)
-            (match (opt-lftr-def-instr-blocks body-blocks source)
-              [(OptLftrMaybeInstr.No) (OptLftrMaybeCounter.No)]
-              [(OptLftrMaybeInstr.Some source-instr)
+            (match (opt-find-def body-blocks source)
+              [(OptMaybeInstr.No) (OptLftrMaybeCounter.No)]
+              [(OptMaybeInstr.Some source-instr)
                 (if (opt-lftr-unit-increment? source-instr phi-var)
                   (OptLftrMaybeCounter.Some
                     (OptLftrCounter.Counter phi-var source back seed))
@@ -50416,10 +50412,6 @@
 ;; sequence for changes is allocation-free, so unchanged blocks keep their
 ;; original instruction arrays instead of paying for a cons-list rebuild and
 ;; an Array->List->Array representation round trip per GVN call.
-(defenum OptMaybeInstr
-  (No)
-  (Some ir.CompilerIrInstr))
-
 (define (opt-gvn-rewrite-instr-maybe
   [type-segment-bases : i64]
   [table : (& table OptGvnMap)]
@@ -62295,8 +62287,8 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (match (opt-bce-mb-find-def-instrs instrs 0 var)
-            [(OptBceMbMaybeInstr.Some _) label]
-            [(OptBceMbMaybeInstr.No) (opt-unroll-def-block (deref rest) var)])])]
+            [(OptMaybeInstr.Some _) label]
+            [(OptMaybeInstr.No) (opt-unroll-def-block (deref rest) var)])])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [blocks (ir.compiler-ir-block-seq-to-list seq)]
@@ -62316,8 +62308,8 @@
     (match limit
       [(ir.CompilerIrValue.Var raw)
         (match (opt-bce-mb-find-def blocks (opt-bce-mb-resolve blocks raw 16))
-          [(OptBceMbMaybeInstr.No) false]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) false]
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                 (and
@@ -62348,8 +62340,8 @@
   (match cond-value
     [(ir.CompilerIrValue.Var var)
       (match (opt-bce-mb-find-def blocks var)
-        [(OptBceMbMaybeInstr.No) false]
-        [(OptBceMbMaybeInstr.Some instr)
+        [(OptMaybeInstr.No) false]
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ fact-op fact-lhs fact-rhs fact-ty)
               (if (not
@@ -62497,8 +62489,8 @@
       (let
         [id : i64 (opt-bce-mb-resolve blocks (deref raw) 16)]
         (match (opt-bce-mb-find-def blocks id)
-          [(OptBceMbMaybeInstr.No) false]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) false]
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.Phi _ inputs _)
                 (let
@@ -62784,8 +62776,8 @@
       (if (< fuel 1)
         (OptUnrollMaybeI64.No)
         (match (opt-unroll-resolved-def blocks (deref id))
-          [(OptBceMbMaybeInstr.No) (OptUnrollMaybeI64.No)]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) (OptUnrollMaybeI64.No)]
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.Phi _ inputs _)
                 (opt-unroll-phi-literal-max
@@ -63635,7 +63627,7 @@
 ;; that reads it, and every shape rule below would miss it otherwise.
 (define (opt-unroll-resolved-def
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [var : i64]) : OptBceMbMaybeInstr
+  [var : i64]) : OptMaybeInstr
   (opt-bce-mb-find-def blocks (opt-bce-mb-resolve blocks var 16)))
 
 (define (opt-unroll-resolved-eq?
@@ -63663,8 +63655,8 @@
   (match address
     [(ir.CompilerIrValue.Var gep-var)
       (match (opt-unroll-resolved-def blocks gep-var)
-        [(OptBceMbMaybeInstr.No) false]
-        [(OptBceMbMaybeInstr.Some gep-instr)
+        [(OptMaybeInstr.No) false]
+        [(OptMaybeInstr.Some gep-instr)
           (match gep-instr
             [(ir.CompilerIrInstr.Gep _ base offset gep-ty)
               (match base
@@ -63744,8 +63736,8 @@
       (if (<= fuel 0)
         false
         (match (opt-unroll-resolved-def blocks (deref var))
-          [(OptBceMbMaybeInstr.No) false]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) false]
+          [(OptMaybeInstr.Some instr)
             (opt-unroll-nonneg-def?
               type-segment-bases
               header
@@ -63803,8 +63795,8 @@
   [bound : ir.CompilerIrValue]
   [factor : i64]) : bool
   (match (opt-unroll-resolved-def blocks quotient-var)
-    [(OptBceMbMaybeInstr.No) false]
-    [(OptBceMbMaybeInstr.Some instr)
+    [(OptMaybeInstr.No) false]
+    [(OptMaybeInstr.Some instr)
       (match instr
         [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
           (and
@@ -63853,8 +63845,8 @@
   (match seed
     [(ir.CompilerIrValue.Var var)
       (match (opt-unroll-resolved-def blocks var)
-        [(OptBceMbMaybeInstr.No) false]
-        [(OptBceMbMaybeInstr.Some instr)
+        [(OptMaybeInstr.No) false]
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
               (cond
@@ -72105,9 +72097,9 @@
       (if (<= fuel 0)
         (owned_view.compiler-owned-reference-shared-view value)
         (match (opt-bce-mb-find-def blocks (deref var))
-          [(OptBceMbMaybeInstr.No)
+          [(OptMaybeInstr.No)
             (owned_view.compiler-owned-reference-shared-view value)]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.Mov _ src ty)
                 (if (opt-affine-64bit-type? ty)
@@ -73350,8 +73342,8 @@
               (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 sum))])]
         [(ir.CompilerIrValue.Var var)
           (match (opt-bce-mb-find-def blocks var)
-            [(OptBceMbMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
-            [(OptBceMbMaybeInstr.Some instr)
+            [(OptMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
+            [(OptMaybeInstr.Some instr)
               (match instr
                 [(ir.CompilerIrInstr.Mov _ src ty)
                   (if (opt-affine-64bit-type? ty)
@@ -77103,10 +77095,7 @@
 ;; (opt-bce-mb-nest-instr-max / -nest-block-max) cap the duplicated region,
 ;; and the scan offers flat loops before nests so an inner loop that can
 ;; version on its own always gets the slot first.
-(defenum OptBceMbMaybeInstr
-  (No)
-  (Some ir.CompilerIrInstr))
-
+;;
 ;; cond-var, exit-label of a latch branch.
 (defenum OptBceMbMaybeLatch
   (No)
@@ -77414,9 +77403,9 @@
 (define (opt-bce-mb-find-def-instrs
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
-  [var : i64]) : OptBceMbMaybeInstr
+  [var : i64]) : OptMaybeInstr
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptBceMbMaybeInstr.No)
+    (OptMaybeInstr.No)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (if (=
@@ -77424,20 +77413,20 @@
           (compiler-opt-global-shared-view instr)
           (- 0 1))
         var)
-        (OptBceMbMaybeInstr.Some instr)
+        (OptMaybeInstr.Some instr)
         (opt-bce-mb-find-def-instrs instrs (+ index 1) var)))))
 
 (define (opt-bce-mb-find-def
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [var : i64]) : OptBceMbMaybeInstr
+  [var : i64]) : OptMaybeInstr
   (match (owned_view.compiler-owned-reference-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil) (OptBceMbMaybeInstr.No)]
+    [(ir.CompilerIrBlockList.Nil) (OptMaybeInstr.No)]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (match (opt-bce-mb-find-def-instrs instrs 0 var)
-            [(OptBceMbMaybeInstr.Some instr) (OptBceMbMaybeInstr.Some instr)]
-            [(OptBceMbMaybeInstr.No) (opt-bce-mb-find-def (deref rest) var)])])]
+            [(OptMaybeInstr.Some instr) (OptMaybeInstr.Some instr)]
+            [(OptMaybeInstr.No) (opt-bce-mb-find-def (deref rest) var)])])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [blocks (ir.compiler-ir-block-seq-to-list seq)]
@@ -77452,8 +77441,8 @@
   (if (<= fuel 0)
     var
     (match (opt-bce-mb-find-def blocks var)
-      [(OptBceMbMaybeInstr.No) var]
-      [(OptBceMbMaybeInstr.Some instr)
+      [(OptMaybeInstr.No) var]
+      [(OptMaybeInstr.Some instr)
         (match instr
           [(ir.CompilerIrInstr.Mov _ src _)
             (match src
@@ -77484,8 +77473,8 @@
           (if (<= fuel 0)
             (OptBceCounterAffine.No)
             (match (opt-bce-mb-find-def body-blocks id)
-              [(OptBceMbMaybeInstr.No) (OptBceCounterAffine.No)]
-              [(OptBceMbMaybeInstr.Some instr)
+              [(OptMaybeInstr.No) (OptBceCounterAffine.No)]
+              [(OptMaybeInstr.Some instr)
                 (match instr
                   [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                     (if (opt-affine-64bit-type? ty)
@@ -78010,8 +77999,8 @@
   (let
     [inext : i64 (opt-bce-mb-resolve body-blocks back-raw 16)]
     (match (opt-bce-mb-find-def body-blocks inext)
-      [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
-      [(OptBceMbMaybeInstr.Some instr)
+      [(OptMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+      [(OptMaybeInstr.Some instr)
         (match instr
           [(ir.CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
             (let
@@ -78055,8 +78044,8 @@
   [bottom? : bool]
   [offset : ir.CompilerIrValue]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-find-def body-blocks core)
-    [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
-    [(OptBceMbMaybeInstr.Some instr)
+    [(OptMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+    [(OptMaybeInstr.Some instr)
       (match instr
         [(ir.CompilerIrInstr.Phi _ inputs pty)
           (match pty
@@ -78246,8 +78235,8 @@
   (if descending?
     (OptBceMbMaybeCounter.No)
     (match (opt-bce-mb-find-def body-blocks core)
-      [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
-      [(OptBceMbMaybeInstr.Some instr)
+      [(OptMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+      [(OptMaybeInstr.Some instr)
         (match instr
           [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
             (if (not
@@ -78337,8 +78326,8 @@
   [cond-var : i64]
   [bottom? : bool]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-find-def body-blocks cond-var)
-    [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
-    [(OptBceMbMaybeInstr.Some instr)
+    [(OptMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+    [(OptMaybeInstr.Some instr)
       (match instr
         [(ir.CompilerIrInstr.BinOp _ cmp-op cmp-lhs cmp-rhs _)
           (match (opt-bce-mb-counter-direction cmp-op)
@@ -79662,8 +79651,8 @@
           (OptCopyEnv.Cons var (ir.CompilerIrValue.Var existing) (box env))
           phis)
         (match (opt-bce-mb-find-def all-blocks var)
-          [(OptBceMbMaybeInstr.No) (OptBceMbMaybeWirePhis.No)]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) (OptBceMbMaybeWirePhis.No)]
+          [(OptMaybeInstr.Some instr)
             (match (opt-bce-mb-def-type instr)
               [(OptMaybeAstType.No) (OptBceMbMaybeWirePhis.No)]
               [(OptMaybeAstType.Some ty)
@@ -80982,8 +80971,8 @@
           [(<= fuel 0) false]
           [else
             (match (opt-bce-mb-find-def body-blocks id)
-              [(OptBceMbMaybeInstr.No) false]
-              [(OptBceMbMaybeInstr.Some instr)
+              [(OptMaybeInstr.No) false]
+              [(OptMaybeInstr.Some instr)
                 (match instr
                   [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                     (match op
@@ -81063,8 +81052,8 @@
                 (let
                   [back-var : i64 (opt-bce-mb-resolve body-blocks back-raw 16)]
                   (match (opt-bce-mb-find-def body-blocks back-var)
-                    [(OptBceMbMaybeInstr.No) (OptBceDerivedInduction.No)]
-                    [(OptBceMbMaybeInstr.Some instr)
+                    [(OptMaybeInstr.No) (OptBceDerivedInduction.No)]
+                    [(OptMaybeInstr.Some instr)
                       (match instr
                         [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                           (match ty
@@ -81330,8 +81319,8 @@
     [(OptBceVersionStridedCore.No) (OptBceVarBaseStrided.No)]
     [(OptBceVersionStridedCore.Some core total)
       (match (opt-bce-mb-find-def body-blocks core)
-        [(OptBceMbMaybeInstr.No) (OptBceVarBaseStrided.No)]
-        [(OptBceMbMaybeInstr.Some instr)
+        [(OptMaybeInstr.No) (OptBceVarBaseStrided.No)]
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.Phi _ inputs pty)
               (match pty
@@ -81478,8 +81467,8 @@
         (if (<= fuel 0)
           (OptBceVersionStridedCore.Some id k)
           (match (opt-bce-mb-find-def body-blocks id)
-            [(OptBceMbMaybeInstr.No) (OptBceVersionStridedCore.Some id k)]
-            [(OptBceMbMaybeInstr.Some instr)
+            [(OptMaybeInstr.No) (OptBceVersionStridedCore.Some id k)]
+            [(OptMaybeInstr.Some instr)
               (match instr
                 [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                   (if (not (opt-affine-64bit-type? ty))
@@ -81737,8 +81726,8 @@
   (if (not (opt-used-contains defs base-id))
     (OptBceMbMaybeBase.Some base-id hoists acc)
     (match (opt-bce-mb-find-def all-blocks base-id)
-      [(OptBceMbMaybeInstr.No) (OptBceMbMaybeBase.No)]
-      [(OptBceMbMaybeInstr.Some base-instr)
+      [(OptMaybeInstr.No) (OptBceMbMaybeBase.No)]
+      [(OptMaybeInstr.Some base-instr)
         (match base-instr
           [(ir.CompilerIrInstr.Load _ handle-src handle-ty)
             (match handle-src
@@ -81746,8 +81735,8 @@
                 (match (opt-bce-mb-find-def
                   all-blocks
                   (opt-bce-mb-resolve body-blocks handle-raw 16))
-                  [(OptBceMbMaybeInstr.No) (OptBceMbMaybeBase.No)]
-                  [(OptBceMbMaybeInstr.Some cell-instr)
+                  [(OptMaybeInstr.No) (OptBceMbMaybeBase.No)]
+                  [(OptMaybeInstr.Some cell-instr)
                     (match cell-instr
                       [(ir.CompilerIrInstr.Gep _ cell-base cell-off cell-ty)
                         (match (compiler-opt-global-shared-view cell-base)
@@ -81847,8 +81836,8 @@
                 (let
                   [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
                   (match (opt-bce-mb-find-def all-blocks id)
-                    [(OptBceMbMaybeInstr.No) (OptBceMbMaybeLength.No)]
-                    [(OptBceMbMaybeInstr.Some instr)
+                    [(OptMaybeInstr.No) (OptBceMbMaybeLength.No)]
+                    [(OptMaybeInstr.Some instr)
                       (match instr
                         [(ir.CompilerIrInstr.Load _ src load-ty)
                           (match (compiler-opt-global-shared-view load-ty)
@@ -81864,9 +81853,9 @@
                                     (match (opt-bce-mb-find-def
                                       all-blocks
                                       src-id)
-                                      [(OptBceMbMaybeInstr.No)
+                                      [(OptMaybeInstr.No)
                                         (OptBceMbMaybeLength.No)]
-                                      [(OptBceMbMaybeInstr.Some gep-instr)
+                                      [(OptMaybeInstr.Some gep-instr)
                                         (match gep-instr
                                           [(ir.CompilerIrInstr.Gep
                                               _
@@ -82093,8 +82082,8 @@
   [defs : (& defs opt_i64_i64_map.Map)]
   [id : i64]) : ir.CompilerIrMaybeValue
   (match (opt-bce-mb-find-def body-blocks id)
-    [(OptBceMbMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
-    [(OptBceMbMaybeInstr.Some instr)
+    [(OptMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
+    [(OptMaybeInstr.Some instr)
       (match instr
         [(ir.CompilerIrInstr.Phi _ inputs pty)
           (if (not (opt-affine-64bit-type? pty))
@@ -82259,7 +82248,7 @@
           (match (opt-bce-mb-find-def
             body-blocks
             (opt-bce-mb-resolve body-blocks raw 16))
-            [(OptBceMbMaybeInstr.Some instr)
+            [(OptMaybeInstr.Some instr)
               (match instr
                 [(ir.CompilerIrInstr.BinOp _ op op-lhs op-rhs ty)
                   (if (not (opt-affine-64bit-type? ty))
@@ -82273,7 +82262,7 @@
                       op-lhs
                       op-rhs))]
                 [_ (ir.CompilerIrMaybeValue.No)])]
-            [(OptBceMbMaybeInstr.No) (ir.CompilerIrMaybeValue.No)])]
+            [(OptMaybeInstr.No) (ir.CompilerIrMaybeValue.No)])]
         [_ (ir.CompilerIrMaybeValue.No)])]))
 
 ;; An invariant value that is ITSELF masked by an invariant mask contributes the
@@ -82294,8 +82283,8 @@
   (match (compiler-opt-global-shared-view value)
     [(ir.CompilerIrValue.Var var)
       (match (opt-bce-mb-find-def all-blocks var)
-        [(OptBceMbMaybeInstr.No) value]
-        [(OptBceMbMaybeInstr.Some instr)
+        [(OptMaybeInstr.No) value]
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
               (if (not
@@ -82368,8 +82357,8 @@
       (let
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
         (match (opt-bce-mb-find-def body-blocks id)
-          [(OptBceMbMaybeInstr.No) (OptBceMaskSet.No)]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) (OptBceMaskSet.No)]
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                 (if (not
@@ -82558,8 +82547,8 @@
               acc)]
           [else
             (match (opt-bce-mb-find-def body-blocks id)
-              [(OptBceMbMaybeInstr.No) (OptBceVersionGuardAcc.No)]
-              [(OptBceMbMaybeInstr.Some instr)
+              [(OptMaybeInstr.No) (OptBceVersionGuardAcc.No)]
+              [(OptMaybeInstr.Some instr)
                 (match instr
                   [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
                     (match op
@@ -82603,9 +82592,9 @@
                                 (OptBceVersionGuardAcc.No)]
                               [(OptBceVersionStridedCore.Some core k0)
                                 (match (opt-bce-mb-find-def body-blocks core)
-                                  [(OptBceMbMaybeInstr.No)
+                                  [(OptMaybeInstr.No)
                                     (OptBceVersionGuardAcc.No)]
-                                  [(OptBceMbMaybeInstr.Some core-instr)
+                                  [(OptMaybeInstr.Some core-instr)
                                     (match core-instr
                                       [(ir.CompilerIrInstr.BinOp
                                           _
@@ -83186,13 +83175,13 @@
   (match value
     [(ir.CompilerIrValue.Var var)
       (match (opt-bce-mb-find-def all-blocks (deref var))
-        [(OptBceMbMaybeInstr.Some instr)
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.Load _ src _)
               (match src
                 [(ir.CompilerIrValue.Var address)
                   (match (opt-bce-mb-find-def all-blocks address)
-                    [(OptBceMbMaybeInstr.Some gep)
+                    [(OptMaybeInstr.Some gep)
                       (match gep
                         [(ir.CompilerIrInstr.Gep _ base offset ty)
                           (if (if (= word 0)
@@ -83204,10 +83193,10 @@
                             (OptLenEqBase.Some base)
                             (OptLenEqBase.No))]
                         [_ (OptLenEqBase.No)])]
-                    [(OptBceMbMaybeInstr.No) (OptLenEqBase.No)])]
+                    [(OptMaybeInstr.No) (OptLenEqBase.No)])]
                 [_ (OptLenEqBase.No)])]
             [_ (OptLenEqBase.No)])]
-        [(OptBceMbMaybeInstr.No) (OptLenEqBase.No)])]
+        [(OptMaybeInstr.No) (OptLenEqBase.No)])]
     [_ (OptLenEqBase.No)]))
 
 (define (opt-bce-mb-len-eq-global
@@ -83817,8 +83806,8 @@
       (match (opt-bce-mb-find-def
         body-blocks
         (opt-bce-mb-resolve body-blocks raw 16))
-        [(OptBceMbMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
-        [(OptBceMbMaybeInstr.Some instr)
+        [(OptMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
               (if (not (opt-bce-fold-i64-type? ty))
@@ -84253,8 +84242,8 @@
   (match cond-value
     [(ir.CompilerIrValue.Var var)
       (match (opt-bce-mb-find-def blocks var)
-        [(OptBceMbMaybeInstr.No) false]
-        [(OptBceMbMaybeInstr.Some instr)
+        [(OptMaybeInstr.No) false]
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ fact-op fact-lhs fact-rhs fact-ty)
               (if (not
@@ -84967,9 +84956,9 @@
 (define (opt-bce-fold-guard-def
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
-  [var : i64]) : OptBceMbMaybeInstr
+  [var : i64]) : OptMaybeInstr
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptBceMbMaybeInstr.No)
+    (OptMaybeInstr.No)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (if (=
@@ -84977,7 +84966,7 @@
           (compiler-opt-global-shared-view instr)
           (- 0 1))
         var)
-        (OptBceMbMaybeInstr.Some instr)
+        (OptMaybeInstr.Some instr)
         (opt-bce-fold-guard-def instrs (+ index 1) var)))))
 
 ;; Decompose the guard value into the conditions the fast edge proves. The
@@ -84995,8 +84984,8 @@
     (match value
       [(ir.CompilerIrValue.Var var)
         (match (opt-bce-fold-guard-def instrs 0 var)
-          [(OptBceMbMaybeInstr.No) acc]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) acc]
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.BinOp _ op lhs rhs cond-ty)
                 (match (compiler-opt-global-shared-view op)
@@ -85106,8 +85095,8 @@
       (let
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
         (match (opt-bce-mb-find-def body-blocks id)
-          [(OptBceMbMaybeInstr.Some _) (ir.CompilerIrMaybeValue.No)]
-          [(OptBceMbMaybeInstr.No)
+          [(OptMaybeInstr.Some _) (ir.CompilerIrMaybeValue.No)]
+          [(OptMaybeInstr.No)
             (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var id))]))]
     [_ (ir.CompilerIrMaybeValue.No)]))
 
@@ -85223,8 +85212,8 @@
         [body-blocks : ir.CompilerIrBlockList facts.body-blocks]
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
         (match (opt-bce-mb-find-def body-blocks id)
-          [(OptBceMbMaybeInstr.No) (OptBceFoldVerdict.Unknown)]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) (OptBceFoldVerdict.Unknown)]
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                 (match (opt-bce-fold-compare-verdict
@@ -85579,8 +85568,8 @@
       (let
         [resolved : i64 (opt-bce-mb-resolve blocks (deref v) 16)]
         (match (opt-bce-mb-find-def blocks resolved)
-          [(OptBceMbMaybeInstr.No) (ir.CompilerIrValue.Var resolved)]
-          [(OptBceMbMaybeInstr.Some instr)
+          [(OptMaybeInstr.No) (ir.CompilerIrValue.Var resolved)]
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.Cast _ src from-ty to-ty)
                 (if (and
@@ -86294,8 +86283,8 @@
   (match inext
     [(ir.CompilerIrValue.Var next-id)
       (match (opt-bce-mb-find-def body-blocks (deref next-id))
-        [(OptBceMbMaybeInstr.No) false]
-        [(OptBceMbMaybeInstr.Some instr)
+        [(OptMaybeInstr.No) false]
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
               (and
@@ -86326,8 +86315,8 @@
   [cond-var : i64]
   [inext : ir.CompilerIrValue]) : bool
   (match (opt-bce-mb-find-def body-blocks cond-var)
-    [(OptBceMbMaybeInstr.No) false]
-    [(OptBceMbMaybeInstr.Some instr)
+    [(OptMaybeInstr.No) false]
+    [(OptMaybeInstr.Some instr)
       (match instr
         [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
           (and
@@ -86725,8 +86714,8 @@
   [cond-var : i64]
   [iphi : i64]) : OptBceTightenCounter
   (match (opt-bce-mb-find-def body-blocks cond-var)
-    [(OptBceMbMaybeInstr.No) (OptBceTightenCounter.No)]
-    [(OptBceMbMaybeInstr.Some cmp)
+    [(OptMaybeInstr.No) (OptBceTightenCounter.No)]
+    [(OptMaybeInstr.Some cmp)
       (match cmp
         [(ir.CompilerIrInstr.BinOp _ op cmp-lhs cmp-rhs ty)
           (if (not
@@ -86740,8 +86729,8 @@
             (match (compiler-opt-global-shared-view cmp-lhs)
               [(ir.CompilerIrValue.Var next-id)
                 (match (opt-bce-mb-find-def body-blocks next-id)
-                  [(OptBceMbMaybeInstr.No) (OptBceTightenCounter.No)]
-                  [(OptBceMbMaybeInstr.Some step)
+                  [(OptMaybeInstr.No) (OptBceTightenCounter.No)]
+                  [(OptMaybeInstr.Some step)
                     (match step
                       [(ir.CompilerIrInstr.BinOp
                           _
@@ -92600,10 +92589,6 @@
   (No)
   (Some ir.CompilerIrInstrSeq (__tl_dyn-array i64) (__tl_dyn-array i64)))
 
-(defenum OptSuccessorSinkMaybeInstr
-  (No)
-  (Some ir.CompilerIrInstr))
-
 (defenum OptSuccessorSinkMaybeRecipe
   (No)
   (Some ir.CompilerIrInstr ir.CompilerIrValue ast.AstType))
@@ -92855,53 +92840,19 @@
       (ir.CompilerIrInstr.BinOp fresh op lhs rhs ty)]
     [_ instr]))
 
-(define (opt-successor-sink-find-def-in-seq
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [var : i64]) : OptSuccessorSinkMaybeInstr
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptSuccessorSinkMaybeInstr.No)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
-        [(option_i64.Some dst)
-          (if (= dst var)
-            (OptSuccessorSinkMaybeInstr.Some instr)
-            (opt-successor-sink-find-def-in-seq instrs (+ index 1) var))]
-        [(option_i64.None)
-          (opt-successor-sink-find-def-in-seq instrs (+ index 1) var)]))))
-
-(define (opt-successor-sink-find-def
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [var : i64]) : OptSuccessorSinkMaybeInstr
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil) (OptSuccessorSinkMaybeInstr.No)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (match (opt-successor-sink-find-def-in-seq instrs 0 var)
-            [(OptSuccessorSinkMaybeInstr.Some instr)
-              (OptSuccessorSinkMaybeInstr.Some instr)]
-            [(OptSuccessorSinkMaybeInstr.No)
-              (opt-successor-sink-find-def (deref rest) var)])])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [blocks (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-successor-sink-find-def blocks var))]))
-
 (define (opt-successor-sink-value-i64
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [value : (& value ir.CompilerIrValue)]) : option_i64.Option
   (match value
     [(ir.CompilerIrValue.I64 n) (option_i64.Some (deref n))]
     [(ir.CompilerIrValue.Var var)
-      (match (opt-successor-sink-find-def blocks (deref var))
-        [(OptSuccessorSinkMaybeInstr.Some instr)
+      (match (opt-find-def blocks (deref var))
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.Mov _ (ir.CompilerIrValue.I64 n) _)
               (option_i64.Some n)]
             [_ (option_i64.None)])]
-        [(OptSuccessorSinkMaybeInstr.No) (option_i64.None)])]
+        [(OptMaybeInstr.No) (option_i64.None)])]
     [_ (option_i64.None)]))
 
 (define (opt-successor-sink-value-zero?
@@ -92912,15 +92863,15 @@
     [(option_i64.None)
       (match value
         [(ir.CompilerIrValue.Var var)
-          (match (opt-successor-sink-find-def blocks var)
-            [(OptSuccessorSinkMaybeInstr.Some instr)
+          (match (opt-find-def blocks var)
+            [(OptMaybeInstr.Some instr)
               (match instr
                 [(ir.CompilerIrInstr.BinOp _ (ir.CompilerIrBinOp.Mul) lhs rhs _)
                   (or
                     (opt-successor-sink-value-zero? blocks lhs)
                     (opt-successor-sink-value-zero? blocks rhs))]
                 [_ false])]
-            [(OptSuccessorSinkMaybeInstr.No) false])]
+            [(OptMaybeInstr.No) false])]
         [_ false])]))
 
 (define (opt-successor-sink-phi-zero-label
@@ -92952,8 +92903,8 @@
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var input-var)
-      (match (opt-successor-sink-find-def blocks input-var)
-        [(OptSuccessorSinkMaybeInstr.Some instr)
+      (match (opt-find-def blocks input-var)
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ (ir.CompilerIrBinOp.Add) lhs rhs _)
               (or
@@ -92968,7 +92919,7 @@
                     [(option_i64.Some step) (= step 1)]
                     [(option_i64.None) false])))]
             [_ false])]
-        [(OptSuccessorSinkMaybeInstr.No) false])]
+        [(OptMaybeInstr.No) false])]
     [_ false]))
 
 (define (opt-successor-sink-phi-unit-step-label
@@ -93024,8 +92975,8 @@
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var input-var)
-      (match (opt-successor-sink-find-def blocks input-var)
-        [(OptSuccessorSinkMaybeInstr.Some instr)
+      (match (opt-find-def blocks input-var)
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.Gep _ base offset _)
               (and
@@ -93035,7 +92986,7 @@
                     expected-base))
                 (opt-successor-sink-value-zero? blocks offset))]
             [_ false])]
-        [(OptSuccessorSinkMaybeInstr.No) false])]
+        [(OptMaybeInstr.No) false])]
     [_ false]))
 
 (define (opt-successor-sink-pointer-step-value?
@@ -93045,8 +92996,8 @@
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var input-var)
-      (match (opt-successor-sink-find-def blocks input-var)
-        [(OptSuccessorSinkMaybeInstr.Some instr)
+      (match (opt-find-def blocks input-var)
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.Gep _ base offset _)
               (and
@@ -93055,7 +93006,7 @@
                   [(option_i64.Some found) (= found scale)]
                   [(option_i64.None) false]))]
             [_ false])]
-        [(OptSuccessorSinkMaybeInstr.No) false])]
+        [(OptMaybeInstr.No) false])]
     [_ false]))
 
 (define (opt-successor-sink-pointer-edge-label
@@ -93150,15 +93101,15 @@
         [found : option_i64.Option
           (match value
             [(ir.CompilerIrValue.Var input-var)
-              (match (opt-successor-sink-find-def blocks input-var)
-                [(OptSuccessorSinkMaybeInstr.Some instr)
+              (match (opt-find-def blocks input-var)
+                [(OptMaybeInstr.Some instr)
                   (match instr
                     [(ir.CompilerIrInstr.Gep _ base offset _)
                       (if (opt-value-is-var? base phi-var)
                         (opt-successor-sink-value-i64 blocks offset)
                         (option_i64.None))]
                     [_ (option_i64.None)])]
-                [(OptSuccessorSinkMaybeInstr.No) (option_i64.None)])]
+                [(OptMaybeInstr.No) (option_i64.None)])]
             [_ (option_i64.None)])]
         (match found
           [(option_i64.Some scale) (option_i64.Some scale)]
@@ -93181,8 +93132,8 @@
         (match (opt-successor-sink-value-i64 blocks rhs)
           [(option_i64.Some n) (= n scale)]
           [(option_i64.None) false])
-        (match (opt-successor-sink-find-def blocks (deref iv))
-          [(OptSuccessorSinkMaybeInstr.Some instr)
+        (match (opt-find-def blocks (deref iv))
+          [(OptMaybeInstr.Some instr)
             (match instr
               [(ir.CompilerIrInstr.Phi _ inputs _)
                 (match (opt-successor-sink-iv-phi-shape
@@ -93192,7 +93143,7 @@
                   [(OptSuccessorSinkMaybeInductionShape.Some _ _) true]
                   [(OptSuccessorSinkMaybeInductionShape.No) false])]
               [_ false])]
-          [(OptSuccessorSinkMaybeInstr.No) false]))]
+          [(OptMaybeInstr.No) false]))]
     [_ false]))
 
 (define (opt-successor-sink-mul-scale-var
@@ -93246,9 +93197,9 @@
   [defs : (& defs (__tl_dyn-array i64))]
   [frame : i64]
   [scale : i64]
-  [index : i64]) : OptSuccessorSinkMaybeInstr
+  [index : i64]) : OptMaybeInstr
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptSuccessorSinkMaybeInstr.No)
+    (OptMaybeInstr.No)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (match (compiler-opt-global-shared-view instr)
@@ -93268,7 +93219,7 @@
               rhs
               lhs
               scale))
-            (OptSuccessorSinkMaybeInstr.Some instr)
+            (OptMaybeInstr.Some instr)
             (opt-successor-sink-find-scale-mul
               blocks
               instrs
@@ -93307,8 +93258,8 @@
             (- phi-inputs-at-97479-3.len 1))]
         (match value
           [(ir.CompilerIrValue.Var input-var)
-            (match (opt-successor-sink-find-def blocks input-var)
-              [(OptSuccessorSinkMaybeInstr.Some instr)
+            (match (opt-find-def blocks input-var)
+              [(OptMaybeInstr.Some instr)
                 (match instr
                   [(ir.CompilerIrInstr.Gep _ base offset ty)
                     (if (and
@@ -93322,7 +93273,7 @@
                         mul))]
                   [_
                     (opt-successor-sink-phi-init-recipe blocks phi-var rest mul)])]
-              [(OptSuccessorSinkMaybeInstr.No)
+              [(OptMaybeInstr.No)
                 (opt-successor-sink-phi-init-recipe blocks phi-var rest mul)])]
           [_ (opt-successor-sink-phi-init-recipe blocks phi-var rest mul)])))))
 
@@ -93349,7 +93300,7 @@
             context.frame
             scale
             0)
-            [(OptSuccessorSinkMaybeInstr.Some mul)
+            [(OptMaybeInstr.Some mul)
               (match (opt-successor-sink-phi-init-recipe
                 context.blocks
                 phi-var
@@ -93363,8 +93314,8 @@
                     scale
                     mul)
                     [(option_i64.Some iv)
-                      (match (opt-successor-sink-find-def context.blocks iv)
-                        [(OptSuccessorSinkMaybeInstr.Some iv-instr)
+                      (match (opt-find-def context.blocks iv)
+                        [(OptMaybeInstr.Some iv-instr)
                           (match iv-instr
                             [(ir.CompilerIrInstr.Phi _ iv-inputs _)
                               (match (opt-successor-sink-iv-phi-shape
@@ -93396,12 +93347,11 @@
                                 [(OptSuccessorSinkMaybeInductionShape.No)
                                   (OptSuccessorSinkMaybeRecipe.No)])]
                             [_ (OptSuccessorSinkMaybeRecipe.No)])]
-                        [(OptSuccessorSinkMaybeInstr.No)
-                          (OptSuccessorSinkMaybeRecipe.No)])]
+                        [(OptMaybeInstr.No) (OptSuccessorSinkMaybeRecipe.No)])]
                     [(option_i64.None) (OptSuccessorSinkMaybeRecipe.No)])]
                 [(OptSuccessorSinkMaybeRecipe.No)
                   (OptSuccessorSinkMaybeRecipe.No)])]
-            [(OptSuccessorSinkMaybeInstr.No) (OptSuccessorSinkMaybeRecipe.No)])]
+            [(OptMaybeInstr.No) (OptSuccessorSinkMaybeRecipe.No)])]
         [(option_i64.None) (OptSuccessorSinkMaybeRecipe.No)])]
     [_ (OptSuccessorSinkMaybeRecipe.No)]))
 
@@ -98520,15 +98470,15 @@
     [(ir.CompilerIrValue.I64 literal) (>= (deref literal) 0)]
     [(ir.CompilerIrValue.Var var)
       (match (opt-bce-mb-find-def blocks (deref var))
-        [(OptBceMbMaybeInstr.No) false]
-        [(OptBceMbMaybeInstr.Some instr)
+        [(OptMaybeInstr.No) false]
+        [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.Load _ source _)
               (match source
                 [(ir.CompilerIrValue.Var slot)
                   (match (opt-bce-mb-find-def blocks slot)
-                    [(OptBceMbMaybeInstr.No) false]
-                    [(OptBceMbMaybeInstr.Some slot-instr)
+                    [(OptMaybeInstr.No) false]
+                    [(OptMaybeInstr.Some slot-instr)
                       (match slot-instr
                         [(ir.CompilerIrInstr.Gep _ _ offset ty)
                           (opt-bounds-object-length-slot?
@@ -135555,41 +135505,6 @@
           ;; the cost, the live range is.
           [_ tail]))]))
 
-;; Find the (single, SSA) instruction defining `var` anywhere in the function.
-(define (opt-load-gvn-find-def-instrs
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [var : i64]) : OptMaybeInstr
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 index]
-    (begin
-      (while (< i count)
-        (let
-          [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs i)]
-          (if (=
-            (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))
-            var)
-            (return (OptMaybeInstr.Some instr))
-            (set! i (+ i 1)))))
-      (OptMaybeInstr.No))))
-
-(define (opt-load-gvn-find-def
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [var : i64]) : OptMaybeInstr
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil) (OptMaybeInstr.No)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (match (opt-load-gvn-find-def-instrs instrs 0 var)
-            [(OptMaybeInstr.Some instr) (OptMaybeInstr.Some instr)]
-            [(OptMaybeInstr.No) (opt-load-gvn-find-def (deref rest) var)])])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [blocks (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-load-gvn-find-def blocks var))]))
-
 ;; Is `var` provably an element (data-buffer) address? A gep of an element
 ;; base stays in the buffer; a load of a header descriptor's first word is the
 ;; data pointer (the element root); phis and movs chase through. Depth-capped
@@ -135601,7 +135516,7 @@
   [depth : i64]) : bool
   (if (>= depth 8)
     false
-    (match (opt-load-gvn-find-def blocks var)
+    (match (opt-find-def blocks var)
       [(OptMaybeInstr.Some instr)
         (match instr
           [(ir.CompilerIrInstr.Gep _ base _ _)
@@ -135621,7 +135536,7 @@
                   (owned_view.compiler-owned-reference-shared-view hs)
                   pvar)
                   true
-                  (match (opt-load-gvn-find-def blocks pvar)
+                  (match (opt-find-def blocks pvar)
                     [(OptMaybeInstr.Some addr-def)
                       (match addr-def
                         [(ir.CompilerIrInstr.Gep _ gbase goff _)

@@ -137,11 +137,14 @@
         [_ more])]
     [_ (comptime-error "opt-walk-going: mode must be a bare name")]))
 
-;; What a walk reads: a named place is viewed, not moved, and any other
-;; expression is evaluated once.
+;; What a walk reads: a named place is viewed, not moved (a reference is read
+;; through), and any other expression is evaluated once.
 (defmacro (opt-walk-source [source : Expr]) : Expr
   (match source
-    [(Expr.Var _) `(compiler-opt-global-shared-view ,source)]
+    [(Expr.Var _)
+      (if (string.eq (type-kind (comptime.expr-type source)) "ref")
+        `(owned_view.compiler-owned-reference-shared-view ,source)
+        `(compiler-opt-global-shared-view ,source))]
     [_ source]))
 
 (defmacro (opt-instrs-walk
@@ -774,12 +777,12 @@
     [state : profile_state.CompilerProfileState]) : unit
     (begin
       (cps.compiler-profile-summary-emit
-        (profile_state.compiler-profile-state-shared-view state)
+        state
         cps.compiler-profile-summary-optimizer-pass
         "optimizer"
         "pass")
       (cps.compiler-profile-summary-emit
-        (profile_state.compiler-profile-state-shared-view state)
+        state
         cps.compiler-profile-summary-optimizer-function
         "optimizer"
         "function")
@@ -936,32 +939,32 @@
       (compiler-opt-load-cse-profile-line
         "max_table_size"
         (profile_state.compiler-profile-state-metric-value
-          (profile_state.compiler-profile-state-shared-view state)
+          state
           compiler-opt-load-cse-profile-max-table-size-metric))
       (compiler-opt-load-cse-profile-line
         "max_kinds_size"
         (profile_state.compiler-profile-state-metric-value
-          (profile_state.compiler-profile-state-shared-view state)
+          state
           compiler-opt-load-cse-profile-max-kinds-size-metric))
       (compiler-opt-load-cse-profile-line
         "max_table_cap"
         (profile_state.compiler-profile-state-metric-value
-          (profile_state.compiler-profile-state-shared-view state)
+          state
           compiler-opt-load-cse-profile-max-table-cap-metric))
       (compiler-opt-load-cse-profile-line
         "max_kinds_cap"
         (profile_state.compiler-profile-state-metric-value
-          (profile_state.compiler-profile-state-shared-view state)
+          state
           compiler-opt-load-cse-profile-max-kinds-cap-metric))
       (compiler-opt-load-cse-profile-line
         "table_cap_hits"
         (profile_state.compiler-profile-state-metric-value
-          (profile_state.compiler-profile-state-shared-view state)
+          state
           compiler-opt-load-cse-profile-table-cap-hits-metric))
       (compiler-opt-load-cse-profile-line
         "kinds_cap_hits"
         (profile_state.compiler-profile-state-metric-value
-          (profile_state.compiler-profile-state-shared-view state)
+          state
           compiler-opt-load-cse-profile-kinds-cap-hits-metric))
       (compiler-opt-load-cse-profile-line
         "field_key_drops"
@@ -979,16 +982,12 @@
       [right : profile_state.CompilerProfileState
         (profile_state.compiler-profile-state-new)]
       [left-metrics : profile_state.CompilerProfileMetrics
-        (profile_state.compiler-profile-state-metrics
-          (compiler-opt-global-shared-view left))]
+        (profile_state.compiler-profile-state-metrics left)]
       [right-metrics : profile_state.CompilerProfileMetrics
-        (profile_state.compiler-profile-state-metrics
-          (compiler-opt-global-shared-view right))]
+        (profile_state.compiler-profile-state-metrics right)]
       (begin
-        (compiler-opt-load-cse-profile-reset
-          (compiler-opt-global-shared-view left))
-        (compiler-opt-load-cse-profile-reset
-          (compiler-opt-global-shared-view right))
+        (compiler-opt-load-cse-profile-reset left)
+        (compiler-opt-load-cse-profile-reset right)
         (compiler-opt-load-cse-profile-note-table-size
           (compiler-opt-global-shared-view left-metrics)
           4)
@@ -1012,42 +1011,41 @@
         (compiler-opt-load-cse-profile-note-kinds-cap-hit
           (compiler-opt-global-shared-view left-metrics))
         (compiler-opt-load-cse-profile-note-field-key-drop left-metrics)
-        (compiler-opt-load-cse-profile-reset
-          (compiler-opt-global-shared-view right))
+        (compiler-opt-load-cse-profile-reset right)
         (compiler-opt-load-cse-profile-note-field-key-drop right-metrics)
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (compiler-opt-global-shared-view left)
+            left
             compiler-opt-load-cse-profile-max-table-size-metric)
           7
           "left job keeps its table maximum across a right reset")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (compiler-opt-global-shared-view left)
+            left
             compiler-opt-load-cse-profile-max-kinds-size-metric)
           6
           "left job keeps its kinds maximum")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (compiler-opt-global-shared-view left)
+            left
             compiler-opt-load-cse-profile-max-table-cap-metric)
           31
           "left job keeps its table cap")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (compiler-opt-global-shared-view left)
+            left
             compiler-opt-load-cse-profile-max-kinds-cap-metric)
           29
           "left job keeps its kinds cap")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (compiler-opt-global-shared-view left)
+            left
             compiler-opt-load-cse-profile-table-cap-hits-metric)
           1
           "left job keeps its table cap hit count")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (compiler-opt-global-shared-view left)
+            left
             compiler-opt-load-cse-profile-kinds-cap-hits-metric)
           1
           "left job keeps its kinds cap hit count")
@@ -1059,7 +1057,7 @@
           "left job keeps its field-key drop count")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
-            (compiler-opt-global-shared-view right)
+            right
             compiler-opt-load-cse-profile-max-table-size-metric)
           0
           "right reset clears only the right maximum")
@@ -1076,11 +1074,11 @@
     [state : profile_state.CompilerProfileState]) : unit
     (begin
       (profile_state.compiler-profile-state-metric-set!
-        (profile_state.compiler-profile-state-shared-view state)
+        state
         compiler-opt-profile-start-ms-metric
         (profile.now-ms))
       (profile_state.compiler-profile-state-metric-set!
-        (profile_state.compiler-profile-state-shared-view state)
+        state
         compiler-opt-profile-start-total-metric
         (profile.alloc-total))
       (profile_state.compiler-profile-state-metric-set!
@@ -1102,7 +1100,7 @@
         (-
           (profile.alloc-peak)
           (profile_state.compiler-profile-state-metric-value
-            (profile_state.compiler-profile-state-shared-view state)
+            state
             compiler-opt-profile-start-live-metric))]
       (io.print-error
         (str_cat.str-cat
@@ -1112,13 +1110,13 @@
             (-
               end-ms
               (profile_state.compiler-profile-state-metric-value
-                (profile_state.compiler-profile-state-shared-view state)
+                state
                 compiler-opt-profile-start-ms-metric)))
           (compiler-opt-profile-field
             (-
               end-total
               (profile_state.compiler-profile-state-metric-value
-                (profile_state.compiler-profile-state-shared-view state)
+                state
                 compiler-opt-profile-start-total-metric)))
           (compiler-opt-profile-field
             (-
@@ -1149,16 +1147,16 @@
         (-
           (profile.now-ms)
           (profile_state.compiler-profile-state-metric-value
-            (profile_state.compiler-profile-state-shared-view state)
+            state
             compiler-opt-profile-detail-start-ms-metric))]
       (cfg
         compile-profile-summary
         (if (string.eq phase "function")
           (begin
             (cps.compiler-profile-summary-note!
-              (profile_state.compiler-profile-state-shared-view state)
+              state
               cps.compiler-profile-summary-optimizer-function
-              (owned_view.compiler-owned-shared-view name)
+              (compiler-opt-global-shared-view name)
               elapsed)
             (cps.compiler-profile-summary-note-module!
               state
@@ -3358,11 +3356,7 @@
   [note : OptUseNote]
   [set : (&mut set opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : unit
-  (ir.compiler-ir-instr-visit-uses
-    instr
-    opt-note-use!
-    (compiler-opt-global-shared-view note)
-    set))
+  (ir.compiler-ir-instr-visit-uses instr opt-note-use! note set))
 
 (define (opt-collect-instr-uses
   [set : opt_i64_i64_map.Map]
@@ -4395,9 +4389,7 @@
                   [(= keep (opt-dce-keep-escape))
                     (set!
                       (array-ref out write)
-                      (ir.compiler-ir-clone-instr
-                        (compiler-opt-global-shared-view pools)
-                        instr))]
+                      (ir.compiler-ir-clone-instr pools instr))]
                   [else unit])
                 (set! write (- write 1)))))
           (set! index (- index 1))))
@@ -4505,7 +4497,7 @@
       mirror
       (compiler-opt-global-shared-view instrs.slots)
       instrs.len
-      (compiler-opt-global-shared-view instrs.slots)
+      instrs.slots
       (opt-dce-keep-none))
     instrs.len))
 
@@ -4623,7 +4615,7 @@
   (opt-blocks-map-seq-array
     blocks
     opt-dce-instr-seq-array-escape
-    (compiler-opt-global-shared-view pools)
+    pools
     (compiler-opt-global-shared-view items)))
 
 ;; --- aggregate allocation candidate analysis --------------------------------
@@ -9636,7 +9628,7 @@
     [(ir.CompilerIrInstr.StoreOwned _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
     [_
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+      (match (opt-instr-def-var instr)
         [(option_i64.Some dst) (opt-copy-invalidate-var env dst)]
         [(option_i64.None) env])]))
 
@@ -10997,8 +10989,7 @@
               b)
               [(ir.CompilerIrBlock.Block _ instrs)
                 (let
-                  [slots : (__tl_dyn-array ir.CompilerIrInstr)
-                    (compiler-opt-global-shared-view instrs.slots)]
+                  [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
                   [n : i64 instrs.len]
                   [i : i64 0]
                   (begin
@@ -13013,8 +13004,7 @@
               (opt-verify-call-args-uses defs doms args block-id pos)))))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [payload : ir.CompilerIrInstrSpmdCallPayload
-          (compiler-opt-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrSpmdCallPayload (deref payload-box)]
         [descriptor-error : String
           (ir.compiler-ir-spmd-call-descriptor-error payload)]
         (if (> (string.string-length descriptor-error) 0)
@@ -14333,20 +14323,23 @@
               (compiler-opt-global-shared-view blocks)
               var
               (compiler-opt-global-shared-view ty)
-              (opt-ssa-phi-add-frontier
-                context.index
-                var
-                ty
-                (opt-cfg-dominance-frontier-with-context
-                  blocks
-                  (compiler-opt-global-shared-view context)
-                  label)
-                (OptSsaPhiInsertState.State
-                  sites
-                  next-var
-                  (opt-label-tail worklist)
-                  work-members
-                  site-members))))])]))
+              (let
+                [hoisted-1
+                  (opt-cfg-dominance-frontier-with-context
+                    blocks
+                    (compiler-opt-global-shared-view context)
+                    label)]
+                (opt-ssa-phi-add-frontier
+                  context.index
+                  var
+                  ty
+                  hoisted-1
+                  (OptSsaPhiInsertState.State
+                    sites
+                    next-var
+                    (opt-label-tail worklist)
+                    work-members
+                    site-members)))))])]))
 
 (define (opt-ssa-insert-phis-for-var
   [context : OptCfgContext]
@@ -14514,7 +14507,7 @@
       (>= change (array-length env.change-slots)))
       (string.tl_oob_abort)
       (let
-        [out : OptSsaRenameEnv (compiler-opt-global-shared-view env)]
+        [out : OptSsaRenameEnv env]
         (begin
           (set! (array-ref out.change-slots change) slot)
           (set!
@@ -17295,7 +17288,7 @@
   [marks : (&mut marks (__tl_dyn-array bool))]
   [state : OptNaturalLoopCollectState]
   [pred : i64]) : OptNaturalLoopCollectState
-  (match (compiler-opt-global-shared-view state)
+  (match state
     [(OptNaturalLoopCollectState.State body worklist)
       (match (opt-cfg-index-id index pred)
         [(option_i64.Some pred-id)
@@ -18860,7 +18853,7 @@
           (set!
             (array-ref slots (+ prefix-count index))
             (ir.compiler-ir-clone-instr
-              (compiler-opt-global-shared-view pools)
+              pools
               (ir.compiler-ir-instr-seq-ref guard index)))
           (set! index (+ index 1))))
       (ir.CompilerIrInstrSeq slots (+ prefix-count guard-count)))))
@@ -18901,7 +18894,7 @@
               guard)
             (ir.compiler-ir-block-cons
               (opt-loop-rotation-rewrite-block
-                (compiler-opt-global-shared-view pools)
+                pools
                 block
                 preheader
                 latch
@@ -19000,7 +18993,7 @@
     [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
       (match (opt-loop-rotation-loop
-        (compiler-opt-global-shared-view pools)
+        pools
         (compiler-opt-global-shared-view blocks)
         context
         (compiler-opt-global-shared-view loops)
@@ -19042,9 +19035,7 @@
   [remaining : i64]) : OptBlockCtxResult
   (if (<= remaining 0)
     (OptBlockCtxResult.Result blocks (opt-cfg-context-empty) false)
-    (match (opt-loop-rotation-blocks-once-result
-      (compiler-opt-global-shared-view pools)
-      blocks)
+    (match (opt-loop-rotation-blocks-once-result pools blocks)
       [(OptLoopRotationCtxResult.Result next changed context)
         (if changed
           (opt-loop-rotation-blocks-fixed-result pools next (- remaining 1))
@@ -28225,7 +28216,7 @@
               [provenance : OptLicmStoreState
                 (opt-licm-provenance-state-from-function
                   type-segment-bases
-                  (compiler-opt-global-shared-view params)
+                  params
                   types
                   return-alias
                   (compiler-opt-global-shared-view blocks))]
@@ -28251,7 +28242,7 @@
                 (&mut frame-cell)
                 late?
                 deref-facts
-                (compiler-opt-global-shared-view context)
+                context
                 (compiler-opt-global-shared-view loops)
                 loops
                 blocks)
@@ -30087,7 +30078,7 @@
             context
             (compiler-opt-global-shared-view loops)
             loops
-            (compiler-opt-global-shared-view params)
+            params
             frame)
             [(OptUnrollResult.Result next next-frame changed)
               (if (not changed)
@@ -32545,7 +32536,7 @@
   [instr : ir.CompilerIrInstr]) : unit
   (if (opt-dead-phi-instr-phi? (compiler-opt-global-shared-view instr))
     unit
-    (opt-collect-instr-uses-array (compiler-opt-global-shared-view live) instr)))
+    (opt-collect-instr-uses-array live instr)))
 
 ;; --- propagate: a live phi makes its own inputs live --------------------------
 (define (opt-dead-phi-expand-instr!
@@ -32562,9 +32553,7 @@
         (= (array-ref done dst) 0))
         (begin
           (set! (array-ref done dst) 1)
-          (opt-collect-phi-uses-array
-            (compiler-opt-global-shared-view live)
-            inputs)
+          (opt-collect-phi-uses-array live inputs)
           (set! (array-ref changed 0) 1))
         unit)]
     [_ unit]))
@@ -36702,9 +36691,7 @@
               plan.seed)
             value)
           label
-          (opt-flag-exit-literalize-inputs
-            rest
-            (compiler-opt-global-shared-view plan)))))))
+          (opt-flag-exit-literalize-inputs rest plan))))))
 
 ;; Step 5. Once the clear edges are gone, every remaining path into a closure
 ;; definition carries K, so pin each one to that literal. The phis are left in
@@ -38271,7 +38258,7 @@
         verified?
         (match (opt-flag-exit-blocks-fixed-result
           (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view context)
+          context
           frame
           (+ 1 (ir.compiler-ir-block-list-count blocks))
           false
@@ -39520,7 +39507,7 @@
           type-segment-bases
           (opt-cfg-natural-loops-with-context
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view context))
+            context)
           blocks
           frame
           false)
@@ -48704,34 +48691,26 @@
       (opt-sccp-rewrite-scalar-def
         (compiler-opt-global-shared-view env)
         dst
-        (compiler-opt-global-shared-view ty)
-        (opt-rewrite-operands
-          (OptOperandRewrite.Sccp (compiler-opt-global-shared-view env))
-          instr))]
+        ty
+        (opt-rewrite-operands (OptOperandRewrite.Sccp env) instr))]
     [(ir.CompilerIrInstr.Cast dst _ _ to-ty)
       (opt-sccp-rewrite-scalar-def
         (compiler-opt-global-shared-view env)
         dst
-        (compiler-opt-global-shared-view to-ty)
-        (opt-rewrite-operands
-          (OptOperandRewrite.Sccp (compiler-opt-global-shared-view env))
-          instr))]
+        to-ty
+        (opt-rewrite-operands (OptOperandRewrite.Sccp env) instr))]
     [(ir.CompilerIrInstr.UnOp dst _ _ ty)
       (opt-sccp-rewrite-scalar-def
         (compiler-opt-global-shared-view env)
         dst
-        (compiler-opt-global-shared-view ty)
-        (opt-rewrite-operands
-          (OptOperandRewrite.Sccp (compiler-opt-global-shared-view env))
-          instr))]
+        ty
+        (opt-rewrite-operands (OptOperandRewrite.Sccp env) instr))]
     [(ir.CompilerIrInstr.Phi dst _ ty)
       (opt-sccp-rewrite-scalar-def
         (compiler-opt-global-shared-view env)
         dst
-        (compiler-opt-global-shared-view ty)
-        (opt-rewrite-operands
-          (OptOperandRewrite.Sccp (compiler-opt-global-shared-view env))
-          instr))]
+        ty
+        (opt-rewrite-operands (OptOperandRewrite.Sccp env) instr))]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       ;; sccp substitutes Const lattice values into operands, but a wide
       ;; (non-imm32) literal in the LEFT operand of a BinOp is never encodable,
@@ -50814,12 +50793,11 @@
   [value-var : i64]
   [head-label : i64]) : OptBitTestMaybeChain
   (let
-    [los : (__tl_dyn-array i64) (compiler-opt-global-shared-view chain.los)]
-    [his : (__tl_dyn-array i64) (compiler-opt-global-shared-view chain.his)]
-    [masks : (__tl_dyn-array i64) (compiler-opt-global-shared-view chain.masks)]
-    [labels : (__tl_dyn-array i64)
-      (compiler-opt-global-shared-view chain.labels)]
-    [nexts : (__tl_dyn-array i64) (compiler-opt-global-shared-view chain.nexts)]
+    [los : (__tl_dyn-array i64) chain.los]
+    [his : (__tl_dyn-array i64) chain.his]
+    [masks : (__tl_dyn-array i64) chain.masks]
+    [labels : (__tl_dyn-array i64) chain.labels]
+    [nexts : (__tl_dyn-array i64) chain.nexts]
     [limit : i64 (opt-bit-test-max-links)]
     [count : i64 0]
     [label : i64 head-label]
@@ -56930,13 +56908,9 @@
               [(ir.CompilerIrInstr.BoundsCheck idx len _)
                 (let
                   [cidx : ir.CompilerIrValue
-                    (opt-bounds-dom-resolve
-                      env.copies
-                      (compiler-opt-global-shared-view idx))]
+                    (opt-bounds-dom-resolve env.copies idx)]
                   [clen : ir.CompilerIrValue
-                    (opt-bounds-dom-resolve
-                      env.copies
-                      (compiler-opt-global-shared-view len))]
+                    (opt-bounds-dom-resolve env.copies len)]
                   ;; Canonical fact identity for stable native Slice length
                   ;; Words. Arithmetic and comparison queries keep `clen`.
                   [fact-len : ir.CompilerIrValue
@@ -57014,7 +56988,7 @@
                       (compiler-opt-global-shared-view cur-cmp-facts)
                       block-id
                       true
-                      (compiler-opt-global-shared-view sidx)
+                      sidx
                       slen))
                     unit
                     (let
@@ -58970,13 +58944,7 @@
           (opt-bounds-dom-range-mark!
             (compiler-opt-global-shared-view state)
             high-dst)
-          (opt-bounds-dom-range-apply
-            (compiler-opt-global-shared-view state)
-            forced
-            merged-op
-            low-dst
-            idx
-            bound))])))
+          (opt-bounds-dom-range-apply state forced merged-op low-dst idx bound))])))
 
 (define (opt-bounds-dom-rewrite-id
   [env : (& env OptBoundsDomEnv)]
@@ -59717,13 +59685,13 @@
         (compiler-opt-global-shared-view context)
         (compiler-opt-global-shared-view index)
         (compiler-opt-global-shared-view doms)
-        (compiler-opt-global-shared-view defs)
-        (compiler-opt-global-shared-view phi-defs)
-        (compiler-opt-global-shared-view terms)
+        defs
+        phi-defs
+        terms
         (compiler-opt-global-shared-view var-facts)
-        (compiler-opt-global-shared-view checks)
-        (compiler-opt-global-shared-view copies)
-        (compiler-opt-global-shared-view sources))]
+        checks
+        copies
+        sources)]
     [out : (__tl_dyn-array OptGvnBlockResult)
       (__tl_make-array OptGvnBlockResult count)]
     [next-var : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -62537,7 +62505,7 @@
           (set!
             work
             (opt-dead-store-instr-seq-known-with-kinds
-              (profile_state.compiler-profile-state-shared-view profile-state)
+              (compiler-opt-global-shared-view profile-state)
               type-segment-bases
               (compiler-opt-global-shared-view hs)
               store-capacity
@@ -62628,8 +62596,8 @@
             (set!
               (array-ref slots index)
               (optimize-block-hs-with-kinds
-                (profile_state.compiler-profile-state-shared-view profile-state)
-                (compiler-opt-global-shared-view pools)
+                (compiler-opt-global-shared-view profile-state)
+                pools
                 type-segment-bases
                 (compiler-opt-global-shared-view hs)
                 (opt-load-kinds-dense-state
@@ -62669,7 +62637,7 @@
       (ir.compiler-ir-block-cons
         (optimize-block-hs-with-kinds
           (compiler-opt-global-shared-view profile-state)
-          (compiler-opt-global-shared-view pools)
+          pools
           type-segment-bases
           (compiler-opt-global-shared-view hs)
           (opt-load-kinds-dense-state
@@ -88047,7 +88015,7 @@
   (let
     [labels : OptCloneLabels
       (OptCloneLabels.Region
-        (compiler-opt-global-shared-view body-labels)
+        body-labels
         all-labels
         "__bce_fast"
         preheader
@@ -88057,7 +88025,7 @@
         (match (opt-bce-fold-branch-verdict
           facts
           label
-          (compiler-opt-global-shared-view cond)
+          cond
           then-label
           else-label)
           [(OptBceFoldVerdict.True)
@@ -88358,8 +88326,7 @@
   [cell : (&mut cell (__tl_dyn-array i64))]
   [frame : i64]) : OptUnrollResult
   (let
-    [body-labels : OptLabelSet
-      (compiler-opt-global-shared-view (__tl-project-field shape body-labels))]
+    [body-labels : OptLabelSet (__tl-project-field shape body-labels)]
     [body-blocks : ir.CompilerIrBlockList
       (compiler-opt-global-shared-view (__tl-project-field shape body-blocks))]
     (match (opt-bce-mb-guard-conds
@@ -88401,7 +88368,7 @@
           [guard-block : ir.CompilerIrBlock
             (opt-bce-version-guard-block
               guard-label
-              (compiler-opt-global-shared-view guard-instrs)
+              guard-instrs
               guard-value
               (ir.compiler-ir-label
                 (str_cat.str-cat
@@ -88410,11 +88377,11 @@
               shape.header)]
           (OptUnrollResult.Result
             (opt-bce-mb-rewrite-blocks
-              (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view shape)
+              blocks
+              shape
               guard-block
-              (compiler-opt-global-shared-view fast-blocks)
-              (compiler-opt-global-shared-view remap))
+              fast-blocks
+              remap)
             (array-ref cell 0)
             true))])))
 
@@ -88493,7 +88460,7 @@
         (compiler-opt-global-shared-view descriptor)
         (opt-bce-mb-stable-blocks? descriptor body-blocks)
         blocks
-        (compiler-opt-global-shared-view shape)
+        shape
         defs
         cell
         frame)
@@ -88541,7 +88508,7 @@
                 (compiler-opt-global-shared-view descriptor)
                 (opt-bce-mb-stable-blocks? descriptor body-blocks)
                 wired-blocks
-                (compiler-opt-global-shared-view shape)
+                shape
                 clone-labels
                 clone-blocks
                 cell
@@ -88594,7 +88561,7 @@
                           (compiler-opt-global-shared-view descriptor)
                           (opt-bce-mb-stable-blocks? descriptor body-blocks)
                           wired-blocks
-                          (compiler-opt-global-shared-view shape)
+                          shape
                           wide-labels
                           wide-blocks
                           cell
@@ -88615,7 +88582,7 @@
       doms
       (compiler-opt-global-shared-view blocks)
       (__tl-project-field shape header)
-      (compiler-opt-global-shared-view (__tl-project-field shape body-labels))
+      (__tl-project-field shape body-labels)
       (compiler-opt-global-shared-view (__tl-project-field shape body-blocks))
       (&mut cell))
       [(OptBceMbFarResult.No)
@@ -90858,7 +90825,7 @@
                   type-segment-bases
                   (opt-load-header-set-from-function
                     type-segment-bases
-                    (compiler-opt-global-shared-view params)
+                    params
                     (compiler-opt-global-shared-view blocks))
                   (opt_i64_i64_map.with-capacity 1)
                   (opt_i64_i64_map.with-capacity 1)))]
@@ -91649,7 +91616,7 @@
                 copy))
             (opt-unroll-mb-clone-blocks
               (deref rest)
-              (compiler-opt-global-shared-view shape)
+              shape
               remap0
               remap1
               cell
@@ -91785,8 +91752,7 @@
   (let
     [body-blocks : ir.CompilerIrBlockList
       (compiler-opt-global-shared-view (__tl-project-field shape body-blocks))]
-    [body-labels : OptLabelSet
-      (compiler-opt-global-shared-view (__tl-project-field shape body-labels))]
+    [body-labels : OptLabelSet (__tl-project-field shape body-labels)]
     [outside : opt_i64_i64_map.Map
       (opt-bce-mb-outside-uses
         (opt_i64_i64_map.with-capacity 64)
@@ -93563,7 +93529,7 @@
         (match (opt-gep-offset-prepare-preheaders
           type-segment-bases
           (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view context)
+          context
           frame
           (+ 1 (ir.compiler-ir-block-list-count blocks))
           false)
@@ -98932,7 +98898,7 @@
   [suffix-opaque : i64]) : i64
   (begin
     (opt-guard-sink-scan-var!
-      (compiler-opt-global-shared-view st.scratch)
+      st.scratch
       var
       st.index
       st.doms
@@ -99565,7 +99531,7 @@
   [false-label : i64]) : i64
   (begin
     (opt-guard-sink-scan-var!
-      (compiler-opt-global-shared-view st.scratch)
+      st.scratch
       var
       st.index
       st.doms
@@ -102458,7 +102424,7 @@
           (OptBlockRewriteResult.Result
             (opt-cfg-reachable-block-order
               (opt-ubound-rewrite-blocks
-                (compiler-opt-global-shared-view blocks)
+                blocks
                 site
                 phi-count
                 lo-label
@@ -102496,9 +102462,7 @@
             0)
             [(OptUboundMaybeSite.No) (OptFunctionPassResult.Result func false)]
             [(OptUboundMaybeSite.Some site)
-              (match (opt-cfg-find-block
-                (compiler-opt-global-shared-view blocks)
-                site.header)
+              (match (opt-cfg-find-block blocks site.header)
                 [(OptMaybeBlock.No) (OptFunctionPassResult.Result func false)]
                 [(OptMaybeBlock.Some header-block)
                   (opt-ubound-apply
@@ -104376,7 +104340,7 @@
         (opt-bg-blocks-have-candidate? (compiler-opt-global-shared-view blocks))
         (match (opt-bg-prepare-preheaders
           (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view context)
+          context
           frame
           (+ 1 (ir.compiler-ir-block-list-count blocks))
           false)
@@ -104750,9 +104714,7 @@
   [state : OptPassState]) : OptPassState
   (let
     [rotation : OptBlockCtxResult
-      (opt-loop-rotation-function-result
-        (compiler-opt-global-shared-view pools)
-        (opt-pass-func state))]
+      (opt-loop-rotation-function-result pools (opt-pass-func state))]
     [simd : OptFunctionCtxResult
       (match (opt-loop-rotation-normalized-function-result
         pools
@@ -104786,9 +104748,7 @@
   [summaries : OptProgramSummaries]) : ir.CompilerIrFunction
   (let
     [load-cse-profile : profile_state.CompilerProfileMetrics
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-shared-view
-          summaries.profile-state))]
+      (profile_state.compiler-profile-state-metrics summaries.profile-state)]
     ;; The round's input, observed so `--trace-passes`/`--dump-ir` show what
     ;; the first slot (fold) starts from.
     [s : OptPassState
@@ -104831,8 +104791,8 @@
         "fold"
         (opt-pass-with-block-result
           (optimize-block-list-for-function-pass
-            (profile_state.compiler-profile-state-shared-view load-cse-profile)
-            (compiler-opt-global-shared-view pools)
+            (compiler-opt-global-shared-view load-cse-profile)
+            pools
             type-segment-bases
             (opt-pass-frame s)
             (opt-pass-params s)
@@ -104849,9 +104809,7 @@
               (opt-pass-frame s)
               (if s.changed?
                 (opt-pass-blocks s)
-                (ir.compiler-ir-clone-block-list
-                  (compiler-opt-global-shared-view pools)
-                  (opt-pass-blocks s))))
+                (ir.compiler-ir-clone-block-list pools (opt-pass-blocks s))))
             s)
           s))]
     [s
@@ -105333,8 +105291,8 @@
             type-segment-bases
             (opt-pass-ctx s)
             verified?
-            (compiler-opt-global-shared-view summaries.direct-call-clean)
-            (compiler-opt-global-shared-view summaries.return-alias)
+            summaries.direct-call-clean
+            summaries.return-alias
             (compiler-opt-global-shared-view summaries.global-cell)
             true
             (opt-pass-func s))
@@ -105519,7 +105477,7 @@
         (if run-heavy?
           (opt-pass-with-cfg-func
             (match (opt-guard-sink-function-with-context-result
-              (compiler-opt-global-shared-view summaries.global-cell)
+              summaries.global-cell
               (opt-pass-ctx s)
               (opt-pass-func s))
               [(OptFunctionCtxResult.Result f _) f])
@@ -105602,9 +105560,7 @@
   [summaries : OptProgramSummaries]) : OptLevel1PreDceResult
   (let
     [load-cse-profile : profile_state.CompilerProfileMetrics
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-shared-view
-          summaries.profile-state))]
+      (profile_state.compiler-profile-state-metrics summaries.profile-state)]
     [s : OptPassState
       (opt-pass-state
         type-segment-bases
@@ -105760,7 +105716,7 @@
   (if (<= remaining 0)
     (OptFunctionPassResult.Result func false)
     (match (optimize-function-pass-with-summaries
-      (compiler-opt-global-shared-view pools)
+      pools
       type-segment-bases
       (compiler-opt-global-shared-view func)
       (compiler-opt-global-shared-view summaries))
@@ -106809,7 +106765,7 @@
           1
           _profile-name
           (optimize-function-level1-pre-dce-with-summaries
-            (compiler-opt-global-shared-view pools)
+            pools
             type-segment-bases
             func
             summaries))
@@ -106833,18 +106789,11 @@
                           (arena.tl_arena_set enclosing))
                         (let
                           [escaped-blocks : ir.CompilerIrBlockList
-                            (opt-dce-block-list-array-escape
-                              (compiler-opt-global-shared-view pools)
-                              used
-                              blocks)]
+                            (opt-dce-block-list-array-escape pools used blocks)]
                           (ir.CompilerIrFunction.Function
                             (ir.compiler-ir-symbol-clone name)
-                            (ir.compiler-ir-clone-param-seq
-                              (compiler-opt-global-shared-view pools)
-                              params)
-                            (ir.compiler-ir-clone-type
-                              (compiler-opt-global-shared-view pools)
-                              ret-ty)
+                            (ir.compiler-ir-clone-param-seq pools params)
+                            (ir.compiler-ir-clone-type pools ret-ty)
                             frame
                             escaped-blocks
                             (ir.compiler-ir-clone-function-abi
@@ -106880,18 +106829,17 @@
           [_start : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-detail-start
-                (compiler-opt-global-shared-view summaries.profile-state)))]
+              (compiler-opt-profile-detail-start summaries.profile-state))]
           [optimized : ir.CompilerIrFunction
             (if (= level 1)
               (optimize-function-level1-escaping-with-summaries
-                (compiler-opt-global-shared-view pools)
+                pools
                 type-segment-bases
                 (compiler-opt-global-shared-view func)
                 scratch
                 (compiler-opt-global-shared-view summaries))
               (optimize-function-escaping-with-summaries
-                (compiler-opt-global-shared-view pools)
+                pools
                 type-segment-bases
                 (compiler-opt-global-shared-view func)
                 level
@@ -106946,7 +106894,7 @@
           level
           _profile-name
           (optimize-function-with-level-and-summaries-pass
-            (compiler-opt-global-shared-view pools)
+            pools
             type-segment-bases
             func
             level
@@ -117511,17 +117459,11 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
     [after : i64
-      (opt-inline-checked-plan-cost
-        (compiler-opt-global-shared-view pools)
-        type-segment-bases
-        checked)]
+      (opt-inline-checked-plan-cost pools type-segment-bases checked)]
     [banked-cost : i64
       (if (>= banked-cost-in 0)
         banked-cost-in
-        (opt-inline-checked-plan-cost
-          (compiler-opt-global-shared-view pools)
-          type-segment-bases
-          banked))]
+        (opt-inline-checked-plan-cost pools type-segment-bases banked))]
     ;; The callee priced where the inline would put it: its instructions at the
     ;; site's depth, its prologue and its spill traffic once per site
     ;; execution.
@@ -117537,7 +117479,7 @@
           (let
             [priced : i64
               (opt-inline-checked-plan-cost-at
-                (compiler-opt-global-shared-view pools)
+                pools
                 type-segment-bases
                 (compiler-opt-global-shared-view callee)
                 site-depth
@@ -119584,7 +119526,7 @@
       seq-start
       lead
       instrs
-      (compiler-opt-global-shared-view index)
+      index
       census
       func-name
       vars
@@ -121184,7 +121126,7 @@
   [index : (& index OptFunctionIndex)]
   [state : OptReachState]
   [instr : ir.CompilerIrInstr]) : OptReachState
-  (match (compiler-opt-global-shared-view instr)
+  (match (& instr)
     ;; Register-group ops carry word-class scalar operands (vars/consts);
     ;; lowering materializes any global/function reference into a var before
     ;; packing, so the group operands themselves reach nothing new.
@@ -124282,7 +124224,7 @@
               (compiler-opt-global-shared-view globals)
               reachable-functions
               facts
-              (compiler-opt-global-shared-view summaries.call-memory))]
+              summaries.call-memory)]
           ;; IAG-2's storage table and GAP-1's call-site facts both start from
           ;; the functions no IR call site accounts for; the walk that finds
           ;; them runs only when one of the two tables is built.
@@ -124299,7 +124241,7 @@
                 (> (opt_i64_i64_map.len (& cell.len-eq)) 0)))
               (opt-arg-global-roots
                 (compiler-opt-global-shared-view globals)
-                (compiler-opt-global-shared-view externs)
+                externs
                 reachable-functions
                 capacity)
               (OptArgGlobalScan
@@ -124313,7 +124255,7 @@
               cell.obj-mod-ref
               (opt-global-obj-build
                 type-segment-bases
-                (compiler-opt-global-shared-view globals)
+                globals
                 reachable-functions
                 facts.index
                 roots
@@ -125010,7 +124952,7 @@
 (define (opt-global-cell-scan-uses
   [scan : OptGlobalCellScan]
   [instr : ir.CompilerIrInstr]) : OptGlobalCellScan
-  (match (compiler-opt-global-shared-view instr)
+  (match (& instr)
     [(ir.CompilerIrInstr.Pack _ _ _) scan]
     [_ (ir.compiler-ir-instr-fold-uses instr scan opt-global-cell-scan-use)]))
 
@@ -126670,7 +126612,7 @@
     (opt-global-obj-mod-ref-none)
     (match (opt-global-obj-index-fill
       (compiler-opt-global-shared-view globals)
-      (opt-global-obj-overflow-bit (compiler-opt-global-shared-view globals))
+      (opt-global-obj-overflow-bit globals)
       (opt_i64_i64_map.with-capacity capacity)
       0
       0)
@@ -127945,12 +127887,9 @@
               bad
               (compiler-opt-global-shared-view value))
             (let
-              [cand : opt_i64_i64_map.Map
-                (compiler-opt-global-shared-view ctx.cand)]
-              [ctors : opt_i64_i64_map.Map
-                (compiler-opt-global-shared-view ctx.ctors)]
-              [writes : OptLenEqWrites
-                (compiler-opt-global-shared-view ctx.writes)]
+              [cand : opt_i64_i64_map.Map ctx.cand]
+              [ctors : opt_i64_i64_map.Map ctx.ctors]
+              [writes : OptLenEqWrites ctx.writes]
               (if (not (opt_i64_i64_map.contains? (& cand) id))
                 unit
                 (match value
@@ -129882,7 +129821,7 @@
             [scan : OptArgGlobalScan
               (opt-arg-global-roots
                 (compiler-opt-global-shared-view globals)
-                (compiler-opt-global-shared-view externs)
+                externs
                 functions
                 capacity)]
             [obj : OptGlobalObjModRef
@@ -130494,7 +130433,7 @@
             0
             0)
           (opt-global-mod-ref-build
-            (compiler-opt-global-shared-view globals)
+            globals
             functions
             facts.index
             facts.cells.stores
@@ -131694,10 +131633,7 @@
             (compiler-opt-global-shared-view program))
           (opt-remap-spans-program spans program))
         (begin
-          (cfg
-            compile-profile
-            (compiler-opt-profile-start
-              (profile_state.compiler-profile-state-shared-view profile-state)))
+          (cfg compile-profile (compiler-opt-profile-start profile-state))
           ;; Everything the inline stage builds -- the devirtualized function
           ;; index, the call graph, the SCC and census tables, every rewritten
           ;; caller body, and every superseded spans array -- is dead once
@@ -131746,15 +131682,10 @@
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-finish
-                      (profile_state.compiler-profile-state-shared-view
-                        profile-state)
-                      "pre_prune"))
+                    (compiler-opt-profile-finish profile-state "pre_prune"))
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-start
-                      (profile_state.compiler-profile-state-shared-view
-                        profile-state)))
+                    (compiler-opt-profile-start profile-state))
                   (let
                     ;; The one inline-stage result that must survive the arena:
                     ;; the spans table is consumed after the destroy, by
@@ -131777,10 +131708,7 @@
                     ;; the lower-IR arena and are untouched by this release.
                     [carrier : i64 (opt-optimizer-input-carrier level)]
                     [optimizer-functions : ir.CompilerIrFunctionSeq
-                      (opt-optimizer-input-carry
-                        (compiler-opt-global-shared-view pools)
-                        carrier
-                        pruned-functions)]
+                      (opt-optimizer-input-carry pools carrier pruned-functions)]
                     [_release-inline-arena-early : unit
                       (if (= carrier 0)
                         unit
@@ -131796,20 +131724,16 @@
                         level)]
                     [_summary-context : unit
                       (begin
-                        (set!
-                          summaries.profile-state
-                          (compiler-opt-global-shared-view profile-state))
+                        (set! summaries.profile-state profile-state)
                         (set! summaries.representations representations))]
                     [_load-cse-profile-reset : unit
                       (cfg
                         compile-profile
-                        (compiler-opt-load-cse-profile-reset
-                          (profile_state.compiler-profile-state-shared-view
-                            profile-state))
+                        (compiler-opt-load-cse-profile-reset profile-state)
                         unit)]
                     [optimized-functions : ir.CompilerIrFunctionSeq
                       (optimize-function-seq-with-level-and-summaries
-                        (compiler-opt-global-shared-view pools)
+                        pools
                         type-segment-bases
                         optimizer-functions
                         level
@@ -131840,24 +131764,17 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-opt-profile-finish
-                          (profile_state.compiler-profile-state-shared-view
-                            profile-state)
-                          "functions"))
+                        (compiler-opt-profile-finish profile-state "functions"))
                       (cfg
                         compile-profile-summary
                         (compiler-opt-profile-summary-emit
                           summaries.profile-state))
                       (cfg
                         compile-profile
-                        (compiler-opt-load-cse-profile-emit
-                          (profile_state.compiler-profile-state-shared-view
-                            profile-state)))
+                        (compiler-opt-load-cse-profile-emit profile-state))
                       (cfg
                         compile-profile
-                        (compiler-opt-profile-start
-                          (profile_state.compiler-profile-state-shared-view
-                            profile-state)))
+                        (compiler-opt-profile-start profile-state))
                       (let
                         [final-pruned
                           : OptPrunedProgram
@@ -131932,7 +131849,7 @@
     [type-segment-bases : i64
       (ast.ast-node-pool-context-type-segment-bases pools)]
     (optimize-program-with-context
-      (compiler-opt-global-shared-view pools)
+      pools
       type-segment-bases
       (compiler-opt-global-shared-view program)
       spans
@@ -133728,9 +133645,7 @@
           (compiler-opt-global-shared-view context)
           (compiler-opt-global-shared-view blocks)
           frame
-          (opt-cfg-natural-loops-with-context
-            blocks
-            (compiler-opt-global-shared-view context)))
+          (opt-cfg-natural-loops-with-context blocks context))
           [(OptScratchResetApplyResult.Result next-blocks next-frame changed)
             (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
 
@@ -133844,7 +133759,7 @@
           (ir.compiler-ir-function-builder-push!
             (&mut builder)
             (opt-late-function-escaping
-              (compiler-opt-global-shared-view pools)
+              pools
               type-segment-bases
               (compiler-opt-global-array-element-shared-view
                 functions.slots
@@ -143022,9 +142937,8 @@
           (__tl_make-array
             i64
             (opt-load-join-loop-count (compiler-opt-global-shared-view loops)))]
-        [succs : OptCfgCsr (compiler-opt-global-shared-view index.succs)]
-        [reachable : (__tl_dyn-array bool)
-          (compiler-opt-global-shared-view index.reachable)]
+        [succs : OptCfgCsr index.succs]
+        [reachable : (__tl_dyn-array bool) index.reachable]
         [moved : i64 0]
         [slot : i64 0]
         [id : i64 0]

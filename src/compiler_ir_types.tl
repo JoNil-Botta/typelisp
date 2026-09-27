@@ -5484,9 +5484,7 @@
 ;; compiler-ir-array-shared-view does not perform a bounds check. Preserve its
 ;; inferred inline-enum element type/stride rather than rebuilding pointer casts
 ;; at each consumer.
-(defmacro (compiler-ir-instr-seq-ref
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : CompilerIrInstr
+(defmacro (compiler-ir-instr-seq-ref [instrs : Expr] [index : i64]) : CompilerIrInstr
   `(compiler-ir-array-shared-view
     (__tl-project-field-name ,instrs "slots")
     ,index))

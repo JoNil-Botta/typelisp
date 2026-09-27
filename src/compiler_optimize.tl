@@ -7107,14 +7107,10 @@
   (if (>= index (ast.ast-type-list-len a))
     true
     (and
-      (opt-type-eq
+      (opt-type-ids-eq?
         type-segment-bases
-        (ast.ast-type-segment-bases-get
-          type-segment-bases
-          (ast.ast-type-list-get a index (ast.ast-type-id-fallback)))
-        (ast.ast-type-segment-bases-get
-          type-segment-bases
-          (ast.ast-type-list-get b index (ast.ast-type-id-fallback))))
+        (ast.ast-type-list-get a index (ast.ast-type-id-fallback))
+        (ast.ast-type-list-get b index (ast.ast-type-id-fallback)))
       (opt-type-list-eq-at type-segment-bases a b (+ index 1)))))
 
 (define (opt-type-list-eq
@@ -7233,20 +7229,14 @@
               type-segment-bases
               (deref a-params)
               (deref b-params))
-            (opt-type-eq
-              type-segment-bases
-              (ast.ast-type-segment-bases-get type-segment-bases a-ret)
-              (ast.ast-type-segment-bases-get type-segment-bases b-ret)))]
+            (opt-type-ids-eq? type-segment-bases a-ret b-ret))]
         [_ false])]
     [(ast.AstType.CFunc a-signature a-mode)
       (match b
         [(ast.AstType.CFunc b-signature b-mode)
           (and
             (ast.ast-c-function-mode-eq? a-mode b-mode)
-            (opt-type-eq
-              type-segment-bases
-              (ast.ast-type-segment-bases-get type-segment-bases a-signature)
-              (ast.ast-type-segment-bases-get type-segment-bases b-signature)))]
+            (opt-type-ids-eq? type-segment-bases a-signature b-signature))]
         [_ false])]
     [(ast.AstType.Tuple a-items)
       (match b
@@ -7258,80 +7248,53 @@
         [(ast.AstType.Array b-item b-len)
           (and
             (= a-len b-len)
-            (opt-type-eq
-              type-segment-bases
-              (ast.ast-type-segment-bases-get type-segment-bases a-item)
-              (ast.ast-type-segment-bases-get type-segment-bases b-item)))]
+            (opt-type-ids-eq? type-segment-bases a-item b-item))]
         [_ false])]
     [(ast.AstType.DynArray a-item)
       (match b
         [(ast.AstType.DynArray b-item)
-          (opt-type-eq
-            type-segment-bases
-            (ast.ast-type-segment-bases-get type-segment-bases a-item)
-            (ast.ast-type-segment-bases-get type-segment-bases b-item))]
+          (opt-type-ids-eq? type-segment-bases a-item b-item)]
         [_ false])]
     [(ast.AstType.Slice a-item)
       (match b
         [(ast.AstType.Slice b-item)
-          (opt-type-eq
-            type-segment-bases
-            (ast.ast-type-segment-bases-get type-segment-bases a-item)
-            (ast.ast-type-segment-bases-get type-segment-bases b-item))]
+          (opt-type-ids-eq? type-segment-bases a-item b-item)]
         [_ false])]
     [(ast.AstType.Box a-item)
       (match b
         [(ast.AstType.Box b-item)
-          (opt-type-eq
-            type-segment-bases
-            (ast.ast-type-segment-bases-get type-segment-bases a-item)
-            (ast.ast-type-segment-bases-get type-segment-bases b-item))]
+          (opt-type-ids-eq? type-segment-bases a-item b-item)]
         [_ false])]
     [(ast.AstType.Ptr a-item)
       (match b
         [(ast.AstType.Ptr b-item)
-          (opt-type-eq
-            type-segment-bases
-            (ast.ast-type-segment-bases-get type-segment-bases a-item)
-            (ast.ast-type-segment-bases-get type-segment-bases b-item))]
+          (opt-type-ids-eq? type-segment-bases a-item b-item)]
         [_ false])]
     [(ast.AstType.MutPtr a-item)
       (match b
         [(ast.AstType.MutPtr b-item)
-          (opt-type-eq
-            type-segment-bases
-            (ast.ast-type-segment-bases-get type-segment-bases a-item)
-            (ast.ast-type-segment-bases-get type-segment-bases b-item))]
+          (opt-type-ids-eq? type-segment-bases a-item b-item)]
         [_ false])]
     [(ast.AstType.Ref a-region a-inner)
       (match b
         [(ast.AstType.Ref b-region b-inner)
           (and
             (= a-region b-region)
-            (opt-type-eq
-              type-segment-bases
-              (ast.ast-type-segment-bases-get type-segment-bases a-inner)
-              (ast.ast-type-segment-bases-get type-segment-bases b-inner)))]
+            (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
         [_ false])]
     [(ast.AstType.MutRef a-region a-inner)
       (match b
         [(ast.AstType.MutRef b-region b-inner)
           (and
             (= a-region b-region)
-            (opt-type-eq
-              type-segment-bases
-              (ast.ast-type-segment-bases-get type-segment-bases a-inner)
-              (ast.ast-type-segment-bases-get type-segment-bases b-inner)))]
+            (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
         [_ false])]
     [(ast.AstType.Region a-region a-inner)
       (match b
         [(ast.AstType.Region b-region b-inner)
           (and
             (= a-region b-region)
-            (opt-type-eq
-              type-segment-bases
-              (ast.ast-type-segment-bases-get type-segment-bases a-inner)
-              (ast.ast-type-segment-bases-get type-segment-bases b-inner)))]
+            (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
         [_ false])]
     [(ast.AstType.Enum a-name)
       (match b
@@ -7366,6 +7329,13 @@
             (= a-name b-name)
             (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
         [_ false])]))
+
+;; `opt-type-eq` of the types two type ids name.
+(define (opt-type-ids-eq? [type-segment-bases : i64] [a : i64] [b : i64]) : bool
+  (opt-type-eq
+    type-segment-bases
+    (ast.ast-type-segment-bases-get type-segment-bases a)
+    (ast.ast-type-segment-bases-get type-segment-bases b)))
 
 (define (opt-symbol-hash [symbol : i64]) : i64
   (let

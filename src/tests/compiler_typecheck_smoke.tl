@@ -2434,8 +2434,7 @@
   [key : String]) : ast.AstDecl
   (match (parser.parse-ast-source-diagnostic "target/tc_state_entry.tl" source)
     [(parser.ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step
-        (ast.ast-decl-list-box-shared-view decls-box))
+      (match (ast.ast-decl-list-step (deref decls-box))
         [(ast.AstDeclListStep.Cons decl _)
           (ast.ast-decl-comptime-decl-with-meta
             (tc_core.macro-generated-meta "state-isolation" "import" key)
@@ -4895,7 +4894,7 @@
 
 (define (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
   [decls : ast.AstDeclList]) : bool
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
       (let

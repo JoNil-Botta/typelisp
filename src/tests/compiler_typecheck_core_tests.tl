@@ -4360,8 +4360,9 @@
         (unsafe
           (ptr-read (ptr-offset (__tl_array-data summary.decls) b-slot)))]
       [generated-meta-ok : bool
-        (match (ast.ast-decl-generated-meta
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view a-decls) 0))
+        (match (let
+          [decl (ast.ast-decl-list-ref a-decls 0)]
+          (ast.ast-decl-generated-meta decl))
           [(ast.AstGeneratedDeclMeta.Some _ _ _ key)
             (string.eq key "summary-key")]
           [(ast.AstGeneratedDeclMeta.No) false])]
@@ -4391,7 +4392,7 @@
           generated-name
           21)
         generated-meta-ok
-        (match (ast.ast-decl-list-ref (tc_core.tc-global-shared-view a-decls) 1)
+        (match (ast.ast-decl-list-ref a-decls 1)
           [(ast.AstDecl.Test name body _ span)
             (and
               (= name test-name)
@@ -4399,11 +4400,11 @@
               (= (ast.ast-source-span-start-line span) 1)
               (= (ast.ast-source-span-end-line span) 3))]
           [_ false])
-        (match (ast.ast-decl-list-ref (tc_core.tc-global-shared-view a-decls) 2)
+        (match (ast.ast-decl-list-ref a-decls 2)
           [(ast.AstDecl.IncludeBin name path)
             (and (= name bin-name) (string.eq path "summary.bin"))]
           [_ false])
-        (match (ast.ast-decl-list-ref (tc_core.tc-global-shared-view a-decls) 3)
+        (match (ast.ast-decl-list-ref a-decls 3)
           [(ast.AstDecl.IncludeStr name path)
             (and (= name str-name) (string.eq path "summary.txt"))]
           [_ false])
@@ -6632,24 +6633,16 @@
           right-address)
         (= reused.offset 1)
         (= (ast.ast-decl-list-len (& reused)) 3)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view reused) 0)
-          left-id)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view reused) 1)
-          right-a-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref reused 0) left-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref reused 1) right-a-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref reused 2) right-b-id)
         (not
           (=
             (macro-decl-list-slots-address
               (tc_core.tc-global-shared-view copied))
             right-address))
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view copied) 0)
-          alias-id)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view copied) 1)
-          right-a-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref copied 0) alias-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref copied 1) right-a-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref copied 2) right-b-id)
         (= reserved.offset 8)
         (=
@@ -6657,15 +6650,9 @@
             (tc_core.tc-global-shared-view prefixed))
           reserved-address)
         (= prefixed.offset 6)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view prefixed) 0)
-          prefix-a-id)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view prefixed) 1)
-          prefix-b-id)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view prefixed) 2)
-          right-a-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 0) prefix-a-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 1) prefix-b-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 2) right-a-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 3) right-b-id)))))
 
 (cfg
@@ -6796,8 +6783,7 @@
         [done : bool false]
         (begin
           (while (not done)
-            (match (ast.ast-decl-list-step
-              (tc_core.tc-global-shared-view cursor))
+            (match (ast.ast-decl-list-step cursor)
               [(ast.AstDeclListStep.Nil) (set! done true)]
               [(ast.AstDeclListStep.Cons decl rest)
                 (begin
@@ -6837,8 +6823,7 @@
                   (& cursor)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
-              (match (ast.ast-decl-path-list-step
-                (tc_core.tc-global-shared-view cursor))
+              (match (ast.ast-decl-path-list-step cursor)
                 [(ast.AstDeclPathListStep.Nil) (set! done true)]
                 [(ast.AstDeclPathListStep.Cons path rest)
                   (begin
@@ -7218,9 +7203,7 @@
                         (set! iter-ok false)
                         (let
                           [expected-id : i64
-                            (match (ast.ast-decl-list-ref
-                              (tc_core.tc-global-shared-view flat-decls)
-                              iter-index)
+                            (match (ast.ast-decl-list-ref flat-decls iter-index)
                               [(ast.AstDecl.Module name) name]
                               [_ -1])]
                           [actual-id : i64

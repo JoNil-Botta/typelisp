@@ -9111,7 +9111,7 @@
   compile-profile
   (define (compiler-tc-decl-profile-record [decl : ast.AstDecl]) : unit
     (begin
-      (match (ast.ast-decl-generated-meta (tc-global-shared-view decl))
+      (match (ast.ast-decl-generated-meta decl)
         [(ast.AstGeneratedDeclMeta.Some _ _ _ _)
           (set!
             compiler-tc-macro-generated-decl-checks
@@ -10222,7 +10222,7 @@
     [(tc-located-error? message) (tc-located-error-diag message)]
     [else
       (tc-generated-decl-diag
-        (ast.ast-decl-generated-meta (tc-global-shared-view decl))
+        (ast.ast-decl-generated-meta decl)
         (tc-decl-location-diag expr-bases decl message))]))
 
 (define (tc-decl-diag-with-maybe-origin
@@ -28990,13 +28990,13 @@
   [paths : ast.AstDeclPathList]
   [fallback-path : String]
   [module-id : i64]) : ResultTcSourcePolicyDiagnostic
-  (match (ast.ast-decl-list-step (tc-global-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) ResultTcSourcePolicyDiagnostic.Ok]
     [(ast.AstDeclListStep.Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         [decl-path : String
-          (match (ast.ast-decl-path-list-step (tc-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
             [(ast.AstDeclPathListStep.Nil) fallback-path])]
         [rest-paths : ast.AstDeclPathList
@@ -33737,7 +33737,7 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [summary : ast.AstDeclList]) : ResultTcEnv
-  (match (ast.ast-decl-list-step (tc-global-shared-view summary))
+  (match (ast.ast-decl-list-step summary)
     [(ast.AstDeclListStep.Nil) (ResultTcEnv.Ok top-env)]
     [(ast.AstDeclListStep.Cons _ _)
       (tc-build-top-env-list-explicit-in-module
@@ -86670,7 +86670,7 @@
           (set!
             result
             (macro-decl-list-prepend-from-source
-              (ast.ast-decl-list-ref (tc-global-shared-view items) index)
+              (ast.ast-decl-list-ref items index)
               (tc-global-shared-view items)
               index
               result))
@@ -86809,7 +86809,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -86903,7 +86903,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-path-list-step (tc-global-shared-view cursor))
+        (match (ast.ast-decl-path-list-step cursor)
           [(ast.AstDeclPathListStep.Nil) (set! done true)]
           [(ast.AstDeclPathListStep.Cons head rest)
             (begin
@@ -87236,7 +87236,7 @@
     [node : MacroProgramSegmentNodeData
       (macro-program-segment-node-data data.head)]
     (macro-decl-list-prepend-from-source
-      (ast.ast-decl-list-ref (tc-global-shared-view node.decls) data.cursor)
+      (ast.ast-decl-list-ref node.decls data.cursor)
       node.decls
       data.cursor
       rest)))
@@ -87714,9 +87714,7 @@
         (begin
           (set!
             (array-ref decl-slots index)
-            (ast.ast-decl-list-ref
-              (tc-global-shared-view prefix-decls)
-              (- (- prefix-count 1) index)))
+            (ast.ast-decl-list-ref prefix-decls (- (- prefix-count 1) index)))
           (set!
             (array-ref path-slots index)
             (ast.ast-decl-path-list-get
@@ -87751,9 +87749,7 @@
                 (begin
                   (set!
                     (array-ref decl-slots index)
-                    (ast.ast-decl-list-ref
-                      (tc-global-shared-view decls)
-                      node-index))
+                    (ast.ast-decl-list-ref decls node-index))
                   (set!
                     (array-ref path-slots index)
                     (ast.ast-decl-path-list-get (& paths) node-index ""))
@@ -88012,9 +88008,7 @@
                   ctx
                   cur-env
                   (&mut seen)
-                  (ast.ast-decl-list-ref
-                    (tc-global-shared-view prefix)
-                    prefix-index))
+                  (ast.ast-decl-list-ref prefix prefix-index))
                   [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
                   [(ResultTcEnv.Err step-message)
                     (begin
@@ -88045,9 +88039,7 @@
                         ctx
                         cur-env
                         (&mut seen)
-                        (ast.ast-decl-list-ref
-                          (tc-global-shared-view decls)
-                          node-index))
+                        (ast.ast-decl-list-ref decls node-index))
                         [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
                         [(ResultTcEnv.Err step-message)
                           (begin
@@ -88754,7 +88746,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -88829,7 +88821,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -88870,7 +88862,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -88903,7 +88895,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -88927,7 +88919,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -88971,7 +88963,7 @@
         span)]
     [missing-body : ast.AstDeclList
       (macro-decls-missing-generated-body generated-body existing-body)]
-    (match (ast.ast-decl-list-step (tc-global-shared-view missing-body))
+    (match (ast.ast-decl-list-step missing-body)
       [(ast.AstDeclListStep.Nil) marker-decls]
       [_
         (macro-decl-list-append
@@ -89729,10 +89721,10 @@
       [done : bool false]
       (begin
         (while (not done)
-          (match (ast.ast-decl-list-step (tc-global-shared-view cursor-a))
+          (match (ast.ast-decl-list-step cursor-a)
             [(ast.AstDeclListStep.Nil) (set! done true)]
             [(ast.AstDeclListStep.Cons decl-a rest-a)
-              (match (ast.ast-decl-list-step (tc-global-shared-view cursor-b))
+              (match (ast.ast-decl-list-step cursor-b)
                 [(ast.AstDeclListStep.Nil)
                   (begin
                     (set! equal false)
@@ -103104,7 +103096,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -105116,7 +105108,7 @@
       (tc-macro-call-site-state-set-active-decl!
         site-state
         (tc-global-shared-view decl-path)
-        (ast.ast-decl-generated-meta (tc-global-shared-view decl)))]
+        (ast.ast-decl-generated-meta decl))]
     [_definition-path : unit
       (macro-definition-path-note-decl!
         ctx
@@ -106150,7 +106142,7 @@
       (tc-macro-call-site-state-set-active-decl!
         site-state
         (tc-global-shared-view decl-path)
-        (ast.ast-decl-generated-meta (tc-global-shared-view decl)))]
+        (ast.ast-decl-generated-meta decl))]
     [result : ResultMacroDeclExpansion
       (match (tc-global-shared-view decl)
         [(ast.AstDecl.Import
@@ -106784,7 +106776,7 @@
   [state : TcMacroState]
   [decls : ast.AstDeclList]
   [importer-module-id : i64]) : MacroMaybeGeneratedModuleExtension
-  (match (ast.ast-decl-list-step (tc-global-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) MacroMaybeGeneratedModuleExtension.No]
     [(ast.AstDeclListStep.Cons first _)
       (match first
@@ -106802,12 +106794,11 @@
                     target-module-id
                     importer-module-id
                     cbi.compiler-builtin-id-fix-empty)]
-                (match (ast.ast-decl-list-step (tc-global-shared-view summary))
+                (match (ast.ast-decl-list-step summary)
                   [(ast.AstDeclListStep.Nil)
                     MacroMaybeGeneratedModuleExtension.No]
                   [_
-                    (match (ast.ast-decl-list-step
-                      (tc-global-shared-view marker))
+                    (match (ast.ast-decl-list-step marker)
                       [(ast.AstDeclListStep.Nil)
                         MacroMaybeGeneratedModuleExtension.No]
                       [_
@@ -107784,7 +107775,7 @@
   [state : TcMacroState]
   [expr-bases : i64]
   [decl : ast.AstDecl]) : bool
-  (if (ast.ast-decl-comptime-only? (tc-global-shared-view decl))
+  (if (ast.ast-decl-comptime-only? decl)
     false
     (match decl
       [(ast.AstDecl.Def decl-meta _ _ expr-box)
@@ -108593,8 +108584,7 @@
                               ;; macro-decls-splice-with-memo) expands to nothing:
                               ;; drop the placeholder and keep walking -- there is
                               ;; no new name, so no context rebuild is needed.
-                              (match (ast.ast-decl-list-step
-                                (tc-global-shared-view expanded))
+                              (match (ast.ast-decl-list-step expanded)
                                 [(ast.AstDeclListStep.Nil)
                                   (macro-segmented-program-advance! walk-state)]
                                 [_
@@ -109437,7 +109427,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cur))
+        (match (ast.ast-decl-list-step cur)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -109918,7 +109908,7 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (define (macro-generated-normal-import [decl : ast.AstDecl]) : MacroMaybeGeneratedNormalImport
-  (match (ast.ast-decl-generated-meta (tc-global-shared-view decl))
+  (match (ast.ast-decl-generated-meta decl)
     [(ast.AstGeneratedDeclMeta.Some _ _ _ _)
       (let
         [template : ast.AstDecl (ast.ast-decl-unwrapped decl)]
@@ -111627,7 +111617,7 @@
   [decl : ast.AstDecl]) : ResultTcUnit
   (begin
     (tc-unbound-suggestion-snapshot-reset!)
-    (if (ast.ast-decl-comptime-only? (tc-global-shared-view decl))
+    (if (ast.ast-decl-comptime-only? decl)
       (let
         [template : ast.AstDecl
           (ast.ast-decl-with-meta
@@ -111725,7 +111715,7 @@
         (tc-prefix-decl-key-inner (ast.ast-decl-box-shared-view inner)))]))
 
 (define (tc-prefix-decl-key [decl : ast.AstDecl]) : String
-  (if (ast.ast-decl-comptime-only? (tc-global-shared-view decl))
+  (if (ast.ast-decl-comptime-only? decl)
     (str_cat.str-cat "comptime:" (tc-prefix-decl-key-inner decl))
     (tc-prefix-decl-key-inner decl)))
 
@@ -111807,7 +111797,7 @@
       (let
         [rest : ast.AstDeclList rest]
         [decl-path : String
-          (match (ast.ast-decl-path-list-step (tc-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
             [(ast.AstDeclPathListStep.Nil) ""])]
         [rest-paths : ast.AstDeclPathList
@@ -112111,7 +112101,7 @@
     [done : bool false]
     (begin
       (while (and (not done) (< index count))
-        (match (ast.ast-decl-list-step (tc-global-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -112496,7 +112486,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cur-decls))
+        (match (ast.ast-decl-list-step cur-decls)
           [(ast.AstDeclListStep.Nil)
             (begin
               (cfg
@@ -112519,13 +112509,11 @@
             (let
               [rest : ast.AstDeclList rest]
               [decl-path : String
-                (match (ast.ast-decl-path-list-step
-                  (tc-global-shared-view cur-paths))
+                (match (ast.ast-decl-path-list-step cur-paths)
                   [(ast.AstDeclPathListStep.Cons path _) path]
                   [(ast.AstDeclPathListStep.Nil) ""])]
               [rest-paths : ast.AstDeclPathList
-                (match (ast.ast-decl-path-list-step
-                  (tc-global-shared-view cur-paths))
+                (match (ast.ast-decl-path-list-step cur-paths)
                   [(ast.AstDeclPathListStep.Cons _ path-rest)
                     (let
                       [path-rest : ast.AstDeclPathList path-rest]
@@ -112639,9 +112627,7 @@
                       [type-module-id : i64
                         (if (and
                           (csym.compiler-symbol-root-module-id? cur-module-id)
-                          (not
-                            (ast.ast-decl-comptime-only?
-                              (tc-global-shared-view decl)))
+                          (not (ast.ast-decl-comptime-only? decl))
                           (not
                             (macro-decl-generated? (tc-global-shared-view decl))))
                           (if (and

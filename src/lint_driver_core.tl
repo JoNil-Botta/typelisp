@@ -2008,11 +2008,7 @@
   [requested-report : bool]) : SelfhostLintDeadScan
   (let
     [allow-report : bool
-      (and
-        requested-report
-        (not
-          (ast.ast-decl-comptime-only?
-            (owned_view.compiler-owned-shared-view decl))))]
+      (and requested-report (not (ast.ast-decl-comptime-only? decl)))]
     [result : SelfhostLintDeadScan
       (match (owned_view.compiler-owned-shared-view decl)
         [(ast.AstDecl.ModuleBody name body-box)

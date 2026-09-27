@@ -1239,8 +1239,10 @@
                                               "surface reason")]
                                           [_ false]))]
                                     [_ false])
-                                  (ast.ast-decl-must-use?
-                                    (ast.ast-decl-list-ref hydration.decls 3))
+                                  (let
+                                    [decl
+                                      (ast.ast-decl-list-ref hydration.decls 3)]
+                                    (ast.ast-decl-must-use? decl))
                                   (surface-ast-hydrated-tuple-set-ok?
                                     (owned_view.compiler-owned-shared-view
                                       hydration.pools))

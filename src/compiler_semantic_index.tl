@@ -6801,8 +6801,7 @@
                       (tc.macro-decl-module-display module-id)
                       module-id))]
                 [generated : bool
-                  (match (ast.ast-decl-generated-meta
-                    (owned_view.compiler-owned-shared-view decl))
+                  (match (ast.ast-decl-generated-meta decl)
                     [(ast.AstGeneratedDeclMeta.No) false]
                     [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true])]
                 [provenance : CompilerSemanticProvenance

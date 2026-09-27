@@ -869,8 +869,7 @@
       [(tltest.InlineHarness.Harness program _ count)
         (match program
           [(ast.AstProgram.Program harness-decls-box)
-            (match (ast.ast-decl-list-step
-              (ast.ast-decl-list-box-shared-view harness-decls-box))
+            (match (ast.ast-decl-list-step (deref harness-decls-box))
               [(ast.AstDeclListStep.Cons first _)
                 (and (= count 1) (tltest-import-alias-preserved? first))]
               [_ false])])]))

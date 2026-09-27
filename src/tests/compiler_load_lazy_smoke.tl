@@ -651,7 +651,7 @@
 (define (lazy-semantic-origin-same-count
   [decls : ast.AstDeclList]
   [count : i64]) : i64
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) count]
     [(ast.AstDeclListStep.Cons decl rest)
       (let

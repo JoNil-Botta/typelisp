@@ -6773,7 +6773,7 @@
       (let
         [rest : ast.AstDeclList rest]
         [decl-path : String
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
             [(ast.AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : ast.AstDeclPathList
@@ -7304,7 +7304,7 @@
   [module : String]
   [module-id : i64]
   [decl : ast.AstDecl]) : LowerNameEnv
-  (match (ast.ast-decl-generated-meta (lower-global-shared-view decl))
+  (match (ast.ast-decl-generated-meta decl)
     [(ast.AstGeneratedDeclMeta.Some generator item _ _)
       (if (string.eq generator "stdlib.clone/synthesize-helpers")
         (match (ast.ast-decl-unwrapped decl)
@@ -11622,7 +11622,7 @@
             next-module)]
         [_
           (+
-            (match (ast.ast-decl-generated-meta (lower-global-shared-view decl))
+            (match (ast.ast-decl-generated-meta decl)
               [(ast.AstGeneratedDeclMeta.Some generator item _ key)
                 (if (and
                   (string.eq generator "stdlib.clone/synthesize-helpers")
@@ -12895,11 +12895,11 @@
       (let
         [rest : ast.AstDeclList rest]
         [decl-path : String
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
             [(ast.AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : ast.AstDeclPathList
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest) path-rest]
             [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)])]
         [logical-module-id : i64
@@ -13151,11 +13151,11 @@
       (let
         [rest : ast.AstDeclList rest]
         [decl-path : String
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
             [(ast.AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : ast.AstDeclPathList
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest) path-rest]
             [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)])]
         [logical-module-id : i64
@@ -13361,7 +13361,7 @@
       (let
         [rest : ast.AstDeclList rest]
         [decl-path : String
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
             [(ast.AstDeclPathListStep.Nil) entry-path])]
         [logical-module-id : i64
@@ -13377,7 +13377,7 @@
             (lower-global-shared-view module-name-cache)
             logical-module-id)]
         [rest-paths : ast.AstDeclPathList
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest)
               (let
                 [path-rest : ast.AstDeclPathList path-rest]
@@ -14619,7 +14619,7 @@
     [_ false]))
 
 (define (lower-decl-is-clone-helper? [decl : ast.AstDecl]) : bool
-  (match (ast.ast-decl-generated-meta (lower-global-shared-view decl))
+  (match (ast.ast-decl-generated-meta decl)
     [(ast.AstGeneratedDeclMeta.Some generator _ _ _)
       (if (string.eq generator "stdlib.clone/synthesize-helpers")
         true
@@ -14695,7 +14695,7 @@
       (let
         [rest : ast.AstDeclList rest]
         [rest-paths : ast.AstDeclPathList
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest) path-rest]
             [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)])]
         [path-owner-id : i64
@@ -14758,7 +14758,7 @@
       (let
         [rest : ast.AstDeclList rest]
         [decl-path : String
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
             [(ast.AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : ast.AstDeclPathList
@@ -15444,7 +15444,7 @@
       (let
         [rest : ast.AstDeclList rest]
         [decl-path : String
-          (match (ast.ast-decl-path-list-step (lower-global-shared-view paths))
+          (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
             [(ast.AstDeclPathListStep.Nil) entry-path])]
         [rest-paths : ast.AstDeclPathList
@@ -69634,7 +69634,7 @@
 (define (lower-skip-runtime-until-next-module-with-paths
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : LowerSkippedRuntimeWithPaths
-  (match (ast.ast-decl-list-step (lower-global-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil)
       (LowerSkippedRuntimeWithPaths.Skipped
         (ast.ast-decl-list-new)
@@ -69714,7 +69714,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (lower-global-shared-view cur-decls))
+        (match (ast.ast-decl-list-step cur-decls)
           [(ast.AstDeclListStep.Nil)
             (begin
               (set!
@@ -69772,8 +69772,7 @@
                   lower-state
                   bool
                   current-decl-generated
-                  (match (ast.ast-decl-generated-meta
-                    (lower-global-shared-view decl))
+                  (match (ast.ast-decl-generated-meta decl)
                     [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true]
                     [(ast.AstGeneratedDeclMeta.No) false]))]
               (match (ast.ast-decl-unwrapped (lower-global-shared-view decl))

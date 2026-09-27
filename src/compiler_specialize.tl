@@ -1246,7 +1246,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -3549,7 +3549,7 @@
   ;; Strip generation provenance, not the aggregate's semantic marker flags.
   (ast.ast-decl-with-meta
     (ast.ast-decl-meta-runtime-with-aggregate-markers
-      (ast.ast-decl-aggregate-markers (ast.ast-place-shared-view decl)))
+      (ast.ast-decl-aggregate-markers decl))
     decl))
 
 (define (gen-rewrite-generated-decl-with-owner
@@ -3636,7 +3636,7 @@
     [(ast.AstDecl.Module name)
       (ResultGenDecl.Ok (gen-single-decl-list decl) registry name)]
     [_
-      (match (ast.ast-decl-generated-meta (ast.ast-place-shared-view decl))
+      (match (ast.ast-decl-generated-meta decl)
         [(ast.AstGeneratedDeclMeta.No)
           (ResultGenDecl.Ok (gen-single-decl-list decl) registry module-id)]
         [(ast.AstGeneratedDeclMeta.Some generator item args meta-key)
@@ -3742,7 +3742,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil)
             (begin
               (parser.compiler-parse-decl-origin-alias-vec-register!
@@ -3819,7 +3819,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view decl-cursor))
+        (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil)
             (begin
               (parser.compiler-parse-decl-origin-alias-vec-register!
@@ -4024,7 +4024,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (if (gen-decl-needs-normalize? decl)
@@ -7093,7 +7093,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil)
             (begin
               (parser.compiler-parse-decl-origin-alias-vec-register!
@@ -7162,7 +7162,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view decl-cursor))
+        (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil)
             (begin
               (parser.compiler-parse-decl-origin-alias-vec-register!

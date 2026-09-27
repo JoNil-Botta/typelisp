@@ -16,7 +16,6 @@
 (import compiler_cfg_core as cfg)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
-(import compiler_owned_view as owned_view)
 (import compiler_parse_core as parser)
 (import read as reader)
 (import sym_i64_env)
@@ -102,9 +101,7 @@
             (str_cat.str-cat
               out
               (compiler-load-decl-run-decl-text
-                (ast.ast-decl-list-ref
-                  (owned_view.compiler-owned-shared-view decls)
-                  index))
+                (ast.ast-decl-list-ref decls index))
               ";"))
           (set! index (+ index 1))))
       out)))
@@ -309,9 +306,7 @@
                     (str_cat.str-cat
                       text
                       (compiler-load-decl-run-decl-text
-                        (ast.ast-decl-list-ref
-                          (owned_view.compiler-owned-shared-view decls)
-                          index))
+                        (ast.ast-decl-list-ref decls index))
                       "/"
                       (compiler-load-decl-run-origin-text (& decls) index)
                       ";"))

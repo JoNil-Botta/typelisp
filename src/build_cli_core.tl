@@ -3308,14 +3308,12 @@
     [module : String initial-module]
     [done : bool false]
     (while (not done)
-      (match (ast.ast-decl-list-step
-        (owned_view.compiler-owned-shared-view decl-cursor))
+      (match (ast.ast-decl-list-step decl-cursor)
         [(ast.AstDeclListStep.Nil) (set! done true)]
         [(ast.AstDeclListStep.Cons decl rest)
           (let
             [decl-path : String
-              (match (ast.ast-decl-path-list-step
-                (owned_view.compiler-owned-shared-view path-cursor))
+              (match (ast.ast-decl-path-list-step path-cursor)
                 [(ast.AstDeclPathListStep.Nil) fallback-path]
                 [(ast.AstDeclPathListStep.Cons path _) path])]
             [owned-path : String
@@ -3335,8 +3333,7 @@
                     out
                     captures)])
               (set! decl-cursor rest)
-              (match (ast.ast-decl-path-list-step
-                (owned_view.compiler-owned-shared-view path-cursor))
+              (match (ast.ast-decl-path-list-step path-cursor)
                 [(ast.AstDeclPathListStep.Nil) unit]
                 [(ast.AstDeclPathListStep.Cons _ path-rest)
                   (set! path-cursor path-rest)])))]))))
@@ -3381,14 +3378,12 @@
     [current : BuildPackageTlciCallableCollector collector]
     (begin
       (while (and (not done) (= (string.string-length current.error) 0))
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view decl-cursor))
+        (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (let
               [decl-path : String
-                (match (ast.ast-decl-path-list-step
-                  (owned_view.compiler-owned-shared-view path-cursor))
+                (match (ast.ast-decl-path-list-step path-cursor)
                   [(ast.AstDeclPathListStep.Nil) fallback-path]
                   [(ast.AstDeclPathListStep.Cons path _) path])]
               [owned-path : String
@@ -3421,8 +3416,7 @@
                         mode
                         current))])
                 (set! decl-cursor rest)
-                (match (ast.ast-decl-path-list-step
-                  (owned_view.compiler-owned-shared-view path-cursor))
+                (match (ast.ast-decl-path-list-step path-cursor)
                   [(ast.AstDeclPathListStep.Nil) unit]
                   [(ast.AstDeclPathListStep.Cons _ path-rest)
                     (set! path-cursor path-rest)])))]))

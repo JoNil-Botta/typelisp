@@ -1929,7 +1929,9 @@
         [decls : ast.AstDeclList (deref decls-box)]
         (and
           (= (ast.ast-decl-list-len (& decls)) 1)
-          (ast.ast-decl-must-use? (ast.ast-decl-list-ref decls 0))))]
+          (let
+            [decl (ast.ast-decl-list-ref decls 0)]
+            (ast.ast-decl-must-use? decl))))]
     [(parser.ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-must-use-metadata-ok?) : bool

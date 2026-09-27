@@ -1677,7 +1677,7 @@
   [index : i64]) : ResultCompilerSymbols
   (let
     [generated-meta : ast.AstGeneratedDeclMeta
-      (ast.ast-decl-generated-meta (compiler-symbols-decl-shared-view decl))]
+      (ast.ast-decl-generated-meta decl)]
     (match (compiler-symbols-add-decl-in-module-inner
       symbols
       module-id
@@ -2984,7 +2984,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cur-decls))
+        (match (ast.ast-decl-list-step cur-decls)
           [(ast.AstDeclListStep.Nil)
             (return (ResultCompilerSymbols.Ok cur-symbols))]
           [(ast.AstDeclListStep.Cons decl rest)
@@ -3115,10 +3115,7 @@
                               ;; Source nominal declarations loaded through a
                               ;; legacy path retain their flat lookup aliases but
                               ;; share the dotted import's canonical owner.
-                              (not
-                                (ast.ast-decl-comptime-only?
-                                  (compiler-symbols-decl-shared-view
-                                    decl-master)))
+                              (not (ast.ast-decl-comptime-only? decl-master))
                               (match (compiler-symbols-decl-shared-view
                                 decl-master)
                                 [(ast.AstDecl.DefEnum decl-meta _ _ _) true]

@@ -2509,7 +2509,7 @@
       decl)
       [(load.CompilerLoadMaybeDecl.CompilerLoadSomeDecl transformed)
         (and
-          (match (ast.ast-decl-generated-meta (clone transformed))
+          (match (ast.ast-decl-generated-meta transformed)
             [(ast.AstGeneratedDeclMeta.Some generator item arg-keys _)
               (and
                 (string.eq generator "gen")

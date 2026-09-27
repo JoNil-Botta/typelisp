@@ -180,7 +180,7 @@
 ;; peak that forced the 1GB Windows reserves). Iterate instead; the
 ;; threaded accumulators become loop state.
 (define (lower-skip-runtime-until-next-module [decls : ast.AstDeclList]) : ast.AstDeclList
-  (match (ast.ast-decl-list-step (owned_view.compiler-owned-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) (ast.ast-decl-list-new)]
     [(ast.AstDeclListStep.Cons decl rest)
       (let

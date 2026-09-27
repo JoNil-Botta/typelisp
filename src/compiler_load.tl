@@ -8140,12 +8140,12 @@
   [alias : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (if (ast.ast-decl-comptime-only? (clone decl))
+  (if (ast.ast-decl-comptime-only? decl)
     (if (compiler-load-session-state-lazy-qualified-observer-exhaustive? state)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-generated-meta-demand
           (owned_view.compiler-owned-shared-view state)
-          (ast.ast-decl-generated-meta (clone decl))
+          (ast.ast-decl-generated-meta decl)
           alias
           summary
           locals)
@@ -9443,7 +9443,7 @@
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
         (ast.ast-decl-list-new)
@@ -12165,7 +12165,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view decl-cursor))
+        (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (let
@@ -12238,7 +12238,7 @@
   [module : String]
   [module-id : i64]
   [spmd-interface : CompilerLoadPackageSpmdInterface]) : ResultCompilerLoadWithPaths
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
         (ast.ast-decl-list-new)
@@ -12482,8 +12482,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -12804,7 +12803,7 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
         (ast.ast-decl-list-new)

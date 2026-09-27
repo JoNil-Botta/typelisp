@@ -1339,7 +1339,7 @@
               (ast.ast-decl-list-box-shared-view decls-box)]
             [equal? : bool
               (spec.gen-decl-eq?
-                (ast.ast-decl-list-ref (ast.ast-place-shared-view decls) 0)
+                (ast.ast-decl-list-ref decls 0)
                 (ast.ast-decl-list-ref decls 1))]
             (and
               (= equal? reuse?)
@@ -1355,8 +1355,10 @@
                           (and
                             (= (ast.ast-decl-list-len (& normalized-decls)) 1)
                             (=
-                              (ast.ast-decl-must-use?
-                                (ast.ast-decl-list-ref normalized-decls 0))
+                              (let
+                                [decl
+                                  (ast.ast-decl-list-ref normalized-decls 0)]
+                                (ast.ast-decl-must-use? decl))
                               marked?)))]))]
                 [(spec.ResultSpecProgram.Err diag)
                   (let
@@ -1504,12 +1506,10 @@
         [(spec.ResultSpecProgram.Ok normalized)
           (match normalized
             [(ast.AstProgram.Program decls-box)
-              (match (ast.ast-decl-list-step
-                (ast.ast-decl-list-box-shared-view decls-box))
+              (match (ast.ast-decl-list-step (deref decls-box))
                 [(ast.AstDeclListStep.Cons decl _)
                   (and
-                    (match (ast.ast-decl-generated-meta
-                      (ast.ast-place-shared-view decl))
+                    (match (ast.ast-decl-generated-meta decl)
                       [(ast.AstGeneratedDeclMeta.Some generator item _ key)
                         (and
                           (string.eq generator "sample-family")

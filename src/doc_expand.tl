@@ -999,8 +999,7 @@
 (define (doc-ast-generated-decl-item
   [ctx : DocExpandContext]
   [decl : ast.AstDecl]) : DocMaybeItem
-  (match (ast.ast-decl-generated-meta
-    (owned_view.compiler-owned-shared-view decl))
+  (match (ast.ast-decl-generated-meta decl)
     [(ast.AstGeneratedDeclMeta.Some _ _ _ _) (doc-ast-decl-item ctx decl)]
     [(ast.AstGeneratedDeclMeta.No) (DocMaybeItem.No)]))
 
@@ -1072,8 +1071,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil)
             (begin
               (doc-generated-flush-module!

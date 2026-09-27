@@ -10197,12 +10197,12 @@
     [(OptMaybeBlock.Some _) true]
     [(OptMaybeBlock.No) false]))
 
-(define (opt-cfg-entry-label [blocks : ir.CompilerIrBlockList]) : i64
+(define (opt-cfg-entry-label [blocks : (& blocks ir.CompilerIrBlockList)]) : i64
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-label-none)]
     [(ir.CompilerIrBlockList.Cons block _)
       (match block
-        [(ir.CompilerIrBlock.Block label _) label])]
+        [(ir.CompilerIrBlock.Block label _) (deref label)])]
     [(ir.CompilerIrBlockList.Array seq)
       (if (> (ir.compiler-ir-block-seq-count seq) 0)
         (match (ir.compiler-ir-block-seq-ref seq 0)
@@ -10277,7 +10277,7 @@
         (opt-cfg-label-set-known-in-map?
           (opt-cfg-block-successors-with-next
             block
-            (opt-cfg-entry-label (compiler-opt-box-shared-view rest)))
+            (opt-cfg-entry-label (deref rest)))
           known)
         (opt-cfg-successor-targets-known-map? (deref rest) known))]
     [(ir.CompilerIrBlockList.Array seq)
@@ -14813,8 +14813,7 @@
         facts
         params
         (opt-ssa-env-for-function facts sites frame))]
-    [entry-label : i64
-      (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))]
+    [entry-label : i64 (opt-cfg-entry-label blocks)]
     [index : OptCfgIndex context.index]
     [block-capacity : i64 (opt-cfg-index-block-count index)]
     (begin
@@ -15117,7 +15116,7 @@
 ;; blocks; the caller observes that their entry still has predecessors.
 (define (opt-ssa-explicit-entry-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
-    [entry : i64 (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))]
+    [entry : i64 (opt-cfg-entry-label blocks)]
     [preheader : i64
       (ir.compiler-ir-label
         (str_cat.str-cat (ir.compiler-ir-label-text entry) "__ssa_entry"))]
@@ -15133,7 +15132,7 @@
 
 (define (opt-ssa-explicit-entry-available? [blocks : ir.CompilerIrBlockList]) : bool
   (let
-    [entry : i64 (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))]
+    [entry : i64 (opt-cfg-entry-label blocks)]
     (and
       (ir.compiler-ir-label-some? entry)
       (not
@@ -18052,7 +18051,7 @@
       (ir.compiler-ir-block-cons
         (opt-loop-preheaders-rewrite-block
           block
-          (opt-cfg-entry-label (compiler-opt-box-shared-view rest))
+          (opt-cfg-entry-label (deref rest))
           header
           outside
           preheader)
@@ -41185,7 +41184,7 @@
   (if (or
     (<= fuel 0)
     (= label merge-label)
-    (= label (opt-cfg-entry-label (compiler-opt-global-shared-view blocks)))
+    (= label (opt-cfg-entry-label blocks))
     (not (= (opt-label-count (opt-cfg-index-predecessors index label)) 1)))
     (OptBoolBranchBranchSite.No)
     (match (opt-cfg-find-block blocks label)
@@ -44997,7 +44996,7 @@
     [doms : OptDomInfo
       (opt-cfg-dominators-with
         (compiler-opt-global-shared-view index)
-        (opt-cfg-entry-label (compiler-opt-global-shared-view blocks)))]
+        (opt-cfg-entry-label blocks))]
     [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame blocks)]
     [scratch : (__tl_dyn-array i64) (opt-used-array-new frame)]
     [budget : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -61254,8 +61253,7 @@
             (compiler-opt-global-shared-view params)
             blocks
             frame)]
-        [entry-label : i64
-          (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))]
+        [entry-label : i64 (opt-cfg-entry-label blocks)]
         [seed-facts : OptAliasFacts
           (opt-alias-seed-params type-segment-bases params)]
         ;; One frame-sized dense workspace per pass, for either block container.
@@ -70703,7 +70701,7 @@
             (compiler-opt-global-shared-view params)
             (compiler-opt-global-shared-view blocks)
             blocks
-            (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
+            (opt-cfg-entry-label blocks)
             frame)
             [(OptUnrollResult.Result next-blocks next-frame changed)
               (if changed
@@ -79046,7 +79044,7 @@
             (not
               (opt-label-contains
                 body-labels
-                (opt-cfg-entry-label (compiler-opt-box-shared-view rest)))))
+                (opt-cfg-entry-label (deref rest)))))
             false
             (opt-bce-mb-fallthroughs-ok? (deref rest) body-labels))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -88426,7 +88424,7 @@
             type-segment-bases
             (compiler-opt-global-shared-view blocks)
             (ir.compiler-ir-block-cons block (ir.CompilerIrBlockList.Nil))
-            (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
+            (opt-cfg-entry-label blocks)
             (OptLabelSet.Nil)
             frame)]
         (if (not (= opt-bce-trace-reason (opt-bce-reason-none)))
@@ -88456,7 +88454,7 @@
             (compiler-opt-global-shared-view blocks)
             all-loops
             (OptNaturalLoopList.Cons loop (box (OptNaturalLoopList.Nil)))
-            (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
+            (opt-cfg-entry-label blocks)
             false
             false
             false
@@ -103390,9 +103388,7 @@
     [index : OptCfgIndex
       (opt-cfg-index-build (compiler-opt-global-shared-view blocks))]
     [doms : OptDomInfo
-      (opt-cfg-dominators-with
-        index
-        (opt-cfg-entry-label (compiler-opt-global-shared-view blocks)))]
+      (opt-cfg-dominators-with index (opt-cfg-entry-label blocks))]
     [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame blocks)]
     (opt-global-copy-blocks facts pack-word-facts doms uses blocks)))
 
@@ -116226,8 +116222,7 @@
                 [entry-label : i64
                   (opt-inline-prefix-label
                     (compiler-opt-global-shared-view prefix)
-                    (opt-cfg-entry-label
-                      (compiler-opt-global-shared-view cblocks)))]
+                    (opt-cfg-entry-label cblocks))]
                 [cont-label : i64
                   (opt-inline-cont-label
                     (compiler-opt-global-shared-view prefix))]
@@ -136210,7 +136205,11 @@
                 (or
                   (= head site)
                   (= head pre)
-                  (= head (opt-cfg-entry-label (opt-function-blocks func))))
+                  (=
+                    head
+                    (let
+                      [blocks (opt-function-blocks func)]
+                      (opt-cfg-entry-label blocks))))
                 (return (OptMaybeFunction.No)))
               (unless
                 (and

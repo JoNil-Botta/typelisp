@@ -2564,10 +2564,7 @@
 (define (lint-decl-names-with-meta [decl : ast.AstDecl] [names : LintNames]) : LintNames
   (let
     [with-meta : LintNames
-      (lint-generated-meta-names
-        (ast.ast-decl-generated-meta
-          (owned_view.compiler-owned-shared-view decl))
-        names)]
+      (lint-generated-meta-names (ast.ast-decl-generated-meta decl) names)]
     (lint-decl-names decl with-meta)))
 
 (define (lint-decl-list-names [decls : ast.AstDeclList] [names : LintNames]) : LintNames

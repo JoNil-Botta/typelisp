@@ -9,6 +9,7 @@
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
 (import stdlib.dense_list)
+(import compiler_owned_view as owned_view)
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
 ;; be allocated in the persistent program arena, never a transient scratch arena
@@ -9132,8 +9133,10 @@
     (array-ref v.slots (+ v.offset index))
     fallback))
 
-(define (ast-decl-list-ref [v : AstDeclList] [index : i64]) : AstDecl
-  (array-ref v.slots (+ v.offset index)))
+(define (ast-decl-list-ref [v : (& v AstDeclList)] [index : i64]) : AstDecl
+  (let
+    [list : AstDeclList (owned_view.compiler-owned-reference-shared-view v)]
+    (array-ref list.slots (+ list.offset index))))
 
 (define (ast-decl-list-ref-borrowed [v : (& v AstDeclList)] [index : i64]) : (&
     v
@@ -9244,15 +9247,16 @@
         (set! (array-ref v.slots index) (array-ref src src-index))
         (set! v.len (+ v.len 1))))))
 
-(define (ast-decl-list-step [items : AstDeclList]) : AstDeclListStep
+(define (ast-decl-list-step [items : (& items AstDeclList)]) : AstDeclListStep
   (let
-    [len : i64 items.len]
-    [offset : i64 items.offset]
+    [list : AstDeclList (owned_view.compiler-owned-reference-shared-view items)]
+    [len : i64 list.len]
+    [offset : i64 list.offset]
     (if (<= len 0)
       (AstDeclListStep.Nil)
       (AstDeclListStep.Cons
-        (ast-array-shared-view items.slots offset)
-        (AstDeclList items.slots (+ offset 1) (- len 1) false)))))
+        (ast-array-shared-view list.slots offset)
+        (AstDeclList list.slots (+ offset 1) (- len 1) false)))))
 
 (define (ast-decl-list-append-from
   [out : (&mut out AstDeclList)]
@@ -9443,8 +9447,8 @@
 (define (ast-decl-unsafe [inner : AstDecl]) : AstDecl
   (AstDecl.Unsafe (box inner)))
 
-(define (ast-decl-meta [decl : AstDecl]) : AstDeclMeta
-  (match decl
+(define (ast-decl-meta [decl : (& decl AstDecl)]) : AstDeclMeta
+  (match (owned_view.compiler-owned-reference-shared-view decl)
     [(AstDecl.Def decl-meta _ _ _) decl-meta]
     [(AstDecl.DefFn decl-meta _ _ _ _ _) decl-meta]
     [(AstDecl.DefMacro decl-meta _ _ _ _) decl-meta]
@@ -9458,12 +9462,12 @@
     [(AstDecl.Unsafe inner-box) (ast-decl-meta (deref inner-box))]
     [_ (ast-global-shared-view ast-decl-meta-runtime)]))
 
-(define (ast-decl-generated-meta [decl : AstDecl]) : AstGeneratedDeclMeta
+(define (ast-decl-generated-meta [decl : (& decl AstDecl)]) : AstGeneratedDeclMeta
   (match (__tl-box-place (__tl-project-field (ast-decl-meta decl) value))
     [(AstDeclMetaValue.Runtime _) AstGeneratedDeclMeta.No]
     [(AstDeclMetaValue.Comptime meta _) meta]))
 
-(define (ast-decl-comptime-only? [decl : AstDecl]) : bool
+(define (ast-decl-comptime-only? [decl : (& decl AstDecl)]) : bool
   (match (__tl-box-place (__tl-project-field (ast-decl-meta decl) value))
     [(AstDeclMetaValue.Runtime _) false]
     [(AstDeclMetaValue.Comptime _ _) true]))
@@ -9475,10 +9479,10 @@
     [(AstDeclMetaValue.Runtime markers) markers]
     [(AstDeclMetaValue.Comptime _ markers) markers]))
 
-(define (ast-decl-aggregate-markers [decl : AstDecl]) : i64
+(define (ast-decl-aggregate-markers [decl : (& decl AstDecl)]) : i64
   (ast-decl-meta-aggregate-markers (ast-decl-meta decl)))
 
-(define (ast-decl-must-use? [decl : AstDecl]) : bool
+(define (ast-decl-must-use? [decl : (& decl AstDecl)]) : bool
   (not (= (bit-and (ast-decl-aggregate-markers decl) 1) 0)))
 
 (define (ast-decl-with-meta [meta : AstDeclMeta] [inner : AstDecl]) : AstDecl
@@ -9514,7 +9518,7 @@
       (box
         (AstDeclMetaValue.Comptime
           AstGeneratedDeclMeta.No
-          (ast-decl-aggregate-markers (ast-global-shared-view inner)))))
+          (ast-decl-aggregate-markers inner))))
     inner))
 
 (define (ast-decl-comptime-decl-with-meta
@@ -9522,20 +9526,14 @@
   [inner : AstDecl]) : AstDecl
   (ast-decl-with-meta
     (AstDeclMeta
-      (box
-        (AstDeclMetaValue.Comptime
-          meta
-          (ast-decl-aggregate-markers (ast-global-shared-view inner)))))
+      (box (AstDeclMetaValue.Comptime meta (ast-decl-aggregate-markers inner))))
     inner))
 
 (define (ast-decl-with-aggregate-markers [inner : AstDecl] [markers : i64]) : AstDecl
-  (if (= markers (ast-decl-aggregate-markers (ast-global-shared-view inner)))
+  (if (= markers (ast-decl-aggregate-markers inner))
     inner
     (ast-decl-with-meta
-      (match (__tl-box-place
-        (__tl-project-field
-          (ast-decl-meta (ast-global-shared-view inner))
-          value))
+      (match (__tl-box-place (__tl-project-field (ast-decl-meta inner) value))
         [(AstDeclMetaValue.Runtime _)
           (ast-decl-meta-runtime-with-aggregate-markers markers)]
         [(AstDeclMetaValue.Comptime generated _)
@@ -9778,20 +9776,17 @@
       (- items.len 1)
       false)))
 
-(define (ast-decl-path-list-step [items : AstDeclPathList]) : AstDeclPathListStep
+(define (ast-decl-path-list-step [items : (& items AstDeclPathList)]) : AstDeclPathListStep
   (let
-    [len : i64 items.len]
-    [offset : i64 items.offset]
+    [list : AstDeclPathList
+      (owned_view.compiler-owned-reference-shared-view items)]
+    [len : i64 list.len]
+    [offset : i64 list.offset]
     (if (<= len 0)
       (AstDeclPathListStep.Nil)
       (AstDeclPathListStep.Cons
-        (ast-array-shared-view items.slots offset)
-        (AstDeclPathList
-          items.slots
-          items.owner-ids
-          (+ offset 1)
-          (- len 1)
-          false)))))
+        (ast-array-shared-view list.slots offset)
+        (AstDeclPathList list.slots list.owner-ids (+ offset 1) (- len 1) false)))))
 
 (define (ast-decl-path-list-append-from
   [out : (&mut out AstDeclPathList)]

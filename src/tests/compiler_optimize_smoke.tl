@@ -13,6 +13,7 @@
 (import compiler_ir_types as ir)
 (import compiler_ir_text as irt)
 (import compiler_ast_types as ast)
+(import compiler_owned_view as owned_view)
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import stdlib.test)
@@ -86,13 +87,13 @@
       [else 42])))
 
 (define (opt-count-switch-instr-seq-from
-  [instrs : ir.CompilerIrInstrSeq]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
   [acc : i64]) : i64
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     acc
     (opt-count-switch-instr-seq-from
-      (ir.compiler-ir-global-shared-view instrs)
+      instrs
       (+ index 1)
       (+
         acc
@@ -119,7 +120,7 @@
 (define (opt-switch-case-seq-count [cases : ir.CompilerIrSwitchCaseSeq]) : i64
   cases.len)
 
-(define (opt-switch-entry-base [blocks : ir.CompilerIrBlockList]) : i64
+(define (opt-switch-entry-base [blocks : (& blocks ir.CompilerIrBlockList)]) : i64
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry"))
     [(opt.OptMaybeBlock.No) (- 0 1)]
     [(opt.OptMaybeBlock.Some block)
@@ -132,7 +133,8 @@
               [_ (- 0 1)])
             (- 0 1))])]))
 
-(define (opt-switch-entry-case-count [blocks : ir.CompilerIrBlockList]) : i64
+(define (opt-switch-entry-case-count
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : i64
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry"))
     [(opt.OptMaybeBlock.No) 0]
     [(opt.OptMaybeBlock.Some block)
@@ -147,7 +149,8 @@
               [_ 0])
             0)])]))
 
-(define (opt-switch-entry-default-label [blocks : ir.CompilerIrBlockList]) : i64
+(define (opt-switch-entry-default-label
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : i64
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry"))
     [(opt.OptMaybeBlock.No) (ir.compiler-ir-label-none)]
     [(opt.OptMaybeBlock.Some block)
@@ -264,8 +267,8 @@
         arm-label
         next-label))))
 
-(define (opt-switch-test-block-tail-base [block : ir.CompilerIrBlock]) : i64
-  (match block
+(define (opt-switch-test-block-tail-base [block : (& block ir.CompilerIrBlock)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view block)
     [(ir.CompilerIrBlock.Block _ instrs)
       (match (ir.compiler-ir-instr-seq-ref
         instrs
@@ -274,8 +277,9 @@
         [(ir.CompilerIrInstr.TotalEnumSwitch _ base _ _ _) base]
         [_ (- 0 1)])]))
 
-(define (opt-switch-test-block-tail-case-count [block : ir.CompilerIrBlock]) : i64
-  (match block
+(define (opt-switch-test-block-tail-case-count
+  [block : (& block ir.CompilerIrBlock)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view block)
     [(ir.CompilerIrBlock.Block _ instrs)
       (match (ir.compiler-ir-instr-seq-ref
         instrs
@@ -286,8 +290,9 @@
           (opt-switch-case-seq-count cases)]
         [_ 0])]))
 
-(define (opt-switch-test-block-tail-default [block : ir.CompilerIrBlock]) : i64
-  (match block
+(define (opt-switch-test-block-tail-default
+  [block : (& block ir.CompilerIrBlock)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view block)
     [(ir.CompilerIrBlock.Block _ instrs)
       (match (ir.compiler-ir-instr-seq-ref
         instrs
@@ -297,8 +302,9 @@
           default-label]
         [_ (ir.compiler-ir-label-none)])]))
 
-(define (opt-switch-test-block-tail-total? [block : ir.CompilerIrBlock]) : bool
-  (match block
+(define (opt-switch-test-block-tail-total?
+  [block : (& block ir.CompilerIrBlock)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view block)
     [(ir.CompilerIrBlock.Block _ instrs)
       (match (ir.compiler-ir-instr-seq-ref
         instrs
@@ -329,10 +335,10 @@
       false)))
 
 (define (opt-switch-test-block-tail-has-case?
-  [block : ir.CompilerIrBlock]
+  [block : (& block ir.CompilerIrBlock)]
   [tag : i64]
   [label : i64]) : bool
-  (match block
+  (match (owned_view.compiler-owned-reference-shared-view block)
     [(ir.CompilerIrBlock.Block _ instrs)
       (match (ir.compiler-ir-instr-seq-ref
         instrs
@@ -1269,22 +1275,11 @@
               (opt.compiler-opt-global-shared-view dense-blocks))
             1))
         1]
+      [(not (= (opt-switch-entry-base dense-blocks) 0)) 2]
+      [(not (= (opt-switch-entry-case-count dense-blocks) 4)) 3]
       [(not
           (=
-            (opt-switch-entry-base
-              (opt.compiler-opt-global-shared-view dense-blocks))
-            0))
-        2]
-      [(not
-          (=
-            (opt-switch-entry-case-count
-              (opt.compiler-opt-global-shared-view dense-blocks))
-            4))
-        3]
-      [(not
-          (=
-            (opt-switch-entry-default-label
-              (opt.compiler-opt-global-shared-view dense-blocks))
+            (opt-switch-entry-default-label dense-blocks)
             (ir.compiler-ir-label "fallback")))
         4]
       [(ot.opt-block-list-has-label?
@@ -1302,21 +1297,11 @@
       ;; A gap inside an admissible span becomes a table slot pointing at the
       ;; chain's own fall-through, which is where that tag went before.
       [(not (= (opt-count-switch-blocks sparse-blocks) 1)) 10]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view sparse-entry))
-            5))
-        57]
-      [(not
-          (=
-            (opt-switch-test-block-tail-base
-              (opt.compiler-opt-global-shared-view sparse-entry))
-            0))
-        58]
+      [(not (= (opt-switch-test-block-tail-case-count sparse-entry) 5)) 57]
+      [(not (= (opt-switch-test-block-tail-base sparse-entry) 0)) 58]
       [(not
           (opt-switch-test-block-tail-has-case?
-            (opt.compiler-opt-global-shared-view sparse-entry)
+            sparse-entry
             2
             (ir.compiler-ir-label "fallback")))
         59]
@@ -1345,22 +1330,11 @@
               (opt.compiler-opt-global-shared-view prefix-blocks))
             1))
         15]
+      [(not (= (opt-switch-test-block-tail-base prefix-entry) 0)) 16]
+      [(not (= (opt-switch-test-block-tail-case-count prefix-entry) 4)) 17]
       [(not
           (=
-            (opt-switch-test-block-tail-base
-              (opt.compiler-opt-global-shared-view prefix-entry))
-            0))
-        16]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view prefix-entry))
-            4))
-        17]
-      [(not
-          (=
-            (opt-switch-test-block-tail-default
-              (opt.compiler-opt-global-shared-view prefix-entry))
+            (opt-switch-test-block-tail-default prefix-entry)
             (ir.compiler-ir-label "fallback")))
         18]
       [(not (opt-switch-test-block-starts-with-mov? prefix-entry)) 19]
@@ -1380,22 +1354,11 @@
       ;; A bare zero-test head (`Branch(tag, next, arm)`) is the folded
       ;; `Eq tag, 0` form and must join the chain as the tag-0 candidate.
       [(not (= (opt-count-switch-blocks bare-blocks) 1)) 24]
+      [(not (= (opt-switch-test-block-tail-base bare-entry) 0)) 25]
+      [(not (= (opt-switch-test-block-tail-case-count bare-entry) 4)) 26]
       [(not
           (=
-            (opt-switch-test-block-tail-base
-              (opt.compiler-opt-global-shared-view bare-entry))
-            0))
-        25]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view bare-entry))
-            4))
-        26]
-      [(not
-          (=
-            (opt-switch-test-block-tail-default
-              (opt.compiler-opt-global-shared-view bare-entry))
+            (opt-switch-test-block-tail-default bare-entry)
             (ir.compiler-ir-label "fallback")))
         27]
       [(not (opt-switch-test-block-starts-with-mov? bare-entry)) 28]
@@ -1403,22 +1366,11 @@
       ;; The vm_run shape: head compare on the raw var, middle compares on
       ;; the prefix Mov's copy; resolution unifies them and the chain forms.
       [(not (= (opt-count-switch-blocks copy-head-blocks) 1)) 30]
+      [(not (= (opt-switch-test-block-tail-base copy-head-entry) 0)) 31]
+      [(not (= (opt-switch-test-block-tail-case-count copy-head-entry) 4)) 32]
       [(not
           (=
-            (opt-switch-test-block-tail-base
-              (opt.compiler-opt-global-shared-view copy-head-entry))
-            0))
-        31]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view copy-head-entry))
-            4))
-        32]
-      [(not
-          (=
-            (opt-switch-test-block-tail-default
-              (opt.compiler-opt-global-shared-view copy-head-entry))
+            (opt-switch-test-block-tail-default copy-head-entry)
             (ir.compiler-ir-label "fallback")))
         33]
       [(not (opt-switch-test-block-starts-with-mov? copy-head-entry)) 34]
@@ -1432,22 +1384,9 @@
               (opt.compiler-opt-global-shared-view total-blocks))
             1))
         36]
-      [(not
-          (opt-switch-test-block-tail-total?
-            (opt.compiler-opt-global-shared-view total-entry)))
-        52]
-      [(not
-          (=
-            (opt-switch-test-block-tail-base
-              (opt.compiler-opt-global-shared-view total-entry))
-            0))
-        37]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view total-entry))
-            4))
-        38]
+      [(not (opt-switch-test-block-tail-total? total-entry)) 52]
+      [(not (= (opt-switch-test-block-tail-base total-entry) 0)) 37]
+      [(not (= (opt-switch-test-block-tail-case-count total-entry) 4)) 38]
       [(not
           (= (opt-switch-test-block-tail-default total-entry) total-final-label))
         39]
@@ -1458,21 +1397,11 @@
               (opt.compiler-opt-global-shared-view total-late-blocks))
             1))
         41]
-      [(not
-          (=
-            (opt-switch-test-block-tail-base
-              (opt.compiler-opt-global-shared-view total-late-entry))
-            0))
-        43]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view total-late-entry))
-            5))
-        44]
+      [(not (= (opt-switch-test-block-tail-base total-late-entry) 0)) 43]
+      [(not (= (opt-switch-test-block-tail-case-count total-late-entry) 5)) 44]
       [(not
           (opt-switch-test-block-tail-has-case?
-            (opt.compiler-opt-global-shared-view total-late-entry)
+            total-late-entry
             4
             total-final-label))
         45]
@@ -1488,15 +1417,8 @@
           (= (opt-count-switch-blocks (opt.opt-function-blocks total-twice)) 1))
         49]
       ;; Old display spellings are not authority without the explicit proof.
-      [(opt-switch-test-block-tail-total?
-          (opt.compiler-opt-global-shared-view spoofed-entry))
-        53]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view spoofed-entry))
-            4))
-        54]
+      [(opt-switch-test-block-tail-total? spoofed-entry) 53]
+      [(not (= (opt-switch-test-block-tail-case-count spoofed-entry) 4)) 54]
       [(not
           (=
             (opt-switch-test-block-tail-default spoofed-entry)
@@ -1509,18 +1431,12 @@
       ;; table, but as an ordinary checked Switch, and the late total pass must
       ;; therefore add neither a final case nor a trap block.
       [(not (= (opt-count-switch-blocks marked-sparse-blocks) 1)) 50]
-      [(opt-switch-test-block-tail-total?
-          (opt.compiler-opt-global-shared-view marked-sparse-entry))
-        63]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view marked-sparse-entry))
-            5))
+      [(opt-switch-test-block-tail-total? marked-sparse-entry) 63]
+      [(not (= (opt-switch-test-block-tail-case-count marked-sparse-entry) 5))
         64]
       [(not
           (opt-switch-test-block-tail-has-case?
-            (opt.compiler-opt-global-shared-view marked-sparse-entry)
+            marked-sparse-entry
             2
             marked-sparse-final-label))
         65]
@@ -1581,21 +1497,12 @@
                 (opt.compiler-opt-global-shared-view long-sparse)))
             1))
         70]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view long-sparse-entry))
-            66))
+      [(not (= (opt-switch-test-block-tail-case-count long-sparse-entry) 66))
         71]
-      [(not
-          (=
-            (opt-switch-test-block-tail-base
-              (opt.compiler-opt-global-shared-view long-sparse-entry))
-            0))
-        72]
+      [(not (= (opt-switch-test-block-tail-base long-sparse-entry) 0)) 72]
       [(not
           (opt-switch-test-block-tail-has-case?
-            (opt.compiler-opt-global-shared-view long-sparse-entry)
+            long-sparse-entry
             65
             (opt-switch-test-arm-label 7)))
         73]
@@ -1622,22 +1529,11 @@
               (opt.compiler-opt-global-shared-view hop-blocks))
             1))
         78]
+      [(not (= (opt-switch-test-block-tail-case-count hop-entry) 6)) 79]
+      [(not (= (opt-switch-test-block-tail-base hop-entry) 0)) 80]
       [(not
           (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view hop-entry))
-            6))
-        79]
-      [(not
-          (=
-            (opt-switch-test-block-tail-base
-              (opt.compiler-opt-global-shared-view hop-entry))
-            0))
-        80]
-      [(not
-          (=
-            (opt-switch-test-block-tail-default
-              (opt.compiler-opt-global-shared-view hop-entry))
+            (opt-switch-test-block-tail-default hop-entry)
             (ir.compiler-ir-label "fallback")))
         81]
       [(not
@@ -1665,11 +1561,7 @@
               (opt.compiler-opt-global-shared-view hop-fallback-blocks))
             1))
         86]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view hop-fallback-entry))
-            4))
+      [(not (= (opt-switch-test-block-tail-case-count hop-fallback-entry) 4))
         87]
       [(not
           (=
@@ -1690,12 +1582,7 @@
               (opt.compiler-opt-global-shared-view hop-shared-blocks))
             1))
         91]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view hop-shared-entry))
-            4))
-        92]
+      [(not (= (opt-switch-test-block-tail-case-count hop-shared-entry) 4)) 92]
       [(not
           (=
             (opt-switch-test-block-tail-default hop-shared-entry)
@@ -1714,12 +1601,7 @@
               (opt.compiler-opt-global-shared-view repeat-tag-blocks))
             1))
         96]
-      [(not
-          (=
-            (opt-switch-test-block-tail-case-count
-              (opt.compiler-opt-global-shared-view repeat-tag-entry))
-            4))
-        97]
+      [(not (= (opt-switch-test-block-tail-case-count repeat-tag-entry) 4)) 97]
       [(not
           (=
             (opt-switch-test-block-tail-default repeat-tag-entry)
@@ -1774,7 +1656,7 @@
       [else 42])))
 
 (define (smoke-mov-dst-var-type-from?
-  [instrs : ir.CompilerIrInstrSeq]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
   [dst : i64]
   [src : i64]
@@ -1794,7 +1676,7 @@
       [_ (smoke-mov-dst-var-type-from? instrs (+ index 1) dst src ty)])))
 
 (define (smoke-mov-dst-var-type?
-  [instrs : ir.CompilerIrInstrSeq]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [dst : i64]
   [src : i64]
   [ty : ast.AstType]) : bool
@@ -1865,25 +1747,13 @@
     (begin
       (unless (= (ot.opt-count-cast-instr-seq rewritten) 3) (return 1))
       (unless
-        (smoke-mov-dst-var-type?
-          (opt.compiler-opt-global-shared-view rewritten)
-          50
-          10
-          (ast.AstType.Char))
+        (smoke-mov-dst-var-type? rewritten 50 10 (ast.AstType.Char))
         (return 2))
       (unless
-        (smoke-mov-dst-var-type?
-          (opt.compiler-opt-global-shared-view rewritten)
-          51
-          11
-          (ast.AstType.U8))
+        (smoke-mov-dst-var-type? rewritten 51 11 (ast.AstType.U8))
         (return 3))
       (unless
-        (smoke-mov-dst-var-type?
-          (opt.compiler-opt-global-shared-view rewritten)
-          52
-          12
-          (ast.AstType.Char))
+        (smoke-mov-dst-var-type? rewritten 52 12 (ast.AstType.Char))
         (return 4))
       (unless
         (smoke-cast-dst-var-types?
@@ -2442,7 +2312,8 @@
       (smoke-inline-phi-callee symbols)
       (ir.compiler-ir-function-seq-empty))))
 
-(define (smoke-inline-phi-loop-repaired? [blocks : ir.CompilerIrBlockList]) : bool
+(define (smoke-inline-phi-loop-repaired?
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "header"))
     [(opt.OptMaybeBlock.No) false]
     [(opt.OptMaybeBlock.Some header)
@@ -2505,10 +2376,7 @@
                     (opt.compiler-opt-global-shared-view blocks))
                   2))
               (+ 40 (ot.opt-count-phi-blocks blocks))]
-            [(not
-                (smoke-inline-phi-loop-repaired?
-                  (opt.compiler-opt-global-shared-view blocks)))
-              61]
+            [(not (smoke-inline-phi-loop-repaired? blocks)) 61]
             [(not (opt.opt-inline-structure-ok? blocks)) 62]
             [else 42]))]
       [(opt.OptMaybeFunction.No) 10])))
@@ -2557,8 +2425,7 @@
                 (=
                   (ot.opt-count-direct-call-name-blocks blocks "inline_branch")
                   0)
-                (smoke-inline-phi-loop-repaired?
-                  (opt.compiler-opt-global-shared-view blocks))
+                (smoke-inline-phi-loop-repaired? blocks)
                 (opt.opt-inline-structure-ok? blocks)
                 (ot.opt-span-lookup-ok?
                   (opt.compiler-opt-global-shared-view optimized-spans)
@@ -2732,7 +2599,7 @@
 (define (smoke-c27-count-binop-instrs
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
-  [wanted : ir.CompilerIrBinOp]) : i64
+  [wanted : (& wanted ir.CompilerIrBinOp)]) : i64
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     0
     (+
@@ -2755,10 +2622,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
-            (smoke-c27-count-binop-instrs
-              instrs
-              0
-              (opt.compiler-opt-global-shared-view wanted))
+            (smoke-c27-count-binop-instrs instrs 0 wanted)
             (smoke-c27-count-binop (deref rest) wanted))])]))
 
 (define (smoke-c27-compare-function [extra-use? : bool]) : ir.CompilerIrFunction

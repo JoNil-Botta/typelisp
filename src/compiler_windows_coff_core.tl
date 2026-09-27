@@ -11,6 +11,7 @@
 (import compiler_object_asm)
 (import compiler_profile_state as profile_state)
 (import compiler_object_coff)
+(import compiler_object_layout as layout)
 (import compiler_driver_core)
 (import compiler_typecheck_core)
 (import compiler_ast_types)
@@ -122,7 +123,7 @@
       (CompilerWindowsCoffLinkability.Unavailable
         compiler_backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
     [(<
-        (compiler_object_coff.compiler-object-coff-section-label-offset
+        (layout.compiler-object-layout-section-label-offset
           image
           (cobj.CompilerObjectSectionKind.Text)
           "tl_setup_argv")
@@ -130,7 +131,7 @@
       (CompilerWindowsCoffLinkability.Unavailable
         compiler_backend.CompilerDirectObjectFallbackReason.MissingRuntimeEntry)]
     [(<=
-        (compiler_object_coff.compiler-object-coff-section-raw-size
+        (layout.compiler-object-layout-section-raw-size
           image
           (cobj.CompilerObjectSectionKind.Text))
         0)

@@ -1896,299 +1896,6 @@
             member)))
       (selfhost-lint-dead-ref-add-raw refs name))))
 
-(define (selfhost-lint-dead-ref-add-id [refs : lint_svec.Vec] [name : i64]) : lint_svec.Vec
-  (selfhost-lint-dead-ref-add refs (ci.intern-str name)))
-
-(define (selfhost-lint-dead-maybe-type-refs
-  [maybe-ty : ast.AstMaybeType]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match maybe-ty
-    [(ast.AstMaybeType.No) refs]
-    [(ast.AstMaybeType.Some ty) (selfhost-lint-dead-type-refs ty refs)]))
-
-(define (selfhost-lint-dead-type-list-refs
-  [types : ast.AstTypeList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-type-list-refs-at (& types) refs 0))
-
-(define (selfhost-lint-dead-type-list-refs-at
-  [types : (& types ast.AstTypeList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index (ast.ast-type-list-len types))
-    refs
-    (selfhost-lint-dead-type-list-refs-at
-      types
-      (selfhost-lint-dead-type-refs
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-        refs)
-      (+ index 1))))
-
-(define (selfhost-lint-dead-type-id-refs [ty : i64] [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-type-refs (ast.ty-node-get ty) refs))
-
-(define (selfhost-lint-dead-type-refs [ty : ast.AstType] [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match ty
-    [(ast.AstType.I64) refs]
-    [(ast.AstType.I32) refs]
-    [(ast.AstType.I16) refs]
-    [(ast.AstType.I8) refs]
-    [(ast.AstType.U64) refs]
-    [(ast.AstType.U32) refs]
-    [(ast.AstType.U16) refs]
-    [(ast.AstType.U8) refs]
-    [(ast.AstType.F64) refs]
-    [(ast.AstType.F32) refs]
-    [(ast.AstType.Bool) refs]
-    [(ast.AstType.Char) refs]
-    [(ast.AstType.String) refs]
-    [(ast.AstType.Str) refs]
-    [(ast.AstType.Bytes) refs]
-    [(ast.AstType.Unit) refs]
-    [(ast.AstType.Never) refs]
-    [(ast.AstType.Expr) refs]
-    [(ast.AstType.ExprList) refs]
-    [(ast.AstType.Func args ret)
-      (selfhost-lint-dead-type-id-refs
-        ret
-        (selfhost-lint-dead-type-list-refs (deref args) refs))]
-    [(ast.AstType.CFunc signature _)
-      (selfhost-lint-dead-type-id-refs signature refs)]
-    [(ast.AstType.Tuple items)
-      (selfhost-lint-dead-type-list-refs (deref items) refs)]
-    [(ast.AstType.Array elem _) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(ast.AstType.DynArray elem) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(ast.AstType.Slice elem) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(ast.AstType.Box elem) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(ast.AstType.Region _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(ast.AstType.Ref _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(ast.AstType.MutRef _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(ast.AstType.Enum name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(ast.AstType.EnumArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
-    [(ast.AstType.Struct name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(ast.AstType.StructArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
-    [(ast.AstType.Var name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(ast.AstType.VarArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
-    [(ast.AstType.Ptr inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(ast.AstType.MutPtr inner) (selfhost-lint-dead-type-id-refs inner refs)]))
-
-(define (selfhost-lint-dead-param-list-refs
-  [params : ast.AstParamList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-param-list-refs-at (& params) refs 0))
-
-(define (selfhost-lint-dead-param-list-refs-at
-  [params : (& params ast.AstParamList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index (ast.ast-param-list-len params))
-    refs
-    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param _ ty _)
-        (selfhost-lint-dead-param-list-refs-at
-          params
-          (selfhost-lint-dead-type-refs ty refs)
-          (+ index 1))])))
-
-(define (selfhost-lint-dead-macro-param-list-refs
-  [params : ast.AstMacroParamList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-macro-param-list-refs-at (& params) refs 0))
-
-(define (selfhost-lint-dead-macro-param-list-refs-at
-  [params : (& params ast.AstMacroParamList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index (ast.ast-macro-param-list-len params))
-    refs
-    (match (ast.ast-macro-param-list-get
-      params
-      index
-      (ast.ast-macro-param-fallback))
-      [(ast.AstMacroParam.Param _ ty _ _)
-        (selfhost-lint-dead-macro-param-list-refs-at
-          params
-          (selfhost-lint-dead-type-refs ty refs)
-          (+ index 1))])))
-
-(define (selfhost-lint-dead-pattern-list-refs
-  [patterns : ast.AstPatternList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-pattern-list-refs-at (& patterns) refs 0))
-
-(define (selfhost-lint-dead-pattern-list-refs-at
-  [patterns : (& patterns ast.AstPatternList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index patterns.len)
-    refs
-    (selfhost-lint-dead-pattern-list-refs-at
-      patterns
-      (selfhost-lint-dead-pattern-refs
-        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
-        refs)
-      (+ index 1))))
-
-(define (selfhost-lint-dead-pattern-refs
-  [pattern : ast.AstPattern]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match pattern
-    [(ast.AstPattern.Var _ maybe-ty)
-      (selfhost-lint-dead-maybe-type-refs maybe-ty refs)]
-    [(ast.AstPattern.Tuple items)
-      (selfhost-lint-dead-pattern-list-refs (deref items) refs)]
-    [(ast.AstPattern.Array items)
-      (selfhost-lint-dead-pattern-list-refs (deref items) refs)]
-    [(ast.AstPattern.Wildcard) refs]
-    [(ast.AstPattern.Binding _) refs]
-    [(ast.AstPattern.Variant name items)
-      (selfhost-lint-dead-pattern-list-refs
-        (deref items)
-        (selfhost-lint-dead-ref-add-id refs name))]
-    [(ast.AstPattern.Literal _) refs]))
-
-(define (selfhost-lint-dead-expr-list-refs
-  [exprs : ast.AstExprList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-expr-list-refs-from exprs refs 0))
-
-(define (selfhost-lint-dead-expr-list-refs-from
-  [exprs : (& exprs ast.AstExprList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index exprs.len)
-    refs
-    (selfhost-lint-dead-expr-list-refs-from
-      exprs
-      (selfhost-lint-dead-expr-refs (ast.ast-expr-list-get exprs index 0) refs)
-      (+ index 1))))
-
-(define (selfhost-lint-dead-child-list-refs-from
-  [children : (& children ast.AstExprChildList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index children.len)
-    refs
-    (selfhost-lint-dead-child-list-refs-from
-      children
-      (match (ast.ast-expr-child-list-get
-        children
-        index
-        (ast.ast-expr-child-fallback))
-        [(ast.AstExprChild.Expr id) (selfhost-lint-dead-expr-refs id refs)]
-        [(ast.AstExprChild.TypeId id) (selfhost-lint-dead-type-id-refs id refs)]
-        [(ast.AstExprChild.Type ty) (selfhost-lint-dead-type-refs ty refs)]
-        [(ast.AstExprChild.Pattern pattern)
-          (selfhost-lint-dead-pattern-refs pattern refs)])
-      (+ index 1))))
-
-(define (selfhost-lint-dead-expr-children
-  [expr : ast.AstExpr]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (let
-    [children : ast.AstExprChildList (ast.ast-expr-children expr)]
-    (selfhost-lint-dead-child-list-refs-from (& children) refs 0)))
-
-(define (selfhost-lint-dead-expr-refs [node-id : i64] [refs : lint_svec.Vec]) : lint_svec.Vec
-  ;; The arms below collect names, fields and the read for-owned slots, and
-  ;; keep the SPMD scan and compact types ahead of their operands; every other
-  ;; variant's children are collected through the AstExpr child list.
-  (match (ast.ast-node-get node-id)
-    [(ast.AstExpr.Var name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(ast.AstExpr.ForOwnedState payload)
-      (selfhost-lint-dead-expr-refs
-        (ast.ast-for-owned-state-body (& payload))
-        (selfhost-lint-dead-expr-refs
-          (ast.ast-for-owned-state-source (& payload))
-          refs))]
-    [(ast.AstExpr.ForOwnedStep payload)
-      (let
-        [source : i64 (ast.ast-for-owned-step-source-name (& payload))]
-        [index : i64 (ast.ast-for-owned-step-index-name (& payload))]
-        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
-        [done : i64 (ast.ast-for-owned-step-done-name (& payload))]
-        [body : i64 (ast.ast-for-owned-step-body (& payload))]
-        (selfhost-lint-dead-expr-refs
-          body
-          (selfhost-lint-dead-expr-refs
-            done
-            (if (>= expected-type 0)
-              (selfhost-lint-dead-expr-refs
-                expected-type
-                (selfhost-lint-dead-expr-refs
-                  index
-                  (selfhost-lint-dead-expr-refs source refs)))
-              (selfhost-lint-dead-expr-refs
-                index
-                (selfhost-lint-dead-expr-refs source refs))))))]
-    [(ast.AstExpr.Set target value)
-      (selfhost-lint-dead-expr-refs
-        value
-        (selfhost-lint-dead-ref-add-id refs target))]
-    [(ast.AstExpr.SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(ast.AstSpmdScan.Scan
-            _
-            _
-            index-ty
-            start
-            end
-            _
-            prefix-ty
-            init
-            value
-            body)
-          (selfhost-lint-dead-expr-refs
-            body
-            (selfhost-lint-dead-expr-refs
-              value
-              (selfhost-lint-dead-expr-refs
-                init
-                (selfhost-lint-dead-expr-refs
-                  end
-                  (selfhost-lint-dead-expr-refs
-                    start
-                    (selfhost-lint-dead-type-refs
-                      prefix-ty
-                      (selfhost-lint-dead-type-refs index-ty refs)))))))])]
-    [(ast.AstExpr.SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(ast.AstSpmdCompact.Compact
-            _
-            index-ty
-            start
-            end
-            _
-            slot-ty
-            init
-            keep
-            body)
-          (selfhost-lint-dead-expr-refs
-            body
-            (selfhost-lint-dead-expr-refs
-              keep
-              (selfhost-lint-dead-expr-refs
-                init
-                (selfhost-lint-dead-expr-refs
-                  end
-                  (selfhost-lint-dead-expr-refs
-                    start
-                    (selfhost-lint-dead-type-refs
-                      slot-ty
-                      (selfhost-lint-dead-type-refs index-ty refs)))))))])]
-    [(ast.AstExpr.StructGet _ field)
-      (selfhost-lint-dead-ref-add-id
-        (selfhost-lint-dead-expr-children (ast.ast-node-get node-id) refs)
-        field)]
-    [(ast.AstExpr.StructSet receiver field value)
-      (selfhost-lint-dead-expr-refs
-        value
-        (selfhost-lint-dead-ref-add-id
-          (selfhost-lint-dead-expr-refs receiver refs)
-          field))]
-    [_ (selfhost-lint-dead-expr-children (ast.ast-node-get node-id) refs)]))
-
 (define (selfhost-lint-dead-expr-span [expr-id : i64]) : ast.AstSourceSpan
   (match (ast.ast-node-get expr-id)
     [(ast.AstExpr.Spanned _ span) span]
@@ -2294,153 +2001,24 @@
   [refs : lint_svec.Vec]) : SelfhostLintDeadScan
   (selfhost-lint-dead-refs-to-roots-from scan refs 0))
 
-(define (selfhost-lint-dead-field-cleanup-refs
-  [cleanup : ast.AstFieldCleanup]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match cleanup
-    [(ast.AstFieldCleanup.No) refs]
-    [(ast.AstFieldCleanup.Fn name)
-      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]
-    [(ast.AstFieldCleanup.Owned) refs]))
+(define (selfhost-lint-dead-names-refs [names : lint_core.LintNames]) : lint_svec.Vec
+  (let
+    [refs : lint_svec.Vec (lint_svec.new)]
+    [index : i64 0]
+    (begin
+      (while (< index names.len)
+        (begin
+          (set!
+            refs
+            (selfhost-lint-dead-ref-add
+              refs
+              (ci.intern-str (array-ref names.ids index))))
+          (set! index (+ index 1))))
+      refs)))
 
-(define (selfhost-lint-dead-field-def-list-refs
-  [fields : ast.AstFieldDefList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-field-def-list-refs-at (& fields) refs 0))
-
-(define (selfhost-lint-dead-field-def-list-refs-at
-  [fields : (& fields ast.AstFieldDefList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index fields.len)
-    refs
-    (match (ast.ast-field-def-list-get
-      fields
-      index
-      (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def _ ty cleanup)
-        (selfhost-lint-dead-field-def-list-refs-at
-          fields
-          (selfhost-lint-dead-field-cleanup-refs
-            cleanup
-            (selfhost-lint-dead-type-refs ty refs))
-          (+ index 1))])))
-
-(define (selfhost-lint-dead-struct-cleanup-refs
-  [cleanup : ast.AstStructCleanup]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match cleanup
-    [(ast.AstStructCleanup.No) refs]
-    [(ast.AstStructCleanup.Fn name)
-      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]))
-
-(define (selfhost-lint-dead-enum-cleanup-refs
-  [cleanup : ast.AstEnumCleanup]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match cleanup
-    [(ast.AstEnumCleanup.No) refs]
-    [(ast.AstEnumCleanup.Fn name)
-      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]))
-
-(define (selfhost-lint-dead-variant-cleanup-refs
-  [cleanup : ast.AstVariantPayloadCleanup]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match cleanup
-    [(ast.AstVariantPayloadCleanup.No) refs]
-    [(ast.AstVariantPayloadCleanup.Fn name)
-      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]
-    [(ast.AstVariantPayloadCleanup.Owned) refs]))
-
-(define (selfhost-lint-dead-variant-cleanup-list-refs
-  [items : ast.AstVariantPayloadCleanupList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-variant-cleanup-list-refs-at (& items) refs 0))
-
-(define (selfhost-lint-dead-variant-cleanup-list-refs-at
-  [items : (& items ast.AstVariantPayloadCleanupList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index items.len)
-    refs
-    (selfhost-lint-dead-variant-cleanup-list-refs-at
-      items
-      (selfhost-lint-dead-variant-cleanup-refs
-        (ast.ast-variant-payload-cleanup-list-get
-          items
-          index
-          (ast.ast-variant-payload-cleanup-fallback))
-        refs)
-      (+ index 1))))
-
-(define (selfhost-lint-dead-variant-def-list-refs
-  [variants : ast.AstVariantDefList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-variant-def-list-refs-at (& variants) refs 0))
-
-(define (selfhost-lint-dead-variant-def-list-refs-at
-  [variants : (& variants ast.AstVariantDefList)]
-  [refs : lint_svec.Vec]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index variants.len)
-    refs
-    (match (ast.ast-variant-def-list-get
-      variants
-      index
-      (ast.ast-variant-def-fallback))
-      [(ast.AstVariantDef.Def name payloads cleanups)
-        (selfhost-lint-dead-variant-def-list-refs-at
-          variants
-          (selfhost-lint-dead-variant-cleanup-list-refs
-            cleanups
-            (selfhost-lint-dead-type-list-refs
-              payloads
-              (selfhost-lint-dead-ref-add-id refs name)))
-          (+ index 1))])))
-
-(define (selfhost-lint-dead-dispatch-variant-list-refs-from
-  [variants : (& variants ast.AstDispatchVariantList)]
-  [index : i64]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (if (>= index variants.len)
-    refs
-    (match (ast.ast-dispatch-variant-list-get
-      variants
-      index
-      (ast.ast-dispatch-variant-fallback))
-      [(ast.AstDispatchVariant.Variant _ name)
-        (selfhost-lint-dead-dispatch-variant-list-refs-from
-          variants
-          (+ index 1)
-          (selfhost-lint-dead-ref-add-id refs name))])))
-
-(define (selfhost-lint-dead-dispatch-variant-list-refs
-  [variants : ast.AstDispatchVariantList]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-dispatch-variant-list-refs-from (& variants) 0 refs))
-
-(define (selfhost-lint-dead-extern-abi-refs
-  [abi : ast.AstExternAbi]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match abi
-    [(ast.AstExternAbi.C) refs]
-    [(ast.AstExternAbi.CVarargsOpen) refs]
-    [(ast.AstExternAbi.CVarargsTyped tail-ty)
-      (selfhost-lint-dead-type-refs tail-ty refs)]))
-
-(define (selfhost-lint-dead-extern-metadata-refs
-  [meta : ast.AstExternMetadata]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match meta
-    [(ast.AstExternMetadata.Metadata abi _ _ _ _)
-      (selfhost-lint-dead-extern-abi-refs abi refs)]))
-
-(define (selfhost-lint-dead-generated-meta-refs
-  [meta : ast.AstGeneratedDeclMeta]
-  [refs : lint_svec.Vec]) : lint_svec.Vec
-  (match meta
-    [(ast.AstGeneratedDeclMeta.No) refs]
-    [(ast.AstGeneratedDeclMeta.Some _ _ args _)
-      (selfhost-lint-dead-expr-list-refs args refs)]))
+(define (selfhost-lint-dead-decl-refs [decl : ast.AstDecl]) : lint_svec.Vec
+  (selfhost-lint-dead-names-refs
+    (lint_core.lint-decl-names decl (lint_core.lint-names-empty true))))
 
 (define (selfhost-lint-dead-add-node
   [scan : SelfhostLintDeadScan]
@@ -2524,13 +2102,9 @@
             allow-report
             (deref body-box))]
         [(ast.AstDecl.Module _) scan]
-        [(ast.AstDecl.Def decl-meta name maybe-ty body)
+        [(ast.AstDecl.Def _ name _ body)
           (let
             [text : String (ci.intern-str name)]
-            [refs : lint_svec.Vec
-              (selfhost-lint-dead-expr-refs
-                body
-                (selfhost-lint-dead-maybe-type-refs maybe-ty (lint_svec.new)))]
             [span : ast.AstSourceSpan
               (selfhost-lint-dead-decl-span
                 source
@@ -2543,18 +2117,13 @@
               source
               text
               span
-              refs
+              (selfhost-lint-dead-decl-refs
+                (owned_view.compiler-owned-shared-view decl))
               visible-root
               allow-report))]
-        [(ast.AstDecl.DefFn decl-meta name params ret body _)
+        [(ast.AstDecl.DefFn _ name _ _ body _)
           (let
             [text : String (ci.intern-str name)]
-            [refs : lint_svec.Vec
-              (selfhost-lint-dead-expr-refs
-                body
-                (selfhost-lint-dead-type-refs
-                  ret
-                  (selfhost-lint-dead-param-list-refs params (lint_svec.new))))]
             [span : ast.AstSourceSpan
               (selfhost-lint-dead-decl-span
                 source
@@ -2567,10 +2136,11 @@
               source
               text
               span
-              refs
+              (selfhost-lint-dead-decl-refs
+                (owned_view.compiler-owned-shared-view decl))
               visible-root
               allow-report))]
-        [(ast.AstDecl.DefMacro decl-meta name params ret body)
+        [(ast.AstDecl.DefMacro _ name _ _ body)
           (selfhost-lint-dead-add-visible-node
             scan
             path
@@ -2578,126 +2148,86 @@
             source
             (ci.intern-str name)
             (selfhost-lint-dead-expr-span body)
-            (selfhost-lint-dead-expr-refs
-              body
-              (selfhost-lint-dead-type-refs
-                ret
-                (selfhost-lint-dead-macro-param-list-refs
-                  params
-                  (lint_svec.new))))
+            (selfhost-lint-dead-decl-refs
+              (owned_view.compiler-owned-shared-view decl))
             visible-root
             allow-report)]
-        [(ast.AstDecl.Extern decl-meta name _ meta ty)
-          (selfhost-lint-dead-add-visible-node
+        [(ast.AstDecl.Extern _ name _ _ _)
+          (selfhost-lint-dead-add-no-span-node
             scan
             path
             module
             source
-            (ci.intern-str name)
-            (lint_core.lint-no-span)
-            (selfhost-lint-dead-type-refs
-              ty
-              (selfhost-lint-dead-extern-metadata-refs
-                (deref meta)
-                (lint_svec.new)))
+            (owned_view.compiler-owned-shared-view decl)
+            name
             visible-root
             allow-report)]
-        [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
-          (selfhost-lint-dead-add-visible-node
+        [(ast.AstDecl.DefEnum _ name _ _)
+          (selfhost-lint-dead-add-no-span-node
             scan
             path
             module
             source
-            (ci.intern-str name)
-            (lint_core.lint-no-span)
-            (selfhost-lint-dead-variant-def-list-refs
-              variants
-              (selfhost-lint-dead-enum-cleanup-refs cleanup (lint_svec.new)))
+            (owned_view.compiler-owned-shared-view decl)
+            name
             visible-root
             allow-report)]
-        [(ast.AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
-          (selfhost-lint-dead-add-visible-node
+        [(ast.AstDecl.DefEnumLifetimes _ name _ _ _)
+          (selfhost-lint-dead-add-no-span-node
             scan
             path
             module
             source
-            (ci.intern-str name)
-            (lint_core.lint-no-span)
-            (selfhost-lint-dead-variant-def-list-refs
-              variants
-              (selfhost-lint-dead-enum-cleanup-refs cleanup (lint_svec.new)))
+            (owned_view.compiler-owned-shared-view decl)
+            name
             visible-root
             allow-report)]
-        [(ast.AstDecl.DefStruct decl-meta name _ cleanup fields)
-          (selfhost-lint-dead-add-visible-node
+        [(ast.AstDecl.DefStruct _ name _ _ _)
+          (selfhost-lint-dead-add-no-span-node
             scan
             path
             module
             source
-            (ci.intern-str name)
-            (lint_core.lint-no-span)
-            (selfhost-lint-dead-field-def-list-refs
-              fields
-              (selfhost-lint-dead-struct-cleanup-refs cleanup (lint_svec.new)))
+            (owned_view.compiler-owned-shared-view decl)
+            name
             visible-root
             allow-report)]
-        [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
-          (selfhost-lint-dead-add-visible-node
+        [(ast.AstDecl.DefStructLifetimes _ name _ _ _ _)
+          (selfhost-lint-dead-add-no-span-node
             scan
             path
             module
             source
-            (ci.intern-str name)
-            (lint_core.lint-no-span)
-            (selfhost-lint-dead-field-def-list-refs
-              fields
-              (selfhost-lint-dead-struct-cleanup-refs cleanup (lint_svec.new)))
+            (owned_view.compiler-owned-shared-view decl)
+            name
             visible-root
             allow-report)]
-        [(ast.AstDecl.Import
-            decl-meta
-            (ast.AstImportSpec.Spec
-              (ast.AstImportKind.Macro call-expr _)
-              _
-              _
-              _
-              _))
+        [(ast.AstDecl.DefDispatch _ name _)
+          (selfhost-lint-dead-add-no-span-node
+            scan
+            path
+            module
+            source
+            (owned_view.compiler-owned-shared-view decl)
+            name
+            visible-root
+            allow-report)]
+        ;; Macro imports and tests reference their names from outside any
+        ;; declaration; other imports reference none.
+        [(ast.AstDecl.Import _ _)
           (selfhost-lint-dead-refs-to-roots
             scan
-            (selfhost-lint-dead-expr-refs call-expr (lint_svec.new)))]
-        [(ast.AstDecl.Import
-            decl-meta
-            (ast.AstImportSpec.Spec
-              (ast.AstImportKind.MacroDecls call-expr _)
-              _
-              _
-              _
-              _))
+            (selfhost-lint-dead-decl-refs
+              (owned_view.compiler-owned-shared-view decl)))]
+        [(ast.AstDecl.Test _ _ _ _)
           (selfhost-lint-dead-refs-to-roots
             scan
-            (selfhost-lint-dead-expr-refs call-expr (lint_svec.new)))]
-        [(ast.AstDecl.Import decl-meta _) scan]
+            (selfhost-lint-dead-decl-refs
+              (owned_view.compiler-owned-shared-view decl)))]
         [(ast.AstDecl.IncludeStr _ _) scan]
         [(ast.AstDecl.IncludeStrComptime _ _) scan]
         [(ast.AstDecl.IncludeStrLzss _ _) scan]
         [(ast.AstDecl.IncludeBin _ _) scan]
-        [(ast.AstDecl.DefDispatch decl-meta name variants)
-          (selfhost-lint-dead-add-visible-node
-            scan
-            path
-            module
-            source
-            (ci.intern-str name)
-            (lint_core.lint-no-span)
-            (selfhost-lint-dead-dispatch-variant-list-refs
-              variants
-              (lint_svec.new))
-            visible-root
-            allow-report)]
-        [(ast.AstDecl.Test _ body _ _)
-          (selfhost-lint-dead-refs-to-roots
-            scan
-            (selfhost-lint-dead-expr-refs body (lint_svec.new)))]
         [(ast.AstDecl.Unsafe inner)
           (selfhost-lint-dead-scan-decl
             scan
@@ -2709,9 +2239,31 @@
             allow-report)])]
     (selfhost-lint-dead-refs-to-roots
       result
-      (selfhost-lint-dead-generated-meta-refs
-        (ast.ast-decl-generated-meta decl)
-        (lint_svec.new)))))
+      (selfhost-lint-dead-names-refs
+        (lint_core.lint-generated-meta-names
+          (ast.ast-decl-generated-meta decl)
+          (lint_core.lint-names-empty true))))))
+
+;; An extern, type or dispatch declaration: a node without a source span.
+(define (selfhost-lint-dead-add-no-span-node
+  [scan : SelfhostLintDeadScan]
+  [path : String]
+  [module : String]
+  [source : (& source str)]
+  [decl : ast.AstDecl]
+  [name : i64]
+  [visible-root : bool]
+  [reportable : bool]) : SelfhostLintDeadScan
+  (selfhost-lint-dead-add-visible-node
+    scan
+    path
+    module
+    source
+    (ci.intern-str name)
+    (lint_core.lint-no-span)
+    (selfhost-lint-dead-decl-refs decl)
+    visible-root
+    reportable))
 
 (define (selfhost-lint-dead-scan-decls
   [scan : SelfhostLintDeadScan]

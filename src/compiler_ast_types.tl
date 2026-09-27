@@ -134,15 +134,6 @@
                 (ci.intern-composite-right-id-unchecked name-id)))))))
     (ast-nominal-name-id-part-display name-id)))
 
-(define (ast-nominal-name-id-part-display-with-intern-state
-  [state : ci.InternCompatState]
-  [name-id : i64]) : String
-  (let
-    [source-name-id : i64 (ci.intern-syntax-source-name-id-or name-id -1)]
-    (if (>= source-name-id 0)
-      (ci.intern-compat-state-str state source-name-id)
-      "<structural-nominal>")))
-
 ;; Explicit display boundary for specialization/normalization.  Unlike the
 ;; legacy helper above, every source/generated/structural lookup is resolved
 ;; through the supplied intern owner and therefore remains valid while another

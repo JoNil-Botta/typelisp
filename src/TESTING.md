@@ -143,16 +143,13 @@ compiler-sized search workload that exposed copying during failed lookups.
 
 ## Compiler arena ownership
 
-`src/tests/scan_storage_growth.tl` exercises geometric lexer and unspanned
-reader growth with fixed storage budgets. It checks every token payload and
-position across growth, nested reader builders while either array grows,
+`src/tests/scan_storage_growth.tl` exercises geometric lexer and reader
+growth. It checks every token payload and position across growth against a
+fixed token-buffer budget, nested reader builders while the pool grows,
 post-growth lexer/reader failures, empty and successful reuse, and transient
-caller retirement. Run its inline tests at opt0/1/2; the two storage budgets
-also serve as negative controls against the former retained-capacity policy.
-The required compile-profile gate additionally runs the allocation guard: after
-a large file warms the node pool, growing a wide builder must stay within 4 MiB
-of cumulative allocation and preserve its elements. Run with `--cfg compile-profile`
-to enable this counter-based guard; ordinary tests still cover retained storage.
+caller retirement. Run its inline tests at opt0/1/2; the token-buffer budget
+also serves as a negative control against the former retained-capacity policy.
+The required compile-profile gate runs them with `--cfg compile-profile` too.
 The compiler-check smoke's loader suite covers cached imports and session
 resets, while the compile-profile gate verifies scratch owners are zero at
 load handoff and retains the separate reader-origin lifetime contract.

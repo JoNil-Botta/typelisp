@@ -2490,9 +2490,7 @@
           (cond
             [(not
                 (=
-                  (ot.opt-count-direct-call-name-blocks
-                    (opt.compiler-opt-global-shared-view blocks)
-                    "inline_branch")
+                  (ot.opt-count-direct-call-name-blocks blocks "inline_branch")
                   0))
               11]
             [(not
@@ -2557,9 +2555,7 @@
               [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
               (and
                 (=
-                  (ot.opt-count-direct-call-name-blocks
-                    (opt.compiler-opt-global-shared-view blocks)
-                    "inline_branch")
+                  (ot.opt-count-direct-call-name-blocks blocks "inline_branch")
                   0)
                 (smoke-inline-phi-loop-repaired?
                   (opt.compiler-opt-global-shared-view blocks))
@@ -2633,15 +2629,9 @@
         (let
           [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
           (and
+            (= (ot.opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
             (=
-              (ot.opt-count-direct-call-name-blocks
-                (ir.compiler-ir-global-shared-view blocks)
-                "inline_nonleaf")
-              0)
-            (=
-              (ot.opt-count-direct-call-name-blocks
-                (ir.compiler-ir-global-shared-view blocks)
-                "external_helper")
+              (ot.opt-count-direct-call-name-blocks blocks "external_helper")
               1)
             (opt.opt-inline-structure-ok? blocks)))]
       [(opt.OptMaybeFunction.No) false])))

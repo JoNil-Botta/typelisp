@@ -181,26 +181,20 @@ functions (2.15 on average, 5 at most).
 
 ### Regeneration
 
-The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
-exported at commit `933fdf56c` (#7382) by a Python exporter that read the
-snapshot compiler's `--dump-ir` output of that time. The exporter and its
-regeneration commands were deleted once the corpus was committed;
-`git log --diff-filter=D -- benchmarks/sccp_lattice/tools` finds the deleting
-commit, whose parent still has both, including the exporter's header that
-documents the full corpus format.
+Exported at `933fdf56c` (#7382) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `16` in `optimization.tsv` | tunes TypeLisp Ir to 0.86 G and C to 0.42 G |
 | round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order |
 | lattice sizing | `max(frame, 1)` slots, where `frame` is the function's `vars N` | `opt-sccp-env-make` called from `opt-sccp-initial-state-with-frame` with the pipeline's `bd-frame` |
 | lattice allocation | one array at the corpus maximum (3,737 slots), capacity re-stamped and slots `[0, frame)` refilled with `Unknown` per function | `opt-sccp-env-make` allocates and fills per function; only the allocation is hoisted |
 | executable flags | one `bool` array at the corpus maximum (257), cleared over `[0, nblocks)` per function | `__tl_make-array bool (opt-cfg-index-block-count index)` |
 | label index capacity | next power of two ≥ `2 * nblocks`, minimum 2 | `opt-cfg-index-id-map-capacity` |
 | sweep bound | `nblocks + 8 + 2 * ninstr` | `opt-sccp-analyze` / `-analyze-with-frame` |
-| checksum | 64-bit FNV-1a, no division on loop-carried values | identical bits in TypeLisp `i64` and C `uint64_t` |
 | folded per function | every `Const` slot's `(index, kind, value, type)`, every executable flag, the const count, the dead-block count, the sweep count, and the running substitution / folded-branch / dropped-bounds-check totals | ties the checksum to the fold results, not just to their count |
 | self-check | the five totals above, compared against the exporter's independent Python SCCP carried in the corpus header | a mismatch makes both binaries exit 1 |

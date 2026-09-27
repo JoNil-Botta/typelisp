@@ -104,25 +104,19 @@ instead of truncating to its stdlib-heavy prefix.
 
 ### Regeneration
 
-The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
-exported at commit `5fce734af` (#5989) by a Python exporter that read the
-snapshot compiler's `--dump-ir` output of that time. The exporter and its
-regeneration commands were deleted once the corpus was committed;
-`git log --diff-filter=D -- benchmarks/gvn_table/tools` finds the deleting
-commit, whose parent still has both, including the exporter's header that
-documents the full corpus format.
+Exported at `5fce734af` (#5989) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `14` in `optimization.tsv` | tunes TypeLisp Ir to 1.62 G and C to 0.62 G |
 | round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order |
 | table cap | `clamp(max(128, ninstr / 2), 2048)` per block | `opt-load-cse-table-cap-for-size` |
 | kinds cap | `clamp(max(96, ninstr / 2), 2048)` per block | `opt-load-cse-kinds-cap-for-size` |
 | kinds generation | `2 * block-index + 1`, stamps zeroed per function | `optimize-block-seq-hs-dense` |
 | facts map | fresh `with-capacity 17` (rounds to 32) per block | `opt-alias-empty` |
 | node pool | `4 * max-table-cap + 128`, free list | peak live is bounded by `2 * cap + 2` (a rebuild's old and new spines) |
-| checksum | 64-bit FNV-1a, no division | identical bits in TypeLisp i64 and C `uint64_t` |
 | folded per block | hits, misses, invalidations, final table size | the four required quantities |

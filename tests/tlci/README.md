@@ -9,7 +9,7 @@ section that binds GOT slots to host entry points by name. Format
 version 1 has been removed — there were no external consumers — so the parser
 and emitter target v2 only.
 
-The checked-in `.tlci` files pin the current format. These immutable corpus
+The checked-in `corpus/*.tlci` files pin the current format. These immutable corpus
 images predate package source-set bindings and checked frontend surfaces; they
 intentionally inspect as `source-set-binding-schema: missing-or-legacy` with an
 unavailable digest and all three surface kinds missing while remaining valid v2
@@ -23,8 +23,13 @@ layout, and metadata failures.
 Linux and Windows and compares exact stdout/stderr.
 
 The gate also runs `corpus_emit.tl` and byte-compares its three outputs with the
-checked-in valid images. A synchronized emitter/parser change therefore cannot
-silently redefine the format.
+checked-in valid images, and `platform_corpus_emit.tl` the same way for the
+host-platform witnesses (`valid-platform-*`, `malformed-platform-unknown`). A
+synchronized emitter/parser change therefore cannot silently redefine the
+format.
+
+`package_dependency_transition.tl` is separate: a dependency-catalog lifecycle
+witness that `scripts/verify-package-native-tlci.sh` runs.
 
 ## Regenerating the corpus
 

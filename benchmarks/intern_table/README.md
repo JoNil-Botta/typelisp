@@ -45,22 +45,8 @@ String-literal interning (`Token.Str`, which also calls `intern-source-slice`)
 is excluded so the corpus stays line oriented; symbol lexemes never contain
 whitespace.
 
-## Arguments
-
-```
-bench <idents-path> <rounds>
-```
-
-`optimization.tsv` ships `benchmarks/intern_table/data/idents.txt 6`, which is
-about 1.1G retired instructions for the TypeLisp build.
-
 ## Regenerating the corpus
 
-The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
-exported at commit `5fce734af` (#5989) by a Python exporter that read the
-checked-in compiler sources of that time. The exporter and its regeneration
-commands were deleted once the corpus was committed;
-`git log --diff-filter=D -- benchmarks/intern_table/tools` finds the deleting
-commit, whose parent still has both, including the exporter's header that
-documents the full corpus format. Later language migrations edited the corpus in
-place; `git log -- benchmarks/intern_table/data` lists them.
+Exported at `5fce734af` (#5989) from the checked-in compiler sources, and since
+edited in place by language migrations; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).

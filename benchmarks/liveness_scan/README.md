@@ -15,11 +15,11 @@ is deliberately out of scope.
 
 One deliberate departure: the checksum's population count clears the lowest set
 bit instead of testing all thirty-two bit positions the way
-`compiler-live-set-word-count-bits` does. Both spell the same value, but with
-the compiler's spelling the checksum alone is 78% of the TypeLisp row (1,164.6M
-of which only 254.4M is the fixpoint), which would make this row a measurement
-of the checksum rather than of the dataflow. The per-bit cost is worth knowing
-on its own -- see the shift-count trap-check note in the delivery report.
+`compiler-live-set-word-count-bits` does. Both spell the same value, but the
+compiler's spelling would make the checksum dominate the row, turning it into a
+measurement of the checksum rather than of the dataflow.
+
+Each round runs both entries over every function of the corpus.
 
 ## Input
 
@@ -63,22 +63,8 @@ repeated F times:
     nphi   var...      compiler-live-phi-out-add-inputs!
 ```
 
-## Arguments
-
-```
-bench <cfgs-path> <rounds>
-```
-
-`optimization.tsv` ships `benchmarks/liveness_scan/data/cfgs.txt 5`, which is
-about 1.18G retired instructions for the TypeLisp build. Each round runs both
-entries over all 2,087 functions.
-
 ## Regenerating the corpus
 
-The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
-exported at commit `5fce734af` (#5989) by a Python exporter that read the
-compiler's `--dump-ir` output of that time. The exporter and its regeneration
-commands were deleted once the corpus was committed;
-`git log --diff-filter=D -- benchmarks/liveness_scan/tools` finds the deleting
-commit, whose parent still has both, including the exporter's header that
-documents the full corpus format.
+Exported at `5fce734af` (#5989) from the compiler's `--dump-ir` output; function
+names in this README refer to that commit. See
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).

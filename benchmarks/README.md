@@ -5,10 +5,8 @@ compiler against an equivalent C program compiled with `clang`. It exists so
 optimization work can be prioritized and regressions caught (refs #929, #1097).
 
 The separate opt-in [`ispc/`](ispc/) corpus holds pinned ports of official ISPC
-example kernels. ISPC is not required by this benchmark harness or by CI.
-Its shared report runner is `scripts/measure-ispc-spmd.sh`; it validates every
-case-specific parity gate before emitting kernel-symbol-only static codegen
-comparisons, and records missing ISPC as an explicit support state.
+example kernels; ISPC is not required by this harness or by CI. Deterministic
+instruction-count baselines are described in [`perf/README.md`](../perf/README.md).
 
 Full timing benchmark runs are manual because wall-clock measurements are noisy.
 They compare TypeLisp opt2 with both clang's normal `-O2` vectorizing pipeline
@@ -28,7 +26,10 @@ benchmarks/
 ```
 
 Each `<name>/` is one benchmark. `scripts/bench.sh` discovers every directory
-that contains both `bench.tl` and `baseline.c`. Linux CI passes explicit suite
+that contains both `bench.tl` and `baseline.c`. Directories with only a
+`baseline.c` (`c_abi_*`, `c_function_pointer_flow`) are not benchmarks: they
+are the C companions that `tests/integration/native.manifest` links into native
+integration cases. Linux CI passes explicit suite
 membership from `perf/benchmark-ci-cases.tsv`; instruction suites check exact
 output parity and cachegrind counts in one run. Local `--cases` and `--filter`
 selections remain independent of CI suite membership.
@@ -46,6 +47,7 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 |------|----------|
 | `arith_loop` | Scalar LCG recurrence over wrapping 64-bit arithmetic. |
 | `mul_small_constants` | Serial wrapping multiply/xor recurrence using factors 3, 5, and 9; exposes constant-multiply latency without affine recurrence folding. |
+| `mul_wide_power` | The same serial multiply/xor recurrence with the wide power-of-two factor 2^34. |
 | `array_sum` | `Vec i64` fill + repeated backing-storage sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
 | `borrowed_disjoint_store` | Loop-invariant shared checked-reference loads separated by a non-inlined direct call that writes through a distinct mutable-reference root (refs #5201, #5216). |
 | `string_scan` | Polynomial rolling hash (`acc = acc * 131 + byte`) over a fixed ASCII string scanned many rounds, carrying the hash across rounds (refs #1098). |
@@ -108,6 +110,40 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
   use `uint64_t` in the C baseline to keep the bit patterns -- and the exit code --
   identical.
 
+### Compiler-derived kernels
+
+`asm_render`, `callgraph_scc`, `cfg_domloops`, `gvn_table`, `intern_table`,
+`lex_source`, `liveness_scan`, `peephole_lines`, `read_sexpr`,
+`regalloc_greedy`, `sccp_lattice` and `ssa_construct` each port one compiler hot
+path to TypeLisp and C and run it over a corpus captured from the compiler
+compiling itself. Each case's README lists the compiler functions it mirrors,
+what the port keeps and drops, and the corpus format. The shared rules:
+
+- **Frozen.** The ports and their `data/` corpora are fixed at the commit that
+  exported them, which each README names, and the `instruction-main` baseline
+  rows pin them byte for byte. Compiler function names in a case README refer to
+  that commit; a kernel is not updated when the compiler code it mirrors
+  changes.
+- **Regeneration.** The corpora were produced by Python exporters under
+  `benchmarks/<name>/tools/`, deleted once the corpora were committed.
+  `git log --diff-filter=D -- benchmarks/<name>/tools` finds the deleting
+  commit; its parent has each exporter, whose header documents the full corpus
+  format. Language migrations may edit a corpus in place afterwards
+  (`git log -- benchmarks/<name>/data`).
+- **Arguments.** `bench <corpus-path> <rounds>`; the case's `optimization.tsv`
+  ships both. Neither is visible to the compiler, so nothing folds away.
+- **Rounds.** Each round rotates its starting unit (function, chunk, program or
+  file), so no round repeats an earlier accumulator and nothing can be hoisted
+  out of the round loop.
+- **Checksum.** A 64-bit wrapping accumulator built from multiply and xor only
+  (usually FNV-1a, `h = (h ^ x) * 1099511628211`), so TypeLisp `i64` and C
+  `uint64_t` produce identical bits and no `%` on a live loop-carried dividend
+  appears (#5982). Most kernels also assert quantities the exporter computed
+  independently and abort on a mismatch.
+- **Scratch.** Per-function scratch arrays are allocated once at the corpus
+  maximum and reused, in both languages, so the measurement is the algorithm
+  rather than the allocator.
+
 ## Running
 
 ```sh
@@ -131,21 +167,13 @@ ratio work:
 bash scripts/bench.sh --correctness
 ```
 
-The required CI gates run both the fast harness validator self-tests and the
-full correctness corpus:
-
-```sh
-bash scripts/bench.sh --self-test
-bash scripts/bench.sh --correctness
-```
-
-The self-tests exercise the report validator with three interleaved rounds and
-deliberately corrupt fixtures. On Linux they also verify that the timing helper
-distinguishes a normal exit above 128 from real signal termination.
-
-SPMD scalar/AVX2 deterministic performance uses the separate cachegrind mode
-matrix. AVX-512 has no instruction-count rows: Valgrind 3.22 SIGILLs on the
-AVX-512 corpus.
+Required CI runs `bash scripts/bench.sh --self-test` as
+`benchmark-wall-clock-harness-self-tests` and `--correctness` as
+`stage2-benchmark-comparison-correctness`; on Linux the latter selects only the
+`benchmark` suite (see Layout). The self-tests exercise the report validator
+with three interleaved rounds and deliberately corrupt fixtures. On Linux they
+also verify that the timing helper distinguishes a normal exit above 128 from
+real signal termination.
 
 The optimizer corpus has a stricter stdout-comparison runner because those
 programs report their result on stdout and take per-case arguments from
@@ -162,6 +190,9 @@ TYPELISP_BIN=./target/stage0/typelisp ./scripts/run-optimization-benchmarks.sh -
 `--filter array_sum` still matches the renamed `opt_array_sum` case; filters
 also match the full `opt_*` names. Timing mode is Linux-only and defaults to
 compiling TypeLisp benchmark sources through a selfhosted `src/main.tl` CLI.
+Required CI runs `--correctness` as `stage2-optimization-corpus-correctness`,
+and again at `--tl-opt-level 2` over the `optimization-opt2` suite as
+`stage2-optimization-corpus-opt2-runtime-correctness`.
 
 Requirements:
 

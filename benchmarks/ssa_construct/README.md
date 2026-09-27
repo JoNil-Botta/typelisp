@@ -110,8 +110,6 @@ expensive and that a "textbook" SSA construction would not have:
   dominance frontier's set-build order and the phi-site order were checked
   against the `OptLabelSet.Dense` read convention (`opt-label-ref 0` is the
   newest element) and are unchanged.
-- Scratch arrays are allocated once at the corpus maxima and reused instead of
-  per function. Both implementations do the same.
 
 ## Corpus
 
@@ -159,7 +157,7 @@ those already satisfy `opt-verify-single-defs?` (the pass returns them
 unchanged) and are dropped, 153 could not be parsed (a `message "…"` operand
 whose string spans lines breaks the line-oriented reader) and are dropped, and
 the remaining 475 — the records the pass actually transforms — are the corpus.
-The rendered corpus is 0.48 MB, under the 3 MB budget, so the stride is 1.
+The corpus is small enough to keep whole, so the stride is 1.
 
 None of the 475 trips an early-out: every one of them has at least one
 candidate, none has a candidate phi destination, none exceeds the 4096-block
@@ -176,13 +174,10 @@ function. The exporter predicts this independently and the kernels assert it.
 
 ### Regeneration
 
-The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
-exported at commit `933fdf56c` (#7382) by a Python exporter that read the
-snapshot compiler's `--dump-ir` output of that time. The exporter and its
-regeneration commands were deleted once the corpus was committed;
-`git log --diff-filter=D -- benchmarks/ssa_construct/tools` finds the deleting
-commit, whose parent still has both, including the exporter's header that
-documents the full corpus format.
+Exported at `933fdf56c` (#7382) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Self-check
 
@@ -209,8 +204,5 @@ the printed number.
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `12` in `optimization.tsv` | tunes TypeLisp Ir to 0.83 G and C to 0.43 G |
-| round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order, so no round repeats an earlier accumulator and nothing can be hoisted |
-| checksum | 64-bit FNV-1a, `h = (h ^ x) * 1099511628211`, basis `1469598103934665603` | wrapping multiply and xor only — no division or `%`, so TypeLisp i64 and C `uint64_t` produce identical bits |
+| round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order |
 | folded per function | the early-out taken (or 6 for a full construction), the candidate count, the inserted-phi count, the final vreg count, the number of renamed definitions, the verify verdict, the three self-check verdicts, and then every materialized instruction's kind, destination and resolved operands | covers the phi placement, the renaming, and every phi-operand resolution id |

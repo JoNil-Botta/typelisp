@@ -7,7 +7,7 @@ This page describes the compiler pipeline and command-line surface. Run
 
 ```
 Source (.tl)
-    ↓  Lexer        → Tokens
+    ↓  Lexer, reader → spanned s-expressions (lex.tl, read.tl)
     ↓  Parser       → AST
     ↓  Type Checker → Typed AST
     ↓  Lowerer      → IR (3-address code, basic blocks)
@@ -89,7 +89,7 @@ and register-allocation decisions still read generated helper and parameter
 spellings; #7493 moves them onto the descriptor.
 
 The lowerer's checked expression dispatcher delegates complete families to
-focused helpers. The [expression-family ledger](compiler-lowering-dispatch.md)
+focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance
 contract for those boundaries.
 
@@ -110,18 +110,16 @@ keyword table. The lowerer's closed core-macro Clone handoff supplies its explic
 empty source-language cfg set. The `generated_cfg` native fixture and interleaved
 cfg driver-state smoke guard this boundary.
 
-Lexer tokens and unspanned reader nodes are scan scratch. Their geometric
-growth replaces dedicated storage after moving the live prefix, then retires
-the superseded owner and restores the caller's active arena. Token storage is
-not published until scanning returns. Unspanned reader children and pending
-builders retain indices rather than array addresses. Each reader array has its
-own owner so growing one cannot repeatedly allocate the other's capacity. The
-reader scratch profile row sums both owners. Token and reader literal payloads
-remain in their source/interner owners. Growth therefore preserves records and
-indices without retaining all previous capacities. The separate spanned reader
-pool also owns declaration/member origins and must follow its existing retained
-origin handoff instead. Whole-load scan release still empties all scan scratch
-owners, while reusable sessions retain only their current capacities.
+Lexer tokens are scan scratch. Their geometric growth replaces dedicated
+storage after moving the live prefix, then retires the superseded owner and
+restores the caller's active arena. Token storage is not published until
+scanning returns. Token literal payloads remain in their source/interner
+owners, so growth preserves records and indices without retaining all previous
+capacities. The spanned reader pool is the only s-expression tree; plain data
+reads (lockfiles, TLCI metadata) use its `data-result` mode. It also owns
+declaration/member origins and follows the retained origin handoff instead.
+Whole-load scan release empties the token scratch, while reusable sessions
+retain only their current capacities.
 
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
@@ -242,6 +240,15 @@ parent selectors and destroys the entry arena on both success and diagnostic
 returns. This lifetime applies to every ordered entry; it does not split or
 restart the batch compiler.
 
+Inline-test harness construction prunes runtime declarations before typechecking.
+An unresolved dotted name may be an imported member or a projection from global
+storage, so reachability retains both the final member and the first source
+component. The normal fixed point then retains a referenced global's initializer
+dependencies. Hygiene and module qualification are normalized against the captured
+intern session; dotted projections must not consult another installed pool.
+Unrelated globals remain pruned. The global-field inline fixture and harness
+retention test guard this boundary.
+
 Mutable typecheck caches, indexes and traversal state belong to the compiler
 job's `TcJobState`, never to process-wide cells, so resetting or destroying one
 job cannot disturb another. A value that is a pure function of intern ids is
@@ -329,8 +336,8 @@ Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large
 analysis temporaries after copying their small result. The budget selects only
 allocation lifetime; it never reduces analysis precision or optimizer work.
-Avoid unconditional arenas for small analyses: measured per-self-compile arena
-creation grew over tenfold and materially regressed ordinary compile time.
+Avoid unconditional arenas for small analyses: an arena per analysis
+multiplies arena creation and regresses ordinary compile time.
 Final scavenger intervals still describe the
 final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes
@@ -412,7 +419,7 @@ interning is published to the job's intern owner before handoff. The generated
 import runtime fixtures and interleaved loader-state smoke guard these contracts.
 
 Handwritten runtime, startup, and direct-object x86-64 code is covered by the
-closed [compiler-owned executable template registry](compiler-x64-executable-templates.md).
+closed [compiler-owned executable template registry](../docs/compiler-x64-executable-templates.md).
 It records mutation-sensitive source identities and typed control/frame events
 for later native-code certification.
 
@@ -510,92 +517,39 @@ tracked with deterministic executed-instruction baselines under
 [`../perf/`](../perf), avoiding wall-clock noise in required CI gates.
 
 Required verification is one table,
-[`scripts/ci-gates.tsv`](../scripts/ci-gates.tsv): each row is a gate's stable
-ID, hosts, label, needs, compiler and command. `ci-verify.sh` runs the rows in
-order for full execution, runs a dependency-closed selection for
-`ci-verify.sh --gates`, and lists a host's inventory without running it. Each
-gate sees only the compiler its row names, and a selection that is not the
-whole inventory is only a partial result. Nested compiler and corpus
-invariants stay in the gate scripts; a row alone does not establish them. See
-the [gate table](../scripts/README.md#core-development-loop) before changing
-CI structure.
+[`scripts/ci-gates.tsv`](../scripts/ci-gates.tsv), run by `scripts/ci-verify.sh`.
+The [scripts README](../scripts/README.md#core-development-loop) describes the
+table and the gates; read it before changing CI structure.
 
 ## CLI
 
-Inline-test harness construction prunes runtime declarations before typechecking.
-An unresolved dotted name may be an imported member or a projection from global
-storage, so reachability retains both the final member and the first source
-component. The normal fixed point then retains a referenced global's initializer
-dependencies. Hygiene and module qualification are normalized against the captured
-intern session; dotted projections must not consult another installed pool.
-Unrelated globals remain pruned. The global-field inline fixture and harness
-retention test guard this boundary.
-
-```text
-Synopsis:
-    typelisp - A typed Lisp/Scheme dialect with x86_64 backend
-
-Usage:
-    typelisp <command> [options]
-    typelisp <command> --help
-
-Commands:
-    typelisp build          Build a source file or package artifact
-    typelisp check          Type check a source file or package
-    typelisp clean          Remove build artifacts
-    typelisp compile        Generate assembly or IR
-    typelisp doc            Generate documentation or run doc tests
-    typelisp explain        Explain a diagnostic code
-    typelisp fmt            Format source files or a package
-    typelisp init           Scaffold a package in the current directory
-    typelisp inspect        Inspect a TypeLisp comptime image
-    typelisp lint           Lint source files or a package
-    typelisp lsp            Start stdio language server
-    typelisp new            Scaffold a new package directory
-    typelisp repl           Start minimal stdio REPL
-    typelisp run            Compile, link, and run a source file or package
-    typelisp test           Run or check inline tests
-```
+`typelisp --help` lists the commands and the global and common options;
+`typelisp <command> --help` shows each command's options.
 
 Common options include `--target linux-x86_64|windows-x86_64` (Linux is the
 default output target; `test` defaults to the host), `--backend-mode
 scalar|avx2|avx512`, `--opt-level 0|1|2` (0: no IR optimizer; 1: cheap
 stack-only passes; 2: full optimizer with register allocation and inlining —
 levels never change program semantics), `--manifest-path <file>`,
-`--stdlib-root <dir>`, `--locked`, `--update-lock`, and `--cfg <name>`. Run
-`typelisp <command> --help` for command-specific help. The REPL remembers
-top-level declarations and evaluates bare expressions by compiling a scratch
-program through the real build/run pipeline — there is no interpreter.
-`.load <file>` adds a source file's declarations to the current session after
-checking the combined session. Scalar results are printed directly; structs,
-enums, tuples, and fixed arrays use the stable fallback `<value: Type>` because
-TypeLisp does not currently provide runtime reflection for their contents.
+`--stdlib-root <dir>`, `--locked`, `--update-lock`, and `--cfg <name>`. The
+REPL remembers top-level declarations and evaluates bare expressions by
+compiling a scratch program through the real build/run pipeline — there is no
+interpreter. `.load <file>` adds a source file's declarations to the current
+session after checking the combined session. Scalar results are printed
+directly; structs, enums, tuples, and fixed arrays use the stable fallback
+`<value: Type>` because TypeLisp does not currently provide runtime reflection
+for their contents.
 
 Human-facing `check`, `compile`, `build`, `run`, and test-preflight failures
 render error codes, source locations and snippets, carets, secondary labels,
 and available help/notes. LSP and other machine consumers keep their structured
 or stable flat diagnostic representations. Diagnostic codes are append-only:
-published numbers are never renumbered or reused. The currently classified
-typecheck codes are `E0201` (unbound name), `E0202` (arity mismatch), `E0203`
-(non-exhaustive match), `E0204` (unknown struct field), `E0205` (region
-escape), `E0206` (type mismatch), `E0207` (borrow violation), `E0208` (move
-violation), `E0209` (unsafe context required), `E0210` (lifetime mismatch),
-`E0211` (resource ownership violation), `E0212` (arena ownership violation),
-`E0213` (invalid pattern), `E0214` (SPMD restriction), `E0215`
-(invalid storage place), `E0216` (control-flow misuse), `E0217` (thread-safety
-violation), `E0218` (compile-time constraint), `E0219` (unsafe callable
-effect erasure), and `E0220` (global written outside its module). Run
-`typelisp explain <code>` for a description, minimal failing
-example, suggested fix, and related references. Code lookup is ASCII
-case-insensitive. `typelisp explain --list` prints the registry and
-`typelisp explain --search <term>` searches its titles and prose. The generic
-`E0100` parse and `E0200` unclassified typecheck entries also have complete
-explanations. The checked-in ownership and construction-site inventory is in
-[diagnostic-codes.md](diagnostic-codes.md).
-
-Disposable measurements and diagnostics belong under `target/exp/<name>/`;
-`typelisp clean --experiments` removes that subtree at the nearest package root
-without touching bootstrap or package build outputs.
+published numbers are never renumbered or reused. Run `typelisp explain <code>`
+for a description, minimal failing example, suggested fix, and related
+references. Code lookup is ASCII case-insensitive. `typelisp explain --list`
+prints the registry and `typelisp explain --search <term>` searches its titles
+and prose. The code list, with owners and construction sites, is in
+[diagnostic-codes.md](../docs/diagnostic-codes.md).
 
 ## Async process ownership
 

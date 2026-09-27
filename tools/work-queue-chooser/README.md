@@ -52,19 +52,9 @@ PR objects should include `baseRefName`. An explicit base other than `main` is
 treated as a stacked PR and is excluded from review; omitting the field retains
 compatibility with older queue snapshots.
 
-Live PR snapshots must include `labels`, as returned by GitHub CLI:
-
-```sh
-gh pr list --repo JoNil-Botta/typelisp --state open --limit 1000 \
-  --json number,title,body,headRefName,baseRefName,isDraft,labels,statusCheckRollup
-```
-
-Combine that complete PR array with the issue array; do not remove claimed PRs
-before passing the snapshot to the chooser. Increase reached query limits or
-fetch all pages.
-
-`labels` is an array of objects with string `name` fields. The exact decoded
-name `review-claimed` excludes a PR from review. Other labels, including case
+Live PR snapshots must include `labels`, as the capture command above
+requests. `labels` is an array of objects with string `name` fields. The exact
+decoded name `review-claimed` excludes a PR from review. Other labels, including case
 or whitespace variants, do not affect eligibility. Empty arrays are unclaimed;
 an absent field remains unclaimed for legacy snapshots. Explicit `null`, a
 non-array field, or an entry without a string `name` is an input error naming
@@ -93,13 +83,7 @@ that a claim is stale, or guarantee atomic exclusion. Workers still recheck
 the live tag before adding their own claim, skip tagged PRs, and confirm a
 reviewer has stopped before reclaiming work. Keep claimed PRs in future inputs.
 
-Use the TypeLisp command directly:
-
-```sh
-typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib
-```
-
-PowerShell workers use the same non-Rust invocation:
+The invocation is the same under PowerShell:
 
 ```powershell
 typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib
@@ -124,4 +108,5 @@ issue at the same priority.
 used by `scripts/benchmark-cli-tools.sh` to benchmark chooser startup and
 selection; its missing PR labels exercise legacy compatibility. The claimed
 wait and malformed-label fixtures exercise the live payload contract through
-the CLI gate on Linux and Windows.
+`tests/cli/selfhost-build-run.cases` (gate
+`stage2-cli-build-run-and-chooser-smoke`) on Linux and Windows.

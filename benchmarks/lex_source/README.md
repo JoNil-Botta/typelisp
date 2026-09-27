@@ -27,22 +27,8 @@ when it compiles itself:
 Each module is followed by a newline if it does not already end in one, so a
 module's last token cannot fuse with the next module's first token.
 
-## Arguments
-
-```
-bench <corpus-path> <rounds>
-```
-
-`optimization.tsv` ships `benchmarks/lex_source/data/corpus.tl-txt 8`, which is
-about 1.0G retired instructions for the TypeLisp build.
-
 ## Regenerating the corpus
 
-The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
-exported at commit `5fce734af` (#5989) by a Python exporter that read the
-checked-in compiler sources of that time. The exporter and its regeneration
-commands were deleted once the corpus was committed;
-`git log --diff-filter=D -- benchmarks/lex_source/tools` finds the deleting
-commit, whose parent still has both, including the exporter's header that
-documents the full corpus format. Later language migrations edited the corpus in
-place; `git log -- benchmarks/lex_source/data` lists them.
+Exported at `5fce734af` (#5989) from the checked-in compiler sources, and since
+edited in place by language migrations; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).

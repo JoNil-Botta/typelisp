@@ -1,42 +1,34 @@
 # Public Tools Test Fixtures
 
-This directory contains REPL transcript fixtures and LSP JSON-RPC protocol fixtures
-that replace the corresponding Rust test cases in `tests/cli.rs`.
+This directory holds the REPL transcript and LSP JSON-RPC fixtures that
+`run-corpus.sh` runs against `typelisp repl` and `typelisp lsp`.
 
 ## Fixture Format
 
-### REPL Fixtures (`repl/*.txt`)
+Every fixture is an input file plus a `.spec.json` expectation with the same
+stem. A `.linux.` infix (`name.linux.in`, `name.linux.spec.json`) limits the
+fixture to Linux hosts.
 
-Each fixture is a plain text file with three sections separated by `---` on its own line:
+- `repl/*.in` is sent to `typelisp repl` on stdin.
+- `lsp/*.in.json` is an array of JSON-RPC messages; the runner adds the
+  `Content-Length` framing. An optional `name.prep.sh` runs first with
+  `FIXTURE_TMP` and `FIXTURE_TMP_URI` set to the case's temporary directory.
+- `selfhost-lsp/*.linux.in.json` are framed the same way; `*.linux.in` files
+  are raw protocol bytes, for malformed-frame cases.
 
-```
-<input lines sent to REPL stdin>
----
-<expected stdout (may include glob patterns)>
----
-<expected stderr (may include glob patterns)>
-```
+Inputs and expectations may use `${{TMP}}` and `${{TMP_URI}}` for the case's
+temporary directory.
 
-- Empty expected section means no output is expected on that stream.
-- Lines prefixed with `! ` in expected sections are negative assertions (must NOT appear).
-- Lines prefixed with `~ ` are substring match (default for non-empty lines).
-- Lines prefixed with `= ` are exact line match.
-- Exit code is always 0 (success) unless the fixture name starts with `error-`.
+A `.spec.json` may contain:
 
-### LSP Fixtures (`lsp/*.json` and `lsp/*.sh`)
-
-Each fixture has a `.json` input file and a `.check` assertion file:
-
-- `.json` file: array of JSON-RPC request objects. The runner auto-wraps each with
-  `Content-Length` framing.
-- `.check` file: list of assertions, one per line:
-  - `stdout contains <substring>`
-  - `stdout regex <pattern>`
-  - `stderr contains <substring>`
-  - `stderr exact <text>`
-  - `message contains <substring>` — checks any parsed JSON-RPC response message
-  - `message count <n>` — total parsed messages
-  - `exit <code>`
+- `exit`: the expected exit code (default 0);
+- `stdout_exact`, `stderr_exact`: the whole stream;
+- `stdout_contains`, `stdout_not_contains`, `stderr_contains`,
+  `stderr_not_contains`: substrings;
+- LSP only: `message_count`, the number of parsed JSON-RPC messages, and
+  `message_checks`, each of which some message must pass: an optional
+  `jsonpath_id` (the message's `id`), an optional `"jsonpath_result": null`,
+  and `raw_contains`, `raw_not_contains` and `json_contains` strings.
 
 ## Running
 
@@ -44,12 +36,15 @@ From the repository root:
 
 ```bash
 # Set TYPELISP_BIN, or the script fetches the published stage0 automatically.
-scripts/fetch-stage0.sh
 TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-public-tools.sh
+TYPELISP_BIN=./target/stage0/typelisp tests/public-tools/run-corpus.sh lsp fresh
 ```
 
-The REPL and LSP fixtures are exercised by `run-corpus.sh`, which is called by
-`verify-public-tools.sh`.
+`verify-public-tools.sh` calls `run-corpus.sh` for both corpora.
+`run-corpus.sh [repl|lsp] [fresh|batch|differential]` runs one corpus; LSP cases
+run one process per case (`fresh`), all cases through one batch process
+(`batch`, the Windows default), or both with their results compared
+(`differential`, the Linux default).
 
 The command-surface list of the freshly built `src/main.tl` binary, with one
 smoke case per command, is `tests/cli/selfhost-surface.cases`.

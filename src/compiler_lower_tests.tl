@@ -1187,12 +1187,12 @@
     (lower.lower-compiler-source (compiler-lower-fixed-array-length-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-load-count functions "owned-len") 0)
-        (= (lower-test-function-load-count functions "shared-len") 0)
-        (= (lower-test-function-load-count functions "mut-len") 0)
-        (= (lower-test-function-return-count functions "owned-len") 1)
-        (= (lower-test-function-return-count functions "shared-len") 1)
-        (= (lower-test-function-return-count functions "mut-len") 1))]
+        (= (lower-test-count functions "owned-len" (LowerTestInstr.Load)) 0)
+        (= (lower-test-count functions "shared-len" (LowerTestInstr.Load)) 0)
+        (= (lower-test-count functions "mut-len" (LowerTestInstr.Load)) 0)
+        (= (lower-test-count functions "owned-len" (LowerTestInstr.Return)) 1)
+        (= (lower-test-count functions "shared-len" (LowerTestInstr.Return)) 1)
+        (= (lower-test-count functions "mut-len" (LowerTestInstr.Return)) 1))]
     [_ false]))
 
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
@@ -1254,14 +1254,15 @@
         (match program
           [(ir.CompilerIrProgram.Program _ functions _)
             (and
-              (= (lower-test-function-pack-count functions "main") 1)
+              (= (lower-test-count functions "main" (LowerTestInstr.Pack)) 1)
               (=
                 (lower-test-function-pack-shape-count functions "main" pools)
                 1)
               (=
-                (lower-test-function-pack-count
+                (lower-test-count
                   functions
-                  "slice-from-array-ref")
+                  "slice-from-array-ref"
+                  (LowerTestInstr.Pack))
                 1)
               (=
                 (lower-test-function-pack-shape-count
@@ -1269,7 +1270,12 @@
                   "slice-from-array-ref"
                   pools)
                 1)
-              (= (lower-test-function-pack-count functions "slice-forward") 0))]))]
+              (=
+                (lower-test-count
+                  functions
+                  "slice-forward"
+                  (LowerTestInstr.Pack))
+                0))]))]
     [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-slice-split-at-source) : String
@@ -1299,7 +1305,7 @@
             ir.CompilerIrBinOp.Sub)
           1)
         (= (lower-test-function-call-count functions "split" "tl_alloc") 0)
-        (>= (lower-test-function-pack-count functions "split") 2))]
+        (>= (lower-test-count functions "split" (LowerTestInstr.Pack)) 2))]
     [_ false]))
 
 (define (compiler-lower-slice-split-at-shape-ok?) : bool
@@ -1334,7 +1340,7 @@
 (define (compiler-lower-tuple-inline-storage-frame?
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [name : String]) : bool
-  (> (lower-test-function-alloc-count functions name) 0))
+  (> (lower-test-count functions name (LowerTestInstr.Alloc)) 0))
 
 (define (compiler-lower-tuple-inline-storage-mode-ok?
   [mode : lower.CompilerLowerMode]) : bool
@@ -1391,9 +1397,9 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (>= (lower-test-function-alloc-count functions "main") 2)
-        (>= (lower-test-function-addr-of-count functions "main") 2)
-        (>= (lower-test-function-load-count functions "main") 2))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.Alloc)) 2)
+        (>= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 2)
+        (>= (lower-test-count functions "main" (LowerTestInstr.Load)) 2))]
     [_ false]))
 
 (define (compiler-lower-mut-ref-array-field-access-source) : String
@@ -2040,8 +2046,8 @@
     (lower.lower-compiler-source (compiler-lower-tuple-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (>= (lower-test-function-store-ptr-count functions "main") 2)
-        (>= (lower-test-function-load-count functions "main") 1))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 2)
+        (>= (lower-test-count functions "main" (LowerTestInstr.Load)) 1))]
     [_ false]))
 
 (define (compiler-lower-clone-shape-ok?) : bool
@@ -2067,7 +2073,9 @@
         (>
           (lower-test-function-call-count functions ".::clone-dyn" "tl_alloc")
           1)
-        (> (lower-test-function-branch-count functions ".::clone-dyn") 0)
+        (>
+          (lower-test-count functions ".::clone-dyn" (LowerTestInstr.Branch))
+          0)
         (=
           (lower-test-function-call-count
             functions
@@ -2112,14 +2120,24 @@
             ".::copy-i64-items"
             "tl_memcpy")
           1)
-        (= (lower-test-function-branch-count functions ".::copy-i64-items") 0)
+        (=
+          (lower-test-count
+            functions
+            ".::copy-i64-items"
+            (LowerTestInstr.Branch))
+          0)
         (=
           (lower-test-function-call-count
             functions
             ".::copy-word-items"
             "tl_memcpy")
           1)
-        (= (lower-test-function-branch-count functions ".::copy-word-items") 0)
+        (=
+          (lower-test-count
+            functions
+            ".::copy-word-items"
+            (LowerTestInstr.Branch))
+          0)
         (=
           (lower-test-function-call-count
             functions
@@ -2133,7 +2151,10 @@
             "tl_substring")
           0)
         (>
-          (lower-test-function-branch-count functions ".::copy-string-items")
+          (lower-test-count
+            functions
+            ".::copy-string-items"
+            (LowerTestInstr.Branch))
           0))]
     [_ false]))
 
@@ -2463,10 +2484,10 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (>= (lower-test-function-alloc-count functions "main") 3)
-        (= (lower-test-function-addr-of-count functions "main") 1)
-        (>= (lower-test-function-store-ptr-count functions "main") 3)
-        (> (lower-test-function-gep-offset-count functions "main" 16) 0))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.Alloc)) 3)
+        (= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 1)
+        (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 3)
+        (> (lower-test-count functions "main" (LowerTestInstr.GepOffset 16)) 0))]
     [_ false]))
 
 (define (compiler-lower-inline-enum-shape-ok?) : bool
@@ -2475,11 +2496,11 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (>= (lower-test-function-alloc-count functions "main") 3)
-        (= (lower-test-function-addr-of-count functions "main") 1)
-        (>= (lower-test-function-store-ptr-count functions "main") 3)
-        (> (lower-test-function-gep-offset-count functions "main" 16) 0)
-        (> (lower-test-function-branch-count functions "main") 0))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.Alloc)) 3)
+        (= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 1)
+        (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 3)
+        (> (lower-test-count functions "main" (LowerTestInstr.GepOffset 16)) 0)
+        (> (lower-test-count functions "main" (LowerTestInstr.Branch)) 0))]
     [_ false]))
 
 (define (compiler-lower-inline-boxed-recursive-shape-ok?) : bool
@@ -2488,9 +2509,9 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 2)
-        (>= (lower-test-function-alloc-count functions "main") 6)
-        (>= (lower-test-function-addr-of-count functions "main") 2)
-        (>= (lower-test-function-store-ptr-count functions "main") 4))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.Alloc)) 6)
+        (>= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 2)
+        (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 4))]
     [_ false]))
 
 (define (compiler-lower-inline-imported-enum-payload-ok?) : bool
@@ -2517,9 +2538,9 @@
     [(LowerTestFunctions.Some pair-functions)
       (let
         [pair-copy-count : i64
-          (lower-test-function-copy-bytes-count pair-functions "id-pair")]
+          (lower-test-count pair-functions "id-pair" (LowerTestInstr.CopyBytes))]
         [pair-store-count : i64
-          (lower-test-function-store-ptr-count pair-functions "id-pair")]
+          (lower-test-count pair-functions "id-pair" (LowerTestInstr.StorePtr))]
         (match (lower-test-functions
           (lower.lower-compiler-source
             (compiler-lower-inline-mixed16-copy-source)))
@@ -2528,9 +2549,10 @@
               (= pair-copy-count 0)
               (= pair-store-count 0)
               (=
-                (lower-test-function-copy-bytes-count
+                (lower-test-count
                   mixed-functions
-                  "id-mixed")
+                  "id-mixed"
+                  (LowerTestInstr.CopyBytes))
                 1))]
           [_ false]))]
     [_ false]))
@@ -2541,7 +2563,9 @@
       (compiler-lower-inline-sret-return-copy-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-copy-bytes-count functions "return216-id") 1)
+        (=
+          (lower-test-count functions "return216-id" (LowerTestInstr.CopyBytes))
+          1)
         (=
           (lower-test-function-call-count functions "return216-id" "tl_memcpy")
           0))]
@@ -2554,7 +2578,10 @@
     [(LowerTestFunctions.Some struct-functions)
       (let
         [struct-copy-count : i64
-          (lower-test-function-copy-bytes-count struct-functions "make-wide")]
+          (lower-test-count
+            struct-functions
+            "make-wide"
+            (LowerTestInstr.CopyBytes))]
         (match (lower-test-functions
           (lower.lower-compiler-source
             (compiler-lower-inline-sret-enum-constructor-source)))
@@ -2562,9 +2589,10 @@
             (and
               (= struct-copy-count 0)
               (=
-                (lower-test-function-copy-bytes-count
+                (lower-test-count
                   enum-functions
-                  "make-wide-choice")
+                  "make-wide-choice"
+                  (LowerTestInstr.CopyBytes))
                 0))]
           [_ false]))]
     [_ false]))
@@ -2576,9 +2604,10 @@
     [(LowerTestFunctions.Some constructor-functions)
       (let
         [constructor-copy-count : i64
-          (lower-test-function-copy-bytes-count
+          (lower-test-count
             constructor-functions
-            "from-choice")]
+            "from-choice"
+            (LowerTestInstr.CopyBytes))]
         [constructor-phi-count : i64
           (lower-test-function-phi-count constructor-functions "from-choice")]
         (match (lower-test-functions
@@ -2589,9 +2618,10 @@
               (= constructor-copy-count 0)
               (= constructor-phi-count 0)
               (>
-                (lower-test-function-copy-bytes-count
+                (lower-test-count
                   generic-functions
-                  "from-choice")
+                  "from-choice"
+                  (LowerTestInstr.CopyBytes))
                 0)
               (=
                 (lower-test-function-phi-count generic-functions "from-choice")
@@ -2605,7 +2635,7 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (> (lower-test-function-branch-count functions "main") 0))]
+        (> (lower-test-count functions "main" (LowerTestInstr.Branch)) 0))]
     [_ false]))
 
 (define (compiler-lower-inline-direct-store-copy-shape-ok?) : bool
@@ -2613,18 +2643,29 @@
     (lower.lower-compiler-source (compiler-lower-inline-direct-store-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-copy-bytes-count functions "direct-field") 0)
-        (= (lower-test-function-copy-bytes-count functions "direct-init") 0)
         (=
-          (lower-test-function-copy-bytes-count functions "direct-dyn-array")
+          (lower-test-count functions "direct-field" (LowerTestInstr.CopyBytes))
           0)
         (=
-          (lower-test-function-copy-bytes-count functions "direct-fixed-array")
+          (lower-test-count functions "direct-init" (LowerTestInstr.CopyBytes))
+          0)
+        (=
+          (lower-test-count
+            functions
+            "direct-dyn-array"
+            (LowerTestInstr.CopyBytes))
+          0)
+        (=
+          (lower-test-count
+            functions
+            "direct-fixed-array"
+            (LowerTestInstr.CopyBytes))
           0)
         (>
-          (lower-test-function-copy-bytes-count
+          (lower-test-count
             functions
-            "direct-fixed-literal")
+            "direct-fixed-literal"
+            (LowerTestInstr.CopyBytes))
           0))]
     [_ false]))
 
@@ -3632,7 +3673,86 @@
           (set! index (+ index 1))))
       acc)))
 
-(define (lower-test-instr-seq-load-count [instrs : ir.CompilerIrInstrSeq]) : i64
+;; The instruction kinds the count checks look for; each counts through its
+;; own lower-test-instr-K-count predicate.
+(defenum LowerTestInstr
+  (AddrOf)
+  (Alloc)
+  (Binop)
+  (Bitcast)
+  (Bounds)
+  (Branch)
+  (Cast)
+  (CopyBytes)
+  (Cpuid)
+  (F64Mov u64)
+  (GepOffset i64)
+  (I64Mov i64)
+  (IndirectCCall)
+  (IndirectCall)
+  (IndirectTailCall)
+  (IndirectUnit)
+  (Load)
+  (Pack)
+  (PredicatedLoad)
+  (PredicatedStore)
+  (Return)
+  (Select)
+  (StorePtr)
+  (TailMask)
+  (TotalEnumBranch)
+  (U64Mov)
+  (VectorBinop)
+  (VectorLoad)
+  (VectorReduce)
+  (VectorStore)
+  (Xgetbv))
+
+(define (lower-test-instr-count
+  [instr : ir.CompilerIrInstr]
+  [kind : LowerTestInstr]) : i64
+  (match kind
+    [(LowerTestInstr.AddrOf) (lower-test-instr-addr-of-count instr)]
+    [(LowerTestInstr.Alloc) (lower-test-instr-alloc-count instr)]
+    [(LowerTestInstr.Binop) (lower-test-instr-binop-count instr)]
+    [(LowerTestInstr.Bitcast) (lower-test-instr-bitcast-count instr)]
+    [(LowerTestInstr.Bounds) (lower-test-instr-bounds-count instr)]
+    [(LowerTestInstr.Branch) (lower-test-instr-branch-count instr)]
+    [(LowerTestInstr.Cast) (lower-test-instr-cast-count instr)]
+    [(LowerTestInstr.CopyBytes) (lower-test-instr-copy-bytes-count instr)]
+    [(LowerTestInstr.Cpuid) (lower-test-instr-cpuid-count instr)]
+    [(LowerTestInstr.F64Mov want) (lower-test-instr-f64-mov-count instr want)]
+    [(LowerTestInstr.GepOffset want)
+      (lower-test-instr-gep-offset-count instr want)]
+    [(LowerTestInstr.I64Mov want) (lower-test-instr-i64-mov-count instr want)]
+    [(LowerTestInstr.IndirectCCall)
+      (lower-test-instr-indirect-c-call-count instr)]
+    [(LowerTestInstr.IndirectCall) (lower-test-instr-indirect-call-count instr)]
+    [(LowerTestInstr.IndirectTailCall)
+      (lower-test-instr-indirect-tail-call-count instr)]
+    [(LowerTestInstr.IndirectUnit) (lower-test-instr-indirect-unit-count instr)]
+    [(LowerTestInstr.Load) (lower-test-instr-load-count instr)]
+    [(LowerTestInstr.Pack) (lower-test-instr-pack-count instr)]
+    [(LowerTestInstr.PredicatedLoad)
+      (lower-test-instr-predicated-load-count instr)]
+    [(LowerTestInstr.PredicatedStore)
+      (lower-test-instr-predicated-store-count instr)]
+    [(LowerTestInstr.Return) (lower-test-instr-return-count instr)]
+    [(LowerTestInstr.Select) (lower-test-instr-select-count instr)]
+    [(LowerTestInstr.StorePtr) (lower-test-instr-store-ptr-count instr)]
+    [(LowerTestInstr.TailMask) (lower-test-instr-tail-mask-count instr)]
+    [(LowerTestInstr.TotalEnumBranch)
+      (lower-test-instr-total-enum-branch-count instr)]
+    [(LowerTestInstr.U64Mov) (lower-test-instr-u64-mov-count instr)]
+    [(LowerTestInstr.VectorBinop) (lower-test-instr-vector-binop-count instr)]
+    [(LowerTestInstr.VectorLoad) (lower-test-instr-vector-load-count instr)]
+    [(LowerTestInstr.VectorReduce) (lower-test-instr-vector-reduce-count instr)]
+    [(LowerTestInstr.VectorStore) (lower-test-instr-vector-store-count instr)]
+    [(LowerTestInstr.Xgetbv) (lower-test-instr-xgetbv-count instr)]))
+
+(define (lower-test-instr-seq-count
+  [instrs : ir.CompilerIrInstrSeq]
+  [kind : LowerTestInstr]) : i64
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
@@ -3645,101 +3765,37 @@
             acc
             (+
               acc
-              (lower-test-instr-load-count
-                (ir.compiler-ir-array-shared-view slots index))))
+              (lower-test-instr-count
+                (ir.compiler-ir-array-shared-view slots index)
+                kind)))
           (set! index (+ index 1))))
       acc)))
 
-(define (lower-test-instr-seq-branch-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-branch-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+(define (lower-test-blocks-count
+  [blocks : ir.CompilerIrBlockList]
+  [kind : LowerTestInstr]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) 0]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-count instrs kind)
+            (lower-test-blocks-count (deref rest) kind))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (lower-test-blocks-count (ir.compiler-ir-block-seq-to-list seq) kind)]))
 
-(define (lower-test-instr-seq-total-enum-branch-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-total-enum-branch-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-bounds-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-bounds-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-return-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-return-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-pack-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-pack-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+;; How many KIND instructions the function NAME holds; -1 when it is missing.
+(define (lower-test-count
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
+  [name : String]
+  [kind : LowerTestInstr]) : i64
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
+      (match func
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+          (lower-test-blocks-count blocks kind)])]))
 
 (define (lower-test-instr-seq-pack-shape-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3811,118 +3867,6 @@
                 unit))
             (set! index (+ index 1)))))
       result)))
-
-(define (lower-test-instr-seq-cpuid-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-cpuid-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-xgetbv-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-xgetbv-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-indirect-call-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-indirect-call-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-indirect-tail-call-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-indirect-tail-call-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-indirect-c-call-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-indirect-c-call-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-indirect-unit-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-indirect-unit-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
 
 (define (lower-test-instr-seq-return-function-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -4010,116 +3954,6 @@
           (set! index (+ index 1))))
       acc)))
 
-(define (lower-test-instr-seq-store-ptr-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-store-ptr-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-copy-bytes-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-copy-bytes-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-alloc-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-alloc-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-addr-of-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-addr-of-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-vector-load-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-vector-load-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-vector-binop-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-vector-binop-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
 (define (lower-test-instr-seq-vector-binop-op-count
   [instrs : ir.CompilerIrInstrSeq]
   [want : ir.CompilerIrBinOp]) : i64
@@ -4138,118 +3972,6 @@
               (lower-test-instr-vector-binop-op-count
                 (ir.compiler-ir-array-shared-view slots index)
                 (owned_view.compiler-owned-shared-view want))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-vector-reduce-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-vector-reduce-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-vector-store-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-vector-store-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-predicated-load-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-predicated-load-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-predicated-store-count
-  [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-predicated-store-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-select-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-select-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-tail-mask-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-tail-mask-count
-                (ir.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4273,24 +3995,6 @@
                 (ir.compiler-ir-array-shared-view slots index)
                 lanes
                 (ast.ast-global-shared-view elem-ty))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-u64-mov-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-u64-mov-count
-                (ir.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4336,42 +4040,6 @@
           (set! index (+ index 1))))
       acc)))
 
-(define (lower-test-instr-seq-cast-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-cast-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-bitcast-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-bitcast-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
 (define (lower-test-instr-seq-store-global-count
   [instrs : ir.CompilerIrInstrSeq]
   [name : (& name str)]) : i64
@@ -4405,18 +4073,6 @@
     [(ir.CompilerIrBlockList.Array seq)
       (lower-test-blocks-phi-count (ir.compiler-ir-block-seq-to-list seq))]))
 
-(define (lower-test-blocks-load-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-load-count instrs)
-            (lower-test-blocks-load-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-load-count (ir.compiler-ir-block-seq-to-list seq))]))
-
 (define (lower-test-blocks-splat-shape-count
   [blocks : ir.CompilerIrBlockList]
   [lanes : i64]
@@ -4447,74 +4103,12 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (if (string.eq (ir.compiler-ir-label-text label) want-label)
-            (lower-test-instr-seq-load-count instrs)
+            (lower-test-instr-seq-count instrs (LowerTestInstr.Load))
             (lower-test-blocks-label-load-count (deref rest) want-label))])]
     [(ir.CompilerIrBlockList.Array seq)
       (lower-test-blocks-label-load-count
         (ir.compiler-ir-block-seq-to-list seq)
         want-label)]))
-
-(define (lower-test-blocks-branch-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-branch-count instrs)
-            (lower-test-blocks-branch-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-branch-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-total-enum-branch-count
-  [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-total-enum-branch-count instrs)
-            (lower-test-blocks-total-enum-branch-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-total-enum-branch-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-bounds-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-bounds-count instrs)
-            (lower-test-blocks-bounds-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-bounds-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-return-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-return-count instrs)
-            (lower-test-blocks-return-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-return-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-pack-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-pack-count instrs)
-            (lower-test-blocks-pack-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-pack-count (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (lower-test-blocks-pack-shape-count
   [blocks : ir.CompilerIrBlockList]
@@ -4565,86 +4159,6 @@
         (ir.compiler-ir-block-seq-to-list seq)
         first
         second)]))
-
-(define (lower-test-blocks-cpuid-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-cpuid-count instrs)
-            (lower-test-blocks-cpuid-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-cpuid-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-xgetbv-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-xgetbv-count instrs)
-            (lower-test-blocks-xgetbv-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-xgetbv-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-indirect-call-count
-  [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-indirect-call-count instrs)
-            (lower-test-blocks-indirect-call-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-indirect-call-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-indirect-tail-call-count
-  [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-indirect-tail-call-count instrs)
-            (lower-test-blocks-indirect-tail-call-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-indirect-tail-call-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-indirect-c-call-count
-  [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-indirect-c-call-count instrs)
-            (lower-test-blocks-indirect-c-call-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-indirect-c-call-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-indirect-unit-count
-  [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-indirect-unit-count instrs)
-            (lower-test-blocks-indirect-unit-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-indirect-unit-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (lower-test-blocks-return-function-count
   [blocks : ir.CompilerIrBlockList]
@@ -4722,81 +4236,6 @@
         (ir.compiler-ir-block-seq-to-list seq)
         name)]))
 
-(define (lower-test-blocks-store-ptr-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-store-ptr-count instrs)
-            (lower-test-blocks-store-ptr-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-store-ptr-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-copy-bytes-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-copy-bytes-count instrs)
-            (lower-test-blocks-copy-bytes-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-copy-bytes-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-alloc-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-alloc-count instrs)
-            (lower-test-blocks-alloc-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-alloc-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-addr-of-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-addr-of-count instrs)
-            (lower-test-blocks-addr-of-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-addr-of-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-vector-load-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-vector-load-count instrs)
-            (lower-test-blocks-vector-load-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-vector-load-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-vector-binop-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-vector-binop-count instrs)
-            (lower-test-blocks-vector-binop-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-vector-binop-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
 (define (lower-test-blocks-vector-binop-op-count
   [blocks : ir.CompilerIrBlockList]
   [want : ir.CompilerIrBinOp]) : i64
@@ -4814,85 +4253,6 @@
       (lower-test-blocks-vector-binop-op-count
         (ir.compiler-ir-block-seq-to-list seq)
         want)]))
-
-(define (lower-test-blocks-vector-reduce-count
-  [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-vector-reduce-count instrs)
-            (lower-test-blocks-vector-reduce-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-vector-reduce-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-vector-store-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-vector-store-count instrs)
-            (lower-test-blocks-vector-store-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-vector-store-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-predicated-load-count
-  [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-predicated-load-count instrs)
-            (lower-test-blocks-predicated-load-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-predicated-load-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-predicated-store-count
-  [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-predicated-store-count instrs)
-            (lower-test-blocks-predicated-store-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-predicated-store-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-select-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-select-count instrs)
-            (lower-test-blocks-select-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-select-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-tail-mask-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-tail-mask-count instrs)
-            (lower-test-blocks-tail-mask-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-tail-mask-count (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (lower-test-blocks-vector-shape-count
   [blocks : ir.CompilerIrBlockList]
@@ -4914,18 +4274,6 @@
         (ir.compiler-ir-block-seq-to-list seq)
         lanes
         elem-ty)]))
-
-(define (lower-test-blocks-u64-mov-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-u64-mov-count instrs)
-            (lower-test-blocks-u64-mov-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-u64-mov-count (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (lower-test-blocks-binop-op-count
   [blocks : ir.CompilerIrBlockList]
@@ -4962,30 +4310,6 @@
       (lower-test-blocks-i64-binop-op-count
         (ir.compiler-ir-block-seq-to-list seq)
         op)]))
-
-(define (lower-test-blocks-cast-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-cast-count instrs)
-            (lower-test-blocks-cast-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-cast-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-bitcast-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-bitcast-count instrs)
-            (lower-test-blocks-bitcast-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-bitcast-count (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (lower-test-blocks-store-global-count
   [blocks : ir.CompilerIrBlockList]
@@ -5075,16 +4399,6 @@
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-phi-count blocks)])]))
 
-(define (lower-test-function-load-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-load-count blocks)])]))
-
 (define (lower-test-function-splat-shape-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
   [name : String]
@@ -5107,56 +4421,6 @@
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-label-load-count blocks want-label)])]))
-
-(define (lower-test-function-branch-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-branch-count blocks)])]))
-
-(define (lower-test-function-total-enum-branch-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-total-enum-branch-count blocks)])]))
-
-(define (lower-test-function-bounds-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-bounds-count blocks)])]))
-
-(define (lower-test-function-return-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-return-count blocks)])]))
-
-(define (lower-test-function-pack-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-pack-count blocks)])]))
 
 (define (lower-test-function-pack-shape-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -5200,7 +4464,11 @@
         (begin
           (match (ir.compiler-ir-array-shared-view funcs.slots index)
             [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-              (set! count (+ count (lower-test-blocks-branch-count blocks)))])
+              (set!
+                count
+                (+
+                  count
+                  (lower-test-blocks-count blocks (LowerTestInstr.Branch))))])
           (set! index (+ index 1))))
       count)))
 
@@ -5214,7 +4482,11 @@
         (begin
           (match (ir.compiler-ir-array-shared-view funcs.slots index)
             [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-              (set! count (+ count (lower-test-blocks-return-count blocks)))])
+              (set!
+                count
+                (+
+                  count
+                  (lower-test-blocks-count blocks (LowerTestInstr.Return))))])
           (set! index (+ index 1))))
       count)))
 
@@ -5254,7 +4526,11 @@
         (begin
           (match (ir.compiler-ir-array-shared-view funcs.slots index)
             [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-              (set! count (+ count (lower-test-blocks-cpuid-count blocks)))])
+              (set!
+                count
+                (+
+                  count
+                  (lower-test-blocks-count blocks (LowerTestInstr.Cpuid))))])
           (set! index (+ index 1))))
       count)))
 
@@ -5268,7 +4544,11 @@
         (begin
           (match (ir.compiler-ir-array-shared-view funcs.slots index)
             [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-              (set! count (+ count (lower-test-blocks-xgetbv-count blocks)))])
+              (set!
+                count
+                (+
+                  count
+                  (lower-test-blocks-count blocks (LowerTestInstr.Xgetbv))))])
           (set! index (+ index 1))))
       count)))
 
@@ -5294,46 +4574,6 @@
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-call-before? blocks first second)])]))
-
-(define (lower-test-function-indirect-call-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-indirect-call-count blocks)])]))
-
-(define (lower-test-function-indirect-tail-call-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-indirect-tail-call-count blocks)])]))
-
-(define (lower-test-function-indirect-c-call-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-indirect-c-call-count blocks)])]))
-
-(define (lower-test-function-indirect-unit-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-indirect-unit-count blocks)])]))
 
 (define (lower-test-function-return-function-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -5395,46 +4635,6 @@
       (owned_view.compiler-owned-shared-view name)
       (owned_view.compiler-owned-shared-view call-name))
     (lower-test-function-tail-call-count funcs name call-name)))
-
-(define (lower-test-function-store-ptr-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-store-ptr-count blocks)])]))
-
-(define (lower-test-function-copy-bytes-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-copy-bytes-count blocks)])]))
-
-(define (lower-test-function-alloc-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-alloc-count blocks)])]))
-
-(define (lower-test-function-addr-of-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-addr-of-count blocks)])]))
 
 (define (lower-test-values-distinct-vars
   [a : ir.CompilerIrValue]
@@ -5516,26 +4716,6 @@
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-distinct-arg-call-count blocks call-name)])]))
 
-(define (lower-test-function-vector-load-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-vector-load-count blocks)])]))
-
-(define (lower-test-function-vector-binop-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-vector-binop-count blocks)])]))
-
 (define (lower-test-function-vector-binop-op-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
   [name : String]
@@ -5546,66 +4726,6 @@
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-vector-binop-op-count blocks want)])]))
-
-(define (lower-test-function-vector-reduce-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-vector-reduce-count blocks)])]))
-
-(define (lower-test-function-vector-store-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-vector-store-count blocks)])]))
-
-(define (lower-test-function-predicated-load-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-predicated-load-count blocks)])]))
-
-(define (lower-test-function-predicated-store-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-predicated-store-count blocks)])]))
-
-(define (lower-test-function-select-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-select-count blocks)])]))
-
-(define (lower-test-function-tail-mask-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-tail-mask-count blocks)])]))
 
 (define (lower-test-function-vector-shape-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -5618,16 +4738,6 @@
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-vector-shape-count blocks lanes elem-ty)])]))
-
-(define (lower-test-function-u64-mov-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-u64-mov-count blocks)])]))
 
 (define (lower-test-function-binop-op-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -5651,26 +4761,6 @@
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-i64-binop-op-count blocks op)])]))
 
-(define (lower-test-function-cast-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-cast-count blocks)])]))
-
-(define (lower-test-function-bitcast-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-bitcast-count blocks)])]))
-
 (define (lower-test-functions-bitcast-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
   (let
@@ -5681,7 +4771,11 @@
         (begin
           (match (ir.compiler-ir-array-shared-view funcs.slots index)
             [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-              (set! count (+ count (lower-test-blocks-bitcast-count blocks)))])
+              (set!
+                count
+                (+
+                  count
+                  (lower-test-blocks-count blocks (LowerTestInstr.Bitcast))))])
           (set! index (+ index 1))))
       count)))
 
@@ -5799,7 +4893,9 @@
               (not (lower-test-function-defined? functions "dot-avx2"))
               (not (lower-test-function-defined? functions "dot-avx512"))
               (= (lower-test-function-call-count functions "main" "dot") 1)
-              (>= (lower-test-function-indirect-call-count functions "dot") 4)
+              (>=
+                (lower-test-count functions "dot" (LowerTestInstr.IndirectCall))
+                4)
               (=
                 (lower-test-function-store-global-count
                   functions
@@ -5818,8 +4914,8 @@
                   "dot"
                   "tl_atomic_i64_cas_ptr")
                 3)
-              (= (lower-test-function-select-count functions "dot") 3)
-              (= (lower-test-function-cast-count functions "dot") 4)
+              (= (lower-test-count functions "dot" (LowerTestInstr.Select)) 3)
+              (= (lower-test-count functions "dot" (LowerTestInstr.Cast)) 4)
               (>= (lower-test-functions-cpuid-count functions) 6)
               (= (lower-test-functions-xgetbv-count functions) 2)
               (=
@@ -5854,7 +4950,7 @@
       (and
         (lower-test-function-defined? functions "dot")
         (= (lower-test-function-call-count functions "main" "dot") 1)
-        (>= (lower-test-function-indirect-call-count functions "dot") 1))]
+        (>= (lower-test-count functions "dot" (LowerTestInstr.IndirectCall)) 1))]
     [_ false]))
 
 (define (compiler-lower-defdispatch-shared-helper-ok?) : bool
@@ -5981,8 +5077,15 @@
                     functions
                     "lib.tl::inc")
                   0)
-                (> (lower-test-function-binop-count functions "lib.tl::inc") 0)
-                (>= (lower-test-function-binop-count functions "main") 0))])]
+                (>
+                  (lower-test-count
+                    functions
+                    "lib.tl::inc"
+                    (LowerTestInstr.Binop))
+                  0)
+                (>=
+                  (lower-test-count functions "main" (LowerTestInstr.Binop))
+                  0))])]
         [(lower.ResultCompilerLower.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 
@@ -6050,7 +5153,7 @@
             (lower-test-global-list-has-name? globals "right/same")
             (> (lower-test-functions-call-count functions "left/get") 0)
             (> (lower-test-functions-call-count functions "right/get") 0)
-            (> (lower-test-function-binop-count functions "main") 0))])]
+            (> (lower-test-count functions "main" (LowerTestInstr.Binop)) 0))])]
     [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-import-alias-source) : String
@@ -6205,7 +5308,7 @@
     (lower.lower-compiler-source
       (compiler-lower-imported-enum-aggregate-payload-source)))
     [(LowerTestFunctions.Some functions)
-      (> (lower-test-function-copy-bytes-count functions "main/make") 0)]
+      (> (lower-test-count functions "main/make" (LowerTestInstr.CopyBytes)) 0)]
     [_ false]))
 
 (define (compiler-lower-module-macro-codegen-source) : String
@@ -6408,8 +5511,8 @@
         ;; spilled into a frame temporary (two 8-byte slots and their
         ;; address), not an arena buffer, so nothing calls tl_alloc (#7885).
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (>= (lower-test-function-alloc-count functions "main") 2)
-        (>= (lower-test-function-addr-of-count functions "main") 1))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.Alloc)) 2)
+        (>= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 1))]
     [_ false]))
 
 (define (compiler-lower-c-abi-windows-byref-aggregate-temps-source) : String
@@ -6483,7 +5586,7 @@
           1)
         (= (lower-test-function-call-count functions "main" "float-pair-use") 1)
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (>= (lower-test-function-bitcast-count functions "main") 2))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.Bitcast)) 2))]
     [_ false]))
 
 (define (compiler-lower-extern-link-inputs-ok?
@@ -6557,8 +5660,8 @@
         (= (lower-test-function-call-count functions "main" "raw-fn") 0)
         (= (lower-test-function-call-count functions "main" "direct-fn") 1)
         (= (lower-test-function-call-count functions "main" "resolve") 1)
-        (= (lower-test-function-indirect-call-count functions "main") 0)
-        (= (lower-test-function-indirect-c-call-count functions "main") 3))]
+        (= (lower-test-count functions "main" (LowerTestInstr.IndirectCall)) 0)
+        (= (lower-test-count functions "main" (LowerTestInstr.IndirectCCall)) 3))]
     [_ false]))
 
 (test
@@ -6610,7 +5713,7 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "status-next") 2)
-        (= (lower-test-function-indirect-c-call-count functions "main") 1)
+        (= (lower-test-count functions "main" (LowerTestInstr.IndirectCCall)) 1)
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0))]
     [_ false]))
 
@@ -6645,7 +5748,7 @@
         (= (lower-test-function-call-count functions "main" "box-score") 1)
         (= (lower-test-function-call-count functions "main" "box-make") 1)
         (= (lower-test-function-call-count functions "main" "wide-make") 1)
-        (= (lower-test-function-indirect-c-call-count functions "main") 1))]
+        (= (lower-test-count functions "main" (LowerTestInstr.IndirectCCall)) 1))]
     [_ false]))
 
 (define (compiler-lower-c-abi-windows-enum-aggregate-source) : String
@@ -6714,7 +5817,7 @@
         (=
           (lower-test-function-call-count functions "main" "return-choice-make")
           1)
-        (= (lower-test-function-indirect-c-call-count functions "main") 4)
+        (= (lower-test-count functions "main" (LowerTestInstr.IndirectCCall)) 4)
         ;; The two by-reference `WideChoice` arguments are copied into
         ;; frame temporaries (#7885). The two allocations left are the
         ;; hidden-sret result buffers of the `ReturnChoice` calls (#7990).
@@ -6811,7 +5914,7 @@
             "floaty"
             ir.CompilerIrBinOp.Lt)
           0)
-        (> (lower-test-function-cast-count functions "casts") 0))]
+        (> (lower-test-count functions "casts" (LowerTestInstr.Cast)) 0))]
     [_ false]))
 
 (define (compiler-lower-tail-simple-source) : String
@@ -7020,8 +6123,10 @@
     (lower.lower-compiler-source (compiler-lower-tail-indirect-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-indirect-tail-call-count functions "step") 1)
-        (= (lower-test-function-indirect-call-count functions "step") 0))]
+        (=
+          (lower-test-count functions "step" (LowerTestInstr.IndirectTailCall))
+          1)
+        (= (lower-test-count functions "step" (LowerTestInstr.IndirectCall)) 0))]
     [_ false]))
 
 (define (compiler-lower-tail-indirect-aggregate-param-shape-ok?) : bool
@@ -7030,8 +6135,10 @@
       (compiler-lower-tail-indirect-aggregate-param-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-indirect-tail-call-count functions "step") 1)
-        (= (lower-test-function-indirect-call-count functions "step") 0))]
+        (=
+          (lower-test-count functions "step" (LowerTestInstr.IndirectTailCall))
+          1)
+        (= (lower-test-count functions "step" (LowerTestInstr.IndirectCall)) 0))]
     [_ false]))
 
 (define (compiler-lower-tail-indirect-aggregate-return-shape-ok?) : bool
@@ -7040,8 +6147,10 @@
       (compiler-lower-tail-indirect-aggregate-return-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-indirect-tail-call-count functions "step") 1)
-        (= (lower-test-function-indirect-call-count functions "step") 0))]
+        (=
+          (lower-test-count functions "step" (LowerTestInstr.IndirectTailCall))
+          1)
+        (= (lower-test-count functions "step" (LowerTestInstr.IndirectCall)) 0))]
     [_ false]))
 
 (define (compiler-lower-tail-cleanup-shape-ok?) : bool
@@ -7117,147 +6226,6 @@
         [_ 0])]
     [_ 0]))
 
-(define (lower-test-instr-seq-i64-mov-count
-  [instrs : ir.CompilerIrInstrSeq]
-  [want : i64]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-i64-mov-count
-                (ir.compiler-ir-array-shared-view slots index)
-                want)))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-f64-mov-count
-  [instrs : ir.CompilerIrInstrSeq]
-  [want : u64]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-f64-mov-count
-                (ir.compiler-ir-array-shared-view slots index)
-                want)))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-binop-count [instrs : ir.CompilerIrInstrSeq]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-binop-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-gep-offset-count
-  [instrs : ir.CompilerIrInstrSeq]
-  [want : i64]) : i64
-  (let
-    [count : i64 instrs.len]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-gep-offset-count
-                (ir.compiler-ir-array-shared-view slots index)
-                want)))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-blocks-i64-mov-count
-  [blocks : ir.CompilerIrBlockList]
-  [want : i64]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-i64-mov-count instrs want)
-            (lower-test-blocks-i64-mov-count (deref rest) want))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-i64-mov-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        want)]))
-
-(define (lower-test-blocks-f64-mov-count
-  [blocks : ir.CompilerIrBlockList]
-  [want : u64]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-f64-mov-count instrs want)
-            (lower-test-blocks-f64-mov-count (deref rest) want))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-f64-mov-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        want)]))
-
-(define (lower-test-blocks-binop-count [blocks : ir.CompilerIrBlockList]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-binop-count instrs)
-            (lower-test-blocks-binop-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-binop-count (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (lower-test-blocks-gep-offset-count
-  [blocks : ir.CompilerIrBlockList]
-  [want : i64]) : i64
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-gep-offset-count instrs want)
-            (lower-test-blocks-gep-offset-count (deref rest) want))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-gep-offset-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        want)]))
-
 (define (lower-test-function-i64-mov-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
   [name : String]
@@ -7267,7 +6235,7 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-i64-mov-count blocks want)])]))
+          (lower-test-blocks-count blocks (LowerTestInstr.I64Mov want))])]))
 
 (define (lower-test-function-f64-mov-count-bits
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -7278,35 +6246,14 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-f64-mov-count blocks want)])]))
-
-(define (lower-test-function-binop-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-binop-count blocks)])]))
-
-(define (lower-test-function-gep-offset-count
-  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]
-  [want : i64]) : i64
-  (match (lower-test-function-seq-find funcs name)
-    [(LowerTestMaybeFunction.No) (- 0 1)]
-    [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-gep-offset-count blocks want)])]))
+          (lower-test-blocks-count blocks (LowerTestInstr.F64Mov want))])]))
 
 (define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(LowerTestFunctions.Some functions)
       (and
         (> (lower-test-function-i64-mov-count functions "main" want) 0)
-        (= (lower-test-function-binop-count functions "main") 0))]
+        (= (lower-test-count functions "main" (LowerTestInstr.Binop)) 0))]
     [_ false]))
 
 (define (compiler-lower-comptime-float-fold-ok?
@@ -7322,7 +6269,7 @@
             "main"
             (lower.lower-float-literal-bits want ty))
           0)
-        (= (lower-test-function-binop-count functions "main") 0))]
+        (= (lower-test-count functions "main" (LowerTestInstr.Binop)) 0))]
     [_ false]))
 
 (define (compiler-lower-comptime-f64-fold-ok? [src : String] [want : String]) : bool
@@ -7353,8 +6300,8 @@
         (= (lower-test-function-phi-count functions "zero-call") 0)
         (= (lower-test-function-phi-count functions "or-zero") 0)
         (= (lower-test-function-phi-count functions "touch") 0)
-        (> (lower-test-function-load-count functions "score") 1)
-        (> (lower-test-function-load-count functions "or-zero") 1))]
+        (> (lower-test-count functions "score" (LowerTestInstr.Load)) 1)
+        (> (lower-test-count functions "or-zero" (LowerTestInstr.Load)) 1))]
     [_ false]))
 
 (define (compiler-lower-two-variant-fallthrough-shape-ok?) : bool
@@ -7377,15 +6324,26 @@
     (lower.lower-compiler-source (compiler-lower-total-enum-provenance-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (>= (lower-test-function-total-enum-branch-count functions "large") 4)
-        (= (lower-test-function-total-enum-branch-count functions "small") 0)
+        (>=
+          (lower-test-count functions "large" (LowerTestInstr.TotalEnumBranch))
+          4)
+        (=
+          (lower-test-count functions "small" (LowerTestInstr.TotalEnumBranch))
+          0)
         ;; The outer two-arm match remains ordinary while its nested
         ;; six-variant match independently carries the total proof.
-        (= (lower-test-function-total-enum-branch-count functions "nested") 4)
-        (= (lower-test-function-branch-count functions "nested") 6)
+        (=
+          (lower-test-count functions "nested" (LowerTestInstr.TotalEnumBranch))
+          4)
+        (= (lower-test-count functions "nested" (LowerTestInstr.Branch)) 6)
         ;; A catch-all makes the match exhaustive as source syntax, but it
         ;; does not prove that the compared tags cover the enum domain.
-        (= (lower-test-function-total-enum-branch-count functions "partial") 0))]
+        (=
+          (lower-test-count
+            functions
+            "partial"
+            (LowerTestInstr.TotalEnumBranch))
+          0))]
     [_ false]))
 
 (define (compiler-lower-enum-string-literal-payload-shape-ok?) : bool
@@ -7396,8 +6354,8 @@
       (and
         (= (lower-test-functions-call-count functions "tl_string_eq") 0)
         (= (lower-test-functions-call-count functions "string-eq") 0)
-        (> (lower-test-function-branch-count functions "classify") 2)
-        (> (lower-test-function-load-count functions "classify") 2))]
+        (> (lower-test-count functions "classify" (LowerTestInstr.Branch)) 2)
+        (> (lower-test-count functions "classify" (LowerTestInstr.Load)) 2))]
     [_ false]))
 
 (define (compiler-lower-borrowed-enum-match-shape-ok?) : bool
@@ -7407,18 +6365,18 @@
       (and
         (> (lower-test-function-phi-count functions "score") 0)
         (> (lower-test-function-call-count functions "score" "take") 0)
-        (> (lower-test-function-gep-offset-count functions "score" 8) 0)
-        (> (lower-test-function-branch-count functions "slot-score") 0))]
+        (> (lower-test-count functions "score" (LowerTestInstr.GepOffset 8)) 0)
+        (> (lower-test-count functions "slot-score" (LowerTestInstr.Branch)) 0))]
     [_ false]))
 
 (define (compiler-lower-result-try-shape-ok? [src : String]) : bool
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-branch-count functions ".::sum") 1)
-        (> (lower-test-function-return-count functions ".::sum") 2)
-        (> (lower-test-function-return-count functions ".::chain") 1)
-        (> (lower-test-function-load-count functions ".::sum") 3))]
+        (> (lower-test-count functions ".::sum" (LowerTestInstr.Branch)) 1)
+        (> (lower-test-count functions ".::sum" (LowerTestInstr.Return)) 2)
+        (> (lower-test-count functions ".::chain" (LowerTestInstr.Return)) 1)
+        (> (lower-test-count functions ".::sum" (LowerTestInstr.Load)) 3))]
     [_ false]))
 
 (define (compiler-lower-option-try-shape-ok?) : bool
@@ -7426,15 +6384,15 @@
     (lower.lower-compiler-source (compiler-lower-option-try-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-branch-count functions "main") 1)
-        (> (lower-test-function-return-count functions "main") 2))]
+        (> (lower-test-count functions "main" (LowerTestInstr.Branch)) 1)
+        (> (lower-test-count functions "main" (LowerTestInstr.Return)) 2))]
     [_ false]))
 
 (define (compiler-lower-return-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-return-source)))
     [(LowerTestFunctions.Some functions)
-      (> (lower-test-function-return-count functions "main") 1)]
+      (> (lower-test-count functions "main" (LowerTestInstr.Return)) 1)]
     [_ false]))
 
 (define (compiler-lower-return-with-arena-shape-ok?) : bool
@@ -7442,7 +6400,7 @@
     (lower.lower-compiler-source (compiler-lower-return-with-arena-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-return-count functions "main") 1)
+        (> (lower-test-count functions "main" (LowerTestInstr.Return)) 1)
         (> (lower-test-functions-call-count functions "tl_region_reset") 1))]
     [_ false]))
 
@@ -7453,8 +6411,8 @@
       (and
         (= (lower-test-functions-call-count functions ".::close-a") 3)
         (= (lower-test-functions-call-count functions ".::close-b") 2)
-        (> (lower-test-function-return-count functions "main") 2)
-        (> (lower-test-function-branch-count functions "main") 2))]
+        (> (lower-test-count functions "main" (LowerTestInstr.Return)) 2)
+        (> (lower-test-count functions "main" (LowerTestInstr.Branch)) 2))]
     [_ false]))
 
 (define (compiler-lower-resource-with-nested-shape-ok?) : bool
@@ -7483,7 +6441,7 @@
             "main"
             ".::cleanup-file-handle")
           1)
-        (> (lower-test-function-return-count functions "main") 1))]
+        (> (lower-test-count functions "main" (LowerTestInstr.Return)) 1))]
     [_ false]))
 
 (define (compiler-lower-cleanup-struct-nested-shape-ok?) : bool
@@ -7520,8 +6478,8 @@
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-bounds-count functions "get") 0)
-        (> (lower-test-function-bounds-count functions "put") 0))]
+        (> (lower-test-count functions "get" (LowerTestInstr.Bounds)) 0)
+        (> (lower-test-count functions "put" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-array-take-shape-ok?) : bool
@@ -7529,10 +6487,12 @@
     (lower.lower-compiler-source (compiler-lower-array-take-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (>= (lower-test-function-bounds-count functions "take-item") 2)
-        (>= (lower-test-function-branch-count functions "take-item") 2)
-        (>= (lower-test-function-store-ptr-count functions "take-item") 3)
-        (>= (lower-test-function-load-count functions "take-item") 3))]
+        (>= (lower-test-count functions "take-item" (LowerTestInstr.Bounds)) 2)
+        (>= (lower-test-count functions "take-item" (LowerTestInstr.Branch)) 2)
+        (>=
+          (lower-test-count functions "take-item" (LowerTestInstr.StorePtr))
+          3)
+        (>= (lower-test-count functions "take-item" (LowerTestInstr.Load)) 3))]
     [_ false]))
 
 (define (compiler-lower-mut-ref-array-field-access-shape-ok?) : bool
@@ -7541,22 +6501,24 @@
       (compiler-lower-mut-ref-array-field-access-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-load-count functions "array-bag-handle") 0)
-        (> (lower-test-function-load-count functions "len") 0)
-        (> (lower-test-function-bounds-count functions "get") 0)
-        (> (lower-test-function-bounds-count functions "put") 0))]
+        (>
+          (lower-test-count functions "array-bag-handle" (LowerTestInstr.Load))
+          0)
+        (> (lower-test-count functions "len" (LowerTestInstr.Load)) 0)
+        (> (lower-test-count functions "get" (LowerTestInstr.Bounds)) 0)
+        (> (lower-test-count functions "put" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-fixed-array-access-shape-ok? [src : String]) : bool
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-bounds-count functions "get") 0)
-        (> (lower-test-function-load-count functions "get") 0)
-        (> (lower-test-function-bounds-count functions "put") 0)
-        (= (lower-test-function-gep-offset-count functions "get" 1) 0)
-        (= (lower-test-function-gep-offset-count functions "put" 1) 0)
-        (> (lower-test-function-store-ptr-count functions "put") 0))]
+        (> (lower-test-count functions "get" (LowerTestInstr.Bounds)) 0)
+        (> (lower-test-count functions "get" (LowerTestInstr.Load)) 0)
+        (> (lower-test-count functions "put" (LowerTestInstr.Bounds)) 0)
+        (= (lower-test-count functions "get" (LowerTestInstr.GepOffset 1)) 0)
+        (= (lower-test-count functions "put" (LowerTestInstr.GepOffset 1)) 0)
+        (> (lower-test-count functions "put" (LowerTestInstr.StorePtr)) 0))]
     [_ false]))
 
 (define (compiler-lower-fixed-array-literal-stack-shape-ok?) : bool
@@ -7565,8 +6527,8 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (>= (lower-test-function-alloc-count functions "main") 3)
-        (= (lower-test-function-addr-of-count functions "main") 1))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.Alloc)) 3)
+        (= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 1))]
     [_ false]))
 
 (define (compiler-lower-fixed-array-aggregate-layout-shape-ok?) : bool
@@ -7576,8 +6538,8 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (> (lower-test-function-gep-offset-count functions "main" 16) 0)
-        (= (lower-test-function-copy-bytes-count functions "main") 0))]
+        (> (lower-test-count functions "main" (LowerTestInstr.GepOffset 16)) 0)
+        (= (lower-test-count functions "main" (LowerTestInstr.CopyBytes)) 0))]
     [_ false]))
 
 (define (compiler-lower-array-push-shape-ok? [src : String]) : bool
@@ -7586,8 +6548,8 @@
       (and
         (> (lower-test-functions-call-count functions "tl_alloc") 0)
         (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
-        (> (lower-test-function-binop-count functions "grow") 0)
-        (> (lower-test-function-store-ptr-count functions "grow") 0))]
+        (> (lower-test-count functions "grow" (LowerTestInstr.Binop)) 0)
+        (> (lower-test-count functions "grow" (LowerTestInstr.StorePtr)) 0))]
     [_ false]))
 
 (define (compiler-lower-make-array-shape-ok? [src : String]) : bool
@@ -7619,7 +6581,7 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_array_fill8") 1)
-        (>= (lower-test-function-store-ptr-count functions "main") 2)
+        (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 2)
         (> (lower-test-functions-call-count functions "tl_alloc") 0))]
     [_ false]))
 
@@ -7630,7 +6592,7 @@
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 2)
         (= (lower-test-function-call-count functions "main" "tl_array_zero") 0)
-        (>= (lower-test-function-store-ptr-count functions "main") 3))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 3))]
     [_ false]))
 
 (define (compiler-lower-make-array-register-resident-zero-fill-shape-ok?) : bool
@@ -7699,7 +6661,10 @@
             "borrowed-score")
           0)
         (>
-          (lower-test-function-gep-offset-count functions "borrowed-score" 1)
+          (lower-test-count
+            functions
+            "borrowed-score"
+            (LowerTestInstr.GepOffset 1))
           0)
         (= (lower-test-functions-call-count functions "string-length") 0))]
     [_ false]))
@@ -7723,9 +6688,10 @@
                   "tl_hash_string")
                 0)
               (>
-                (lower-test-function-bounds-count
+                (lower-test-count
                   functions
-                  (owned_view.compiler-owned-shared-view name))
+                  (owned_view.compiler-owned-shared-view name)
+                  (LowerTestInstr.Bounds))
                 0)
               (=
                 (lower-test-function-direct-call-count functions "main" name)
@@ -7740,9 +6706,9 @@
       (and
         (> (lower-test-function-call-count functions "ref-return" "tl_alloc") 0)
         (= (lower-test-function-call-count functions "ref-id" "tl_alloc") 0)
-        (> (lower-test-function-store-ptr-count functions "main") 1)
-        (= (lower-test-function-return-count functions "ref-return") 1)
-        (= (lower-test-function-return-count functions "ref-id") 1))]
+        (> (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 1)
+        (= (lower-test-count functions "ref-return" (LowerTestInstr.Return)) 1)
+        (= (lower-test-count functions "ref-id" (LowerTestInstr.Return)) 1))]
     [_ false]))
 
 (define (compiler-lower-reference-place-shape-ok?) : bool
@@ -7750,9 +6716,21 @@
     (lower.lower-compiler-source (compiler-lower-reference-place-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-gep-offset-count functions "borrow-pair" 0) 0)
-        (> (lower-test-function-gep-offset-count functions "borrow-tuple" 0) 0)
-        (> (lower-test-function-bounds-count functions "borrow-array") 0)
+        (>
+          (lower-test-count
+            functions
+            "borrow-pair"
+            (LowerTestInstr.GepOffset 0))
+          0)
+        (>
+          (lower-test-count
+            functions
+            "borrow-tuple"
+            (LowerTestInstr.GepOffset 0))
+          0)
+        (>
+          (lower-test-count functions "borrow-array" (LowerTestInstr.Bounds))
+          0)
         (compiler-lower-reference-inline-struct-field-shape-ok?))]
     [_ false]))
 
@@ -7765,7 +6743,7 @@
         (=
           (lower-test-function-direct-call-count functions "main" "take-inner")
           1)
-        (= (lower-test-function-load-count functions "main") 0))]
+        (= (lower-test-count functions "main" (LowerTestInstr.Load)) 0))]
     [_ false]))
 
 (define (compiler-lower-reference-nominal-aggregate-ok?) : bool
@@ -7791,11 +6769,21 @@
     (lower.lower-compiler-source (compiler-lower-function-value-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-indirect-tail-call-count functions "apply1") 1)
-        (= (lower-test-function-indirect-call-count functions "apply1") 0)
+        (=
+          (lower-test-count
+            functions
+            "apply1"
+            (LowerTestInstr.IndirectTailCall))
+          1)
+        (=
+          (lower-test-count functions "apply1" (LowerTestInstr.IndirectCall))
+          0)
         (= (lower-test-function-call-count functions "apply1" "f") 0)
         (=
-          (lower-test-function-indirect-tail-call-count functions "shadow-inc")
+          (lower-test-count
+            functions
+            "shadow-inc"
+            (LowerTestInstr.IndirectTailCall))
           1)
         (= (lower-test-function-call-count functions "shadow-inc" "inc") 0)
         (=
@@ -7813,8 +6801,10 @@
       (compiler-lower-function-value-contextual-init-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-indirect-tail-call-count functions "main") 1)
-        (= (lower-test-function-indirect-call-count functions "main") 0))]
+        (=
+          (lower-test-count functions "main" (LowerTestInstr.IndirectTailCall))
+          1)
+        (= (lower-test-count functions "main" (LowerTestInstr.IndirectCall)) 0))]
     [_ false]))
 
 (define (compiler-lower-mutable-global-function-value-mode-shape-ok?
@@ -7830,7 +6820,12 @@
               globals
               "callback"
               "initial")
-            (= (lower-test-function-indirect-call-count functions "invoke") 1)
+            (=
+              (lower-test-count
+                functions
+                "invoke"
+                (LowerTestInstr.IndirectCall))
+              1)
             (= (lower-test-function-call-count functions "invoke" "callback") 0)
             (=
               (lower-test-function-store-global-count
@@ -7943,7 +6938,7 @@
               "get-fn"
               lambda-name)
             1)
-          (> (lower-test-function-binop-count functions lambda-name) 0)))]
+          (> (lower-test-count functions lambda-name (LowerTestInstr.Binop)) 0)))]
     [_ false]))
 
 (define (compiler-lower-immediate-lambda-call-ok?) : bool
@@ -7957,7 +6952,12 @@
             (ir.compiler-ir-function-seq-count
               (ir.compiler-ir-global-shared-view functions))
             2)
-          (= (lower-test-function-indirect-tail-call-count functions "main") 1)
+          (=
+            (lower-test-count
+              functions
+              "main"
+              (LowerTestInstr.IndirectTailCall))
+            1)
           (=
             (lower-test-function-indirect-callee-function-count
               functions
@@ -7978,7 +6978,9 @@
             (ir.compiler-ir-function-seq-count
               (ir.compiler-ir-global-shared-view functions))
             2)
-          (= (lower-test-function-indirect-unit-count functions "main") 1)
+          (=
+            (lower-test-count functions "main" (LowerTestInstr.IndirectUnit))
+            1)
           (=
             (lower-test-function-indirect-callee-function-count
               functions
@@ -8005,10 +7007,15 @@
             (ir.compiler-ir-function-seq-count
               (ir.compiler-ir-global-shared-view functions))
             2)
-          (= (lower-test-function-indirect-tail-call-count functions "main") 1)
-          (>= (lower-test-function-store-ptr-count functions "main") 3)
+          (=
+            (lower-test-count
+              functions
+              "main"
+              (LowerTestInstr.IndirectTailCall))
+            1)
+          (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 3)
           (>= (lower-test-functions-call-count functions "tl_alloc") 2)
-          (>= (lower-test-function-load-count functions lambda-name) 1)))]
+          (>= (lower-test-count functions lambda-name (LowerTestInstr.Load)) 1)))]
     [_ false]))
 
 (define (compiler-lower-capturing-lambda-function-value-shape-ok?) : bool
@@ -8023,13 +7030,21 @@
             (ir.compiler-ir-function-seq-count
               (ir.compiler-ir-global-shared-view functions))
             3)
-          (= (lower-test-function-indirect-tail-call-count functions "main") 1)
-          (>=
-            (lower-test-function-indirect-tail-call-count
+          (=
+            (lower-test-count
               functions
-              (owned_view.compiler-owned-shared-view capturing-name))
+              "main"
+              (LowerTestInstr.IndirectTailCall))
             1)
-          (>= (lower-test-function-load-count functions capturing-name) 2)))]
+          (>=
+            (lower-test-count
+              functions
+              (owned_view.compiler-owned-shared-view capturing-name)
+              (LowerTestInstr.IndirectTailCall))
+            1)
+          (>=
+            (lower-test-count functions capturing-name (LowerTestInstr.Load))
+            2)))]
     [_ false]))
 
 (define (compiler-lower-capturing-lambda-fat-handle-shape-ok?) : bool
@@ -8044,9 +7059,14 @@
             (ir.compiler-ir-function-seq-count
               (ir.compiler-ir-global-shared-view functions))
             2)
-          (= (lower-test-function-indirect-tail-call-count functions "main") 1)
+          (=
+            (lower-test-count
+              functions
+              "main"
+              (LowerTestInstr.IndirectTailCall))
+            1)
           (>= (lower-test-functions-call-count functions "tl_alloc") 3)
-          (>= (lower-test-function-load-count functions lambda-name) 2)))]
+          (>= (lower-test-count functions lambda-name (LowerTestInstr.Load)) 2)))]
     [_ false]))
 
 (define (compiler-lower-capturing-lambda-aggregate-shape-ok?) : bool
@@ -8061,10 +7081,15 @@
             (ir.compiler-ir-function-seq-count
               (ir.compiler-ir-global-shared-view functions))
             2)
-          (= (lower-test-function-indirect-tail-call-count functions "main") 1)
+          (=
+            (lower-test-count
+              functions
+              "main"
+              (LowerTestInstr.IndirectTailCall))
+            1)
           (>= (lower-test-functions-call-count functions "tl_alloc") 5)
-          (>= (lower-test-function-store-ptr-count functions "main") 8)
-          (>= (lower-test-function-load-count functions lambda-name) 4)))]
+          (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 8)
+          (>= (lower-test-count functions lambda-name (LowerTestInstr.Load)) 4)))]
     [_ false]))
 
 (define (compiler-lower-capturing-lambda-structural-return-shape-ok?) : bool
@@ -8077,8 +7102,13 @@
           (ir.compiler-ir-function-seq-count
             (ir.compiler-ir-global-shared-view functions))
           2)
-        (= (lower-test-function-indirect-call-count functions "main") 1)
-        (>= (lower-test-function-pack-count functions "__tl_lambda_main_0") 1))]
+        (= (lower-test-count functions "main" (LowerTestInstr.IndirectCall)) 1)
+        (>=
+          (lower-test-count
+            functions
+            "__tl_lambda_main_0"
+            (LowerTestInstr.Pack))
+          1))]
     [_ false]))
 
 (define (compiler-lower-capturing-lambda-structural-sret-params-ok?) : bool
@@ -8113,7 +7143,9 @@
           (ir.compiler-ir-function-seq-count
             (ir.compiler-ir-global-shared-view functions))
           2)
-        (= (lower-test-function-indirect-tail-call-count functions "main") 1))]
+        (=
+          (lower-test-count functions "main" (LowerTestInstr.IndirectTailCall))
+          1))]
     [_ false]))
 
 (define (compiler-lower-capturing-lambda-reference-shape-ok?) : bool
@@ -8128,8 +7160,10 @@
             (ir.compiler-ir-function-seq-count
               (ir.compiler-ir-global-shared-view functions))
             2)
-          (= (lower-test-function-indirect-call-count functions "main") 1)
-          (>= (lower-test-function-load-count functions lambda-name) 1)))]
+          (=
+            (lower-test-count functions "main" (LowerTestInstr.IndirectCall))
+            1)
+          (>= (lower-test-count functions lambda-name (LowerTestInstr.Load)) 1)))]
     [_ false]))
 
 (define (compiler-lower-capturing-lambda-reference-immediate-shape-ok?) : bool
@@ -8144,8 +7178,10 @@
             (ir.compiler-ir-function-seq-count
               (ir.compiler-ir-global-shared-view functions))
             2)
-          (= (lower-test-function-indirect-call-count functions "main") 1)
-          (>= (lower-test-function-load-count functions lambda-name) 1)))]
+          (=
+            (lower-test-count functions "main" (LowerTestInstr.IndirectCall))
+            1)
+          (>= (lower-test-count functions lambda-name (LowerTestInstr.Load)) 1)))]
     [_ false]))
 
 (define (compiler-lower-capturing-lambda-tests-ok?) : bool
@@ -8659,8 +7695,8 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (> (lower-test-function-gep-offset-count functions "main" 4) 0)
-        (> (lower-test-function-gep-offset-count functions "main" 12) 0))]
+        (> (lower-test-count functions "main" (LowerTestInstr.GepOffset 4)) 0)
+        (> (lower-test-count functions "main" (LowerTestInstr.GepOffset 12)) 0))]
     [_ false]))
 
 ;; `foreach` scalar lowering: a foreach `main` lowers to a loop, so its
@@ -8670,8 +7706,8 @@
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-branch-count functions "main") 0)
-        (> (lower-test-function-binop-count functions "main") 1))]
+        (> (lower-test-count functions "main" (LowerTestInstr.Branch)) 0)
+        (> (lower-test-count functions "main" (LowerTestInstr.Binop)) 1))]
     [_ false]))
 
 (define (compiler-lower-avx2-foreach-map-source) : String
@@ -8968,17 +8004,17 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -8986,7 +8022,7 @@
             lanes
             elem-ty)]
         [tail-store-count : i64
-          (lower-test-function-store-ptr-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.StorePtr))]
         (compiler-lower-and8
           (= load-count 2)
           (= binop-count 2)
@@ -9057,17 +8093,17 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -9075,7 +8111,7 @@
             lanes
             elem-ty)]
         [tail-store-count : i64
-          (lower-test-function-store-ptr-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.StorePtr))]
         (compiler-lower-and8
           (= load-count want-loads)
           (= binop-count (* want-binops 2))
@@ -9175,8 +8211,8 @@
     (lower.lower-compiler-source-with-mode src (lower.CompilerLowerMode.Avx2)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-vector-load-count functions "fill") 0)
-        (= (lower-test-function-vector-store-count functions "fill") 1)
+        (= (lower-test-count functions "fill" (LowerTestInstr.VectorLoad)) 0)
+        (= (lower-test-count functions "fill" (LowerTestInstr.VectorStore)) 1)
         (=
           (lower-test-function-vector-shape-count
             functions
@@ -9184,7 +8220,7 @@
             lanes
             elem-ty)
           2)
-        (> (lower-test-function-bounds-count functions "fill") 0))]
+        (> (lower-test-count functions "fill" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-spmd-broadcast-avx2-shape-ok?) : bool
@@ -9222,17 +8258,17 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -9240,7 +8276,7 @@
             lanes
             elem-ty)]
         [tail-store-count : i64
-          (lower-test-function-store-ptr-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.StorePtr))]
         (compiler-lower-and8
           (= load-count 2)
           (= binop-count 2)
@@ -9312,17 +8348,17 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -9330,7 +8366,7 @@
             lanes
             elem-ty)]
         [tail-store-count : i64
-          (lower-test-function-store-ptr-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.StorePtr))]
         (compiler-lower-and8
           (= load-count want-loads)
           (= binop-count want-binops)
@@ -9441,10 +8477,12 @@
     (lower.lower-compiler-source-with-mode src (lower.CompilerLowerMode.Avx512)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-vector-load-count functions "fill") 0)
-        (= (lower-test-function-vector-store-count functions "fill") 1)
-        (= (lower-test-function-predicated-store-count functions "fill") 1)
-        (= (lower-test-function-tail-mask-count functions "fill") 1)
+        (= (lower-test-count functions "fill" (LowerTestInstr.VectorLoad)) 0)
+        (= (lower-test-count functions "fill" (LowerTestInstr.VectorStore)) 1)
+        (=
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))
+          1)
+        (= (lower-test-count functions "fill" (LowerTestInstr.TailMask)) 1)
         (=
           (lower-test-function-vector-shape-count
             functions
@@ -9452,7 +8490,7 @@
             lanes
             elem-ty)
           4)
-        (> (lower-test-function-bounds-count functions "fill") 0))]
+        (> (lower-test-count functions "fill" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-spmd-broadcast-avx512-shape-ok?) : bool
@@ -9574,9 +8612,9 @@
     [(LowerTestFunctions.Some functions)
       (let
         [actual-vector-loads : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [actual-predicated-loads : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         (and
           (= actual-vector-loads vector-loads)
           (= actual-predicated-loads predicated-loads)))]
@@ -9835,19 +8873,19 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [tail-store-count : i64
-          (lower-test-function-store-ptr-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.StorePtr))]
         (compiler-lower-and8
           (= load-count 1)
           (= store-count 0)
@@ -9875,17 +8913,17 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -9893,7 +8931,7 @@
             8
             (ast.AstType.I64))]
         [tail-store-count : i64
-          (lower-test-function-store-ptr-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.StorePtr))]
         (compiler-lower-and8
           (= load-count 0)
           (= store-count 0)
@@ -9913,17 +8951,17 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -9931,7 +8969,7 @@
             8
             (ast.AstType.I64))]
         [tail-store-count : i64
-          (lower-test-function-store-ptr-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.StorePtr))]
         (compiler-lower-and8
           (= load-count 0)
           (= store-count 0)
@@ -9951,18 +8989,19 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
-        [select-count : i64 (lower-test-function-select-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
+        [select-count : i64
+          (lower-test-count functions "fill" (LowerTestInstr.Select))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -9970,7 +9009,7 @@
             8
             (ast.AstType.I64))]
         [tail-store-count : i64
-          (lower-test-function-store-ptr-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.StorePtr))]
         (compiler-lower-and8
           (= load-count 1)
           (= store-count 1)
@@ -9992,18 +9031,19 @@
       (let
         [lanes : i64 (lower.lower-simd-lanes-for-elem mode (ast.AstType.I64))]
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
-        [select-count : i64 (lower-test-function-select-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
+        [select-count : i64
+          (lower-test-count functions "fill" (LowerTestInstr.Select))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -10033,7 +9073,7 @@
       (let
         [lanes : i64 (lower.lower-simd-lanes-for-elem mode (ast.AstType.I64))]
         [binop-count : i64
-          (lower-test-function-vector-binop-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorBinop))]
         [bit-or-count : i64
           (lower-test-function-vector-binop-op-count
             functions
@@ -10045,10 +9085,11 @@
             "fill"
             (ir.CompilerIrBinOp.BitXor))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
-        [select-count : i64 (lower-test-function-select-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
+        [select-count : i64
+          (lower-test-count functions "fill" (LowerTestInstr.Select))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -10197,15 +9238,15 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         [shape-count : i64
           (lower-test-function-vector-shape-count
             functions
@@ -10213,7 +9254,7 @@
             8
             (ast.AstType.I64))]
         [tail-store-count : i64
-          (lower-test-function-store-ptr-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.StorePtr))]
         (compiler-lower-and8
           (= load-count 1)
           (= store-count 0)
@@ -10231,16 +9272,17 @@
     [(LowerTestFunctions.Some functions)
       (let
         [load-count : i64
-          (lower-test-function-vector-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorLoad))]
         [store-count : i64
-          (lower-test-function-vector-store-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.VectorStore))]
         [pred-load-count : i64
-          (lower-test-function-predicated-load-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedLoad))]
         [pred-store-count : i64
-          (lower-test-function-predicated-store-count functions "fill")]
-        [select-count : i64 (lower-test-function-select-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore))]
+        [select-count : i64
+          (lower-test-count functions "fill" (LowerTestInstr.Select))]
         [tail-mask-count : i64
-          (lower-test-function-tail-mask-count functions "fill")]
+          (lower-test-count functions "fill" (LowerTestInstr.TailMask))]
         (and
           (>
             (+
@@ -10269,7 +9311,7 @@
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-avx2-foreach-map-source)))
     [(LowerTestFunctions.Some functions)
-      (= (lower-test-function-vector-load-count functions "fill") 0)]
+      (= (lower-test-count functions "fill" (LowerTestInstr.VectorLoad)) 0)]
     [_ false]))
 
 (define (compiler-lower-spmd-lane-array-source) : String
@@ -10287,13 +9329,23 @@
       mode))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-vector-load-count functions "fill") 0)
-        (> (lower-test-function-vector-store-count functions "fill") 0)
-        (> (lower-test-function-bounds-count functions "fill") 0)
+        (> (lower-test-count functions "fill" (LowerTestInstr.VectorLoad)) 0)
+        (> (lower-test-count functions "fill" (LowerTestInstr.VectorStore)) 0)
+        (> (lower-test-count functions "fill" (LowerTestInstr.Bounds)) 0)
         (if predicated?
           (and
-            (> (lower-test-function-predicated-load-count functions "fill") 0)
-            (> (lower-test-function-predicated-store-count functions "fill") 0))
+            (>
+              (lower-test-count
+                functions
+                "fill"
+                (LowerTestInstr.PredicatedLoad))
+              0)
+            (>
+              (lower-test-count
+                functions
+                "fill"
+                (LowerTestInstr.PredicatedStore))
+              0))
           true))]
     [_ false]))
 
@@ -11177,13 +10229,15 @@
     (lower.lower-compiler-source-with-mode src (lower.CompilerLowerMode.Avx2)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-vector-load-count functions "f") 1)
-        (= (lower-test-function-vector-reduce-count functions "f") 1)
-        (= (lower-test-function-vector-binop-count functions "f") vector-binops)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorLoad)) 1)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorReduce)) 1)
+        (=
+          (lower-test-count functions "f" (LowerTestInstr.VectorBinop))
+          vector-binops)
         (=
           (lower-test-function-vector-shape-count functions "f" lanes elem-ty)
           vector-shapes)
-        (> (lower-test-function-bounds-count functions "f") 0))]
+        (> (lower-test-count functions "f" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-spmd-bool-reduce-shape-ok?
@@ -11193,10 +10247,10 @@
   (match (lower-test-functions (lower.lower-compiler-source-with-mode src mode))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-vector-load-count functions "f") 0)
-        (= (lower-test-function-vector-reduce-count functions "f") 0)
-        (= (lower-test-function-predicated-load-count functions "f") 1)
-        (= (lower-test-function-tail-mask-count functions "f") 1)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorLoad)) 0)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorReduce)) 0)
+        (= (lower-test-count functions "f" (LowerTestInstr.PredicatedLoad)) 1)
+        (= (lower-test-count functions "f" (LowerTestInstr.TailMask)) 1)
         (=
           (lower-test-function-vector-shape-count
             functions
@@ -11204,7 +10258,7 @@
             lanes
             (ast.AstType.Bool))
           1)
-        (> (lower-test-function-bounds-count functions "f") 0))]
+        (> (lower-test-count functions "f" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-spmd-reduce-map-fused-shape-ok?
@@ -11218,9 +10272,9 @@
       mode))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-vector-load-count functions "f") 1)
-        (= (lower-test-function-vector-reduce-count functions "f") 1)
-        (= (lower-test-function-vector-binop-count functions "f") 4)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorLoad)) 1)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorReduce)) 1)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorBinop)) 4)
         (=
           (lower-test-function-vector-shape-count
             functions
@@ -11228,7 +10282,7 @@
             lanes
             (ast.AstType.I64))
           9)
-        (> (lower-test-function-bounds-count functions "f") 0))]
+        (> (lower-test-count functions "f" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-avx512-spmd-reduce-shape-ok?
@@ -11241,13 +10295,15 @@
     (lower.lower-compiler-source-with-mode src (lower.CompilerLowerMode.Avx512)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-vector-load-count functions "f") 1)
-        (= (lower-test-function-vector-reduce-count functions "f") 1)
-        (= (lower-test-function-vector-binop-count functions "f") vector-binops)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorLoad)) 1)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorReduce)) 1)
+        (=
+          (lower-test-count functions "f" (LowerTestInstr.VectorBinop))
+          vector-binops)
         (=
           (lower-test-function-vector-shape-count functions "f" lanes elem-ty)
           vector-shapes)
-        (> (lower-test-function-bounds-count functions "f") 0))]
+        (> (lower-test-count functions "f" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-spmd-reduce-lane-identity-source) : String
@@ -11263,9 +10319,9 @@
       mode))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-vector-load-count functions "f") 0)
-        (= (lower-test-function-vector-reduce-count functions "f") 1)
-        (= (lower-test-function-vector-binop-count functions "f") 2)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorLoad)) 0)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorReduce)) 1)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorBinop)) 2)
         (=
           (lower-test-function-vector-shape-count
             functions
@@ -11273,7 +10329,7 @@
             lanes
             (ast.AstType.I64))
           5)
-        (= (lower-test-function-bounds-count functions "f") 0))]
+        (= (lower-test-count functions "f" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-spmd-reduce-gather-source-shape-ok?
@@ -11284,8 +10340,8 @@
     (lower.lower-compiler-source-with-mode source mode))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-vector-load-count functions "f") 0)
-        (= (lower-test-function-vector-reduce-count functions "f") 1)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorLoad)) 0)
+        (= (lower-test-count functions "f" (LowerTestInstr.VectorReduce)) 1)
         (=
           (lower-test-function-vector-shape-count
             functions
@@ -11293,7 +10349,7 @@
             lanes
             (ast.AstType.F32))
           2)
-        (> (lower-test-function-bounds-count functions "f") 0))]
+        (> (lower-test-count functions "f" (LowerTestInstr.Bounds)) 0))]
     [_ false]))
 
 (define (compiler-lower-spmd-reduce-gather-shape-ok?
@@ -11623,8 +10679,8 @@
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(LowerTestFunctions.Some functions)
       (and
-        (> (lower-test-function-branch-count functions "f") 0)
-        (= (lower-test-function-binop-count functions "f") 0))]
+        (> (lower-test-count functions "f" (LowerTestInstr.Branch)) 0)
+        (= (lower-test-count functions "f" (LowerTestInstr.Binop)) 0))]
     [_ false]))
 
 (define (compiler-lower-and-or-short-circuit-shape-ok?) : bool
@@ -11648,8 +10704,8 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (= (lower-test-function-addr-of-count functions "main") 1)
-        (>= (lower-test-function-store-ptr-count functions "main") 2))]
+        (= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 1)
+        (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 2))]
     [_ false]))
 
 (define (compiler-lower-register-addr-of-shape-ok?) : bool
@@ -11658,10 +10714,10 @@
     [(LowerTestFunctions.Some functions)
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-        (>= (lower-test-function-addr-of-count functions "main") 3)
-        (>= (lower-test-function-gep-offset-count functions "main" 4) 1)
-        (>= (lower-test-function-gep-offset-count functions "main" 8) 1)
-        (>= (lower-test-function-store-ptr-count functions "main") 2))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.AddrOf)) 3)
+        (>= (lower-test-count functions "main" (LowerTestInstr.GepOffset 4)) 1)
+        (>= (lower-test-count functions "main" (LowerTestInstr.GepOffset 8)) 1)
+        (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 2))]
     [_ false]))
 
 (define (compiler-lower-raw-pointer-call-value-shape-ok?) : bool
@@ -11671,8 +10727,8 @@
       (and
         (= (lower-test-functions-call-count functions "raw-make") 1)
         (= (lower-test-functions-call-count functions "raw-value") 1)
-        (= (lower-test-function-store-ptr-count functions "main") 1)
-        (> (lower-test-function-u64-mov-count functions "main") 0))]
+        (= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 1)
+        (> (lower-test-count functions "main" (LowerTestInstr.U64Mov)) 0))]
     [_ false]))
 
 (define (compiler-lower-raw-pointer-aggregate-copy-shape-ok?) : bool
@@ -11681,10 +10737,14 @@
       (compiler-lower-raw-pointer-aggregate-copy-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-copy-bytes-count functions "copy-slot") 1)
-        (= (lower-test-function-store-ptr-count functions "copy-slot") 0)
-        (= (lower-test-function-copy-bytes-count functions "copy-pair") 0)
-        (= (lower-test-function-store-ptr-count functions "copy-pair") 2))]
+        (=
+          (lower-test-count functions "copy-slot" (LowerTestInstr.CopyBytes))
+          1)
+        (= (lower-test-count functions "copy-slot" (LowerTestInstr.StorePtr)) 0)
+        (=
+          (lower-test-count functions "copy-pair" (LowerTestInstr.CopyBytes))
+          0)
+        (= (lower-test-count functions "copy-pair" (LowerTestInstr.StorePtr)) 2))]
     [_ false]))
 
 (define (compiler-lower-string-length-ok?) : bool
@@ -11694,13 +10754,16 @@
         [(LowerTestFunctions.Some functions)
           (and
             (>
-              (lower-test-function-gep-offset-count functions "core-str-len" 1)
+              (lower-test-count
+                functions
+                "core-str-len"
+                (LowerTestInstr.GepOffset 1))
               0)
             (>
-              (lower-test-function-gep-offset-count
+              (lower-test-count
                 functions
                 "core-str-len-borrow"
-                1)
+                (LowerTestInstr.GepOffset 1))
               0)
             (= (lower-test-functions-direct-call-count functions "length") 0))]
         [_ false])]
@@ -11711,10 +10774,10 @@
     (lower.lower-compiler-source (compiler-lower-float-bitcast-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-bitcast-count functions "f64-bits") 1)
-        (= (lower-test-function-bitcast-count functions "f32-bits") 1)
-        (= (lower-test-function-bitcast-count functions "f64-from") 1)
-        (= (lower-test-function-bitcast-count functions "f32-from") 1)
+        (= (lower-test-count functions "f64-bits" (LowerTestInstr.Bitcast)) 1)
+        (= (lower-test-count functions "f32-bits" (LowerTestInstr.Bitcast)) 1)
+        (= (lower-test-count functions "f64-from" (LowerTestInstr.Bitcast)) 1)
+        (= (lower-test-count functions "f32-from" (LowerTestInstr.Bitcast)) 1)
         (= (lower-test-functions-call-count functions "tl_alloc") 0)
         (=
           (lower-test-functions-direct-call-count
@@ -14824,12 +13887,12 @@
 (define (compiler-lower-bounds-operand-counts-ok?
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : bool
   (and
-    (= (lower-test-function-bounds-count functions "get") 1)
-    (= (lower-test-function-cast-count functions "get") 1)
-    (= (lower-test-function-bounds-count functions "get-narrow") 1)
-    (= (lower-test-function-cast-count functions "get-narrow") 2)
-    (= (lower-test-function-bounds-count functions "plain-cast") 0)
-    (= (lower-test-function-cast-count functions "plain-cast") 1)))
+    (= (lower-test-count functions "get" (LowerTestInstr.Bounds)) 1)
+    (= (lower-test-count functions "get" (LowerTestInstr.Cast)) 1)
+    (= (lower-test-count functions "get-narrow" (LowerTestInstr.Bounds)) 1)
+    (= (lower-test-count functions "get-narrow" (LowerTestInstr.Cast)) 2)
+    (= (lower-test-count functions "plain-cast" (LowerTestInstr.Bounds)) 0)
+    (= (lower-test-count functions "plain-cast" (LowerTestInstr.Cast)) 1)))
 
 (define (compiler-lower-bounds-operand-shape-ok?) : bool
   (match (lower-test-functions
@@ -15184,13 +14247,21 @@
         (=
           (lower-test-function-call-count functions "main" "array-roundtrip")
           1)
-        (>= (lower-test-function-store-ptr-count functions "tuple-roundtrip") 2)
         (>=
-          (lower-test-function-copy-bytes-count functions "array-roundtrip")
+          (lower-test-count
+            functions
+            "tuple-roundtrip"
+            (LowerTestInstr.StorePtr))
+          2)
+        (>=
+          (lower-test-count
+            functions
+            "array-roundtrip"
+            (LowerTestInstr.CopyBytes))
           1)
         ;; Tuple register-group transport is packed at the call boundary;
         ;; the array return takes the leading hidden sret path.
-        (>= (lower-test-function-pack-count functions "main") 1))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.Pack)) 1))]
     [_ false]))
 
 (test
@@ -15217,11 +14288,14 @@
           (lower-test-function-call-count functions "main" "scalar-roundtrip")
           1)
         (>=
-          (lower-test-function-copy-bytes-count functions "array-roundtrip")
+          (lower-test-count
+            functions
+            "array-roundtrip"
+            (LowerTestInstr.CopyBytes))
           1)
         ;; Win64 ByRef parameters are copied into a private caller buffer;
         ;; the >8-byte result uses a leading sret pointer.
-        (>= (lower-test-function-copy-bytes-count functions "main") 1))]
+        (>= (lower-test-count functions "main" (LowerTestInstr.CopyBytes)) 1))]
     [_ false]))
 
 (define (compiler-lower-internal-windows-u8-three-shape-ok?) : bool
@@ -15238,8 +14312,10 @@
         ;; Three-byte copies lower to two scalar load/store chunks rather
         ;; than a bulk CopyBytes instruction. The callee copies into sret;
         ;; main has three literal stores plus the two ByRef-copy stores.
-        (>= (lower-test-function-store-ptr-count functions "roundtrip") 2)
-        (>= (lower-test-function-store-ptr-count functions "main") 5))]
+        (>=
+          (lower-test-count functions "roundtrip" (LowerTestInstr.StorePtr))
+          2)
+        (>= (lower-test-count functions "main" (LowerTestInstr.StorePtr)) 5))]
     [_ false]))
 
 (define (compiler-lower-internal-early-return-shape-ok?) : bool
@@ -15249,8 +14325,10 @@
       (lower.CompilerLowerMode.LinuxScalar)))
     [(LowerTestFunctions.Some functions)
       (and
-        (>= (lower-test-function-pack-count functions "tuple-early") 1)
-        (>= (lower-test-function-copy-bytes-count functions "array-early") 1))]
+        (>= (lower-test-count functions "tuple-early" (LowerTestInstr.Pack)) 1)
+        (>=
+          (lower-test-count functions "array-early" (LowerTestInstr.CopyBytes))
+          1))]
     [_ false]))
 
 (define (compiler-lower-internal-indirect-structural-shape-ok?) : bool
@@ -15259,8 +14337,8 @@
       (compiler-lower-internal-indirect-structural-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-indirect-call-count functions "main") 1)
-        (>= (lower-test-function-pack-count functions "main") 1))]
+        (= (lower-test-count functions "main" (LowerTestInstr.IndirectCall)) 1)
+        (>= (lower-test-count functions "main" (LowerTestInstr.Pack)) 1))]
     [_ false]))
 
 (define (compiler-lower-internal-tail-structural-shape-ok?) : bool
@@ -15323,7 +14401,7 @@
       (and
         (= (lower-test-function-tail-call-count functions "step" "finish") 0)
         (= (lower-test-function-call-count functions "step" "finish") 1)
-        (>= (lower-test-function-pack-count functions "step") 1))]
+        (>= (lower-test-count functions "step" (LowerTestInstr.Pack)) 1))]
     [_ false]))
 
 (define (compiler-lower-internal-indirect-tail-structural-param-shape-ok?) : bool
@@ -15333,9 +14411,11 @@
       (lower.CompilerLowerMode.LinuxScalar)))
     [(LowerTestFunctions.Some functions)
       (and
-        (= (lower-test-function-indirect-tail-call-count functions "step") 0)
-        (= (lower-test-function-indirect-call-count functions "step") 1)
-        (>= (lower-test-function-pack-count functions "step") 1))]
+        (=
+          (lower-test-count functions "step" (LowerTestInstr.IndirectTailCall))
+          0)
+        (= (lower-test-count functions "step" (LowerTestInstr.IndirectCall)) 1)
+        (>= (lower-test-count functions "step" (LowerTestInstr.Pack)) 1))]
     [_ false]))
 
 (test

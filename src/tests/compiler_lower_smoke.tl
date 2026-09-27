@@ -63,43 +63,54 @@
         [(ir.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower_tests.lower-test-function-vector-load-count
+              (lower_tests.lower-test-count
                 functions
-                "fill")
+                "fill"
+                (lower_tests.LowerTestInstr.VectorLoad))
               2)
             (=
-              (lower_tests.lower-test-function-vector-binop-count
+              (lower_tests.lower-test-count
                 functions
-                "fill")
+                "fill"
+                (lower_tests.LowerTestInstr.VectorBinop))
               (if predicated?
                 6
                 3))
             (=
-              (lower_tests.lower-test-function-vector-store-count
+              (lower_tests.lower-test-count
                 functions
-                "fill")
+                "fill"
+                (lower_tests.LowerTestInstr.VectorStore))
               2)
             (=
-              (lower_tests.lower-test-function-predicated-load-count
+              (lower_tests.lower-test-count
                 functions
-                "fill")
+                "fill"
+                (lower_tests.LowerTestInstr.PredicatedLoad))
               (if predicated?
                 2
                 0))
             (=
-              (lower_tests.lower-test-function-predicated-store-count
+              (lower_tests.lower-test-count
                 functions
-                "fill")
+                "fill"
+                (lower_tests.LowerTestInstr.PredicatedStore))
               (if predicated?
                 2
                 0))
             (=
-              (lower_tests.lower-test-function-tail-mask-count functions "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.TailMask))
               (if predicated?
                 1
                 0))
             (>
-              (lower_tests.lower-test-function-store-ptr-count functions "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.StorePtr))
               0))])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -146,29 +157,36 @@
         [(ir.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower_tests.lower-test-function-tail-mask-count functions "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.TailMask))
               1)
             (=
-              (lower_tests.lower-test-function-vector-load-count
+              (lower_tests.lower-test-count
                 functions
-                "fill")
+                "fill"
+                (lower_tests.LowerTestInstr.VectorLoad))
               1)
             (=
-              (lower_tests.lower-test-function-vector-store-count
+              (lower_tests.lower-test-count
                 functions
-                "fill")
+                "fill"
+                (lower_tests.LowerTestInstr.VectorStore))
               1)
             (=
-              (lower_tests.lower-test-function-predicated-load-count
+              (lower_tests.lower-test-count
                 functions
-                "fill")
+                "fill"
+                (lower_tests.LowerTestInstr.PredicatedLoad))
               1)
             ;; One parent tail store plus two divergent stores in each of the
             ;; full and tail bodies. Child masks must remain predicated.
             (=
-              (lower_tests.lower-test-function-predicated-store-count
+              (lower_tests.lower-test-count
                 functions
-                "fill")
+                "fill"
+                (lower_tests.LowerTestInstr.PredicatedStore))
               5))])]
     [(lower.ResultCompilerLower.Err _) false]))
 

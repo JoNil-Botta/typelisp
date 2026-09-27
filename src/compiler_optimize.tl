@@ -244,12 +244,6 @@
             (opt-blocks-walk instr ,mode ,var walk-blocks ,f ,@contexts)])
         (set! walk-function (+ walk-function 1))))))
 
-(defmacro (opt-instrs-visit
-  [instrs : Expr]
-  [visitor : Expr]
-  [contexts : Expr ...]) : unit
-  `(opt-instrs-walk visit _ ,instrs ,visitor ,@contexts))
-
 (defmacro (opt-instrs-fold
   [instrs : Expr]
   [acc : Expr]
@@ -352,12 +346,6 @@
     (begin
       (opt-blocks-walk block any any-found ,blocks ,pred ,@contexts)
       any-found)))
-
-(defmacro (opt-functions-visit
-  [functions : Expr]
-  [visitor : Expr]
-  [contexts : Expr ...]) : unit
-  `(opt-functions-walk visit _ ,functions ,visitor ,@contexts))
 
 (defmacro (opt-functions-fold
   [functions : Expr]
@@ -19641,27 +19629,6 @@
             (opt-label-tail cursor)
             header)))]))
 
-(define (opt-rotate-ssa-uses-except-header
-  [set : opt_i64_i64_map.Map]
-  [blocks : ir.CompilerIrBlockList]
-  [header : i64]) : opt_i64_i64_map.Map
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (opt-rotate-ssa-uses-except-header
-            (if (= label header)
-              set
-              (opt-collect-instr-seq-uses set instrs))
-            (deref rest)
-            header)])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-rotate-ssa-uses-except-header
-        set
-        (ir.compiler-ir-block-seq-to-list seq)
-        header)]))
-
 (define (opt-rotate-ssa-uses-except-header-array
   [items : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
@@ -21976,32 +21943,14 @@
       (opt-direct-call-clean-memory-bit)
       (opt-direct-call-clean-global-bit))))
 
-;; Writes ONLY element storage -- the descriptor-safety fact. Strictly weaker
-;; than memory-clean and implied by it, so the test takes either bit. This is
-;; what a DESCRIPTOR word's invariance needs: the buffer a data slot names is a
-;; different allocation from the descriptor that names it, so a callee whose
-;; every write lands in element storage cannot change a header word the caller
-;; already loaded -- whatever the caller passed it. Unlike the global-clean
-;; test, this one needs no call-site argument gate: a `GlobalAddr` argument
-;; hands over a CELL's address, and a write through it is not an element write,
-;; so such a callee would not carry the bit in the first place (see
-;; opt-loop-bce-direct-call-clean-bits, which requires `has-param-writes?`
-;; clear).
-(define (opt-direct-call-element-clean?
-  [direct-call-clean : opt_i64_i64_map.Map]
-  [name : i64]) : bool
-  (opt-direct-call-clean-has-bit?
-    direct-call-clean
-    name
-    (bit-or
-      (opt-direct-call-clean-memory-bit)
-      (opt-direct-call-clean-unconditional-global-bit))))
-
-;; SUM-6. Cannot change a descriptor header word or a frame word: the
-;; element-only fact above, or the header bit, which is that fact for a callee
-;; that also writes named cells (opt-direct-call-clean-header-bit). This is the
-;; test the descriptor-header proofs read; the element-only test keeps its
-;; other readers, which ask about cells too.
+;; SUM-6. Cannot change a descriptor header word or a frame word: the callee
+;; writes only element storage (the unconditional-global bit, implied by
+;; memory-clean), or it has the header bit, which is that fact for a callee
+;; that also writes named cells (opt-direct-call-clean-header-bit). The buffer
+;; a data slot names is a different allocation from the descriptor that names
+;; it, so an element-only callee cannot change a header word the caller
+;; already loaded, whatever the caller passed it. This is the test the
+;; descriptor-header proofs read.
 (define (opt-direct-call-header-clean?
   [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
   [name : i64]) : bool
@@ -24273,32 +24222,6 @@
 ;; per-iteration `movabs $imm64` plus `imul`), spmd_zip +600,003 and phys_nbody
 ;; +9,190 -- none of them a baseline row, and none of them a change in what the
 ;; guard tests. Self-compile +0.0185%.
-(define (opt-licm-collect-nonbranch-uses-from
-  [set : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [count : i64]) : opt_i64_i64_map.Map
-  (if (>= index count)
-    set
-    (opt-licm-collect-nonbranch-uses-from
-      (let
-        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-        (match (compiler-opt-global-shared-view instr)
-          [(ir.CompilerIrInstr.Branch _ _ _) set]
-          [_ (opt-collect-instr-uses set instr)]))
-      instrs
-      (+ index 1)
-      count)))
-
-(define (opt-licm-collect-nonbranch-uses
-  [set : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrSeq]) : opt_i64_i64_map.Map
-  (opt-licm-collect-nonbranch-uses-from
-    set
-    (compiler-opt-global-shared-view instrs)
-    0
-    (ir.compiler-ir-instr-seq-count instrs)))
-
 (define (opt-licm-collect-nonbranch-uses-array
   [items : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
@@ -28600,14 +28523,6 @@
             (compiler-opt-global-shared-view blocks)
             (opt-licm-unswitch-clone-label labels (opt-label-ref labels 0))))
         (opt-licm-unswitch-labels-fresh? blocks (opt-label-tail labels)))]))
-
-(define (opt-licm-unswitch-has-versioned-label? [labels : OptLabelSet]) : bool
-  (match labels
-    [(OptLabelSet.Nil) false]
-    [(OptLabelSet.Dense _ _)
-      (or
-        (opt-label-has-marker? (opt-label-ref labels 0) (opt-label-marker-bce))
-        (opt-licm-unswitch-has-versioned-label? (opt-label-tail labels)))]))
 
 (define (opt-licm-unswitch-preheader-jumps-to?
   [blocks : ir.CompilerIrBlockList]
@@ -82816,25 +82731,6 @@
           acc
           (opt-bce-mb-var-list-prepend acc item))))))
 
-(define (opt-bce-mb-var-list-subset?
-  [vars : OptBceMbVarList]
-  [outer : OptBceMbVarList]) : bool
-  (opt-bce-mb-var-list-subset-from? vars outer 0))
-
-(define (opt-bce-mb-var-list-subset-from?
-  [vars : OptBceMbVarList]
-  [outer : OptBceMbVarList]
-  [index : i64]) : bool
-  (or
-    (>=
-      index
-      (opt-bce-mb-var-list-count (compiler-opt-global-shared-view vars)))
-    (and
-      (opt-bce-mb-var-list-contains?
-        (compiler-opt-global-shared-view outer)
-        (opt-bce-mb-var-list-ref (compiler-opt-global-shared-view vars) index))
-      (opt-bce-mb-var-list-subset-from? vars outer (+ index 1)))))
-
 ;; Classify every outside block with a direct loop-def use as the wire point or
 ;; as a far block.
 ;; --- far-scan body defs -------------------------------------------------------
@@ -104661,12 +104557,6 @@
   `(if (__tl-project-field ,state priced?)
     ,state
     ,next))
-
-;; A pass only the frozen priced pipeline still runs.
-(defmacro (opt-priced-only [state : Expr] [next : Expr]) : Expr
-  `(if (__tl-project-field ,state priced?)
-    ,next
-    ,state))
 
 ;; Show a state's function to `--trace-passes`/`--dump-ir` as `pass`'s output.
 ;; `state` names a local, which this reads without copying.
@@ -135876,18 +135766,6 @@
   [global : i64]
   [value : ir.CompilerIrValue]) : OptLoadGlobalBases
   (OptLoadGlobalBases bases.slots bases.len global value))
-
-;; GSF-1: the known contents of the cell `value` reads, when `value` is
-;; `Global g` and g is the cell the map knows.
-(define (opt-load-global-bases-cell-read
-  [bases : OptLoadGlobalBases]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
-  (match value
-    [(ir.CompilerIrValue.Global g)
-      (if (and (>= bases.cell 0) (= bases.cell (ir.compiler-ir-symbol-id g)))
-        (ir.CompilerIrMaybeValue.Some bases.cell-value)
-        (ir.CompilerIrMaybeValue.No))]
-    [_ (ir.CompilerIrMaybeValue.No)]))
 
 (define (opt-load-global-bases-copy-slots
   [slots : (__tl_dyn-array OptLoadGlobalBaseEntry)]

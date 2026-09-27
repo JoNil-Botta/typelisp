@@ -16335,14 +16335,6 @@
       (= at2 at3)
       (= at2 (opt.opt-inline-checked-weighted-instrs-at func 9)))))
 
-;; INL-14. A self-loop block under `label`, `remaining` instructions long.
-(define (opt-inline-checked-self-loop-instrs [label : i64] [remaining : i64]) : ir.CompilerIrInstrSeq
-  (if (<= remaining 1)
-    (opt-test-instrs (ir.CompilerIrInstr.Jump label))
-    (opt-test-instrs-with-tail
-      (opt-inline-checked-self-loop-instrs label (- remaining 1))
-      (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 1) (ast.AstType.I64)))))
-
 ;; INL-14: a versioned loop prices as ONE loop. The slow copy is the guard's
 ;; failure path and is priced cold, so the pair costs exactly what either copy
 ;; costs alone; a clone with no original beside it, or an original with no

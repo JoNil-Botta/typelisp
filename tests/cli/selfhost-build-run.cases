@@ -244,7 +244,11 @@ stderr empty
 # The package cache: a first fetch fills it, an offline rebuild hits it, a
 # cache entry is confined to its locked checkout, and a corrupt entry is
 # preserved and refetched. The git remote is local, through insteadOf.
-case selfhost-cli-package-graph-github-cache
+# Windows: the package cache nests a long staging path under the case
+# directory and the runtime file calls stop at 260 characters, so the
+# three remote-package cases keep short ids (the runner uses them as
+# directory names).
+case ghc
 file remote/typelisp.pkg
 (package
   (name "gc_remote")
@@ -336,7 +340,8 @@ stderr empty
 # equivalent build keeps it byte- and mtime-identical, --locked replays it
 # offline, a moved pin is stale under --locked, failed transactions keep the
 # old lock, --update-lock moves it, and concurrent writers serialize.
-case selfhost-cli-package-graph-github-lock
+# Short id for Windows paths; see ghc.
+case gl
 sh . "{{root}}/scripts/lib-package-lock-test-wait.sh"
 file remote/typelisp.pkg
 (package
@@ -628,7 +633,8 @@ stderr contains build: package dependency `fail_bad` failed with status 1
 
 # A fetched library's normal dependency is refused after acquisition, before
 # resolution; its private lock does not take part in root resolution.
-case selfhost-cli-package-library-dependency-remote
+# Short id for Windows paths; see ghc.
+case gld
 file remote/typelisp.pkg
 (package
   (name "remote_layer")

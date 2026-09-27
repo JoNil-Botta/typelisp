@@ -163,7 +163,9 @@ if [ "$CC_LIST" -eq 0 ]; then
     gate_compiler_absolute
     gate_require_compiler
     CCV_compiler=$COMPILER
-    CC_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
+    # A failed probe must not read as "no SIMD": rows that ask for an ISA fail.
+    CC_ISA_ERROR=
+    CC_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh") || CC_ISA_ERROR=1
 fi
 
 CC_FAILURES=0
@@ -240,6 +242,10 @@ cc_isa_runnable() {
     case "$1" in
         - | scalar) return 0 ;;
     esac
+    if [ -n "${CC_ISA_ERROR:-}" ]; then
+        cc_fail "$CC_LINE" "SIMD ISA detection failed; cannot tell whether $1 runs"
+        return 1
+    fi
     printf '%s\n' "$CC_ISAS" | grep -qx "$1"
 }
 

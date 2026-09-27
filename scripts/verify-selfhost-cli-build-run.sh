@@ -14,4 +14,8 @@ if [ -z "${TYPELISP_BIN:-}" ]; then
     exit 2
 fi
 
+# A short work root: Windows file calls stop at 260 characters, and the
+# remote-package cases nest the package cache's staging paths below it.
+CODEGEN_CASES_WORKDIR=${CODEGEN_CASES_WORKDIR:-$ROOT/target/cc}
+export CODEGEN_CASES_WORKDIR
 exec scripts/verify-codegen-cases.sh tests/cli/selfhost-surface.cases tests/cli/selfhost-build-run.cases

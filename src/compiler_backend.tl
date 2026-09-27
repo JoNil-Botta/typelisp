@@ -36015,6 +36015,30 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]))
 
+;; Evaluate BODY with the pair-emission flag set (the sibling-reordering load
+;; families), restoring the flag's previous value afterwards.
+(defmacro (compiler-backend-with-pair-emission
+  [function-state : Expr]
+  [body : Expr]) : Expr
+  `(let
+    [pair-emission-state : CompilerBackendFunctionState ,function-state]
+    [pair-emission-prev : bool
+      (compiler-backend-function-scratch-bool?
+        pair-emission-state
+        compiler-backend-scratch-bool-pair-emission)]
+    [_pair-emission-on : unit
+      (compiler-backend-function-scratch-set-bool!
+        pair-emission-state
+        compiler-backend-scratch-bool-pair-emission
+        true)]
+    [pair-emission-result : ResultCompilerBackend ,body]
+    [_pair-emission-off : unit
+      (compiler-backend-function-scratch-set-bool!
+        pair-emission-state
+        compiler-backend-scratch-bool-pair-emission
+        pair-emission-prev)]
+    pair-emission-result))
+
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
 (define (compiler-backend-emit-load-from-gep-pair-first
@@ -36028,103 +36052,63 @@
   [base-reg : String]
   [sibling-home : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-from-gep-pair-first-unflagged
-        type-segment-bases
-        assignments
-        dst
-        base
-        offset
-        elem-ty
-        load-ty
-        base-reg
-        sibling-home
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-from-gep-pair-first-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [base : compiler_ir_types.CompilerIrValue]
-  [offset : compiler_ir_types.CompilerIrValue]
-  [elem-ty : compiler_ast_types.AstType]
-  [load-ty : compiler_ast_types.AstType]
-  [base-reg : String]
-  [sibling-home : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-value-as-i64 offset)
-    [(option_i64.Some n)
-      (let
-        [disp : i64
-          (* n (compiler-backend-type-size type-segment-bases elem-ty))]
-        [addr : String
-          (compiler-backend-base-address
-            disp
-            (compiler-backend-global-shared-view base-reg))]
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          base
-          (compiler-backend-global-shared-view base-reg)
-          backend-state)
-          [(ResultCompilerBackend.Ok base-asm)
-            (ResultCompilerBackend.Ok
-              (if (compiler-backend-float-type? load-ty)
-                (str_cat.str-cat
-                  base-asm
-                  (compiler-backend-emit-load-float-address-to-var
-                    assignments
-                    dst
-                    addr
-                    load-ty
-                    ""
-                    backend-state))
-                (str_cat.str-cat
-                  base-asm
-                  ;; The pair head's emergency restore runs after both loads; if
-                  ;; this spilled first load borrows the sibling result home, the
-                  ;; restore clobbers the second load before its consumer.
-                  (compiler-backend-emit-load-scalar-address-to-var
-                    type-segment-bases
-                    assignments
-                    dst
-                    addr
-                    load-ty
-                    (if (string.eq sibling-home "")
-                      (compiler-backend-one-exclude base-reg)
-                      (compiler-backend-two-exclude
-                        base-reg
-                        (compiler-backend-global-shared-view sibling-home)))
-                    (if (string.eq sibling-home "")
-                      1
-                      2)
-                    ""
-                    backend-state))))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)]))]
-    [(option_i64.None)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-at-start
-            ""
-            "backend: non-immediate gep pair first load")))]))
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some n)
+        (let
+          [disp : i64
+            (* n (compiler-backend-type-size type-segment-bases elem-ty))]
+          [addr : String
+            (compiler-backend-base-address
+              disp
+              (compiler-backend-global-shared-view base-reg))]
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            base
+            (compiler-backend-global-shared-view base-reg)
+            backend-state)
+            [(ResultCompilerBackend.Ok base-asm)
+              (ResultCompilerBackend.Ok
+                (if (compiler-backend-float-type? load-ty)
+                  (str_cat.str-cat
+                    base-asm
+                    (compiler-backend-emit-load-float-address-to-var
+                      assignments
+                      dst
+                      addr
+                      load-ty
+                      ""
+                      backend-state))
+                  (str_cat.str-cat
+                    base-asm
+                    ;; The pair head's emergency restore runs after both loads; if
+                    ;; this spilled first load borrows the sibling result home, the
+                    ;; restore clobbers the second load before its consumer.
+                    (compiler-backend-emit-load-scalar-address-to-var
+                      type-segment-bases
+                      assignments
+                      dst
+                      addr
+                      load-ty
+                      (if (string.eq sibling-home "")
+                        (compiler-backend-one-exclude base-reg)
+                        (compiler-backend-two-exclude
+                          base-reg
+                          (compiler-backend-global-shared-view sibling-home)))
+                      (if (string.eq sibling-home "")
+                        1
+                        2)
+                      ""
+                      backend-state))))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))]
+      [(option_i64.None)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start
+              ""
+              "backend: non-immediate gep pair first load")))])))
 
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
@@ -36138,95 +36122,57 @@
   [base-reg : String]
   [sibling-home : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-from-gep-r10-live-unflagged
-        type-segment-bases
-        assignments
-        dst
-        offset
-        elem-ty
-        load-ty
-        base-reg
-        sibling-home
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-from-gep-r10-live-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [offset : compiler_ir_types.CompilerIrValue]
-  [elem-ty : compiler_ast_types.AstType]
-  [load-ty : compiler_ast_types.AstType]
-  [base-reg : String]
-  [sibling-home : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-value-as-i64 offset)
-    [(option_i64.Some n)
-      (let
-        [disp : i64
-          (* n (compiler-backend-type-size type-segment-bases elem-ty))]
-        ;; The base was loaded into base-reg by the 1st load of the pair; reuse it.
-        [addr : String
-          (compiler-backend-base-address
-            disp
-            (compiler-backend-global-shared-view base-reg))]
-        (ResultCompilerBackend.Ok
-          (if (compiler-backend-float-type? load-ty)
-            (compiler-backend-emit-load-float-address-to-var
-              assignments
-              dst
-              addr
-              load-ty
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some n)
+        (let
+          [disp : i64
+            (* n (compiler-backend-type-size type-segment-bases elem-ty))]
+          ;; The base was loaded into base-reg by the 1st load of the pair; reuse it.
+          [addr : String
+            (compiler-backend-base-address
+              disp
+              (compiler-backend-global-shared-view base-reg))]
+          (ResultCompilerBackend.Ok
+            (if (compiler-backend-float-type? load-ty)
+              (compiler-backend-emit-load-float-address-to-var
+                assignments
+                dst
+                addr
+                load-ty
+                ""
+                backend-state)
+              ;; M-D clobber fix (companion to emit-load-from-gep-pair's base guard):
+              ;; a SPILLED 2nd-load dst stages through a scavenged scratch, and this
+              ;; whole gep-pair is ONE emergency-wrap head. `sibling-home` is the 1st
+              ;; load's register home -- already DEFINED at this point but saved by the
+              ;; head's emergency-wrap PROLOGUE (before the def), so an emergency pick
+              ;; landing there would be OVERWRITTEN by the wrap's restore, dropping the
+              ;; 1st word (Win64 next.length -> false OOB abort). Exclude it too; "" (a
+              ;; register-homed sibling absent, or itself spilled) keeps the old set.
+              (compiler-backend-emit-load-scalar-address-to-var
+                type-segment-bases
+                assignments
+                dst
+                addr
+                load-ty
+                (if (string.eq sibling-home "")
+                  (compiler-backend-one-exclude base-reg)
+                  (compiler-backend-two-exclude
+                    base-reg
+                    (compiler-backend-global-shared-view sibling-home)))
+                (if (string.eq sibling-home "")
+                  1
+                  2)
+                ""
+                backend-state))))]
+      [(option_i64.None)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start
               ""
-              backend-state)
-            ;; M-D clobber fix (companion to emit-load-from-gep-pair's base guard):
-            ;; a SPILLED 2nd-load dst stages through a scavenged scratch, and this
-            ;; whole gep-pair is ONE emergency-wrap head. `sibling-home` is the 1st
-            ;; load's register home -- already DEFINED at this point but saved by the
-            ;; head's emergency-wrap PROLOGUE (before the def), so an emergency pick
-            ;; landing there would be OVERWRITTEN by the wrap's restore, dropping the
-            ;; 1st word (Win64 next.length -> false OOB abort). Exclude it too; "" (a
-            ;; register-homed sibling absent, or itself spilled) keeps the old set.
-            (compiler-backend-emit-load-scalar-address-to-var
-              type-segment-bases
-              assignments
-              dst
-              addr
-              load-ty
-              (if (string.eq sibling-home "")
-                (compiler-backend-one-exclude base-reg)
-                (compiler-backend-two-exclude
-                  base-reg
-                  (compiler-backend-global-shared-view sibling-home)))
-              (if (string.eq sibling-home "")
-                1
-                2)
-              ""
-              backend-state))))]
-    [(option_i64.None)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-at-start
-            ""
-            "backend: non-immediate r10-live gep load")))]))
+              "backend: non-immediate r10-live gep load")))])))
 
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
@@ -36243,127 +36189,84 @@
   [load-dst1 : i64]
   [load-ty1 : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-from-gep-pair-unflagged
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (let
+      ;; Scavenge ONE base register and share it across both loads: the 1st load
+      ;; materializes the base into it, the 2nd reuses it (no reload, byte-identical
+      ;; to the old %r10 path while %r10 is reserved).
+      ;;
+      ;; M-D clobber fix: EXPLICITLY exclude the SIBLING load's register home.
+      ;; scavenge-reg's dst-var only excludes load-dst0's home, and the sibling is
+      ;; protected on the free path solely by the staging-window occupancy query --
+      ;; which the EMERGENCY path deliberately ignores (everything is occupied when
+      ;; it fires). Under full occupancy the emergency scratch could land on
+      ;; load-dst1's home; the emergency-wrap restore then overwrites the second
+      ;; load's just-defined result (lex-parse-based-int: string len loaded into
+      ;; %r9, restored over before the bounds cmp -> false OOB abort). The free
+      ;; path never picked the sibling home (occupied in the window), so this
+      ;; exclusion only changes emergency picks, i.e. only the buggy case.
+      [dst1-home : String
+        (compiler-backend-var-register-home backend-state assignments load-dst1)]
+      ;; M-C2: when the shared base is register-homed, address both loads off the
+      ;; home directly -- no staging copy (the 1st load's materialization becomes
+      ;; an elided self-move) and no scavenge side effects. Guard: the FIRST
+      ;; load's dst home must differ from the base home, or load0 would clobber
+      ;; the base register load1 still needs. dst1's home MAY equal the base home
+      ;; (the 2nd load reads its address operand before writing, and afterwards
+      ;; the base register is no longer needed).
+      [base-home : String
+        (compiler-backend-address-base-filter-direct
+          (compiler-backend-value-scalar-register
+            backend-state
+            assignments
+            (compiler-backend-global-shared-view base)))]
+      [dst0-home : String
+        (compiler-backend-var-register-home backend-state assignments load-dst0)]
+      [base-reg : String
+        (if (and
+          (not (string.eq base-home ""))
+          (not (string.eq base-home dst0-home)))
+          base-home
+          (compiler-backend-scavenge-reg
+            load-dst0
+            (if (string.eq dst1-home "")
+              (compiler-backend-addr-scavenge-exclude)
+              (compiler-backend-one-exclude
+                (compiler-backend-global-shared-view dst1-home)))
+            (if (string.eq dst1-home "")
+              0
+              1)
+            "%r10"
+            backend-state))]
+      (match (compiler-backend-emit-load-from-gep-pair-first
         type-segment-bases
         assignments
+        load-dst0
         base
         offset0
         elem-ty0
-        load-dst0
         load-ty0
-        offset1
-        elem-ty1
-        load-dst1
-        load-ty1
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-from-gep-pair-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [base : compiler_ir_types.CompilerIrValue]
-  [offset0 : compiler_ir_types.CompilerIrValue]
-  [elem-ty0 : compiler_ast_types.AstType]
-  [load-dst0 : i64]
-  [load-ty0 : compiler_ast_types.AstType]
-  [offset1 : compiler_ir_types.CompilerIrValue]
-  [elem-ty1 : compiler_ast_types.AstType]
-  [load-dst1 : i64]
-  [load-ty1 : compiler_ast_types.AstType]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    ;; Scavenge ONE base register and share it across both loads: the 1st load
-    ;; materializes the base into it, the 2nd reuses it (no reload, byte-identical
-    ;; to the old %r10 path while %r10 is reserved).
-    ;;
-    ;; M-D clobber fix: EXPLICITLY exclude the SIBLING load's register home.
-    ;; scavenge-reg's dst-var only excludes load-dst0's home, and the sibling is
-    ;; protected on the free path solely by the staging-window occupancy query --
-    ;; which the EMERGENCY path deliberately ignores (everything is occupied when
-    ;; it fires). Under full occupancy the emergency scratch could land on
-    ;; load-dst1's home; the emergency-wrap restore then overwrites the second
-    ;; load's just-defined result (lex-parse-based-int: string len loaded into
-    ;; %r9, restored over before the bounds cmp -> false OOB abort). The free
-    ;; path never picked the sibling home (occupied in the window), so this
-    ;; exclusion only changes emergency picks, i.e. only the buggy case.
-    [dst1-home : String
-      (compiler-backend-var-register-home backend-state assignments load-dst1)]
-    ;; M-C2: when the shared base is register-homed, address both loads off the
-    ;; home directly -- no staging copy (the 1st load's materialization becomes
-    ;; an elided self-move) and no scavenge side effects. Guard: the FIRST
-    ;; load's dst home must differ from the base home, or load0 would clobber
-    ;; the base register load1 still needs. dst1's home MAY equal the base home
-    ;; (the 2nd load reads its address operand before writing, and afterwards
-    ;; the base register is no longer needed).
-    [base-home : String
-      (compiler-backend-address-base-filter-direct
-        (compiler-backend-value-scalar-register
-          backend-state
-          assignments
-          (compiler-backend-global-shared-view base)))]
-    [dst0-home : String
-      (compiler-backend-var-register-home backend-state assignments load-dst0)]
-    [base-reg : String
-      (if (and
-        (not (string.eq base-home ""))
-        (not (string.eq base-home dst0-home)))
-        base-home
-        (compiler-backend-scavenge-reg
-          load-dst0
-          (if (string.eq dst1-home "")
-            (compiler-backend-addr-scavenge-exclude)
-            (compiler-backend-one-exclude
-              (compiler-backend-global-shared-view dst1-home)))
-          (if (string.eq dst1-home "")
-            0
-            1)
-          "%r10"
-          backend-state))]
-    (match (compiler-backend-emit-load-from-gep-pair-first
-      type-segment-bases
-      assignments
-      load-dst0
-      base
-      offset0
-      elem-ty0
-      load-ty0
-      (compiler-backend-global-shared-view base-reg)
-      dst1-home
-      backend-state)
-      [(ResultCompilerBackend.Ok first-asm)
-        (match (compiler-backend-emit-load-from-gep-r10-live
-          type-segment-bases
-          assignments
-          load-dst1
-          offset1
-          elem-ty1
-          load-ty1
-          base-reg
-          dst0-home
-          backend-state)
-          [(ResultCompilerBackend.Ok second-asm)
-            (ResultCompilerBackend.Ok (str_cat.str-cat first-asm second-asm))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+        (compiler-backend-global-shared-view base-reg)
+        dst1-home
+        backend-state)
+        [(ResultCompilerBackend.Ok first-asm)
+          (match (compiler-backend-emit-load-from-gep-r10-live
+            type-segment-bases
+            assignments
+            load-dst1
+            offset1
+            elem-ty1
+            load-ty1
+            base-reg
+            dst0-home
+            backend-state)
+            [(ResultCompilerBackend.Ok second-asm)
+              (ResultCompilerBackend.Ok (str_cat.str-cat first-asm second-asm))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
@@ -36386,20 +36289,10 @@
   [index1 : String]
   [value1 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-from-gep-pair-planned-unflagged
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (if (and (string.eq address0 "") (string.eq address1 ""))
+      (compiler-backend-emit-load-from-gep-pair
         type-segment-bases
         assignments
         base
@@ -36411,87 +36304,42 @@
         elem-ty1
         load-dst1
         load-ty1
+        backend-state)
+      (match (compiler-backend-emit-load-from-gep
+        type-segment-bases
+        assignments
+        load-dst0
+        (compiler-backend-global-shared-view base)
+        offset0
+        elem-ty0
+        load-ty0
+        ""
+        0
         address0
         index0
         value0
-        address1
-        index1
-        value1
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-from-gep-pair-planned-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [base : compiler_ir_types.CompilerIrValue]
-  [offset0 : compiler_ir_types.CompilerIrValue]
-  [elem-ty0 : compiler_ast_types.AstType]
-  [load-dst0 : i64]
-  [load-ty0 : compiler_ast_types.AstType]
-  [offset1 : compiler_ir_types.CompilerIrValue]
-  [elem-ty1 : compiler_ast_types.AstType]
-  [load-dst1 : i64]
-  [load-ty1 : compiler_ast_types.AstType]
-  [address0 : String]
-  [index0 : String]
-  [value0 : String]
-  [address1 : String]
-  [index1 : String]
-  [value1 : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (and (string.eq address0 "") (string.eq address1 ""))
-    (compiler-backend-emit-load-from-gep-pair
-      type-segment-bases
-      assignments
-      base
-      offset0
-      elem-ty0
-      load-dst0
-      load-ty0
-      offset1
-      elem-ty1
-      load-dst1
-      load-ty1
-      backend-state)
-    (match (compiler-backend-emit-load-from-gep
-      type-segment-bases
-      assignments
-      load-dst0
-      (compiler-backend-global-shared-view base)
-      offset0
-      elem-ty0
-      load-ty0
-      ""
-      0
-      address0
-      index0
-      value0
-      backend-state)
-      [(ResultCompilerBackend.Ok first-asm)
-        (match (compiler-backend-emit-load-from-gep
-          type-segment-bases
-          assignments
-          load-dst1
-          base
-          offset1
-          elem-ty1
-          load-ty1
-          ""
-          0
-          address1
-          index1
-          value1
-          backend-state)
-          [(ResultCompilerBackend.Ok second-asm)
-            (ResultCompilerBackend.Ok (str_cat.str-cat first-asm second-asm))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+        backend-state)
+        [(ResultCompilerBackend.Ok first-asm)
+          (match (compiler-backend-emit-load-from-gep
+            type-segment-bases
+            assignments
+            load-dst1
+            base
+            offset1
+            elem-ty1
+            load-ty1
+            ""
+            0
+            address1
+            index1
+            value1
+            backend-state)
+            [(ResultCompilerBackend.Ok second-asm)
+              (ResultCompilerBackend.Ok (str_cat.str-cat first-asm second-asm))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
@@ -36508,123 +36356,79 @@
   [second-address : String]
   [second-value : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-load-unflagged
-        type-segment-bases
-        assignments
-        first-dst
-        ptr
-        first-ty
-        second-dst
-        second-ty
-        first-address
-        first-value
-        second-address
-        second-value
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-load-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [first-dst : i64]
-  [ptr : compiler_ir_types.CompilerIrValue]
-  [first-ty : compiler_ast_types.AstType]
-  [second-dst : i64]
-  [second-ty : compiler_ast_types.AstType]
-  [first-address : String]
-  [first-value : String]
-  [second-address : String]
-  [second-value : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [_first-dst : i64 first-dst]
-    (if (=
-      (compiler-backend-type-size
-        type-segment-bases
-        (compiler-backend-global-shared-view first-ty))
-      8)
-      (let
-        ;; M-D clobber fix (see emit-load-from-gep-pair): the pointer-chase base
-        ;; scratch must not land on second-dst's register home under EMERGENCY
-        ;; scavenge -- the wrap restore would overwrite the chased load's result.
-        [second-home : String
-          (compiler-backend-var-register-home
-            backend-state
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (let
+      [_first-dst : i64 first-dst]
+      (if (=
+        (compiler-backend-type-size
+          type-segment-bases
+          (compiler-backend-global-shared-view first-ty))
+        8)
+        (let
+          ;; M-D clobber fix (see emit-load-from-gep-pair): the pointer-chase base
+          ;; scratch must not land on second-dst's register home under EMERGENCY
+          ;; scavenge -- the wrap restore would overwrite the chased load's result.
+          [second-home : String
+            (compiler-backend-var-register-home
+              backend-state
+              assignments
+              second-dst)]
+          [base : String
+            (if (string.eq second-address "")
+              (compiler-backend-scavenge-reg-here
+                (if (string.eq second-home "")
+                  (compiler-backend-addr-scavenge-exclude)
+                  (compiler-backend-one-exclude
+                    (compiler-backend-global-shared-view second-home)))
+                (if (string.eq second-home "")
+                  0
+                  1)
+                "%r10"
+                backend-state)
+              second-address)]
+          [base-mem : String
+            (compiler-backend-base-deref
+              (compiler-backend-global-shared-view base))]
+          (match (compiler-backend-emit-load-value-with-plan
             assignments
-            second-dst)]
-        [base : String
-          (if (string.eq second-address "")
-            (compiler-backend-scavenge-reg-here
-              (if (string.eq second-home "")
-                (compiler-backend-addr-scavenge-exclude)
-                (compiler-backend-one-exclude
-                  (compiler-backend-global-shared-view second-home)))
-              (if (string.eq second-home "")
-                0
-                1)
-              "%r10"
-              backend-state)
-            second-address)]
-        [base-mem : String
-          (compiler-backend-base-deref
-            (compiler-backend-global-shared-view base))]
-        (match (compiler-backend-emit-load-value-with-plan
+            ptr
+            (compiler-backend-global-shared-view base)
+            backend-state)
+            [(ResultCompilerBackend.Ok ptr-asm)
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat
+                  ptr-asm
+                  (str_cat.str-cat "    movq " base-mem ", " base "\n")
+                  (if (compiler-backend-float-type? second-ty)
+                    (compiler-backend-emit-load-float-address-to-var
+                      assignments
+                      second-dst
+                      base-mem
+                      second-ty
+                      second-value
+                      backend-state)
+                    (compiler-backend-emit-load-scalar-address-to-var
+                      type-segment-bases
+                      assignments
+                      second-dst
+                      base-mem
+                      second-ty
+                      (compiler-backend-one-exclude base)
+                      1
+                      second-value
+                      backend-state))))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))
+        (compiler-backend-emit-load-instr
+          type-segment-bases
           assignments
+          first-dst
           ptr
-          (compiler-backend-global-shared-view base)
-          backend-state)
-          [(ResultCompilerBackend.Ok ptr-asm)
-            (ResultCompilerBackend.Ok
-              (str_cat.str-cat
-                ptr-asm
-                (str_cat.str-cat "    movq " base-mem ", " base "\n")
-                (if (compiler-backend-float-type? second-ty)
-                  (compiler-backend-emit-load-float-address-to-var
-                    assignments
-                    second-dst
-                    base-mem
-                    second-ty
-                    second-value
-                    backend-state)
-                  (compiler-backend-emit-load-scalar-address-to-var
-                    type-segment-bases
-                    assignments
-                    second-dst
-                    base-mem
-                    second-ty
-                    (compiler-backend-one-exclude base)
-                    1
-                    second-value
-                    backend-state))))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)]))
-      (compiler-backend-emit-load-instr
-        type-segment-bases
-        assignments
-        first-dst
-        ptr
-        first-ty
-        first-address
-        first-value
-        backend-state))))
+          first-ty
+          first-address
+          first-value
+          backend-state)))))
 
 (define (compiler-backend-emit-store-value-to-address
   [type-segment-bases : i64]
@@ -54676,56 +54480,24 @@
   [dst : i64]
   [addr0 : String]
   [addr1 : String]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-gep-load-pair-alu-unflagged
-        backend-state
-        assignments
-        mnem
-        dst
-        addr0
-        addr1)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-gep-load-pair-alu-unflagged
-  [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [mnem : String]
-  [dst : i64]
-  [addr0 : String]
-  [addr1 : String]) : ResultCompilerBackend
-  (let
-    [dst-home : String
-      (compiler-backend-var-register-home backend-state assignments dst)]
-    (ResultCompilerBackend.Ok
-      (str_cat.str-cat
-        "    movq "
-        addr0
-        ", "
-        dst-home
-        "\n    "
-        mnem
-        "q "
-        addr1
-        ", "
-        dst-home
-        "\n"))))
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (let
+      [dst-home : String
+        (compiler-backend-var-register-home backend-state assignments dst)]
+      (ResultCompilerBackend.Ok
+        (str_cat.str-cat
+          "    movq "
+          addr0
+          ", "
+          dst-home
+          "\n    "
+          mnem
+          "q "
+          addr1
+          ", "
+          dst-home
+          "\n")))))
 
 (defenum CompilerBackendMaybeGepLoadPairAluDivmodEmission
   (No)

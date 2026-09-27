@@ -2286,20 +2286,6 @@
         (lint-pattern-list-uses-import? (deref items) alias module-name))]
     [(ast.AstPattern.Literal _) false]))
 
-(define (lint-unused-unsafe-candidate-sentinel?
-  [alias : (& alias str)]
-  [module-name : (& module-name str)]) : bool
-  (and
-    (string.eq alias "__tl_lint_unused_unsafe_candidate")
-    (string.eq module-name "")))
-
-(define (lint-requires-enclosing-unsafe-sentinel?
-  [alias : (& alias str)]
-  [module-name : (& module-name str)]) : bool
-  (and
-    (string.eq alias "__tl_lint_requires_enclosing_unsafe")
-    (string.eq module-name "")))
-
 (define (lint-expr-list-requires-enclosing-unsafe?
   [exprs : (& exprs ast.AstExprList)]) : bool
   (__tl-project-field
@@ -2371,8 +2357,8 @@
   [expr-id : i64]
   [alias : (& alias str)]
   [module-name : (& module-name str)]) : bool
-  ;; The arms below check names and the for-owned and unsafe forms; every other
-  ;; variant's children are checked through the AstExpr child list.
+  ;; The arms below check names and the for-owned forms; every other variant's
+  ;; children are checked through the AstExpr child list.
   (match (ast.ast-node-get expr-id)
     [(ast.AstExpr.Var name) (lint-name-id-uses-import? name alias module-name)]
     [(ast.AstExpr.ForOwnedState payload)
@@ -2396,28 +2382,15 @@
             (ast.ast-for-owned-step-body (& payload))
             alias
             module-name)))]
-    [(ast.AstExpr.Unsafe exprs)
-      (cond
-        [(lint-requires-enclosing-unsafe-sentinel? alias module-name) false]
-        [(lint-unused-unsafe-candidate-sentinel? alias module-name)
-          (if (lint-expr-list-requires-enclosing-unsafe? exprs)
-            (lint-expr-list-uses-import? exprs alias module-name)
-            true)]
-        [else (lint-expr-list-uses-import? exprs alias module-name)])]
     [(ast.AstExpr.Set target value)
       (or
         (lint-name-id-uses-import? target alias module-name)
         (lint-expr-uses-import? value alias module-name))]
     [_
       (let
-        [expr : ast.AstExpr (ast.ast-node-get expr-id)]
-        [unsafe-operation : bool (lint-expr-unsafe-operation? (& expr))]
-        [children : ast.AstExprChildList (ast.ast-expr-children expr)]
-        (or
-          (and
-            unsafe-operation
-            (lint-requires-enclosing-unsafe-sentinel? alias module-name))
-          (lint-expr-children-use-import-at? (& children) alias module-name 0)))]))
+        [children : ast.AstExprChildList
+          (ast.ast-expr-children (ast.ast-node-get expr-id))]
+        (lint-expr-children-use-import-at? (& children) alias module-name 0))]))
 
 (define (lint-extern-abi-uses-import?
   [abi : ast.AstExternAbi]

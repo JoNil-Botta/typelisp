@@ -15264,69 +15264,6 @@
       (set! (array-ref points n) acc)
       points)))
 
-;; Per-block predecessor index RANGE, packed two entries per block:
-;; ranges[2b] = lowest predecessor block index (block count when b has none),
-;; ranges[2b+1] = highest predecessor block index (-1 when b has none). One
-;; successor scan answers "are ALL of b's predecessors inside [lo..hi]?" for
-;; every region the header scan tries, which keeps the single-entry test O(1)
-;; per body block instead of a fresh CFG walk per candidate header.
-(define (compiler-reg-loop-phi-mb-record-pred-range!
-  [liveness : live.CompilerFunctionLiveness]
-  [ranges : (&mut ranges (__tl_dyn-array i64))]
-  [from : i64]
-  [succs : live.CompilerLiveLabelSet]) : unit
-  (match (compiler-reg-global-shared-view succs)
-    [(live.CompilerLiveLabelSet.Nil) unit]
-    [(live.CompilerLiveLabelSet.Dense _ _)
-      (begin
-        (let
-          [to : i64
-            (live.compiler-live-function-block-index
-              (compiler-reg-global-shared-view liveness)
-              (live.compiler-live-label-set-ref
-                (compiler-reg-global-shared-view succs)
-                0))]
-          (if (and (>= to 0) (< (* 2 to) (array-length ranges)))
-            (begin
-              (when
-                (< from (array-ref ranges (* 2 to)))
-                (set! (array-ref ranges (* 2 to)) from))
-              (when
-                (> from (array-ref ranges (+ (* 2 to) 1)))
-                (set! (array-ref ranges (+ (* 2 to) 1)) from)))
-            unit))
-        (compiler-reg-loop-phi-mb-record-pred-range!
-          liveness
-          ranges
-          from
-          (live.compiler-live-label-set-tail succs)))]))
-
-(define (compiler-reg-loop-phi-mb-pred-ranges
-  [liveness : live.CompilerFunctionLiveness]
-  [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)]) : (__tl_dyn-array
-    i64)
-  (let
-    [n : i64 (array-length live-blocks)]
-    [ranges : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 n))]
-    [b : i64 0]
-    (begin
-      (while (< b n)
-        (begin
-          (set! (array-ref ranges (* 2 b)) n)
-          (set! (array-ref ranges (+ (* 2 b) 1)) (- 0 1))
-          (set! b (+ b 1))))
-      (set! b 0)
-      (while (< b n)
-        (begin
-          (compiler-reg-loop-phi-mb-record-pred-range!
-            (compiler-reg-global-shared-view liveness)
-            (&mut ranges)
-            b
-            (compiler-reg-live-block-succs
-              (compiler-reg-global-array-element-shared-view live-blocks b)))
-          (set! b (+ b 1))))
-      ranges)))
-
 ;; Single-entry gate for the region [lo..end]: every block in it EXCEPT the
 ;; header `h` has ALL of its predecessors inside the region, so the only way in
 ;; is `h`. The header is skipped by identity and not by position, which is what
@@ -22471,11 +22408,12 @@
 ;; occupy r8/r9/rsi/rdi for its whole body, which is exactly why the greedy had
 ;; to spill the invariant in the first place.
 ;; ===========================================================================
-;; Predecessor index RANGE per block, packed two entries per block as in
-;; compiler-reg-loop-phi-mb-pred-ranges: ranges[2b] = lowest predecessor index
-;; (block count when b has none), ranges[2b+1] = highest (-1 when none). Built
-;; from the IR successor sets rather than from live blocks because the rescue
-;; runs without a liveness handle.
+;; Predecessor index RANGE per block, packed two entries per block:
+;; ranges[2b] = lowest predecessor index (block count when b has none),
+;; ranges[2b+1] = highest (-1 when none). One successor scan answers "are ALL
+;; of b's predecessors inside [lo..hi]?" for every region the header scan
+;; tries. Built from the IR successor sets because the rescue runs without a
+;; liveness handle.
 (define (compiler-reg-call-region-record-pred-range!
   [ids : (& ids reg_label_i64_map.Map)]
   [ranges : (&mut ranges (__tl_dyn-array i64))]

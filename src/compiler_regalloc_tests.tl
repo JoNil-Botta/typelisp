@@ -538,53 +538,6 @@
             (= (array-ref weights 4) 4)
             (= (array-ref weights 5) 4)))])))
 
-;; --- FREQ-2 block weights ---------------------------------------------------
-;; The spill-weight ladder times a static path share
-;; (compiler-reg-function-block-weights). A loop body that branches two ways
-;; carries the whole share down both arms; a four-way Switch splits it, a
-;; quarter to each arm, and the arms add back up at the join. The exit lies
-;; outside the loop and out of the header's in-loop fan-out, so it weighs what
-;; the entry weighs, and a body with no dispatch weighs the bare ladder.
-(cfg
-  test
-  (define (compiler-reg-block-weights-jump-block
-    [label : String]
-    [target : String]) : ir.CompilerIrBlock
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label label)
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label target))
-        (ir.compiler-ir-instr-seq-empty)))))
-
-(cfg
-  test
-  (define (compiler-reg-block-weights-branch-block
-    [label : String]
-    [then-target : String]
-    [else-target : String]) : ir.CompilerIrBlock
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label label)
-      (compiler-reg-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Bool false)
-          (ir.compiler-ir-label then-target)
-          (ir.compiler-ir-label else-target))
-        (ir.compiler-ir-instr-seq-empty)))))
-
-(cfg
-  test
-  (define (compiler-reg-block-weights-switch-block [label : String]) : ir.CompilerIrBlock
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label label)
-      (irt.instrs "switch %0 base 3 [0:s0, 1:s1, 2:s2] default s3"))))
-
-(cfg
-  test
-  (define (compiler-reg-block-weights-return-block [label : String]) : ir.CompilerIrBlock
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label label)
-      (irt.instrs "return 0"))))
-
 ;; entry -> header -> body -> {left, right}; left -> join; right dispatches to
 ;; s0..s3 -> join; join -> header; header -> exit.
 (cfg
@@ -5900,16 +5853,6 @@
 
 (cfg
   test
-  (define (compiler-reg-instr-seq-has-mov-i64?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [dst : i64]
-    [value : i64]) : bool
-    (compiler-reg-instr-seq-has-query?
-      instrs
-      (CompilerRegTestInstrQuery.MovI64 dst value))))
-
-(cfg
-  test
   (define (compiler-reg-instr-seq-has-mov-var?
     [instrs : (& instrs ir.CompilerIrInstrSeq)]
     [dst : i64]
@@ -5917,76 +5860,6 @@
     (compiler-reg-instr-seq-has-query?
       instrs
       (CompilerRegTestInstrQuery.MovVar dst src))))
-
-(cfg
-  test
-  (define (compiler-reg-instr-seq-has-mov-global?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [dst : i64]
-    [name : String]) : bool
-    (compiler-reg-instr-seq-has-query?
-      instrs
-      (CompilerRegTestInstrQuery.MovGlobal dst name))))
-
-(cfg
-  test
-  (define (compiler-reg-instr-seq-has-load-global-addr?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [dst : i64]
-    [name : String]) : bool
-    (compiler-reg-instr-seq-has-query?
-      instrs
-      (CompilerRegTestInstrQuery.LoadGlobalAddr dst name))))
-
-(cfg
-  test
-  (define (compiler-reg-instr-seq-has-gep-global-i64?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [dst : i64]
-    [name : String]
-    [offset : i64]
-    [ty : ast.AstType]) : bool
-    (compiler-reg-instr-seq-has-query?
-      instrs
-      (CompilerRegTestInstrQuery.GepGlobalI64 dst name offset ty))))
-
-(cfg
-  test
-  (define (compiler-reg-instr-seq-has-store-var?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [name : String]
-    [src : i64]) : bool
-    (compiler-reg-instr-seq-has-query?
-      instrs
-      (CompilerRegTestInstrQuery.StoreVar name src))))
-
-(cfg
-  test
-  (define (compiler-reg-instr-seq-has-addr-of?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [dst : i64]
-    [src : i64]) : bool
-    (compiler-reg-instr-seq-has-query?
-      instrs
-      (CompilerRegTestInstrQuery.AddrOf dst src))))
-
-(cfg
-  test
-  (define (compiler-reg-instr-seq-has-call-indirect-var?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [callee : i64]) : bool
-    (compiler-reg-instr-seq-has-query?
-      instrs
-      (CompilerRegTestInstrQuery.CallIndirectVar callee))))
-
-(cfg
-  test
-  (define (compiler-reg-instr-seq-has-return-var?
-    [instrs : (& instrs ir.CompilerIrInstrSeq)]
-    [src : i64]) : bool
-    (compiler-reg-instr-seq-has-query?
-      instrs
-      (CompilerRegTestInstrQuery.ReturnVar src))))
 
 (cfg
   test
@@ -6023,111 +5896,6 @@
 
 (cfg
   test
-  (define (compiler-reg-remat-rewrite-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @remat_rewrite() -> unit vars 1 {
-       entry:
-         %0 = mov 7 : i64
-         store @use0a, %0 : i64
-         store @use0b, %0 : i64
-         return
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-remat-conflict-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @remat_conflict() -> unit vars 2 {
-       entry:
-         %0 = mov 7 : i64
-         %1 = mov 9 : i64
-         store @use0, %0 : i64
-         store @keep1, %1 : i64
-         return
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-remat-caller-clobber-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @remat_caller_clobber() -> unit vars 2 {
-       entry:
-         %0 = mov &@callee : u64
-         %1 = call* %0() : unit
-         return
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-remat-addr-of-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_addr_of")
-      (ir.compiler-ir-param-seq-empty)
-      (ast.AstType.Unit)
-      2
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%0 = mov 7 : i64")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.AddrOf 1 0)
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "addr")
-                  (ir.CompilerIrValue.Var 1)
-                  (reg.compiler-reg-addr-of-result-type))
-                (irt.instrs "return")))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
-
-(cfg
-  test
-  (define (compiler-reg-remat-global-mov-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @remat_global_mov() -> i64 vars 1 {
-       entry:
-         %0 = mov @global_value : i64
-         return %0
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-remat-global-load-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @remat_global_load() -> i64 vars 1 {
-       entry:
-         %0 = load &@global_value : i64
-         return %0
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-remat-global-gep-function) : ir.CompilerIrFunction
-    (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "remat_global_gep")
-      (ir.compiler-ir-param-seq-empty)
-      (reg.compiler-reg-addr-of-result-type)
-      1
-      (irt.blocks
-        "entry:
-           %0 = gep &@global_value, 3 : i64
-           return %0")
-      ir.CompilerIrFunctionAbi.Ordinary)))
-
-(cfg
-  test
-  (define (compiler-reg-remat-global-mutating-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @remat_global_mutating() -> i64 vars 1 {
-       entry:
-         %0 = mov @global_value : i64
-         store @global_value, 1 : i64
-         return %0
-       }")))
-
-(cfg
-  test
   (define (compiler-reg-remat-parameter-global-rhs-function) : ir.CompilerIrFunction
     (irt.func
       "function @remat_parameter_global_rhs(x=%0:i64, y=%1:i64) -> i64 vars 3 {
@@ -6135,40 +5903,6 @@
          %2 = mul %0, @global_value : i64
          return %2
        }")))
-
-(cfg
-  test
-  (define (compiler-reg-remat-single-spill-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
-    (reg.CompilerRegPlan.Plan
-      (reg.compiler-reg-assignments-prepend
-        (reg.CompilerRegAssignment
-          0
-          (reg.CompilerRegLocation.Spill (reg.compiler-reg-stack-slot-offset 0)))
-        (reg.compiler-reg-assignment-table-empty))
-      (live.compiler-live-set-empty)
-      (reg.compiler-reg-interval-seq-empty)
-      (reg.compiler-reg-function-var-types func)
-      (reg.compiler-reg-call-split-empty)
-      (reg.compiler-reg-split-plan-empty))))
-
-(cfg
-  test
-  (define (compiler-reg-remat-conflict-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
-    (reg.CompilerRegPlan.Plan
-      (reg.compiler-reg-assignments-prepend
-        (reg.CompilerRegAssignment
-          0
-          (reg.CompilerRegLocation.Spill (reg.compiler-reg-stack-slot-offset 0)))
-        (reg.compiler-reg-assignments-prepend
-          (reg.CompilerRegAssignment
-            1
-            (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r9))
-          (reg.compiler-reg-assignment-table-empty)))
-      (live.compiler-live-set-empty)
-      (reg.compiler-reg-interval-seq-empty)
-      (reg.compiler-reg-function-var-types func)
-      (reg.compiler-reg-call-split-empty)
-      (reg.compiler-reg-split-plan-empty))))
 
 (cfg
   test
@@ -6213,58 +5947,6 @@
         [(reg.CompilerRegMaybeLocation.Some (reg.CompilerRegLocation.Spill _))
           true]
         [_ false]))))
-
-(cfg
-  test
-  (define (compiler-reg-call-spanning-post-call-stores
-    [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-    (compiler-reg-test-instr-seq-prepend
-      (irt.instr "store @g0, %0 : i64")
-      (compiler-reg-test-instr-seq-prepend
-        (irt.instr "store @g1, %1 : i64")
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g2, %2 : i64")
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @g3, %3 : i64")
-            (compiler-reg-test-instr-seq-prepend
-              (irt.instr "store @g4, %4 : i64")
-              (compiler-reg-test-instr-seq-prepend
-                (irt.instr "store @g5, %5 : i64")
-                (compiler-reg-test-instr-seq-prepend
-                  (irt.instr "store @g6, %6 : i64")
-                  (compiler-reg-test-instr-seq-prepend
-                    (irt.instr "store @g5b, %5 : i64")
-                    (compiler-reg-test-instr-seq-prepend
-                      (irt.instr "store @g5c, %5 : i64")
-                      tail)))))))))))
-
-(cfg
-  test
-  (define (compiler-reg-call-spanning-defs-before
-    [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-    (compiler-reg-test-instr-seq-prepend
-      (irt.instr "%0 = mov 0 : i64")
-      (compiler-reg-test-instr-seq-prepend
-        (irt.instr "%1 = mov 1 : i64")
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "%2 = mov 2 : i64")
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%3 = mov 3 : i64")
-            (compiler-reg-test-instr-seq-prepend
-              (irt.instr "%4 = mov 4 : i64")
-              (compiler-reg-test-instr-seq-prepend
-                (irt.instr "%5 = mov 5 : i64")
-                (compiler-reg-test-instr-seq-prepend
-                  (irt.instr "%6 = mov 6 : i64")
-                  tail)))))))))
-
-(cfg
-  test
-  (define (compiler-reg-call-spanning-call-before
-    [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-    (compiler-reg-test-instr-seq-prepend
-      (irt.instr "%7 = call side_effect() : unit")
-      tail)))
 
 (cfg
   test
@@ -7617,89 +7299,6 @@
 
 (cfg
   test
-  (define (compiler-reg-loop-split-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
-    (let
-      [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (ir.compiler-ir-global-shared-view func))]
-      [liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function
-          (ir.compiler-ir-global-shared-view func))]
-      (match (reg.compiler-reg-live-interval-selection func liveness)
-        [(reg.CompilerRegIntervalSelection.Selection intervals _)
-          (reg.CompilerRegPlan.Plan
-            (reg.compiler-reg-assignments-prepend
-              (reg.CompilerRegAssignment
-                0
-                (reg.CompilerRegLocation.Spill
-                  (reg.compiler-reg-stack-slot-offset 0)))
-              (reg.compiler-reg-assignment-table-empty))
-            (live.compiler-live-set-empty)
-            intervals
-            type-info
-            (reg.compiler-reg-call-split-empty)
-            (reg.compiler-reg-split-plan-empty))]))))
-
-(cfg
-  test
-  (define (compiler-reg-loop-split-two-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
-    (let
-      [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (ir.compiler-ir-global-shared-view func))]
-      [liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function
-          (ir.compiler-ir-global-shared-view func))]
-      (match (reg.compiler-reg-live-interval-selection func liveness)
-        [(reg.CompilerRegIntervalSelection.Selection intervals _)
-          (reg.CompilerRegPlan.Plan
-            (reg.compiler-reg-assignments-prepend
-              (reg.CompilerRegAssignment
-                0
-                (reg.CompilerRegLocation.Spill
-                  (reg.compiler-reg-stack-slot-offset 0)))
-              (reg.compiler-reg-assignments-prepend
-                (reg.CompilerRegAssignment
-                  1
-                  (reg.CompilerRegLocation.Spill
-                    (reg.compiler-reg-stack-slot-offset 1)))
-                (reg.compiler-reg-assignment-table-empty)))
-            (live.compiler-live-set-empty)
-            intervals
-            type-info
-            (reg.compiler-reg-call-split-empty)
-            (reg.compiler-reg-split-plan-empty))]))))
-
-(cfg
-  test
-  (define (compiler-reg-leaf-csr-split-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
-    (let
-      [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (ir.compiler-ir-global-shared-view func))]
-      [liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function
-          (ir.compiler-ir-global-shared-view func))]
-      (match (reg.compiler-reg-live-interval-selection func liveness)
-        [(reg.CompilerRegIntervalSelection.Selection intervals _)
-          (reg.CompilerRegPlan.Plan
-            (reg.compiler-reg-assignments-prepend
-              (reg.CompilerRegAssignment
-                0
-                (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
-              (reg.compiler-reg-assignments-prepend
-                (reg.CompilerRegAssignment
-                  1
-                  (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r8))
-                (reg.compiler-reg-assignment-table-empty)))
-            (live.compiler-live-set-empty)
-            intervals
-            type-info
-            (reg.compiler-reg-call-split-empty)
-            (reg.compiler-reg-split-plan-empty))]))))
-
-(cfg
-  test
   (define (compiler-reg-leaf-csr-split-function) : ir.CompilerIrFunction
     (irt.func
       "function @leaf_csr_split() -> i64 vars 2 {
@@ -7715,134 +7314,6 @@
          jump loop
        exit:
          return 0
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-loop-split-rewrite-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @loop_split_rewrite() -> i64 vars 1 {
-       entry:
-         %0 = mov 7 : i64
-         jump loop
-       loop:
-         branch false, body, exit
-       body:
-         store @hot0, %0 : i64
-         store @hot1, %0 : i64
-         jump loop
-       exit:
-         return %0
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-loop-split-two-rewrite-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @loop_split_two_rewrite() -> i64 vars 2 {
-       entry:
-         %0 = mov 7 : i64
-         %1 = mov 11 : i64
-         jump loop
-       loop:
-         branch false, body, exit
-       body:
-         store @hot0, %0 : i64
-         store @hot1, %1 : i64
-         store @hot2, %0 : i64
-         store @hot3, %1 : i64
-         jump loop
-       exit:
-         return %0
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-loop-split-low-benefit-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @loop_split_low_benefit() -> i64 vars 1 {
-       entry:
-         %0 = mov 7 : i64
-         jump loop
-       loop:
-         branch false, body, exit
-       body:
-         store @hot0, %0 : i64
-         jump loop
-       exit:
-         return %0
-       }")))
-
-(cfg
-  test
-  (define (compiler-reg-loop-split-phi-region-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @loop_split_phi_region() -> i64 vars 2 {
-       entry:
-         %0 = mov 7 : i64
-         jump loop
-       loop:
-         branch false, body, exit
-       body:
-         %1 = phi [%0, loop] : i64
-         store @hot0, %0 : i64
-         store @hot1, %0 : i64
-         jump loop
-       exit:
-         return %0
-       }")))
-
-(cfg
-  test
-  ;; N-BLOCK loop-invariant region (SplitKit step 1 lifted past the 2-block
-  ;; bound). `loop` is the header, `body1`+`body2` the body, so the natural loop
-  ;; spans THREE blocks; every use of var 0 sits in `body1` while the back-edge
-  ;; block `body2` mentions nothing, so no SINGLE block is a profitable region
-  ;; and only the multi-block region can home it. Every body block is entered
-  ;; from inside the region, so the region is single-entry at `loop`.
-  (define (compiler-reg-loop-split-nblock-invariant-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @loop_split_nblock_invariant() -> i64 vars 1 {
-       entry:
-         %0 = mov 7 : i64
-         jump loop
-       loop:
-         branch false, body1, exit
-       body1:
-         store @hot0, %0 : i64
-         store @hot1, %0 : i64
-         jump body2
-       body2:
-         jump loop
-       exit:
-         return %0
-       }")))
-
-(cfg
-  test
-  ;; Same natural loop, but `side` branches from OUTSIDE the region straight into
-  ;; the body block `body2`. The region is then multi-entry, its entry edge is not
-  ;; the header edge, and the INTO copy could land after a phi that already read
-  ;; the region register -- so the single-entry gate must refuse it and the whole
-  ;; loop-split rewrite must be a no-op.
-  (define (compiler-reg-loop-split-nblock-outside-entry-function) : ir.CompilerIrFunction
-    (irt.func
-      "function @loop_split_nblock_outside_entry() -> i64 vars 1 {
-       entry:
-         %0 = mov 7 : i64
-         branch false, loop, side
-       side:
-         jump body2
-       loop:
-         branch false, body1, exit
-       body1:
-         store @hot0, %0 : i64
-         store @hot1, %0 : i64
-         jump body2
-       body2:
-         jump loop
-       exit:
-         return %0
        }")))
 
 (cfg
@@ -15322,26 +14793,6 @@
       (compiler-reg-stack-only-storage-escape-ok?)
       (cfg test (compiler-reg-trace-reason-vocabulary-ok?) true))
     true))
-
-;; ---------------------------------------------------------------------------
-;; RG-1: the `--trace-passes` home tracer's reason vocabulary.
-;;
-;; The fixture is the smallest shape that produces the classes a census reads:
-;; six values that all span the function's one call, against a five-register
-;; callee-saved pool. Five take a callee-saved home, the sixth loses the heap's
-;; var-id tie-break and is left in memory with a multi-segment range, and the
-;; values around the call take ordinary caller-saved homes. The journal this
-;; reads is exactly what `--trace-passes` renders, so the spellings a census
-;; joins on are pinned here rather than in the renderer.
-(cfg
-  test
-  (define (compiler-reg-trace-fixture-add-instr [dst : i64] [a : i64] [b : i64]) : ir.CompilerIrInstr
-    (ir.CompilerIrInstr.BinOp
-      dst
-      (ir.CompilerIrBinOp.Add)
-      (ir.CompilerIrValue.Var a)
-      (ir.CompilerIrValue.Var b)
-      (compiler-reg-i64-ty))))
 
 (cfg
   test

@@ -1779,40 +1779,6 @@
           (set! index (+ index 1))))
       fold-acc)))
 
-;; Phi inputs in order, value and predecessor label together:
-;;   (visitor ctx... value label)   (folder ctx... acc value label) -> acc
-;;   (value-mapper ctx... value)    (label-mapper ctx... label)
-;; A mapper given as `_` is the identity; with both identities the sequence is
-;; returned as is, otherwise the result owns fresh storage.
-(defmacro (compiler-ir-phi-inputs-visit
-  [inputs : Expr]
-  [visitor : Expr]
-  [contexts : Expr ...]) : unit
-  `(compiler-ir-phi-inputs-walk ,inputs _ _ ,visitor ,@contexts))
-
-(defmacro (compiler-ir-phi-inputs-fold
-  [inputs : Expr]
-  [acc : Expr]
-  [folder : Expr]
-  [contexts : Expr ...]) : Expr
-  `(let
-    [fold-acc ,acc]
-    (begin
-      (compiler-ir-phi-inputs-walk ,inputs fold-acc _ ,folder ,@contexts)
-      fold-acc)))
-
-(defmacro (compiler-ir-phi-inputs-map
-  [inputs : Expr]
-  [value-mapper : Expr]
-  [label-mapper : Expr]
-  [contexts : Expr ...]) : CompilerIrPhiInputSeq
-  `(compiler-ir-phi-inputs-rebuild
-    ,inputs
-    ,value-mapper
-    _
-    ,label-mapper
-    ,@contexts))
-
 ;; Shared loop of the phi-input visit and fold. `acc` is `_` to visit, or the
 ;; accumulator variable to fold. With `role` `_` the callback receives the
 ;; value and label; with a role it receives the role and value (the operand

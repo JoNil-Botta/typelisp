@@ -43104,45 +43104,44 @@
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
-    (let
-      [point : i64
-        (compiler-backend-function-state-emission-point function-state)]
-      [occupied-mask : i64
-        (compiler-backend-scavenge-occupied-mask-at-point function-state point)]
-      ;; The cycle-break Temp must avoid every register the phi marshalling still
-      ;; needs: the dst homes of the REMAINING copies, AND every dst home of the
-      ;; ORIGINAL copy list. An already-emitted (drained) copy has placed a final
-      ;; phi value into its dst register (live to the merge block entry), but that
-      ;; dst is no longer in `copies`, so excluding only `copies` could pick it as
-      ;; the Temp and clobber a placed phi value -- the same unsound-cycle-break
-      ;; class as the arg-move sret/rcx<->r9 bug. The occupancy mask reflects
-      ;; the allocation, not these transient marshalling values.
-      [exclude-mask : i64
-        (bit-or
-          (compiler-backend-phi-copy-list-dst-home-mask
-            backend-state
-            assignments
-            copies)
-          (compiler-backend-phi-copy-list-dst-home-mask
-            backend-state
-            assignments
-            all))]
-      [cands : (__tl_dyn-array i64)
-        (compiler-backend-i64-array-shared-view
-          (& compiler-backend-scavenge-candidate-pool))]
-      [reg-id : i64
-        (compiler-backend-phi-temp-pick-reg-iter
+    [point : i64
+      (compiler-backend-function-state-emission-point function-state)]
+    [occupied-mask : i64
+      (compiler-backend-scavenge-occupied-mask-at-point function-state point)]
+    ;; The cycle-break Temp must avoid every register the phi marshalling still
+    ;; needs: the dst homes of the REMAINING copies, AND every dst home of the
+    ;; ORIGINAL copy list. An already-emitted (drained) copy has placed a final
+    ;; phi value into its dst register (live to the merge block entry), but that
+    ;; dst is no longer in `copies`, so excluding only `copies` could pick it as
+    ;; the Temp and clobber a placed phi value -- the same unsound-cycle-break
+    ;; class as the arg-move sret/rcx<->r9 bug. The occupancy mask reflects
+    ;; the allocation, not these transient marshalling values.
+    [exclude-mask : i64
+      (bit-or
+        (compiler-backend-phi-copy-list-dst-home-mask
+          backend-state
+          assignments
+          copies)
+        (compiler-backend-phi-copy-list-dst-home-mask
+          backend-state
+          assignments
+          all))]
+    [cands : (__tl_dyn-array i64)
+      (compiler-backend-i64-array-shared-view
+        (& compiler-backend-scavenge-candidate-pool))]
+    [reg-id : i64
+      (compiler-backend-phi-temp-pick-reg-iter
+        function-state
+        occupied-mask
+        exclude-mask
+        (compiler-backend-function-scratch-i64
           function-state
-          occupied-mask
-          exclude-mask
-          (compiler-backend-function-scratch-i64
-            function-state
-            compiler-backend-scratch-i64-scavenge-plan-reg-mask)
-          cands
-          0
-          (array-length cands))]
-      [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
-      reg)))
+          compiler-backend-scratch-i64-scavenge-plan-reg-mask)
+        cands
+        0
+        (array-length cands))]
+    [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
+    reg))
 
 ;; A copy is "register-swappable" when emitting it scavenges NO register: it is a
 ;; scalar-int copy (no float/group word staging) whose dst is register-homed and

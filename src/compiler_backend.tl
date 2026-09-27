@@ -38206,7 +38206,7 @@
   (let
     [spmd-abi-error : String
       (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
-        (compiler-backend-global-shared-view functions))]
+        functions)]
     (if (> (string.string-length spmd-abi-error) 0)
       (ResultCompilerBackendSymbolValidation.Err
         (box
@@ -47177,7 +47177,7 @@
   (if (>=
     index
     (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      (compiler-backend-global-shared-view args)))
+      args))
     unit
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value _)
@@ -47214,7 +47214,7 @@
   (if (>=
     index
     (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      (compiler-backend-global-shared-view args)))
+      args))
     (compiler_ast_types.ast-type-list-new)
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class _ ty)
@@ -47237,7 +47237,7 @@
   (if (>=
     index
     (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      (compiler-backend-global-shared-view args)))
+      args))
     0
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class _ _)
@@ -47320,7 +47320,7 @@
   (if (>=
     index
     (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      (compiler-backend-global-shared-view args)))
+      args))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value ty)
@@ -47425,7 +47425,7 @@
   (if (>=
     index
     (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      (compiler-backend-global-shared-view args)))
+      args))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value ty)
@@ -47531,7 +47531,7 @@
   (if (>=
     index
     (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      (compiler-backend-global-shared-view args)))
+      args))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value _)

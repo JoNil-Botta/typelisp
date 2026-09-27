@@ -454,7 +454,7 @@
         "first")
       (=
         (compiler_ir_types.compiler-ir-function-seq-block-count
-          (compiler_ir_types.compiler-ir-global-shared-view compact))
+          compact)
         2)
       (=
         (compiler_ir_types.compiler-ir-function-seq-instruction-count compact)
@@ -2393,8 +2393,11 @@
       (compiler_ir_types.compiler-ir-function-builder-push!
         (&mut builder)
         helper)
-      (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
-        (compiler_ir_types.compiler-ir-function-builder-to-seq builder)))))
+      (let
+        [functions : compiler_ir_types.CompilerIrFunctionSeq
+          (compiler_ir_types.compiler-ir-function-builder-to-seq builder)]
+        (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
+          functions)))))
 
 (define (pabi-program-rejects?
   [helper : compiler_ir_types.CompilerIrFunction]

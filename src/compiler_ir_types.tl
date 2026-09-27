@@ -3899,7 +3899,7 @@
   _)
 
 (define (compiler-ir-spmd-private-param-seq-ref
-  [seq : CompilerIrSpmdPrivateParamSeq]
+  [seq : (& CompilerIrSpmdPrivateParamSeq)]
   [index : i64]) : CompilerIrSpmdPrivateParam
   (compiler-ir-array-shared-view seq.slots index))
 
@@ -4277,7 +4277,7 @@
   [abi : CompilerIrSpmdPrivateAbi]
   [index : i64]) : String
   (match (compiler-ir-spmd-private-param-seq-ref
-    (compiler-ir-global-shared-view abi.params)
+    abi.params
     index)
     [(CompilerIrSpmdPrivateParam.Param ordinal role ty)
       (cond
@@ -4349,7 +4349,7 @@
       (and
         (> abi.params.len 1)
         (match (compiler-ir-spmd-private-param-seq-ref
-          (compiler-ir-global-shared-view abi.params)
+          abi.params
           (- abi.params.len 1))
           [(CompilerIrSpmdPrivateParam.Param
               _
@@ -4695,7 +4695,7 @@
 ;; Whether any function in `functions` has symbol `name`. Only failed private
 ;; call lookups ask, so a valid program never pays for the scan.
 (define (compiler-ir-function-seq-names?
-  [functions : CompilerIrFunctionSeq]
+  [functions : (& CompilerIrFunctionSeq)]
   [name : i64]) : bool
   (let
     [found : bool false]
@@ -4710,7 +4710,7 @@
       found)))
 
 (define (compiler-ir-spmd-private-call-callee-error
-  [functions : CompilerIrFunctionSeq]
+  [functions : (& CompilerIrFunctionSeq)]
   [private-index : (& private-index ir_i64_i64_map.Map)]
   [caller : i64]
   [payload : CompilerIrInstrSpmdCallPayload]) : String
@@ -4766,7 +4766,7 @@
       (str_cat.str-cat "in @" (compiler-ir-symbol-text caller) ": " problem))))
 
 (define (compiler-ir-spmd-private-instr-seq-error
-  [functions : CompilerIrFunctionSeq]
+  [functions : (& CompilerIrFunctionSeq)]
   [private-index : (& private-index ir_i64_i64_map.Map)]
   [caller : i64]
   [instrs : CompilerIrInstrSeq]) : String
@@ -4781,7 +4781,7 @@
               (set!
                 problem
                 (compiler-ir-spmd-private-call-callee-error
-                  (compiler-ir-global-shared-view functions)
+                  functions
                   private-index
                   caller
                   (deref payload-box)))]
@@ -4790,7 +4790,7 @@
       problem)))
 
 (define (compiler-ir-spmd-private-block-list-error
-  [functions : CompilerIrFunctionSeq]
+  [functions : (& CompilerIrFunctionSeq)]
   [private-index : (& private-index ir_i64_i64_map.Map)]
   [caller : i64]
   [blocks : CompilerIrBlockList]) : String
@@ -4802,7 +4802,7 @@
           (let
             [problem : String
               (compiler-ir-spmd-private-instr-seq-error
-                (compiler-ir-global-shared-view functions)
+                functions
                 private-index
                 caller
                 instrs)]
@@ -4825,7 +4825,7 @@
                   (set!
                     problem
                     (compiler-ir-spmd-private-instr-seq-error
-                      (compiler-ir-global-shared-view functions)
+                      functions
                       private-index
                       caller
                       instrs))])
@@ -4838,7 +4838,7 @@
 ;; call may not target a same-program private helper. Returns "" or the first
 ;; problem, prefixed with the function it was found in.
 (define (compiler-ir-spmd-private-abi-program-error
-  [functions : CompilerIrFunctionSeq]) : String
+  [functions : (& CompilerIrFunctionSeq)]) : String
   (let
     [private-index : ir_i64_i64_map.Map (ir_i64_i64_map.with-capacity 8)]
     [problem : String ""]
@@ -4872,7 +4872,7 @@
               (set!
                 problem
                 (compiler-ir-spmd-private-block-list-error
-                  (compiler-ir-global-shared-view functions)
+                  functions
                   private-index
                   name
                   blocks))])
@@ -7022,7 +7022,7 @@
     args
     0))
 
-(define (compiler-ir-spmd-call-arg-seq-count [args : CompilerIrSpmdCallArgSeq]) : i64
+(define (compiler-ir-spmd-call-arg-seq-count [args : (& CompilerIrSpmdCallArgSeq)]) : i64
   args.len)
 
 (define (compiler-ir-spmd-result-render
@@ -9316,9 +9316,8 @@
     [(CompilerIrFunction.Function _ _ _ vars _ _) vars]))
 
 (define (compiler-ir-function-seq-block-count
-  [functions : CompilerIrFunctionSeq]) : i64
+  [functions : (& CompilerIrFunctionSeq)]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
@@ -9330,7 +9329,7 @@
             (+
               acc
               (compiler-ir-function-block-count
-                (compiler-ir-array-shared-view slots index))))
+                (compiler-ir-array-shared-view functions.slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -9475,7 +9474,7 @@
           (compiler-ir-global-shared-view functions))
         (compiler-ir-extern-seq-count externs)
         (compiler-ir-function-seq-block-count
-          (compiler-ir-global-shared-view functions))
+          functions)
         (compiler-ir-function-seq-instruction-count
           (compiler-ir-global-shared-view functions))
         (compiler-ir-function-seq-var-count

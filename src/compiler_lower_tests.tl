@@ -9886,7 +9886,7 @@
       (and
         (string.eq
           (ir.compiler-ir-spmd-private-abi-program-error
-            (ir.compiler-ir-global-shared-view functions))
+            functions)
           "")
         (lower-test-function-abi-ordinary? functions caller)
         (string.eq
@@ -9919,7 +9919,7 @@
               (> (string.string-length before) 0)
               (string.eq
                 (ir.compiler-ir-spmd-private-abi-program-error
-                  (ir.compiler-ir-global-shared-view functions))
+                  functions)
                 "")
               (string.eq
                 (ir.compiler-ir-test-spmd-private-abi-shapes functions)

@@ -710,7 +710,7 @@
           (and
             (string.eq
               (ir.compiler-ir-spmd-private-abi-program-error
-                (ir.compiler-ir-global-shared-view functions))
+                functions)
               "")
             (string.eq
               (ir.compiler-ir-test-spmd-private-abi-shapes functions)

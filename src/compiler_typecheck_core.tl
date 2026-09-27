@@ -6302,136 +6302,27 @@
       (- (profile.alloc-total) start-total)
       (- (profile.alloc-live) start-live))))
 
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-expr
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [expr : ast.AstExpr]) : ResultTcType
-    (let
+;; Time `body`, the re-inference at `site`, into that site's reinference row.
+(defmacro (compiler-tc-reinfer-profiled
+  [_ctx : Expr]
+  [_site : Expr]
+  [body : Expr]) : Expr
+  (cfg
+    compile-profile
+    `(let
       [start-ms : i64 (profile.now-ms)]
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcType (tc-expr ctx env expr)]
+      [result ,body]
       (begin
         (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
+          (tc-context-job-state ,_ctx)
+          ,_site
           start-ms
           start-total
           start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-expr-id
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [expr-id : i64]) : ResultTcType
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcType (tc-expr-id ctx env expr-id)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-expr-list-types
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [exprs : ast.AstExprList]) : ResultTcTypeList
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcTypeList (tc-expr-list-types ctx env exprs)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-effective-arg-expr
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [arg : ast.AstExpr]
-    [want : ast.AstType]) : ResultTcExpr
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcExpr (tc-call-effective-arg-expr ctx env arg want)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-call-param-types-id
-    [site : String]
-    [ctx : TcContext]
-    [env : TcTypeEnv]
-    [func-id : i64]) : ResultTcTypeList
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcTypeList
-        (tc-move-call-param-types-id-raw ctx env func-id)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-borrow-call-info-id
-    [site : String]
-    [ctx : TcContext]
-    [expr-bases : i64]
-    [env : TcTypeEnv]
-    [func-id : i64]
-    [args : ast.AstExprList]) : ResultTcBorrowCallInfo
-    (let
-      [start-ms : i64 (profile.now-ms)]
-      [start-total : i64 (profile.alloc-total)]
-      [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcBorrowCallInfo
-        (tc-borrow-call-info-id-raw ctx expr-bases env func-id args)]
-      (begin
-        (compiler-tc-reinfer-profile-record
-          (tc-context-job-state ctx)
-          site
-          start-ms
-          start-total
-          start-live)
-        result))))
+        result))
+    body))
 
 (cfg
   compile-profile
@@ -32268,10 +32159,7 @@
     expr-id)
     [(TcBodyTypeFact.Hit ty) (ResultTcType.Ok ty)]
     [(TcBodyTypeFact.Miss)
-      (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-expr-id site ctx env expr-id)
-        (tc-expr-id ctx env expr-id))]))
+      (compiler-tc-reinfer-profiled ctx site (tc-expr-id ctx env expr-id))]))
 
 (define (tc-body-type-fact-list-types-into-at
   [state : TcBodyState]
@@ -32319,9 +32207,9 @@
           (compiler-tc-body-fact-profile-miss
             (tc-context-job-state ctx)
             (tc-global-shared-view _site)))
-        (cfg
-          compile-profile
-          (compiler-tc-reinfer-profile-expr-list-types _site ctx env exprs)
+        (compiler-tc-reinfer-profiled
+          ctx
+          _site
           (tc-expr-list-types ctx env exprs)))]))
 
 (define (tc-move-binding-type-id
@@ -65595,15 +65483,9 @@
       [(TcBodyTypeFact.Hit fn-ty)
         (tc-borrow-call-info-from-type ctx env func args fn-ty)]
       [(TcBodyTypeFact.Miss)
-        (cfg
-          compile-profile
-          (compiler-tc-reinfer-profile-borrow-call-info-id
-            site
-            ctx
-            expr-bases
-            env
-            func-id
-            args)
+        (compiler-tc-reinfer-profiled
+          ctx
+          site
           (tc-borrow-call-info-id-raw ctx expr-bases env func-id args))])))
 
 (define (tc-move-call-param-types-id-raw
@@ -65630,9 +65512,9 @@
     func-id)
     [(TcBodyTypeFact.Hit fn-ty) (tc-move-call-param-types-from-type fn-ty)]
     [(TcBodyTypeFact.Miss)
-      (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-call-param-types-id site ctx env func-id)
+      (compiler-tc-reinfer-profiled
+        ctx
+        site
         (tc-move-call-param-types-id-raw ctx env func-id))]))
 
 (define (tc-move-check-exprs
@@ -74463,14 +74345,9 @@
   [borrowed : TcMovedSet]
   [arg : ast.AstExpr]
   [ty : ast.AstType]) : TcBorrowCheckResult
-  (match (cfg
-    compile-profile
-    (compiler-tc-reinfer-profile-effective-arg-expr
-      "borrow.call_arg"
-      ctx
-      env
-      (tc-global-shared-view arg)
-      (tc-global-shared-view ty))
+  (match (compiler-tc-reinfer-profiled
+    ctx
+    "borrow.call_arg"
     (tc-call-effective-arg-expr
       ctx
       env
@@ -74756,14 +74633,9 @@
       [raw-ty : ast.AstType
         (ast.ty-node-get
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (match (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-effective-arg-expr
-          "borrow.call_arg"
-          ctx
-          env
-          (tc-global-shared-view head-expr)
-          (tc-global-shared-view raw-ty))
+      (match (compiler-tc-reinfer-profiled
+        ctx
+        "borrow.call_arg"
         (tc-call-effective-arg-expr
           ctx
           env
@@ -74917,14 +74789,9 @@
   [ty : ast.AstType]) : TcBorrowCheckResult
   (if (tc-call-explicit-borrow-expr? (tc-global-shared-view arg))
     (TcBorrowCheckResult.Ok borrowed)
-    (match (cfg
-      compile-profile
-      (compiler-tc-reinfer-profile-effective-arg-expr
-        "borrow.call_arg"
-        ctx
-        env
-        (tc-global-shared-view arg)
-        ty)
+    (match (compiler-tc-reinfer-profiled
+      ctx
+      "borrow.call_arg"
       (tc-call-effective-arg-expr ctx env (tc-global-shared-view arg) ty))
       [(ResultTcExpr.Ok effective)
         (match (ast.ast-expr-unspan effective)
@@ -76922,14 +76789,7 @@
   [borrowed : TcMovedSet]
   [arg : ast.AstExpr]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (match (cfg
-    compile-profile
-    (compiler-tc-reinfer-profile-expr
-      "borrow.return_arg"
-      ctx
-      env
-      (tc-global-shared-view arg))
-    (tc-expr ctx env (tc-global-shared-view arg)))
+  (match (tc-expr ctx env (tc-global-shared-view arg))
     [(ResultTcType.Ok arg-ty)
       (if (tc-name-id-list-overlaps?
         (tc-type-collect-reference-lifetimes
@@ -77095,14 +76955,7 @@
         args
         result-lifetimes)]
     [(TcBorrowCallReturnLifetimes.Fallback)
-      (match (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-expr
-          "borrow.return_call"
-          ctx
-          env
-          call-expr)
-        (tc-expr ctx env call-expr))
+      (match (tc-expr ctx env call-expr)
         [(ResultTcType.Ok result-ty)
           (tc-borrow-check-after-returning-call-lifetimes
             ctx

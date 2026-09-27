@@ -9884,10 +9884,7 @@
   (match (lower-test-functions (lower.lower-compiler-source-with-mode src mode))
     [(LowerTestFunctions.Some functions)
       (and
-        (string.eq
-          (ir.compiler-ir-spmd-private-abi-program-error
-            functions)
-          "")
+        (string.eq (ir.compiler-ir-spmd-private-abi-program-error functions) "")
         (lower-test-function-abi-ordinary? functions caller)
         (string.eq
           (ir.compiler-ir-test-spmd-private-abi-shapes functions)
@@ -9918,8 +9915,7 @@
             (and
               (> (string.string-length before) 0)
               (string.eq
-                (ir.compiler-ir-spmd-private-abi-program-error
-                  functions)
+                (ir.compiler-ir-spmd-private-abi-program-error functions)
                 "")
               (string.eq
                 (ir.compiler-ir-test-spmd-private-abi-shapes functions)

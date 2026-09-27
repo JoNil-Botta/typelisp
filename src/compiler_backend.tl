@@ -21382,7 +21382,10 @@
     (compiler-backend-target-arg-reg-for-banks target int-idx position)))
 
 ;; The staging register for one value written into an outgoing (or tail) stack
-;; argument slot.
+;; argument slot, and for an indirect call's final target load. Both follow
+;; argument marshalling, so the pick must not clobber any placed argument: the
+;; pooled caller-arg candidates stay unavailable and %r11 is kept for ABI and
+;; runtime clobber semantics.
 (define (compiler-backend-stack-call-arg-stage
   [backend-state : CompilerBackendState]) : String
   (compiler-backend-scavenge-reg-here
@@ -38205,8 +38208,7 @@
   [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
   (let
     [spmd-abi-error : String
-      (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
-        functions)]
+      (compiler_ir_types.compiler-ir-spmd-private-abi-program-error functions)]
     (if (> (string.string-length spmd-abi-error) 0)
       (ResultCompilerBackendSymbolValidation.Err
         (box
@@ -47174,10 +47176,7 @@
   [index : i64]
   [uniform-only : bool]
   [builder : (&mut builder compiler_ir_types.CompilerIrValueBuilder)]) : unit
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      args))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     unit
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value _)
@@ -47211,10 +47210,7 @@
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [uniform-only : bool]) : compiler_ast_types.AstTypeList
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      args))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     (compiler_ast_types.ast-type-list-new)
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class _ ty)
@@ -47234,10 +47230,7 @@
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [want-mask : bool]) : i64
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      args))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     0
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class _ _)
@@ -47317,10 +47310,7 @@
   [base-offset : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      args))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value ty)
@@ -47422,10 +47412,7 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      args))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value ty)
@@ -47528,10 +47515,7 @@
   [base-offset : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
-      args))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at args index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value _)
@@ -56470,8 +56454,7 @@
                     ;; the whole marshalling sequence.
                     (let
                       [scav-clo : String
-                        (compiler-backend-scavenge-call-target-reg
-                          backend-state)]
+                        (compiler-backend-stack-call-arg-stage backend-state)]
                       [overlap : bool
                         (compiler-backend-indirect-call-callee-arg-overlap?
                           target
@@ -56715,17 +56698,6 @@
       home
       "")))
 
-(define (compiler-backend-scavenge-call-target-reg
-  [backend-state : CompilerBackendState]) : String
-  ;; The final target load follows argument marshalling, so it must not clobber
-  ;; any placed argument. Keep pooled caller-arg candidates unavailable and
-  ;; reserve %r11 for ABI/runtime clobber semantics.
-  (compiler-backend-scavenge-reg-here
-    (compiler-backend-c-abi-stage-exclude-with "%r11")
-    compiler-backend-c-abi-stage-exclude-count
-    "%r10"
-    backend-state))
-
 (define (compiler-backend-emit-indirect-c-call
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -56807,7 +56779,7 @@
         (if (string.eq direct-home "")
           (let
             [call-reg : String
-              (compiler-backend-scavenge-call-target-reg backend-state)]
+              (compiler-backend-stack-call-arg-stage backend-state)]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               func
@@ -57032,7 +57004,7 @@
           [(ResultCompilerBackend.Ok base-save)
             (let
               [call-reg : String
-                (compiler-backend-scavenge-call-target-reg backend-state)]
+                (compiler-backend-stack-call-arg-stage backend-state)]
               (match (compiler-backend-emit-load-value-with-plan
                 assignments
                 func

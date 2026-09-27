@@ -709,8 +709,7 @@
         [(ir.CompilerIrProgram.Program _ functions _)
           (and
             (string.eq
-              (ir.compiler-ir-spmd-private-abi-program-error
-                functions)
+              (ir.compiler-ir-spmd-private-abi-program-error functions)
               "")
             (string.eq
               (ir.compiler-ir-test-spmd-private-abi-shapes functions)

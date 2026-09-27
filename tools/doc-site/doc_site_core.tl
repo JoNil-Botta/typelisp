@@ -123,9 +123,6 @@
   [index : i64]) : DocSiteGuidePage
   (doc_site_guides.get guides index (DocSiteGuidePage.GuidePage "" "" "" "")))
 
-(define (doc-site-section-list-empty) : doc_site_sections.Vec
-  (doc_site_sections.new))
-
 (define (doc-site-section-list-count
   [sections : (& sections doc_site_sections.Vec)]) : i64
   (doc_site_sections.len sections))

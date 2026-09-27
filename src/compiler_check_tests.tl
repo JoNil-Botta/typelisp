@@ -7,6 +7,7 @@
 (import compiler_load_tests as load_tests)
 (import compiler_check_core as check_core)
 (import compiler_diagnostic as cdiag)
+(import compiler_diagnostic_tests as cdiag_tests)
 (import compiler_semantic_index as semantic_index)
 (import compiler_semantic_index_tests as sem_tests)
 (import compiler_builtin_ids as cbi)
@@ -759,7 +760,11 @@
         2
         1
         "fatal after advisory")]
-    [_append : bool (tc_core.tc-job-state-add-advisory! job (& warning))]
+    [_append : bool
+      (cdiag_tests.compiler-advisory-sink-push!
+        (tc_core.tc-job-state-advisory-sink job)
+        cdiag.CompilerAdvisoryPhase.Semantic
+        (& warning))]
     [success : check_core.ResultCompilerCheck
       (check_core.ResultCompilerCheck.Ok
         (tc_core.CompilerTypecheckSummary 1 0 0)

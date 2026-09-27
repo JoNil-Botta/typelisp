@@ -5177,15 +5177,6 @@
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
   (ast-type-list-cons-id (ast-node-pool-reader-type-push head) rest))
 
-(define (ast-ty-c-func-with-pools
-  [pools : AstNodePoolContext]
-  [args : AstTypeList]
-  [ret : AstType]
-  [mode : AstCFunctionMode]) : AstType
-  (let
-    [signature : AstType (ast-ty-func-with-pools pools args ret)]
-    (AstType.CFunc (ast-node-pool-context-type-push pools signature) mode)))
-
 (define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
   (AstType.Func (box args) (ast-node-pool-reader-type-push ret)))
 
@@ -11315,9 +11306,6 @@
     (and
       (= len (ast-lifetime-list-len (& b)))
       (ast-lifetime-list-eq-at? (& a) (& b) len 0))))
-
-(define (ast-type-list-eq? [a : AstTypeList] [b : AstTypeList]) : bool
-  (ast-type-id-list-eq? a b ast-type-installed-ids-eq?))
 
 (define (ast-type-eq? [a : AstType] [b : AstType]) : bool
   (ast-type-children-eq? a b ast-type-installed-ids-eq?))

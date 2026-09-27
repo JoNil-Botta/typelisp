@@ -33,15 +33,6 @@
 (import compiler_intern_state as cis)
 (import compiler_ast_types as ast)
 (import compiler_owned_view as owned_view)
-(import compiler_diagnostic as cdiag)
-
-(define (compiler-opt-add-advisory!
-  [sink : cdiag.CompilerAdvisorySink]
-  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
-  (cdiag.compiler-advisory-sink-push!
-    sink
-    (cdiag.CompilerAdvisoryPhase.Optimization)
-    diagnostic))
 
 ;; The inliner's measured-plan check (opt-inline-checked-*) reads one register
 ;; allocation plan per candidate to price the caller's prologue and spill

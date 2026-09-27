@@ -25,14 +25,6 @@
 (import compiler_diagnostic as cdiag)
 (cfg test (import stdlib.test))
 
-(define (compiler-reg-add-advisory!
-  [sink : cdiag.CompilerAdvisorySink]
-  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
-  (cdiag.compiler-advisory-sink-push!
-    sink
-    (cdiag.CompilerAdvisoryPhase.RegisterAllocation)
-    diagnostic))
-
 (defmacro (compiler-reg-global-shared-view [place : Expr]) : Expr
   `(owned_view.compiler-owned-shared-view ,place))
 

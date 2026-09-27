@@ -3194,11 +3194,6 @@
   [enabled : bool]) : unit
   (set! (array-ref state.cache-enabled 2) enabled))
 
-(define (compiler-load-session-lazy-import-mode-set-enabled! [enabled : bool]) : unit
-  (compiler-load-session-state-lazy-import-mode-set-enabled!
-    (compiler-load-active-session-state-shared-view)
-    enabled))
-
 (define (compiler-load-session-state-lazy-imports-enabled?
   [state : CompilerLoadSessionState]) : bool
   (and
@@ -11720,18 +11715,6 @@
     (str_cat.str-cat
       (compiler-load-package-module-id-normalized entry-path decl-path)
       "::"
-      source-name)))
-
-(define (compiler-load-package-module-logical-name
-  [entry-path : String]
-  [decl-path : String]
-  [source-name : String]) : String
-  (let
-    [entry-path : String (compiler-load-normalize-path entry-path)]
-    [decl-path : String (compiler-load-normalize-path decl-path)]
-    (compiler-load-package-module-logical-name-normalized
-      entry-path
-      decl-path
       source-name)))
 
 (define (compiler-load-package-entry-main-normalized?

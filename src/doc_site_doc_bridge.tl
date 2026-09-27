@@ -22,9 +22,6 @@
 (define (bridge-doc-html-escape [text : (& text str)]) : String
   (doc_html.doc-html-escape text))
 
-(define (bridge-doc-html-page-open [title : String]) : String
-  (doc_html.doc-html-page-open title))
-
 (define (bridge-doc-html-page-open-with-metadata
   [title : String]
   [compiler-identity : String]
@@ -53,12 +50,6 @@
   [needle : String]
   [message : String]) : bool
   (doc_html.doc-html-require-contains rendered needle message))
-
-(define (bridge-doc-html-module-section-source
-  [path : String]
-  [source : String]) : String
-  (doc_html.doc-html-module-section
-    (doc_render.DocModule.Module path (doc_extract.doc-extract-source source))))
 
 (define (bridge-doc-html-module-section-source-url
   [path : String]

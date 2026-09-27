@@ -1340,15 +1340,6 @@
       (set! data.advisory-sink sink)
       (compiler-backend-state-data-set! state data))))
 
-(define (compiler-backend-state-add-advisory!
-  [state : CompilerBackendState]
-  [phase : compiler_diagnostic.CompilerAdvisoryPhase]
-  [diagnostic : (& diagnostic compiler_diagnostic.CompilerDiagnostic)]) : bool
-  (compiler_diagnostic.compiler-advisory-sink-push!
-    (compiler-backend-state-advisory-sink state)
-    phase
-    diagnostic))
-
 (define (compiler-backend-state-set-metrics!
   [state : CompilerBackendState]
   [metrics : profile_state.CompilerProfileMetrics]) : unit

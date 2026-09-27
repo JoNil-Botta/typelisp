@@ -14888,14 +14888,6 @@
     cdiag.CompilerAdvisorySink
     lower.advisory-sink-owner))
 
-(define (compiler-lower-state-add-advisory!
-  [state : lower.CompilerLowerState]
-  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
-  (cdiag.compiler-advisory-sink-push!
-    (compiler-lower-state-advisory-sink state)
-    cdiag.CompilerAdvisoryPhase.Lowering
-    diagnostic))
-
 (defenum LowerPrunedProgram
   (Program ast.AstProgram ast.AstDeclPathList))
 

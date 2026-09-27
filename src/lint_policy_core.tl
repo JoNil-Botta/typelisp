@@ -126,9 +126,6 @@
 (define (lint-policy-groups-empty) : LintPolicyGroups
   (LintPolicyGroups (__tl_make-array LintPolicyGroup 0) 0))
 
-(define (lint-policy-groups-count [items : (& items LintPolicyGroups)]) : i64
-  items.len)
-
 (define (lint-policy-groups-ref
   [items : (& items LintPolicyGroups)]
   [index : i64]) : LintPolicyGroup

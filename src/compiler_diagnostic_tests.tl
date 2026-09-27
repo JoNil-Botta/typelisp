@@ -3,12 +3,15 @@
 ;;
 ;; Holds the render/metadata/typecheck-code fixtures, the test-only
 ;; compiler-diagnostic-string-eq? helper (its only consumers were these
-;; fixtures), and the compiler-diagnostic-self-test entry that drives them.
+;; fixtures), the advisory producers (compiler-advisory-sink-push! and the list
+;; push; no compiler phase emits advisories yet, only tests do), and the
+;; compiler-diagnostic-self-test entry that drives them.
 ;; All production rendering and classification machinery stays in
 ;; compiler_diagnostic.tl.
 (import compiler_diagnostic as cdiag)
 (import token)
 (import stdlib.string)
+(import stdlib.arena)
 
 (define (compiler-diagnostic-string-eq? [left : String] [right : String]) : bool
   (let
@@ -479,6 +482,95 @@
         (string.eq (compiler-diagnostic-code-registry-category count) "")
         (string.eq (compiler-diagnostic-code-registry-owner count) "")))))
 
+(define (compiler-advisory-phase-copy [phase : cdiag.CompilerAdvisoryPhase]) : cdiag.CompilerAdvisoryPhase
+  (match phase
+    [(cdiag.CompilerAdvisoryPhase.Semantic)
+      cdiag.CompilerAdvisoryPhase.Semantic]
+    [(cdiag.CompilerAdvisoryPhase.Lowering)
+      cdiag.CompilerAdvisoryPhase.Lowering]
+    [(cdiag.CompilerAdvisoryPhase.Optimization)
+      cdiag.CompilerAdvisoryPhase.Optimization]
+    [(cdiag.CompilerAdvisoryPhase.RegisterAllocation)
+      cdiag.CompilerAdvisoryPhase.RegisterAllocation]
+    [(cdiag.CompilerAdvisoryPhase.Backend) cdiag.CompilerAdvisoryPhase.Backend]))
+
+(define (compiler-advisory-list-grow!
+  [advisories : (&mut advisories cdiag.CompilerAdvisoryList)]) : unit
+  (let
+    [count : i64 advisories.len]
+    [old-capacity : i64 (array-length advisories.slots)]
+    [new-capacity : i64
+      (if (< old-capacity 1)
+        4
+        (* old-capacity 2))]
+    [next : (__tl_dyn-array cdiag.CompilerAdvisory)
+      (__tl_make-array cdiag.CompilerAdvisory new-capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref next index)
+            (cdiag.compiler-advisory-copy-ref
+              (& (array-ref advisories.slots index))))
+          (set! index (+ index 1))))
+      (set! advisories.slots next))))
+
+(define (compiler-advisory-list-push!
+  [advisories : (&mut advisories cdiag.CompilerAdvisoryList)]
+  [phase : cdiag.CompilerAdvisoryPhase]
+  [diagnostic : cdiag.CompilerDiagnostic]) : unit
+  (begin
+    (if (< advisories.len (array-length advisories.slots))
+      unit
+      (compiler-advisory-list-grow! advisories))
+    (let
+      [index : i64 advisories.len]
+      (begin
+        (set!
+          (array-ref advisories.slots index)
+          (cdiag.CompilerAdvisory phase diagnostic))
+        (set! advisories.len (+ index 1))))))
+
+;; Return false for an error-level diagnostic instead of silently reclassifying
+;; it. The caller retains the original value and must take its ordinary fatal
+;; path. Accepted advisories are deep-copied while the sink arena is current.
+(define (compiler-advisory-sink-push!
+  [sink : cdiag.CompilerAdvisorySink]
+  [phase : cdiag.CompilerAdvisoryPhase]
+  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
+  (if (match (cdiag.compiler-diagnostic-level diagnostic)
+    [(cdiag.CompilerDiagnosticError) true]
+    [_ false])
+    false
+    (let
+      [data : cdiag.CompilerAdvisorySinkData
+        (cdiag.compiler-advisory-sink-data sink)]
+      [payload-arena : i64
+        (if (= data.payload-arena 0)
+          (arena.tl_arena_make_small)
+          data.payload-arena)]
+      [advisories : cdiag.CompilerAdvisoryList
+        (if (= data.payload-arena 0)
+          (in-arena
+            (arena.Arena payload-arena)
+            (cdiag.compiler-advisory-list-with-capacity 4))
+          data.advisories)]
+      (begin
+        (in-arena
+          (arena.Arena payload-arena)
+          (compiler-advisory-list-push!
+            (&mut advisories)
+            (compiler-advisory-phase-copy phase)
+            (cdiag.compiler-diagnostic-copy-ref diagnostic)))
+        (cdiag.compiler-advisory-sink-data-set!
+          sink
+          (cdiag.CompilerAdvisorySinkData
+            payload-arena
+            advisories
+            data.generation))
+        true))))
+
 (define (compiler-diagnostic-advisory-warning
   [path : String]
   [line : i64]
@@ -509,31 +601,31 @@
           [fatal : cdiag.CompilerDiagnostic
             (cdiag.compiler-diagnostic-simple "first.tl" 6 1 "fatal")]
           (begin
-            (cdiag.compiler-advisory-sink-push!
+            (compiler-advisory-sink-push!
               sink-a
               cdiag.CompilerAdvisoryPhase.Semantic
               (& semantic))
-            (cdiag.compiler-advisory-sink-push!
+            (compiler-advisory-sink-push!
               sink-a
               cdiag.CompilerAdvisoryPhase.Lowering
               (& lowering))
-            (cdiag.compiler-advisory-sink-push!
+            (compiler-advisory-sink-push!
               sink-a
               cdiag.CompilerAdvisoryPhase.Optimization
               (& optimization))
-            (cdiag.compiler-advisory-sink-push!
+            (compiler-advisory-sink-push!
               sink-a
               cdiag.CompilerAdvisoryPhase.RegisterAllocation
               (& regalloc))
-            (cdiag.compiler-advisory-sink-push!
+            (compiler-advisory-sink-push!
               sink-a
               cdiag.CompilerAdvisoryPhase.Backend
               (& backend))
-            (cdiag.compiler-advisory-sink-push!
+            (compiler-advisory-sink-push!
               sink-b
               cdiag.CompilerAdvisoryPhase.Semantic
               (& other))
-            (cdiag.compiler-advisory-sink-push!
+            (compiler-advisory-sink-push!
               sink-a
               cdiag.CompilerAdvisoryPhase.Backend
               (& fatal))

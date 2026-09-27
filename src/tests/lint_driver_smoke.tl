@@ -156,13 +156,6 @@
     false
     true))
 
-(define (lint-driver-smoke-source-rule-count-with-name-case
-  [source : String]
-  [rule : String]) : i64
-  (driver_tests.selfhost-lint-findings-rule-count
-    (lint-driver-smoke-source-findings-with-name-case source)
-    rule))
-
 (define (lint-driver-smoke-name-case-rule-count
   [findings : lint_core.LintFindings]) : i64
   (+
@@ -283,22 +276,6 @@
       (let
         [fspan : ast.AstSourceSpan finding.span]
         (and
-          (= (ast.ast-source-span-start-line fspan) line)
-          (string.eq finding.rule-id rule-id)))]
-    [(lint_core.LintMaybeFinding.No) false]))
-
-(define (lint-driver-smoke-finding-rule-depth-line-ok?
-  [findings : lint_core.LintFindings]
-  [index : i64]
-  [rule-id : String]
-  [depth : i64]
-  [line : i64]) : bool
-  (match (lint_core_tests.lint-findings-get findings index)
-    [(lint_core.LintMaybeFinding.Some finding)
-      (let
-        [fspan : ast.AstSourceSpan finding.span]
-        (and
-          (= finding.depth depth)
           (= (ast.ast-source-span-start-line fspan) line)
           (string.eq finding.rule-id rule-id)))]
     [(lint_core.LintMaybeFinding.No) false]))

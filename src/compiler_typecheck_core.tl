@@ -945,14 +945,6 @@
 (define (tc-job-state-advisory-sink [state : TcJobState]) : cdiag.CompilerAdvisorySink
   (tc-job-state-field state advisory-sink cdiag.CompilerAdvisorySink))
 
-(define (tc-job-state-add-advisory!
-  [state : TcJobState]
-  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
-  (cdiag.compiler-advisory-sink-push!
-    (tc-job-state-advisory-sink state)
-    cdiag.CompilerAdvisoryPhase.Semantic
-    diagnostic))
-
 (define (tc-job-state-reset-advisories! [state : TcJobState]) : unit
   (cdiag.compiler-advisory-sink-reset! (tc-job-state-advisory-sink state)))
 
@@ -4984,18 +4976,6 @@
 
 (define (tc-ty-node-pool-exhausted-diagnostic) : cdiag.CompilerDiagnostic
   (tc-diag-at-start (ast.ty-node-pool-exhausted-message)))
-
-(define (tc-typecheck-result-with-pool-check
-  [job-state : TcJobState]
-  [result : ResultCompilerTypecheck]) : ResultCompilerTypecheck
-  (begin
-    (tc-job-state-release-scratch-arenas! job-state)
-    (if (ast.ty-node-pool-exhausted?)
-      (ResultCompilerTypecheck.Err
-        (box
-          (cdiag.compiler-diagnostic-list-single
-            (tc-ty-node-pool-exhausted-diagnostic))))
-      result)))
 
 (define (tc-typecheck-checked-result-with-pool-check
   [job-state : TcJobState]
@@ -18636,20 +18616,6 @@
     (begin
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
-
-(define (tc-lookup-hygiene-context-global-visible-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [module : String]
-  [module-id : i64]
-  [name-id : i64]) : ResultTcType
-  (tc-lookup-hygiene-context-global-visible-id-mode
-    ctx
-    env
-    module
-    module-id
-    name-id
-    false))
 
 (define (tc-hygiene-global-binding-unsafe-scan
   [root : TcTypeEnv]

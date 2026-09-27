@@ -117,15 +117,6 @@
 (defstruct CompilerAdvisorySink
   (address i64))
 
-(define (compiler-advisory-phase-copy [phase : CompilerAdvisoryPhase]) : CompilerAdvisoryPhase
-  (match phase
-    [(CompilerAdvisoryPhase.Semantic) (CompilerAdvisoryPhase.Semantic)]
-    [(CompilerAdvisoryPhase.Lowering) (CompilerAdvisoryPhase.Lowering)]
-    [(CompilerAdvisoryPhase.Optimization) (CompilerAdvisoryPhase.Optimization)]
-    [(CompilerAdvisoryPhase.RegisterAllocation)
-      (CompilerAdvisoryPhase.RegisterAllocation)]
-    [(CompilerAdvisoryPhase.Backend) (CompilerAdvisoryPhase.Backend)]))
-
 (define (compiler-advisory-list-with-capacity [capacity : i64]) : CompilerAdvisoryList
   (CompilerAdvisoryList (__tl_make-array CompilerAdvisory capacity) 0))
 
@@ -158,43 +149,6 @@
   (CompilerAdvisory
     (compiler-advisory-phase advisory)
     (compiler-diagnostic-copy-ref (& advisory.diagnostic))))
-
-(define (compiler-advisory-list-grow!
-  [advisories : (&mut advisories CompilerAdvisoryList)]) : unit
-  (let
-    [count : i64 advisories.len]
-    [old-capacity : i64 (array-length advisories.slots)]
-    [new-capacity : i64
-      (if (< old-capacity 1)
-        4
-        (* old-capacity 2))]
-    [next : (__tl_dyn-array CompilerAdvisory)
-      (__tl_make-array CompilerAdvisory new-capacity)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            (array-ref next index)
-            (compiler-advisory-copy-ref (& (array-ref advisories.slots index))))
-          (set! index (+ index 1))))
-      (set! advisories.slots next))))
-
-(define (compiler-advisory-list-push!
-  [advisories : (&mut advisories CompilerAdvisoryList)]
-  [phase : CompilerAdvisoryPhase]
-  [diagnostic : CompilerDiagnostic]) : unit
-  (begin
-    (if (< advisories.len (array-length advisories.slots))
-      unit
-      (compiler-advisory-list-grow! advisories))
-    (let
-      [index : i64 advisories.len]
-      (begin
-        (set!
-          (array-ref advisories.slots index)
-          (CompilerAdvisory phase diagnostic))
-        (set! advisories.len (+ index 1))))))
 
 (define (compiler-advisory-sink-new) : CompilerAdvisorySink
   (let
@@ -241,45 +195,6 @@
           0
           (compiler-advisory-list-empty)
           (+ data.generation 1))))))
-
-(define (compiler-advisory-level? [level : CompilerDiagnosticLevel]) : bool
-  (match level
-    [(CompilerDiagnosticError) false]
-    [(CompilerDiagnosticWarning) true]
-    [(CompilerDiagnosticNote) true]))
-
-;; Return false for an error-level diagnostic instead of silently reclassifying
-;; it. The caller retains the original value and must take its ordinary fatal
-;; path. Accepted advisories are deep-copied while the sink arena is current.
-(define (compiler-advisory-sink-push!
-  [sink : CompilerAdvisorySink]
-  [phase : CompilerAdvisoryPhase]
-  [diagnostic : (& diagnostic CompilerDiagnostic)]) : bool
-  (if (not (compiler-advisory-level? (compiler-diagnostic-level diagnostic)))
-    false
-    (let
-      [data : CompilerAdvisorySinkData (compiler-advisory-sink-data sink)]
-      [payload-arena : i64
-        (if (= data.payload-arena 0)
-          (arena.tl_arena_make_small)
-          data.payload-arena)]
-      [advisories : CompilerAdvisoryList
-        (if (= data.payload-arena 0)
-          (in-arena
-            (arena.Arena payload-arena)
-            (compiler-advisory-list-with-capacity 4))
-          data.advisories)]
-      (begin
-        (in-arena
-          (arena.Arena payload-arena)
-          (compiler-advisory-list-push!
-            (&mut advisories)
-            (compiler-advisory-phase-copy phase)
-            (compiler-diagnostic-copy-ref diagnostic)))
-        (compiler-advisory-sink-data-set!
-          sink
-          (CompilerAdvisorySinkData payload-arena advisories data.generation))
-        true))))
 
 (define (compiler-diagnostic-list-box-shared-view
   [value : (Box CompilerDiagnosticList)]) : CompilerDiagnosticList

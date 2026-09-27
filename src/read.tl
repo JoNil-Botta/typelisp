@@ -119,11 +119,6 @@
 (define (symbol-id [name-id : ci.InternSyntaxId]) : i64
   (ci.intern-syntax-id-value name-id))
 
-;: Parser metadata may deliberately promote a string literal to a symbol.
-;: Assign that spelling its sole source id while the frontend is still writable.
-(define (string-symbol-id [text : String]) : i64
-  (ci.intern-source-slice text 0 (ci.intern-private-string-length text)))
-
 ;: Intern a process-stable parser literal once and memoize its String object.
 (define (stable-symbol-id [text : String]) : i64
   (ci.intern-source-slice text 0 (ci.intern-private-string-length text)))

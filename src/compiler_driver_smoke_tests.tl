@@ -13,10 +13,10 @@
 (import compiler_optimize)
 (import compiler_cfg_core)
 (import compiler_diagnostic as cdiag)
+(import compiler_diagnostic_tests as cdiag_tests)
 (import compiler_typecheck_core as tc)
 (import compiler_parse_core)
 (import compiler_backend)
-(import compiler_regalloc)
 (import compiler_ir_types)
 (import compiler_load)
 (import sym_i64_env)
@@ -1740,24 +1740,37 @@
         (owned_view.compiler-owned-shared-view state-a))]
     [_append : unit
       (begin
-        (tc.tc-job-state-add-advisory!
-          (driver.compiler-driver-state-typecheck
-            (owned_view.compiler-owned-shared-view state-a))
+        (cdiag_tests.compiler-advisory-sink-push!
+          (tc.tc-job-state-advisory-sink
+            (driver.compiler-driver-state-typecheck
+              (owned_view.compiler-owned-shared-view state-a)))
+          cdiag.CompilerAdvisoryPhase.Semantic
           (& semantic))
-        (compiler_lower_tests.compiler-lower-state-add-advisory!
-          (driver.compiler-driver-state-owned-lower-state
-            (owned_view.compiler-owned-shared-view state-a))
+        (cdiag_tests.compiler-advisory-sink-push!
+          (compiler_lower_tests.compiler-lower-state-advisory-sink
+            (driver.compiler-driver-state-owned-lower-state
+              (owned_view.compiler-owned-shared-view state-a)))
+          cdiag.CompilerAdvisoryPhase.Lowering
           (& lowering))
-        (compiler_optimize.compiler-opt-add-advisory! sink-a (& optimization))
-        (compiler_regalloc.compiler-reg-add-advisory! sink-a (& regalloc))
-        (compiler_backend.compiler-backend-state-add-advisory!
-          (driver.compiler-driver-state-backend
-            (owned_view.compiler-owned-shared-view state-a))
+        (cdiag_tests.compiler-advisory-sink-push!
+          sink-a
+          cdiag.CompilerAdvisoryPhase.Optimization
+          (& optimization))
+        (cdiag_tests.compiler-advisory-sink-push!
+          sink-a
+          cdiag.CompilerAdvisoryPhase.RegisterAllocation
+          (& regalloc))
+        (cdiag_tests.compiler-advisory-sink-push!
+          (compiler_backend.compiler-backend-state-advisory-sink
+            (driver.compiler-driver-state-backend
+              (owned_view.compiler-owned-shared-view state-a)))
           cdiag.CompilerAdvisoryPhase.Backend
           (& backend))
-        (tc.tc-job-state-add-advisory!
-          (driver.compiler-driver-state-typecheck
-            (owned_view.compiler-owned-shared-view state-b))
+        (cdiag_tests.compiler-advisory-sink-push!
+          (tc.tc-job-state-advisory-sink
+            (driver.compiler-driver-state-typecheck
+              (owned_view.compiler-owned-shared-view state-b)))
+          cdiag.CompilerAdvisoryPhase.Semantic
           (& other))
         unit)]
     [advisories : cdiag.CompilerAdvisoryList

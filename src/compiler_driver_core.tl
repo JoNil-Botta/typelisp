@@ -304,10 +304,6 @@
 (define (compiler-driver-state-backend [state : CompilerDriverState]) : compiler_backend.CompilerBackendState
   state.backend-state)
 
-(define (compiler-driver-state-typecheck-prefix-cache
-  [state : CompilerDriverState]) : compiler_typecheck_core.TcPrefixSnapshotCacheState
-  state.typecheck-prefix-cache)
-
 (define (compiler-driver-state-typecheck [state : CompilerDriverState]) : compiler_typecheck_core.TcJobState
   state.typecheck-state)
 
@@ -873,10 +869,6 @@
   (compiler-driver-state-source-name-session-in-arena
     (owned_view.compiler-owned-shared-view state)
     (compiler-driver-state-surface-arena state)))
-
-(define (compiler-driver-state-structural-session [state : CompilerDriverState]) : cis.InternStructuralSessionHandle
-  (cis.intern-structural-session-handle-from-source-names
-    (compiler-driver-state-source-name-session state)))
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : (& state CompilerDriverState)]) : unit

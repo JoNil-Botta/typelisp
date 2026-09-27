@@ -1,5 +1,6 @@
 ;; compiler_regalloc_smoke.tl - Runnable smoke for compiler_regalloc.tl.
 (import compiler_liveness as live)
+(import compiler_liveness_tests as live_tests)
 (import compiler_regalloc as reg)
 (import compiler_regalloc_tests as reg_tests)
 (import compiler_ir_types as ir)
@@ -89,7 +90,9 @@
     (match (reg_tests.compiler-reg-plan-function func)
       [(reg.CompilerRegPlan.Plan _ ineligible _ _ _ _)
         (and
-          (live.compiler-live-set-eq? call-args (live.compiler-live-set3 0 1 2))
+          (live.compiler-live-set-eq?
+            call-args
+            (live_tests.compiler-live-set3 0 1 2))
           (live.compiler-live-set-contains? call-live 3)
           (live.compiler-live-set-contains? direct-calls 6)
           ;; Call operands retain ordinary spill eligibility; only hidden helper

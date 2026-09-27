@@ -38226,7 +38226,7 @@ b_keep:
         (compiler-backend-stream-record-growth-ok?)
         (compiler-backend-stream-home-keeps-stable-root-ok?))
       (and
-        (pmove.compiler-parallel-move-self-test?)
+        (compiler-parallel-move-self-test?)
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-forward-edge-unbracket-ok?)
         (compiler-backend-phi-xmm-stage-preserved-ok?)
@@ -41782,3 +41782,82 @@ b_keep:
   (backend.compiler-backend-function-state-live-set
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-live-set-group-vars))
+
+(define (compiler-parallel-move-edge-seq-empty) : pmove.CompilerParallelMoveEdgeSeq
+  (pmove.CompilerParallelMoveEdgeSeq
+    (__tl_make-array pmove.CompilerParallelMoveEdge 0)
+    0))
+
+(define (compiler-parallel-move-test-edge
+  [id : i64]
+  [dest : i64]
+  [source : i64]) : pmove.CompilerParallelMoveEdge
+  (ParallelMoveEdge id dest 0 source 0))
+
+(define (compiler-parallel-move-test-seq-two
+  [first : pmove.CompilerParallelMoveEdge]
+  [second : pmove.CompilerParallelMoveEdge]) : pmove.CompilerParallelMoveEdgeSeq
+  (let
+    [edges : pmove.CompilerParallelMoveEdgeSeq
+      (pmove.compiler-parallel-move-edge-seq-with-capacity 2)]
+    (begin
+      (pmove.compiler-parallel-move-edge-push! (&mut edges) first)
+      (pmove.compiler-parallel-move-edge-push! (&mut edges) second)
+      edges)))
+
+(define (compiler-parallel-move-self-test?) : bool
+  (let
+    [empty : pmove.CompilerParallelMoveEdgeSeq
+      (compiler-parallel-move-edge-seq-empty)]
+    [chain : pmove.CompilerParallelMoveEdgeSeq
+      (compiler-parallel-move-test-seq-two
+        (compiler-parallel-move-test-edge 1 10 20)
+        (compiler-parallel-move-test-edge 2 20 0))]
+    [cycle : pmove.CompilerParallelMoveEdgeSeq
+      (compiler-parallel-move-test-seq-two
+        (compiler-parallel-move-test-edge 1 10 20)
+        (compiler-parallel-move-test-edge 2 20 10))]
+    [pair : pmove.CompilerParallelMoveEdgeSeq
+      (compiler-parallel-move-test-seq-two
+        (ParallelMoveEdge 3 12 13 14 15)
+        (compiler-parallel-move-test-edge 4 8 13))]
+    ;; A scalar destination must not clobber either half of a pair source
+    ;; before the pair is copied. This is the reverse of `pair` above and is
+    ;; the phi-carried group case: emit edge 5 first, then edge 6 may write
+    ;; resource 12.
+    [pair-source : pmove.CompilerParallelMoveEdgeSeq
+      (compiler-parallel-move-test-seq-two
+        (ParallelMoveEdge 5 8 0 12 13)
+        (compiler-parallel-move-test-edge 6 12 20))]
+    (and
+      (match (pmove.compiler-parallel-move-decision
+        (pmove.compiler-parallel-move-shared-view empty)
+        empty)
+        [(CompilerParallelMoveDone) true]
+        [_ false])
+      (match (pmove.compiler-parallel-move-decision
+        (pmove.compiler-parallel-move-shared-view chain)
+        chain)
+        [(CompilerParallelMoveUnblocked id) (= id 1)]
+        [_ false])
+      (match (pmove.compiler-parallel-move-decision
+        (pmove.compiler-parallel-move-shared-view cycle)
+        cycle)
+        [(CompilerParallelMoveCycle id) (= id 1)]
+        [_ false])
+      (match (pmove.compiler-parallel-move-decision
+        (pmove.compiler-parallel-move-shared-view pair)
+        (pmove.compiler-parallel-move-shared-view pair))
+        [(CompilerParallelMoveUnblocked id) (= id 4)]
+        [_ false])
+      (pmove.compiler-parallel-move-seq-has-blocked?
+        (pmove.compiler-parallel-move-shared-view pair)
+        pair)
+      (match (pmove.compiler-parallel-move-decision
+        (pmove.compiler-parallel-move-shared-view pair-source)
+        (pmove.compiler-parallel-move-shared-view pair-source))
+        [(CompilerParallelMoveUnblocked id) (= id 5)]
+        [_ false])
+      (pmove.compiler-parallel-move-seq-has-blocked?
+        (pmove.compiler-parallel-move-shared-view pair-source)
+        pair-source))))

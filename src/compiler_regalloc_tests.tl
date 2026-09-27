@@ -5,6 +5,7 @@
 (import compiler_profile_state as profile_state)
 (import compiler_abi as cabi)
 (import compiler_liveness as live)
+(import compiler_liveness_tests as live_tests)
 (import compiler_ir_types as ir)
 (import compiler_ir_text as irt)
 (import compiler_owned_view as owned_view)
@@ -8953,7 +8954,7 @@
   test
   (define (compiler-reg-call-span-counts-ok?) : bool
     (let
-      [points : live.CompilerLiveI64Set (live.compiler-live-set4 2 4 6 8)]
+      [points : live.CompilerLiveI64Set (live_tests.compiler-live-set4 2 4 6 8)]
       (and
         (=
           (compiler-reg-call-set-count-in-range
@@ -13235,7 +13236,7 @@
       (reg.compiler-reg-active-insert
         (reg.compiler-reg-active-seq-empty)
         (reg.CompilerRegActive 1 10 cabi.compiler-reg-id-r12))]
-    [hole-aware : live.CompilerLiveI64Set (live.compiler-live-set3 0 2 3)]
+    [hole-aware : live.CompilerLiveI64Set (live_tests.compiler-live-set3 0 2 3)]
     [parents : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     (begin
       (reg.compiler-reg-fill-i64-array (&mut starts) -1)
@@ -13335,7 +13336,7 @@
             [coalesce-map (reg.CompilerRegCoalesceMap (clone parents))]
             (reg.compiler-reg-coalesce-root-set-from-vars
               coalesce-map
-              (live.compiler-live-set2 1 4)))]
+              (live_tests.compiler-live-set2 1 4)))]
         (and
           var1-disjoint-reuses
           root-hole-reuses
@@ -14821,7 +14822,7 @@
   (match (compiler-reg-color-fusion-pin-coloring (live.compiler-live-set-empty))
     [(reg.CompilerRegColoring.Remap merged-remap merged-slots)
       (match (compiler-reg-color-fusion-pin-coloring
-        (live.compiler-live-set2 0 1))
+        (live_tests.compiler-live-set2 0 1))
         [(reg.CompilerRegColoring.Remap pin-remap pin-slots)
           (and
             (= merged-slots 1)

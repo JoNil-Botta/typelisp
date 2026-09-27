@@ -695,10 +695,14 @@ The row includes source bytes, token and encoded-integer counts, compact result
 bytes, cold and warm latency, and RSS deltas for the retained cold snapshot and
 the request-local warm loop. Override the request count or source with
 `TYPELISP_LSP_SEMANTIC_TOKEN_REQUESTS` and
-`TYPELISP_LSP_SEMANTIC_TOKEN_SOURCE`.
+`TYPELISP_LSP_SEMANTIC_TOKEN_SOURCE`; its scratch files go under
+`target/lsp-semantic-tokens-latency/` (`TYPELISP_LSP_SEMANTIC_TOKEN_WORKDIR`).
 
-These three harnesses drive framed stdio JSON-RPC through the host's Python 3
-(standard library only).
+These three harnesses share `scripts/lib-lsp-client.sh`, a POSIX sh client for
+framed stdio JSON-RPC. Its request timers read `date +%s%N` (GNU coreutils,
+BusyBox or MSYS2) and stop when the response header arrives. Each timer
+includes one `date` spawn, so sub-millisecond requests read as about a
+millisecond.
 
 ### Allocation profile rows
 

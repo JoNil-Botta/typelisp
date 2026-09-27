@@ -23501,29 +23501,28 @@
     [state : OptLicmStoreState
       (let
         [types (opt-ssa-var-types-new)]
-        (let
-          [direct-call-clean (opt_i64_i64_map.with-capacity 1)]
-          [global-cells (opt-global-cell-summary-empty)]
-          (opt-licm-store-state-blocks
-            type-segment-bases
-            types
-            blocks
-            direct-call-clean
-            global-cells
-            true
-            (OptLicmStoreState
-              summary
-              (opt-licm-store-summary-empty)
-              (opt-licm-ptr-env-new)
-              (opt-licm-root-env-with-capacity
-                17
-                (opt_i64_i64_map.with-capacity 1))
-              (opt-licm-store-roots-new)
-              false
-              false
-              false
-              (opt-global-mod-ref-any)
-              (opt-global-obj-any)))))]
+        [direct-call-clean (opt_i64_i64_map.with-capacity 1)]
+        [global-cells (opt-global-cell-summary-empty)]
+        (opt-licm-store-state-blocks
+          type-segment-bases
+          types
+          blocks
+          direct-call-clean
+          global-cells
+          true
+          (OptLicmStoreState
+            summary
+            (opt-licm-store-summary-empty)
+            (opt-licm-ptr-env-new)
+            (opt-licm-root-env-with-capacity
+              17
+              (opt_i64_i64_map.with-capacity 1))
+            (opt-licm-store-roots-new)
+            false
+            false
+            false
+            (opt-global-mod-ref-any)
+            (opt-global-obj-any))))]
     (opt-licm-store-summary-merge state.summary state.rooted-summary)))
 
 (define (opt-licm-memory-safe?
@@ -47338,12 +47337,11 @@
             phi-inputs-at-45408-3.slots
             (+ phi-inputs-at-45408-3.start 1)
             (- phi-inputs-at-45408-3.len 1))]
-        (let
-          [old (opt-sccp-phi-input-value state value pred ty)]
-          (opt-sccp-join
-            type-segment-bases
-            old
-            (opt-sccp-phi-value type-segment-bases state rest ty)))))))
+        [old (opt-sccp-phi-input-value state value pred ty)]
+        (opt-sccp-join
+          type-segment-bases
+          old
+          (opt-sccp-phi-value type-segment-bases state rest ty))))))
 
 (define (opt-sccp-mark-branch-targets
   [state : OptSccpState]

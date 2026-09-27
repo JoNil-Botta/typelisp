@@ -6012,9 +6012,8 @@
     [unused-word-dead : bool
       (let
         [set (opt_i64_i64_map.with-capacity 4)]
-        (let
-          [instr (irt.instr "%3 = word %2, 0 : i64")]
-          (opt-instr-dead? set instr)))]
+        [instr (irt.instr "%3 = word %2, 0 : i64")]
+        (opt-instr-dead? set instr))]
     [dead-blocks : ir.CompilerIrBlockList
       (ir.compiler-ir-block-cons
         (ir.CompilerIrBlock.Block
@@ -30199,13 +30198,12 @@
   [representations : ir.CompilerIrRepresentationIndex]) : bool
   (let
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
-    (let
-      [b
-        (opt.opt-ssa-construct-function-with-representations
-          bases
-          representations
-          (opt.compiler-opt-global-shared-view func))]
-      (opt.opt-function-eq bases func b))))
+    [b
+      (opt.opt-ssa-construct-function-with-representations
+        bases
+        representations
+        (opt.compiler-opt-global-shared-view func))]
+    (opt.opt-function-eq bases func b)))
 
 (define (opt-ssa-over-budget-function) : ir.CompilerIrFunction
   (let
@@ -32768,17 +32766,15 @@
       [(let
           [loop-defs (opt_i64_i64_map.with-capacity 4)]
           [hoisted (opt_i64_i64_map.with-capacity 4)]
-          (let
-            [value (ir.CompilerIrValue.Global (opt-test-symbol "g"))]
-            (opt.opt-licm-value-invariant? false loop-defs hoisted value)))
+          [value (ir.CompilerIrValue.Global (opt-test-symbol "g"))]
+          (opt.opt-licm-value-invariant? false loop-defs hoisted value))
         26]
       [(not
           (let
             [loop-defs (opt_i64_i64_map.with-capacity 4)]
             [hoisted (opt_i64_i64_map.with-capacity 4)]
-            (let
-              [value (ir.CompilerIrValue.Global (opt-test-symbol "g"))]
-              (opt.opt-licm-value-invariant? true loop-defs hoisted value))))
+            [value (ir.CompilerIrValue.Global (opt-test-symbol "g"))]
+            (opt.opt-licm-value-invariant? true loop-defs hoisted value)))
         126]
       [(opt.opt-licm-globals-clean? true) 127]
       [(not (opt.opt-licm-globals-clean? false)) 128]
@@ -39874,18 +39870,17 @@
   (let
     [map : opt_i64_i64_map.Map (opt-pcd-test-map false)]
     [_agg : unit (opt_i64_i64_map.insert-ref! (&mut map) (opt-pcd-test-agg) 0)]
-    (let
-      [func
-        (opt.opt-pure-call-dedupe-function
-          map
-          (ir.CompilerIrFunction.Function
-            (opt-test-symbol "pcd_redef_fixture")
-            (opt-pcd-test-params)
-            (ast.AstType.I64)
-            opt-pcd-test-frame
-            (opt-pcd-test-redef-blocks)
-            ir.CompilerIrFunctionAbi.Ordinary))]
-      (opt.opt-function-blocks func))))
+    [func
+      (opt.opt-pure-call-dedupe-function
+        map
+        (ir.CompilerIrFunction.Function
+          (opt-test-symbol "pcd_redef_fixture")
+          (opt-pcd-test-params)
+          (ast.AstType.I64)
+          opt-pcd-test-frame
+          (opt-pcd-test-redef-blocks)
+          ir.CompilerIrFunctionAbi.Ordinary))]
+    (opt.opt-function-blocks func)))
 
 ;; Is instruction `index` of block `label` `Mov dst, %src`?
 (define (opt-pcd-test-mov-at?
@@ -68953,14 +68948,13 @@
     [functions : ir.CompilerIrFunctionSeq
       (opt-gc-test-functions1
         (opt-cm-elem-function callee (opt-t22-element-writer-instrs store-ty)))]
-    (let
-      [blocks
-        (opt-t22-run
-          (opt-load-cse-shared-ref-params)
-          (opt.opt-call-memory-build (opt-t22-type-bases) functions 16)
-          (opt.opt-global-cell-summary-empty)
-          (opt-t22-blocks (opt-t22-element-call-instrs callee)))]
-      (opt-count-load-blocks blocks))))
+    [blocks
+      (opt-t22-run
+        (opt-load-cse-shared-ref-params)
+        (opt.opt-call-memory-build (opt-t22-type-bases) functions 16)
+        (opt.opt-global-cell-summary-empty)
+        (opt-t22-blocks (opt-t22-element-call-instrs callee)))]
+    (opt-count-load-blocks blocks)))
 
 ;; (e) A named cell word read twice across a call. `GlobalAddr` is the spelling
 ;; that keys as `GlobalField(g, 0, i64, false)` -- g's own storage -- and it is
@@ -69002,20 +68996,19 @@
             (ir.compiler-ir-function-seq-prepend
               (opt-t22-opaque-function symbols.opaque)
               (ir.compiler-ir-function-seq-empty)))))]
-    (let
-      [blocks
-        (opt-t22-run
-          (ir.compiler-ir-param-seq-empty)
-          (opt.opt-call-memory-build
-            (opt-t22-type-bases)
-            (ir.compiler-ir-global-shared-view functions)
-            16)
-          (opt.opt-global-cell-summary-build
-            (opt-t22-type-bases)
-            (opt-t22-cell-globals symbols)
-            functions)
-          (opt-t22-blocks (opt-t22-cell-row-instrs symbols callee)))]
-      (opt-count-load-blocks blocks))))
+    [blocks
+      (opt-t22-run
+        (ir.compiler-ir-param-seq-empty)
+        (opt.opt-call-memory-build
+          (opt-t22-type-bases)
+          (ir.compiler-ir-global-shared-view functions)
+          16)
+        (opt.opt-global-cell-summary-build
+          (opt-t22-type-bases)
+          (opt-t22-cell-globals symbols)
+          functions)
+        (opt-t22-blocks (opt-t22-cell-row-instrs symbols callee)))]
+    (opt-count-load-blocks blocks)))
 
 ;; --- (d) IAG-2: a `(&mut g)` argument at a parameter-write position ---------
 ;;
@@ -69098,19 +69091,18 @@
         (opt-t22-type-bases)
         (opt-t22-storage-globals symbols)
         (ir.compiler-ir-global-shared-view functions))]
-    (let
-      [blocks
-        (opt-t22-run
-          (ir.compiler-ir-param-seq-empty)
-          (opt.opt-call-memory-build
-            (opt-t22-type-bases)
-            (ir.compiler-ir-global-shared-view functions)
-            16)
-          (if with-storage?
-            (opt-test-global-obj-attach globals functions 16 cells)
-            cells)
-          (opt-t22-blocks (opt-t22-global-arg-instrs symbols callee arg)))]
-      (opt-count-load-blocks blocks))))
+    [blocks
+      (opt-t22-run
+        (ir.compiler-ir-param-seq-empty)
+        (opt.opt-call-memory-build
+          (opt-t22-type-bases)
+          (ir.compiler-ir-global-shared-view functions)
+          16)
+        (if with-storage?
+          (opt-test-global-obj-attach globals functions 16 cells)
+          cells)
+        (opt-t22-blocks (opt-t22-global-arg-instrs symbols callee arg)))]
+    (opt-count-load-blocks blocks)))
 
 ;; --- (c) MF-5 (ii): the width rule for constant globals ---------------------
 ;;
@@ -72695,15 +72687,14 @@
                   (ast.AstType.I64))
                 (opt.OptUnrollPhiList.Nil))
               (opt.OptUnrollPhiList.Nil)))]
-        (let
-          [ku-ids (__tl_make-array i64 44)]
-          (opt.opt-unroll-sum-chains
-            (opt.compiler-opt-global-shared-view instrs)
-            0
-            instrs.len
-            others
-            ku-ids
-            copies))))))
+        [ku-ids (__tl_make-array i64 44)]
+        (opt.opt-unroll-sum-chains
+          (opt.compiler-opt-global-shared-view instrs)
+          0
+          instrs.len
+          others
+          ku-ids
+          copies)))))
 
 (test
   unrolled-sum-chain-admission

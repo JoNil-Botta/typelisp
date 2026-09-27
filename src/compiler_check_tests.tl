@@ -492,14 +492,14 @@
           [slot-definition : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Definition
               0)]
           [slot-write : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               0)]
@@ -510,63 +510,63 @@
           [slot-rhs-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               1)]
           [slot-result-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               2)]
           [shadow-param-definition : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Definition
               0)]
           [shadow-local-definition : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Definition
               1)]
           [shadow-param-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               0)]
           [shadow-local-write : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               1)]
           [shadow-local-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               2)]
           [shadow-local-result-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               3)]
           [bump-read : i64
             (sem_tests.compiler-semantic-source-index-find-record
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "bump"
               semantic_index.CompilerSemanticRecordRole.Use
               -1)]

@@ -1938,7 +1938,7 @@
     (lsp-str2 "file://" (lsp-percent-encode-path path))
     (lsp-str2 "file:///" (lsp-percent-encode-path path))))
 
-(define (lsp-resolved-path-to-file-uri [path : String]) : String
+(define (lsp-resolved-path-to-file-uri [path : (& path str)]) : String
   (let
     [normalized : String (fs.path-normalize (& path))]
     (lsp-path-to-file-uri
@@ -2108,10 +2108,11 @@
   [span : (& span cdiag.CompilerDiagnosticSpan)]) : String
   (let
     [path : String (cdiag.compiler-diagnostic-span-path span)]
-    (lsp-resolved-path-to-file-uri
+    [path-arg
       (if (string.eq path "")
         fallback-path
-        path))))
+        path)]
+    (lsp-resolved-path-to-file-uri path-arg)))
 
 (define (lsp-diagnostic-related-message
   [label : cdiag.CompilerDiagnosticMaybeString]) : String
@@ -4922,9 +4923,7 @@
     [span : compiler_semantic_index.CompilerSemanticSpan record.span]
     (lsp-json-object2
       "uri"
-      (json.JsonString
-        (lsp-resolved-path-to-file-uri
-          (owned_view.compiler-owned-shared-view span.path)))
+      (json.JsonString (lsp-resolved-path-to-file-uri span.path))
       "range"
       (lsp-json-object2
         "start"
@@ -8383,8 +8382,7 @@
         [path : String doc.path]
         [uri : String
           (if (> (string.string-length path) 0)
-            (lsp-resolved-path-to-file-uri
-              (owned_view.compiler-owned-shared-view path))
+            (lsp-resolved-path-to-file-uri path)
             "")]
         (begin
           (if (and

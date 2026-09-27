@@ -171,7 +171,7 @@
   [src : String]
   [line : i64]
   [col : i64]
-  [expected : String]) : bool
+  [expected : (& expected str)]) : bool
   (match (fcst.parse-format-source-result src)
     [(fcst.ResultFormatCst.Ok _) false]
     [(fcst.ResultFormatCst.Err err)
@@ -190,46 +190,14 @@
   (let
     [message : String "format lexer: malformed number literal"]
     (and
-      (fe-format-cst-malformed-number-at?
-        "1e"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e+"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1.5e"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e2foo"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1.e2"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1_0e2"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e2.3"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e2_3"
-        1
-        1
-        (lx.global-shared-view message))
+      (fe-format-cst-malformed-number-at? "1e" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e+" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1.5e" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e2foo" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1.e2" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1_0e2" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e2.3" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e2_3" 1 1 message)
       (fe-format-cst-malformed-number-at? "\n  1.5e-" 2 3 message))))
 
 (define (fe-format-rules-source) : String

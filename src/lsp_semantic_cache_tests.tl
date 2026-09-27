@@ -288,7 +288,7 @@
       [definition-index : i64
         (sem_tests.compiler-semantic-source-index-find-definition
           (& shared-doc.semantic.index)
-          (lsp.lsp-global-shared-view shared-path)
+          shared-path
           "target-value")]
       [definition : sem.CompilerSemanticRecord
         (sem.compiler-semantic-source-index-get
@@ -530,7 +530,7 @@
       [definition-index : i64
         (sem_tests.compiler-semantic-source-index-find-definition
           (& doc.semantic.index)
-          (lsp.lsp-global-shared-view shared-path)
+          shared-path
           "target-value")]
       [definition : sem.CompilerSemanticRecord
         (sem.compiler-semantic-source-index-get

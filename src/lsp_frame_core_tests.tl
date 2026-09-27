@@ -215,7 +215,7 @@
           [use-index : i64
             (sem_tests.compiler-semantic-source-index-find-record
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "imported-value"
               sem.CompilerSemanticRecordRole.Use
               -1)]

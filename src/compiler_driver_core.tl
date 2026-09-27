@@ -429,79 +429,79 @@
     (begin
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "active"
         (arena.tl_arena_current))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "compiler-entry"
         (allocation_profile.compiler-allocation-profile-entry-arena-handle))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "source-pools"
         (compiler-driver-node-pool-base-arena))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "state-pool-arena"
         (array-ref compiler-driver-active-state-pool-arena 0))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "state-surface-arena"
         (array-ref compiler-driver-active-state-surface-arena 0))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "expr-pool-storage"
         (compiler_ast_types.ast-node-pool-expr-storage-arena-handle))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "type-pool-storage"
         (compiler_ast_types.ast-node-pool-type-storage-arena-handle))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "intern-persistent"
         (ci.intern-persistent-arena-handle))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "ir-labels"
         (compiler_ir_types.compiler-ir-label-arena-handle-value))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "ir-symbols"
         (compiler_ir_types.compiler-ir-symbol-arena-handle-value))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "load-provenance"
         (compiler_load.compiler-load-session-state-provenance-arena-value
           (compiler_load.compiler-load-serial-test-session-state)))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "lexer-token-buffer"
         (compiler_load.compiler-load-lex-token-buffer-arena-handle))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "reader-node-pool"
         (compiler_load.compiler-load-reader-node-pool-arena-handle))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "typecheck-aggregate-layout-cache"
         (compiler_typecheck_core.tc-agg-layout-cache-storage-arena-handle-value-for-job
           typecheck-state))
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "lower-scratch"
         compiler_lower.lower-scratch-arena)
       (allocation_profile.compiler-allocation-profile-control!
@@ -524,7 +524,7 @@
     (begin
       (allocation_profile.compiler-allocation-profile-control!
         2
-        (owned_view.compiler-owned-shared-view phase)
+        phase
         "expr-pool-storage"
         (compiler_ast_types.ast-node-pool-context-expr-storage-arena pools))
       (allocation_profile.compiler-allocation-profile-control!

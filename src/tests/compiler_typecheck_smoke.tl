@@ -24,7 +24,7 @@
 (import sym_i64_env)
 
 (define (compiler-typecheck-smoke-write-text
-  [path : String]
+  [path : (& path str)]
   [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
@@ -2010,7 +2010,7 @@
     (module generated.macro_kind.family)
     (define (answer) : i64 41)))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(defstruct Ball (x i64))
 (import tc_macro_kind_provider as provider)
 (provider.emit Ball)
@@ -2038,11 +2038,11 @@
         "(module tc_prefix_local_dep)
 (define (value [x : i64]) : i64 (+ x 1))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry-a)
+        entry-a
         "(import tc_prefix_local_dep as dep)
 (define (main) : i64 (dep.value 1))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry-b)
+        entry-b
         "(import tc_prefix_local_dep as dep)
 (define (main) : i64 (dep.value 2))")
       (load.compiler-load-session-cache-enable!)
@@ -2101,11 +2101,11 @@
         dep
         "(define (flat-helper [x : i64]) : i64 (+ x 1))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry-a)
+        entry-a
         "(import tc_prefix_flat_dep)
 (define (main) : i64 (tc_prefix_flat_dep.flat-helper 1))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry-b)
+        entry-b
         "(import tc_prefix_flat_dep)
 (define (main) : i64 (tc_prefix_flat_dep.flat-helper 2))")
       (load.compiler-load-session-cache-enable!)
@@ -2168,14 +2168,14 @@
 (define (named-score) : i64
   (option_i64.value-or (option_i64.some 2) 0))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view root-then-named)
+        root-then-named
         "(import tc_4004_root_provider)
 (import tc_4004_named_provider)
 
 (define (main) : i64
   (+ (tc_4004_root_provider.root-score) (tc_4004_named_provider.named-score)))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view named-then-root)
+        named-then-root
         "(import tc_4004_named_provider)
 (import tc_4004_root_provider)
 
@@ -2499,7 +2499,7 @@
 (defmacro (emit-imports) : Decls
   `(import tc_generated_import_left.missing as unused))")))
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         (if (= mode 3)
           "(import tc_generated_import_provider as provider)
 
@@ -2949,7 +2949,7 @@
       (load.compiler-load-test-mkdir stdlib-root)
       (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(import stdlib.some_name)
 (define (main) : i64 some_name.value)")
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -2970,11 +2970,9 @@
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     (begin
       (load.compiler-load-test-mkdir dir)
+      (compiler-typecheck-smoke-write-text dep "(define imported : i64 true)")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view dep)
-        "(define imported : i64 true)")
-      (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(define (id [comptime T : type] [value : T]) : T value)
 (import dep)
 (define (main) : i64 0)")
@@ -3062,7 +3060,7 @@
 (import tc_macro_missing_helper as helper)
 (defmacro (bumped [value : Expr]) : Expr `(helper.bump ,value))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(import tc_macro_missing_provider as provider)
 (define (main) : i64 (provider.bumped 41))")
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -3103,7 +3101,7 @@
 (defmacro (bumped [value : Expr]) : Expr
   `(helper.bump i64 ,value))")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(import tc_macro_context_provider as provider)
 (define (main) : i64 (provider.bumped 41))")
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -3144,7 +3142,7 @@
 (defmacro (hook [value : i64]) : i64 `(+ ,value 1))
 (defmacro (last) : Expr `42)")
       (compiler-typecheck-smoke-write-text
-        (tc_core.tc-global-shared-view entry)
+        entry
         "(import tc_surface_macro_provider as provider)
 (define (main) : i64 0)")
       (tc_api.compiler-typecheck-reset-load-session!)

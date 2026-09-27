@@ -46523,6 +46523,88 @@
         false-jcc
         backend-state))))
 
+;; The phi copies a two-way branch owes each successor, and the labels it
+;; jumps to so they run: a side with copies goes through an edge block of its
+;; own, emitted after the branch by compiler-backend-emit-branch-edges.
+(defstruct CompilerBackendBranchEdges
+  (true-copies String)
+  (false-copies String)
+  (true-target i64)
+  (false-target i64)
+  (fallthrough CompilerBackendMaybeLabel))
+
+(defenum ResultCompilerBackendBranchEdges
+  (Ok CompilerBackendBranchEdges)
+  (Err (Box compiler_diagnostic.CompilerDiagnostic)))
+
+(define (compiler-backend-branch-phi-edges
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [current-label : i64]
+  [true-label : i64]
+  [false-label : i64]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackendBranchEdges
+  (match (compiler-backend-emit-phi-edge-copies
+    type-segment-bases
+    assignments
+    (compiler-backend-global-shared-view blocks)
+    true-label
+    current-label
+    program-index
+    vars
+    ""
+    ""
+    (compiler-backend-current-phi-planned-xmm-cycle program-index.backend-state))
+    [(ResultCompilerBackend.Ok true-copies)
+      (match (compiler-backend-emit-phi-edge-copies
+        type-segment-bases
+        assignments
+        blocks
+        false-label
+        current-label
+        program-index
+        vars
+        ""
+        ""
+        (compiler-backend-current-phi-planned-xmm-cycle
+          program-index.backend-state))
+        [(ResultCompilerBackend.Ok false-copies)
+          (let
+            [true-edge : i64
+              (compiler-backend-branch-edge-label current-label "true")]
+            [false-edge : i64
+              (compiler-backend-branch-edge-label current-label "false")]
+            [true-target : i64
+              (compiler-backend-branch-edge-target
+                true-edge
+                true-label
+                true-copies)]
+            [false-target : i64
+              (compiler-backend-branch-edge-target
+                false-edge
+                false-label
+                false-copies)]
+            [edge-fallthrough : CompilerBackendMaybeLabel
+              (compiler-backend-branch-edge-fallthrough
+                current-label
+                true-copies
+                false-copies
+                fallthrough)]
+            (ResultCompilerBackendBranchEdges.Ok
+              (CompilerBackendBranchEdges
+                true-copies
+                false-copies
+                true-target
+                false-target
+                edge-fallthrough)))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackendBranchEdges.Err message)])]
+    [(ResultCompilerBackend.Err message)
+      (ResultCompilerBackendBranchEdges.Err message)]))
+
 (define (compiler-backend-emit-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -46552,80 +46634,43 @@
       true-jcc
       false-jcc
       program-index.backend-state)
-    (match (compiler-backend-emit-phi-edge-copies
+    (match (compiler-backend-branch-phi-edges
       type-segment-bases
       assignments
-      (compiler-backend-global-shared-view blocks)
-      true-label
+      blocks
       current-label
+      true-label
+      false-label
+      fallthrough
       program-index
-      vars
-      ""
-      ""
-      (compiler-backend-current-phi-planned-xmm-cycle
-        program-index.backend-state))
-      [(ResultCompilerBackend.Ok true-copies)
-        (match (compiler-backend-emit-phi-edge-copies
-          type-segment-bases
+      vars)
+      [(ResultCompilerBackendBranchEdges.Ok edges)
+        (match (compiler-backend-emit-branch-test-or-jcc
           assignments
-          blocks
-          false-label
-          current-label
-          program-index
-          vars
-          ""
-          ""
-          (compiler-backend-current-phi-planned-xmm-cycle
-            program-index.backend-state))
-          [(ResultCompilerBackend.Ok false-copies)
-            (let
-              [true-edge : i64
-                (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : i64
-                (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : i64
-                (compiler-backend-branch-edge-target
-                  true-edge
-                  true-label
-                  true-copies)]
-              [false-target : i64
-                (compiler-backend-branch-edge-target
-                  false-edge
-                  false-label
-                  false-copies)]
-              [edge-fallthrough : CompilerBackendMaybeLabel
-                (compiler-backend-branch-edge-fallthrough
-                  current-label
-                  true-copies
-                  false-copies
-                  fallthrough)]
-              (match (compiler-backend-emit-branch-test-or-jcc
-                assignments
-                (compiler-backend-global-shared-view function)
-                cond
-                true-target
-                false-target
-                edge-fallthrough
-                true-jcc
-                false-jcc
-                program-index.backend-state)
-                [(ResultCompilerBackend.Ok branch-asm)
-                  (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-branch-edges
-                      program-index.backend-state
-                      function
-                      current-label
-                      true-label
-                      false-label
-                      true-copies
-                      false-copies
-                      fallthrough
-                      branch-asm))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))]
+          (compiler-backend-global-shared-view function)
+          cond
+          edges.true-target
+          edges.false-target
+          edges.fallthrough
+          true-jcc
+          false-jcc
+          program-index.backend-state)
+          [(ResultCompilerBackend.Ok branch-asm)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-branch-edges
+                program-index.backend-state
+                function
+                current-label
+                true-label
+                false-label
+                edges.true-copies
+                edges.false-copies
+                fallthrough
+                branch-asm))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+      [(ResultCompilerBackendBranchEdges.Err message)
+        (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-compare-branch-with-phi-copies
   [type-segment-bases : i64]
@@ -46659,82 +46704,45 @@
       false-label
       fallthrough
       program-index.backend-state)
-    (match (compiler-backend-emit-phi-edge-copies
+    (match (compiler-backend-branch-phi-edges
       type-segment-bases
       assignments
-      (compiler-backend-global-shared-view blocks)
-      true-label
+      blocks
       current-label
+      true-label
+      false-label
+      fallthrough
       program-index
-      vars
-      ""
-      ""
-      (compiler-backend-current-phi-planned-xmm-cycle
-        program-index.backend-state))
-      [(ResultCompilerBackend.Ok true-copies)
-        (match (compiler-backend-emit-phi-edge-copies
+      vars)
+      [(ResultCompilerBackendBranchEdges.Ok edges)
+        (match (compiler-backend-emit-compare-branch
           type-segment-bases
           assignments
-          blocks
-          false-label
-          current-label
-          program-index
-          vars
-          ""
-          ""
-          (compiler-backend-current-phi-planned-xmm-cycle
-            program-index.backend-state))
-          [(ResultCompilerBackend.Ok false-copies)
-            (let
-              [true-edge : i64
-                (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : i64
-                (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : i64
-                (compiler-backend-branch-edge-target
-                  true-edge
-                  true-label
-                  true-copies)]
-              [false-target : i64
-                (compiler-backend-branch-edge-target
-                  false-edge
-                  false-label
-                  false-copies)]
-              [edge-fallthrough : CompilerBackendMaybeLabel
-                (compiler-backend-branch-edge-fallthrough
-                  current-label
-                  true-copies
-                  false-copies
-                  fallthrough)]
-              (match (compiler-backend-emit-compare-branch
-                type-segment-bases
-                assignments
-                (compiler-backend-global-shared-view function)
-                op
-                lhs
-                rhs
-                ty
-                true-target
-                false-target
-                edge-fallthrough
-                program-index.backend-state)
-                [(ResultCompilerBackend.Ok branch-asm)
-                  (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-branch-edges
-                      program-index.backend-state
-                      function
-                      current-label
-                      true-label
-                      false-label
-                      true-copies
-                      false-copies
-                      fallthrough
-                      branch-asm))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))]
+          (compiler-backend-global-shared-view function)
+          op
+          lhs
+          rhs
+          ty
+          edges.true-target
+          edges.false-target
+          edges.fallthrough
+          program-index.backend-state)
+          [(ResultCompilerBackend.Ok branch-asm)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-branch-edges
+                program-index.backend-state
+                function
+                current-label
+                true-label
+                false-label
+                edges.true-copies
+                edges.false-copies
+                fallthrough
+                branch-asm))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+      [(ResultCompilerBackendBranchEdges.Err message)
+        (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
@@ -46767,81 +46775,44 @@
       false-label
       fallthrough
       program-index.backend-state)
-    (match (compiler-backend-emit-phi-edge-copies
+    (match (compiler-backend-branch-phi-edges
       type-segment-bases
       assignments
-      (compiler-backend-global-shared-view blocks)
-      true-label
+      blocks
       current-label
+      true-label
+      false-label
+      fallthrough
       program-index
-      vars
-      ""
-      ""
-      (compiler-backend-current-phi-planned-xmm-cycle
-        program-index.backend-state))
-      [(ResultCompilerBackend.Ok true-copies)
-        (match (compiler-backend-emit-phi-edge-copies
-          type-segment-bases
+      vars)
+      [(ResultCompilerBackendBranchEdges.Ok edges)
+        (match (compiler-backend-emit-load-compare-branch-with-plan
           assignments
-          blocks
-          false-label
-          current-label
-          program-index
-          vars
-          ""
-          ""
-          (compiler-backend-current-phi-planned-xmm-cycle
-            program-index.backend-state))
-          [(ResultCompilerBackend.Ok false-copies)
-            (let
-              [true-edge : i64
-                (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : i64
-                (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : i64
-                (compiler-backend-branch-edge-target
-                  true-edge
-                  true-label
-                  true-copies)]
-              [false-target : i64
-                (compiler-backend-branch-edge-target
-                  false-edge
-                  false-label
-                  false-copies)]
-              [edge-fallthrough : CompilerBackendMaybeLabel
-                (compiler-backend-branch-edge-fallthrough
-                  current-label
-                  true-copies
-                  false-copies
-                  fallthrough)]
-              (match (compiler-backend-emit-load-compare-branch-with-plan
-                assignments
-                (compiler-backend-global-shared-view function)
-                ptr
-                op
-                rhs
-                ty
-                true-target
-                false-target
-                edge-fallthrough
-                program-index.backend-state)
-                [(ResultCompilerBackend.Ok branch-asm)
-                  (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-branch-edges
-                      program-index.backend-state
-                      function
-                      current-label
-                      true-label
-                      false-label
-                      true-copies
-                      false-copies
-                      fallthrough
-                      branch-asm))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))]
+          (compiler-backend-global-shared-view function)
+          ptr
+          op
+          rhs
+          ty
+          edges.true-target
+          edges.false-target
+          edges.fallthrough
+          program-index.backend-state)
+          [(ResultCompilerBackend.Ok branch-asm)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-branch-edges
+                program-index.backend-state
+                function
+                current-label
+                true-label
+                false-label
+                edges.true-copies
+                edges.false-copies
+                fallthrough
+                branch-asm))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+      [(ResultCompilerBackendBranchEdges.Err message)
+        (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
@@ -46879,84 +46850,47 @@
       false-label
       fallthrough
       program-index.backend-state)
-    (match (compiler-backend-emit-phi-edge-copies
+    (match (compiler-backend-branch-phi-edges
       type-segment-bases
       assignments
-      (compiler-backend-global-shared-view blocks)
-      true-label
+      blocks
       current-label
+      true-label
+      false-label
+      fallthrough
       program-index
-      vars
-      ""
-      ""
-      (compiler-backend-current-phi-planned-xmm-cycle
-        program-index.backend-state))
-      [(ResultCompilerBackend.Ok true-copies)
-        (match (compiler-backend-emit-phi-edge-copies
+      vars)
+      [(ResultCompilerBackendBranchEdges.Ok edges)
+        (match (compiler-backend-emit-gep-load-compare-branch-with-plan
           type-segment-bases
           assignments
-          blocks
-          false-label
-          current-label
-          program-index
-          vars
-          ""
-          ""
-          (compiler-backend-current-phi-planned-xmm-cycle
-            program-index.backend-state))
-          [(ResultCompilerBackend.Ok false-copies)
-            (let
-              [true-edge : i64
-                (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : i64
-                (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : i64
-                (compiler-backend-branch-edge-target
-                  true-edge
-                  true-label
-                  true-copies)]
-              [false-target : i64
-                (compiler-backend-branch-edge-target
-                  false-edge
-                  false-label
-                  false-copies)]
-              [edge-fallthrough : CompilerBackendMaybeLabel
-                (compiler-backend-branch-edge-fallthrough
-                  current-label
-                  true-copies
-                  false-copies
-                  fallthrough)]
-              (match (compiler-backend-emit-gep-load-compare-branch-with-plan
-                type-segment-bases
-                assignments
-                (compiler-backend-global-shared-view function)
-                base
-                offset
-                elem-ty
-                op
-                rhs
-                ty
-                true-target
-                false-target
-                edge-fallthrough
-                program-index.backend-state)
-                [(ResultCompilerBackend.Ok branch-asm)
-                  (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-branch-edges
-                      program-index.backend-state
-                      function
-                      current-label
-                      true-label
-                      false-label
-                      true-copies
-                      false-copies
-                      fallthrough
-                      branch-asm))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))]
+          (compiler-backend-global-shared-view function)
+          base
+          offset
+          elem-ty
+          op
+          rhs
+          ty
+          edges.true-target
+          edges.false-target
+          edges.fallthrough
+          program-index.backend-state)
+          [(ResultCompilerBackend.Ok branch-asm)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-branch-edges
+                program-index.backend-state
+                function
+                current-label
+                true-label
+                false-label
+                edges.true-copies
+                edges.false-copies
+                fallthrough
+                branch-asm))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+      [(ResultCompilerBackendBranchEdges.Err message)
+        (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-tail-call-return-normalize
   [type-segment-bases : i64]

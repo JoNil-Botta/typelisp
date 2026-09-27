@@ -11,6 +11,7 @@
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import stdlib.io)
+(import stdlib.comptime)
 (cfg test (import stdlib.string))
 (cfg test (import stdlib.profile))
 (import stdlib.hashmap)
@@ -10757,6 +10758,45 @@
     unit
     (io.panic (compiler-regalloc-self-test-failure-message name))))
 
+;; `(require-each! (p args ...) ...)` requires each check in order, and names a
+;; failed check after its callee. A `(cfg test (p ...) true)` check reads as
+;; `true` outside test builds and requires nothing there.
+(defmacro (require-each! [checks : comptime.Expr ...]) : unit
+  (let
+    [out : comptime.ExprList (comptime.expr-list-empty)]
+    [i : i64 (comptime.expr-list-length checks)]
+    (begin
+      (while (> i 0)
+        (begin
+          (set! i (- i 1))
+          (let
+            [check : comptime.Expr (comptime.expr-list-nth checks i)]
+            (match check
+              [(comptime.Expr.Call head _)
+                (match head
+                  [(comptime.Expr.Var name)
+                    (set!
+                      out
+                      (comptime.expr-list-cons
+                        `(compiler-regalloc-self-test-require!
+                          ,(comptime.expr-string name)
+                          ,check)
+                        out))]
+                  [_
+                    (comptime.comptime-error
+                      "require-each! checks call a named predicate")])]
+              [(comptime.Expr.Bool always)
+                (if always
+                  unit
+                  (comptime.comptime-error
+                    "require-each! checks call a named predicate"))]
+              [_
+                (comptime.comptime-error
+                  "require-each! checks call a named predicate")]))))
+      `(begin
+        ,@out
+        unit))))
+
 (define (compiler-reg-location-remat? [location : reg.CompilerRegLocation]) : bool
   (match location
     [(reg.CompilerRegLocation.Remat _) true]
@@ -16311,613 +16351,218 @@
 
 (define (compiler-regalloc-core-self-test?) : bool
   (begin
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-early-exit-ok?"
-      (compiler-reg-loop-nest-early-exit-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-sunk-cold-ok?"
-      (compiler-reg-loop-nest-sunk-cold-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-two-latch-ok?"
-      (compiler-reg-loop-nest-two-latch-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-nested-ok?"
-      (compiler-reg-loop-nest-nested-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-fallthrough-ok?"
-      (compiler-reg-loop-nest-fallthrough-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-unreachable-ok?"
-      (compiler-reg-loop-nest-unreachable-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-deterministic-ok?"
-      (compiler-reg-loop-nest-deterministic-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-rotated-ok?"
-      (compiler-reg-loop-nest-rotated-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-multi-entry-ok?"
-      (compiler-reg-loop-nest-multi-entry-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-non-member-ok?"
-      (compiler-reg-loop-nest-non-member-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-consumer-ok?"
-      (compiler-reg-loop-nest-consumer-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-regeneration-ok?"
-      (compiler-reg-loop-nest-regeneration-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-spans-ok?"
-      (compiler-reg-loop-nest-spans-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-spans-deterministic-ok?"
-      (compiler-reg-loop-nest-spans-deterministic-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-preheader-rotated-splice-ok?"
-      (compiler-reg-preheader-rotated-splice-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-live-in-call-ok?"
-      (compiler-reg-live-in-call-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-program-maps-suppression-ok?"
-      (compiler-reg-program-maps-suppression-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-low-bit-index32-powers-ok?"
-      (cfg test (compiler-reg-low-bit-index32-powers-ok? 0 1) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-reuse-ok?"
-      (compiler-reg-reuse-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-f64-reuse-ok?"
-      (compiler-reg-f64-reuse-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-overlap-spill-ok?"
-      (compiler-reg-overlap-spill-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-f64-overlap-spill-ok?"
-      (compiler-reg-f64-overlap-spill-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-live-ok?"
-      (compiler-reg-call-live-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-f64-call-live-ok?"
-      (compiler-reg-f64-call-live-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-arg-ok?"
-      (compiler-reg-call-arg-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-f64-call-arg-ok?"
-      (compiler-reg-f64-call-arg-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-ineligible-ok?"
-      (compiler-reg-ineligible-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-target-clobbers-ok?"
-      (compiler-reg-target-clobbers-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-xmm-clobbers-ok?"
-      (compiler-reg-xmm-clobbers-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-xmm-abi-call-constraints-ok?"
-      (compiler-reg-xmm-abi-call-constraints-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-xmm-shared-greedy-bank-ok?"
-      (compiler-reg-xmm-shared-greedy-bank-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-xmm-vector-class-reset-ok?"
-      (compiler-reg-xmm-vector-class-reset-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-coalesce-ok?"
-      (compiler-reg-coalesce-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-p22-nested-copy-ok?"
-      (compiler-reg-p22-nested-copy-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-liveness-handle-ok?"
-      (cfg test (compiler-reg-liveness-handle-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-liveness-handle-phi-ok?"
-      (cfg test (compiler-reg-liveness-handle-phi-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-xmm-physical-ownership-ok?"
-      (cfg test (compiler-reg-xmm-physical-ownership-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-dense-mask-on-vector-homes-ok?"
-      (cfg test (compiler-reg-dense-mask-on-vector-homes-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-vector-mask-homes-ok?"
-      (compiler-reg-vector-mask-homes-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-mask-pressure-spill-home-ok?"
-      (compiler-reg-mask-pressure-spill-home-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-segmented-interference-ok?"
-      (compiler-reg-segmented-interference-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-hole-aware-register-reuse-ok?"
-      (compiler-reg-hole-aware-register-reuse-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-tail-call-clobber-ok?"
+    (require-each!
+      (compiler-reg-loop-nest-early-exit-ok?)
+      (compiler-reg-loop-nest-sunk-cold-ok?)
+      (compiler-reg-loop-nest-two-latch-ok?)
+      (compiler-reg-loop-nest-nested-ok?)
+      (compiler-reg-loop-nest-fallthrough-ok?)
+      (compiler-reg-loop-nest-unreachable-ok?)
+      (compiler-reg-loop-nest-deterministic-ok?)
+      (compiler-reg-loop-nest-rotated-ok?)
+      (compiler-reg-loop-nest-multi-entry-ok?)
+      (compiler-reg-loop-nest-non-member-ok?)
+      (compiler-reg-loop-nest-consumer-ok?)
+      (compiler-reg-loop-nest-regeneration-ok?)
+      (compiler-reg-loop-nest-spans-ok?)
+      (compiler-reg-loop-nest-spans-deterministic-ok?)
+      (compiler-reg-preheader-rotated-splice-ok?)
+      (compiler-reg-live-in-call-ok?)
+      (compiler-reg-program-maps-suppression-ok?)
+      (cfg test (compiler-reg-low-bit-index32-powers-ok? 0 1) true)
+      (compiler-reg-reuse-ok?)
+      (compiler-reg-f64-reuse-ok?)
+      (compiler-reg-overlap-spill-ok?)
+      (compiler-reg-f64-overlap-spill-ok?)
+      (compiler-reg-call-live-ok?)
+      (compiler-reg-f64-call-live-ok?)
+      (compiler-reg-call-arg-ok?)
+      (compiler-reg-f64-call-arg-ok?)
+      (compiler-reg-ineligible-ok?)
+      (compiler-reg-target-clobbers-ok?)
+      (compiler-reg-xmm-clobbers-ok?)
+      (compiler-reg-xmm-abi-call-constraints-ok?)
+      (compiler-reg-xmm-shared-greedy-bank-ok?)
+      (compiler-reg-xmm-vector-class-reset-ok?)
+      (compiler-reg-coalesce-ok?)
+      (compiler-reg-p22-nested-copy-ok?)
+      (cfg test (compiler-reg-liveness-handle-ok?) true)
+      (cfg test (compiler-reg-liveness-handle-phi-ok?) true)
+      (cfg test (compiler-reg-xmm-physical-ownership-ok?) true)
+      (cfg test (compiler-reg-dense-mask-on-vector-homes-ok?) true)
+      (compiler-reg-vector-mask-homes-ok?)
+      (compiler-reg-mask-pressure-spill-home-ok?)
+      (compiler-reg-segmented-interference-ok?)
+      (compiler-reg-hole-aware-register-reuse-ok?)
       (compiler-reg-tail-call-clobber-ok?))
     true))
 
 (define (compiler-regalloc-scalar-self-test?) : bool
   (begin
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-early-exit-general-ok?"
-      (cfg test (compiler-reg-early-exit-general-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-early-exit-float-guard-refused-ok?"
-      (cfg test (compiler-reg-early-exit-float-guard-refused-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-cold-call-split-ok?"
-      (cfg test (compiler-reg-cold-call-split-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-weights-ok?"
-      (cfg test (compiler-reg-call-hole-weights-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-block-weights-ok?"
-      (cfg test (compiler-reg-block-weights-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-select-ok?"
-      (cfg test (compiler-reg-call-hole-select-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-rewrite-shape-ok?"
-      (cfg test (compiler-reg-call-hole-rewrite-shape-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-cross-block-ok?"
-      (cfg test (compiler-reg-call-hole-cross-block-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-join-ok?"
-      (cfg test (compiler-reg-call-hole-join-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-redef-ok?"
-      (cfg test (compiler-reg-call-hole-redef-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-flow-conservative-ok?"
-      (cfg test (compiler-reg-call-hole-flow-conservative-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-drop-ok?"
-      (cfg test (compiler-reg-call-hole-drop-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-round-ok?"
-      (cfg test (compiler-reg-call-hole-round-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-declines-ok?"
-      (cfg test (compiler-reg-call-hole-declines-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-cold-arm-weight-ok?"
-      (cfg test (compiler-reg-call-hole-cold-arm-weight-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-loop-arm-weight-ok?"
-      (cfg test (compiler-reg-call-hole-loop-arm-weight-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-csr-qualify-ok?"
-      (cfg test (compiler-reg-call-hole-csr-qualify-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-csr-split-ok?"
-      (cfg test (compiler-reg-call-hole-csr-split-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-csr-cost-strict-ok?"
-      (cfg test (compiler-reg-call-hole-csr-cost-strict-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-hole-recursive-arm-ok?"
-      (cfg test (compiler-reg-call-hole-recursive-arm-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-detect-ok?"
-      (cfg test (compiler-reg-loop-park-detect-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-eligible-ok?"
-      (cfg test (compiler-reg-loop-park-eligible-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-sites-ok?"
-      (cfg test (compiler-reg-loop-park-sites-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-redirectable-ok?"
-      (cfg test (compiler-reg-loop-park-redirectable-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-direct-rewrite-ok?"
-      (cfg test (compiler-reg-loop-park-direct-rewrite-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-splice-rewrite-ok?"
-      (cfg test (compiler-reg-loop-park-splice-rewrite-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-verify-ok?"
-      (cfg test (compiler-reg-loop-park-verify-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-round-ok?"
-      (cfg test (compiler-reg-loop-park-round-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-declines-ok?"
-      (cfg test (compiler-reg-loop-park-declines-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-deep-parks-ok?"
-      (cfg test (compiler-reg-loop-park-deep-parks-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-deep-two-bases-homed-ok?"
-      (cfg test (compiler-reg-loop-park-deep-two-bases-homed-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-deep-declines-ok?"
-      (cfg test (compiler-reg-loop-park-deep-declines-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-park-deep-ranking-ok?"
-      (cfg test (compiler-reg-loop-park-deep-ranking-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-park-ladder-ok?"
-      (cfg test (compiler-reg-park-ladder-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scavenge-segment-hulls-ok?"
-      (cfg test (compiler-reg-scavenge-segment-hulls-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-call-live-ok?"
-      (compiler-reg-scalar-call-live-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-f64-call-live-ok?"
-      (compiler-reg-scalar-f64-call-live-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-win64-f64-call-live-ok?"
-      (compiler-reg-scalar-win64-f64-call-live-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-handle-eligible-ok?"
-      (compiler-reg-scalar-handle-eligible-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-handle-call-arg-ok?"
-      (compiler-reg-scalar-handle-call-arg-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-indirect-call-arg-ok?"
-      (compiler-reg-scalar-indirect-call-arg-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-c-abi-store-result-call-arg-ok?"
-      (compiler-reg-scalar-c-abi-store-result-call-arg-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-win64-indirect-call-arg-cap-ok?"
-      (compiler-reg-scalar-win64-indirect-call-arg-cap-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-linux-param-registers-ok?"
-      (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-windows-param-registers-ok?"
-      (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-param-entry-forbidden-ok?"
-      (cfg test (compiler-reg-param-entry-forbidden-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-param-entry-forbidden-refuses-windows-ok?"
-      (cfg test (compiler-reg-param-entry-forbidden-refuses-windows-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-param-entry-forbidden-refuses-float-ok?"
-      (cfg test (compiler-reg-param-entry-forbidden-refuses-float-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-param-entry-forbidden-refuses-memory-ok?"
-      (cfg test (compiler-reg-param-entry-forbidden-refuses-memory-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-float-param-registers-ok?"
-      (cfg test (compiler-reg-scalar-float-param-registers-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-win64-float-param-registers-ok?"
-      (cfg test (compiler-reg-scalar-win64-float-param-registers-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-mixed-float-call-args-ok?"
-      (cfg test (compiler-reg-scalar-mixed-float-call-args-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-win64-mixed-float-call-args-ok?"
-      (cfg test (compiler-reg-scalar-win64-mixed-float-call-args-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-windows-rsi-rdi-pool-ok?"
-      (cfg test (compiler-reg-scalar-windows-rsi-rdi-pool-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-win64-arg-result-prefs-ok?"
-      (cfg test (compiler-reg-win64-arg-result-prefs-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-indirect-call-arg-prefs-ok?"
-      (cfg test (compiler-reg-indirect-call-arg-prefs-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-param-clobber-ok?"
-      (cfg test (compiler-reg-scalar-param-clobber-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-param-const-shift-pin-ok?"
-      (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-param-var-shift-pin-ok?"
-      (cfg test (compiler-reg-scalar-param-var-shift-pin-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-param-dead-before-call-pin-ok?"
-      (cfg test (compiler-reg-scalar-param-dead-before-call-pin-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-param-rdx-div-span-ok?"
-      (cfg test (compiler-reg-scalar-param-rdx-div-span-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-param-rcx-shift-span-ok?"
-      (cfg test (compiler-reg-scalar-param-rcx-shift-span-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-param-pin-coalesce-demote-ok?"
-      (cfg test (compiler-reg-scalar-param-pin-coalesce-demote-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-aggregate-param-pinned-ok?"
-      (cfg test (compiler-reg-scalar-aggregate-param-pinned-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-function-intervals-ok?"
-      (compiler-reg-scalar-function-intervals-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-interval-guardrail-ok?"
-      (compiler-reg-scalar-interval-guardrail-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-edge-precise-allocation-intervals-ok?"
-      (compiler-reg-scalar-edge-precise-allocation-intervals-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-loop-backedge-ok?"
-      (compiler-reg-scalar-loop-backedge-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-zero-call-caller-saved-ok?"
-      (compiler-reg-scalar-zero-call-caller-saved-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-zero-call-param-conflict-ok?"
-      (cfg test (compiler-reg-scalar-zero-call-param-conflict-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-caller-saved-clobber-ok?"
-      (compiler-reg-scalar-caller-saved-clobber-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-call-spanning-caller-saved-ok?"
-      (compiler-reg-scalar-call-spanning-caller-saved-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-call-spanning-multiblock-local-ok?"
-      (cfg test (compiler-reg-scalar-call-spanning-multiblock-local-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scalar-call-spanning-multiblock-boundary-ok?"
+    (require-each!
+      (cfg test (compiler-reg-early-exit-general-ok?) true)
+      (cfg test (compiler-reg-early-exit-float-guard-refused-ok?) true)
+      (cfg test (compiler-reg-cold-call-split-ok?) true)
+      (cfg test (compiler-reg-call-hole-weights-ok?) true)
+      (cfg test (compiler-reg-block-weights-ok?) true)
+      (cfg test (compiler-reg-call-hole-select-ok?) true)
+      (cfg test (compiler-reg-call-hole-rewrite-shape-ok?) true)
+      (cfg test (compiler-reg-call-hole-cross-block-ok?) true)
+      (cfg test (compiler-reg-call-hole-join-ok?) true)
+      (cfg test (compiler-reg-call-hole-redef-ok?) true)
+      (cfg test (compiler-reg-call-hole-flow-conservative-ok?) true)
+      (cfg test (compiler-reg-call-hole-drop-ok?) true)
+      (cfg test (compiler-reg-call-hole-round-ok?) true)
+      (cfg test (compiler-reg-call-hole-declines-ok?) true)
+      (cfg test (compiler-reg-call-hole-cold-arm-weight-ok?) true)
+      (cfg test (compiler-reg-call-hole-loop-arm-weight-ok?) true)
+      (cfg test (compiler-reg-call-hole-csr-qualify-ok?) true)
+      (cfg test (compiler-reg-call-hole-csr-split-ok?) true)
+      (cfg test (compiler-reg-call-hole-csr-cost-strict-ok?) true)
+      (cfg test (compiler-reg-call-hole-recursive-arm-ok?) true)
+      (cfg test (compiler-reg-loop-park-detect-ok?) true)
+      (cfg test (compiler-reg-loop-park-eligible-ok?) true)
+      (cfg test (compiler-reg-loop-park-sites-ok?) true)
+      (cfg test (compiler-reg-loop-park-redirectable-ok?) true)
+      (cfg test (compiler-reg-loop-park-direct-rewrite-ok?) true)
+      (cfg test (compiler-reg-loop-park-splice-rewrite-ok?) true)
+      (cfg test (compiler-reg-loop-park-verify-ok?) true)
+      (cfg test (compiler-reg-loop-park-round-ok?) true)
+      (cfg test (compiler-reg-loop-park-declines-ok?) true)
+      (cfg test (compiler-reg-loop-park-deep-parks-ok?) true)
+      (cfg test (compiler-reg-loop-park-deep-two-bases-homed-ok?) true)
+      (cfg test (compiler-reg-loop-park-deep-declines-ok?) true)
+      (cfg test (compiler-reg-loop-park-deep-ranking-ok?) true)
+      (cfg test (compiler-reg-park-ladder-ok?) true)
+      (cfg test (compiler-reg-scavenge-segment-hulls-ok?) true)
+      (compiler-reg-scalar-call-live-ok?)
+      (compiler-reg-scalar-f64-call-live-ok?)
+      (compiler-reg-scalar-win64-f64-call-live-ok?)
+      (compiler-reg-scalar-handle-eligible-ok?)
+      (compiler-reg-scalar-handle-call-arg-ok?)
+      (compiler-reg-scalar-indirect-call-arg-ok?)
+      (compiler-reg-scalar-c-abi-store-result-call-arg-ok?)
+      (compiler-reg-scalar-win64-indirect-call-arg-cap-ok?)
+      (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
+      (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
+      (cfg test (compiler-reg-param-entry-forbidden-ok?) true)
+      (cfg test (compiler-reg-param-entry-forbidden-refuses-windows-ok?) true)
+      (cfg test (compiler-reg-param-entry-forbidden-refuses-float-ok?) true)
+      (cfg test (compiler-reg-param-entry-forbidden-refuses-memory-ok?) true)
+      (cfg test (compiler-reg-scalar-float-param-registers-ok?) true)
+      (cfg test (compiler-reg-scalar-win64-float-param-registers-ok?) true)
+      (cfg test (compiler-reg-scalar-mixed-float-call-args-ok?) true)
+      (cfg test (compiler-reg-scalar-win64-mixed-float-call-args-ok?) true)
+      (cfg test (compiler-reg-scalar-windows-rsi-rdi-pool-ok?) true)
+      (cfg test (compiler-reg-win64-arg-result-prefs-ok?) true)
+      (cfg test (compiler-reg-indirect-call-arg-prefs-ok?) true)
+      (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
+      (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true)
+      (cfg test (compiler-reg-scalar-param-var-shift-pin-ok?) true)
+      (cfg test (compiler-reg-scalar-param-dead-before-call-pin-ok?) true)
+      (cfg test (compiler-reg-scalar-param-rdx-div-span-ok?) true)
+      (cfg test (compiler-reg-scalar-param-rcx-shift-span-ok?) true)
+      (cfg test (compiler-reg-scalar-param-pin-coalesce-demote-ok?) true)
+      (cfg test (compiler-reg-scalar-aggregate-param-pinned-ok?) true)
+      (compiler-reg-scalar-function-intervals-ok?)
+      (compiler-reg-scalar-interval-guardrail-ok?)
+      (compiler-reg-scalar-edge-precise-allocation-intervals-ok?)
+      (compiler-reg-scalar-loop-backedge-ok?)
+      (compiler-reg-scalar-zero-call-caller-saved-ok?)
+      (cfg test (compiler-reg-scalar-zero-call-param-conflict-ok?) true)
+      (compiler-reg-scalar-caller-saved-clobber-ok?)
+      (compiler-reg-scalar-call-spanning-caller-saved-ok?)
+      (cfg test (compiler-reg-scalar-call-spanning-multiblock-local-ok?) true)
       (cfg
         test
         (compiler-reg-scalar-call-spanning-multiblock-boundary-ok?)
-        true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-region-invariant-ok?"
-      (cfg test (compiler-reg-loop-region-invariant-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-region-defined-in-loop-refused?"
-      (cfg test (compiler-reg-loop-region-defined-in-loop-refused?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-region-call-refused?"
-      (cfg test (compiler-reg-loop-region-call-refused?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-region-admit-ok?"
-      (cfg test (compiler-reg-loop-region-admit-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-region-score-ok?"
-      (cfg test (compiler-reg-loop-region-score-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-region-overlap-ok?"
-      (cfg test (compiler-reg-loop-region-overlap-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-parked-ok?"
-      (cfg test (compiler-reg-evict-parked-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-busy-victim-refused?"
-      (cfg test (compiler-reg-evict-busy-victim-refused?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-all-busy-refused?"
-      (cfg test (compiler-reg-evict-all-busy-refused?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-dead-exit-ok?"
-      (cfg test (compiler-reg-evict-dead-exit-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-price-refused?"
-      (cfg test (compiler-reg-evict-price-refused?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-double-lend-refused?"
-      (cfg test (compiler-reg-evict-double-lend-refused?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-coalesced-victim-refused?"
-      (cfg test (compiler-reg-evict-coalesced-victim-refused?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-sole-occupant-ok?"
-      (cfg test (compiler-reg-evict-sole-occupant-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-class-mention-ok?"
-      (cfg test (compiler-reg-evict-class-mention-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-evict-rewrite-shape-ok?"
-      (cfg test (compiler-reg-evict-rewrite-shape-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-edge-copy-linear-ok?"
-      (cfg test (compiler-reg-edge-copy-linear-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-edge-copy-backedge-ok?"
-      (cfg test (compiler-reg-edge-copy-backedge-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-edge-copy-critical-refusal-ok?"
-      (cfg test (compiler-reg-edge-copy-critical-refusal-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-split-rewrite-ok?"
-      (cfg test (compiler-reg-loop-split-rewrite-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-split-multiple-rewrite-ok?"
-      (cfg test (compiler-reg-loop-split-multiple-rewrite-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-leaf-csr-split-ok?"
-      (cfg test (compiler-reg-leaf-csr-split-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-split-low-benefit-ok?"
-      (cfg test (compiler-reg-loop-split-low-benefit-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-split-phi-region-refusal-ok?"
-      (cfg test (compiler-reg-loop-split-phi-region-refusal-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-split-rcx-rdx-candidates-ok?"
-      (cfg test (compiler-reg-loop-split-rcx-rdx-candidates-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-split-fixed-clobber-scan-ok?"
-      (cfg test (compiler-reg-loop-split-fixed-clobber-scan-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-split-nblock-invariant-rewrite-ok?"
-      (cfg test (compiler-reg-loop-split-nblock-invariant-rewrite-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-split-nblock-outside-entry-refused-ok?"
+        true)
+      (cfg test (compiler-reg-loop-region-invariant-ok?) true)
+      (cfg test (compiler-reg-loop-region-defined-in-loop-refused?) true)
+      (cfg test (compiler-reg-loop-region-call-refused?) true)
+      (cfg test (compiler-reg-loop-region-admit-ok?) true)
+      (cfg test (compiler-reg-loop-region-score-ok?) true)
+      (cfg test (compiler-reg-loop-region-overlap-ok?) true)
+      (cfg test (compiler-reg-evict-parked-ok?) true)
+      (cfg test (compiler-reg-evict-busy-victim-refused?) true)
+      (cfg test (compiler-reg-evict-all-busy-refused?) true)
+      (cfg test (compiler-reg-evict-dead-exit-ok?) true)
+      (cfg test (compiler-reg-evict-price-refused?) true)
+      (cfg test (compiler-reg-evict-double-lend-refused?) true)
+      (cfg test (compiler-reg-evict-coalesced-victim-refused?) true)
+      (cfg test (compiler-reg-evict-sole-occupant-ok?) true)
+      (cfg test (compiler-reg-evict-class-mention-ok?) true)
+      (cfg test (compiler-reg-evict-rewrite-shape-ok?) true)
+      (cfg test (compiler-reg-edge-copy-linear-ok?) true)
+      (cfg test (compiler-reg-edge-copy-backedge-ok?) true)
+      (cfg test (compiler-reg-edge-copy-critical-refusal-ok?) true)
+      (cfg test (compiler-reg-loop-split-rewrite-ok?) true)
+      (cfg test (compiler-reg-loop-split-multiple-rewrite-ok?) true)
+      (cfg test (compiler-reg-leaf-csr-split-ok?) true)
+      (cfg test (compiler-reg-loop-split-low-benefit-ok?) true)
+      (cfg test (compiler-reg-loop-split-phi-region-refusal-ok?) true)
+      (cfg test (compiler-reg-loop-split-rcx-rdx-candidates-ok?) true)
+      (cfg test (compiler-reg-loop-split-fixed-clobber-scan-ok?) true)
+      (cfg test (compiler-reg-loop-split-nblock-invariant-rewrite-ok?) true)
       (cfg test (compiler-reg-loop-split-nblock-outside-entry-refused-ok?) true))
     true))
 
 (define (compiler-regalloc-storage-self-test?) : bool
   (begin
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-classifier-ok?"
-      (cfg test (compiler-reg-remat-classifier-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-invariant-word-load-admitted-ok?"
-      (cfg test (compiler-reg-invariant-word-load-admitted-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-invariant-field-store-refused-ok?"
-      (cfg test (compiler-reg-invariant-field-store-refused-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-invariant-call-refused-ok?"
-      (cfg test (compiler-reg-invariant-call-refused-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-invariant-recipe-ok?"
-      (cfg test (compiler-reg-invariant-recipe-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-invariant-base-availability-ok?"
-      (cfg test (compiler-reg-invariant-base-availability-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-recompute-classifier-ok?"
-      (cfg test (compiler-reg-remat-recompute-classifier-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-literal-assignment-ok?"
-      (cfg test (compiler-reg-remat-literal-assignment-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-frozen-global-ok?"
-      (cfg test (compiler-reg-remat-frozen-global-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-discount-weights-ok?"
-      (cfg test (compiler-reg-remat-discount-weights-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-spill-weight-eviction-ok?"
-      (cfg test (compiler-reg-remat-spill-weight-eviction-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-rewrite-shape-ok?"
-      (cfg test (compiler-reg-remat-rewrite-shape-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-register-conflict-ok?"
-      (cfg test (compiler-reg-remat-register-conflict-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-caller-clobber-refusal-ok?"
-      (cfg test (compiler-reg-remat-caller-clobber-refusal-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-addr-of-source-refusal-ok?"
-      (cfg test (compiler-reg-remat-addr-of-source-refusal-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-global-mov-rewrite-ok?"
-      (cfg test (compiler-reg-remat-global-mov-rewrite-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-global-load-rewrite-ok?"
-      (cfg test (compiler-reg-remat-global-load-rewrite-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-global-gep-rewrite-ok?"
-      (cfg test (compiler-reg-remat-global-gep-rewrite-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-global-mutation-refusal-ok?"
-      (cfg test (compiler-reg-remat-global-mutation-refusal-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-parameters-poisoned-ok?"
-      (cfg test (compiler-reg-remat-parameters-poisoned-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-parameter-assignment-keeps-home-ok?"
-      (cfg test (compiler-reg-remat-parameter-assignment-keeps-home-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-remat-parameter-use-not-rewritten-ok?"
-      (cfg test (compiler-reg-remat-parameter-use-not-rewritten-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-spill-weight-eviction-ok?"
-      (cfg test (compiler-reg-spill-weight-eviction-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-spill-weight-eviction-ok?"
-      (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-foldable-rebate-classification-ok?"
-      (cfg test (compiler-reg-foldable-rebate-classification-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-foldable-rebate-keeps-counter-ok?"
-      (cfg test (compiler-reg-foldable-rebate-keeps-counter-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-foldable-rebate-index-not-discounted-ok?"
-      (cfg test (compiler-reg-foldable-rebate-index-not-discounted-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-foldable-rebate-idempotent-ok?"
-      (cfg test (compiler-reg-foldable-rebate-idempotent-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-call-span-counts-ok?"
-      (cfg test (compiler-reg-call-span-counts-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-group-pair-widening-ok?"
-      (cfg test (compiler-reg-group-pair-widening-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-early-scratch-model-ok?"
-      (compiler-reg-early-scratch-model-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-greedy-live-union-invariant-ok?"
-      (compiler-reg-greedy-live-union-invariant-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-scratch-borrow-masks-ok?"
-      (compiler-reg-scratch-borrow-masks-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-early-scratch-never-spills-ok?"
-      (compiler-reg-early-scratch-never-spills-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-early-scratch-exclusion-rehomes-ok?"
-      (compiler-reg-early-scratch-exclusion-rehomes-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-dense-lookups-ok?"
-      (compiler-reg-dense-lookups-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-dense-assignment-snapshot-ok?"
-      (compiler-reg-dense-assignment-snapshot-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-stack-group-ok?"
-      (compiler-reg-color-stack-group-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-spill-slot-sharing-ok?"
-      (compiler-reg-color-spill-slot-sharing-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-fusion-pin-slots-ok?"
-      (compiler-reg-color-fusion-pin-slots-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-phi-web-slot-sharing-ok?"
-      (cfg test (compiler-reg-color-phi-web-slot-sharing-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-web-merge-ok?"
-      (cfg test (compiler-reg-color-web-merge-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-carry-priority-ok?"
-      (cfg test (compiler-reg-color-carry-priority-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-witness-chain-ok?"
-      (cfg test (compiler-reg-color-witness-chain-ok?) true))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-spill-param-pins-ok?"
-      (compiler-reg-color-spill-param-pins-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-avx2-param-ranges-ok?"
-      (compiler-reg-color-avx2-param-ranges-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-spill-hole-demand-ok?"
-      (compiler-reg-color-spill-hole-demand-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-spill-scratch-demand-ok?"
-      (compiler-reg-color-spill-scratch-demand-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-vector-stack-slots-ok?"
-      (compiler-reg-color-vector-stack-slots-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-vector-stack-mask-words-ok?"
-      (compiler-reg-vector-stack-mask-words-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-color-storage-ranges-ok?"
-      (compiler-reg-color-storage-ranges-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-stack-only-storage-branch-ok?"
-      (compiler-reg-stack-only-storage-branch-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-stack-only-storage-escape-ok?"
-      (compiler-reg-stack-only-storage-escape-ok?))
-    (compiler-regalloc-self-test-require!
-      "compiler-reg-trace-reason-vocabulary-ok?"
+    (require-each!
+      (cfg test (compiler-reg-remat-classifier-ok?) true)
+      (cfg test (compiler-reg-invariant-word-load-admitted-ok?) true)
+      (cfg test (compiler-reg-invariant-field-store-refused-ok?) true)
+      (cfg test (compiler-reg-invariant-call-refused-ok?) true)
+      (cfg test (compiler-reg-invariant-recipe-ok?) true)
+      (cfg test (compiler-reg-invariant-base-availability-ok?) true)
+      (cfg test (compiler-reg-remat-recompute-classifier-ok?) true)
+      (cfg test (compiler-reg-remat-literal-assignment-ok?) true)
+      (cfg test (compiler-reg-remat-frozen-global-ok?) true)
+      (cfg test (compiler-reg-remat-discount-weights-ok?) true)
+      (cfg test (compiler-reg-remat-spill-weight-eviction-ok?) true)
+      (cfg test (compiler-reg-remat-rewrite-shape-ok?) true)
+      (cfg test (compiler-reg-remat-register-conflict-ok?) true)
+      (cfg test (compiler-reg-remat-caller-clobber-refusal-ok?) true)
+      (cfg test (compiler-reg-remat-addr-of-source-refusal-ok?) true)
+      (cfg test (compiler-reg-remat-global-mov-rewrite-ok?) true)
+      (cfg test (compiler-reg-remat-global-load-rewrite-ok?) true)
+      (cfg test (compiler-reg-remat-global-gep-rewrite-ok?) true)
+      (cfg test (compiler-reg-remat-global-mutation-refusal-ok?) true)
+      (cfg test (compiler-reg-remat-parameters-poisoned-ok?) true)
+      (cfg test (compiler-reg-remat-parameter-assignment-keeps-home-ok?) true)
+      (cfg test (compiler-reg-remat-parameter-use-not-rewritten-ok?) true)
+      (cfg test (compiler-reg-spill-weight-eviction-ok?) true)
+      (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true)
+      (cfg test (compiler-reg-foldable-rebate-classification-ok?) true)
+      (cfg test (compiler-reg-foldable-rebate-keeps-counter-ok?) true)
+      (cfg test (compiler-reg-foldable-rebate-index-not-discounted-ok?) true)
+      (cfg test (compiler-reg-foldable-rebate-idempotent-ok?) true)
+      (cfg test (compiler-reg-call-span-counts-ok?) true)
+      (cfg test (compiler-reg-group-pair-widening-ok?) true)
+      (compiler-reg-early-scratch-model-ok?)
+      (compiler-reg-greedy-live-union-invariant-ok?)
+      (compiler-reg-scratch-borrow-masks-ok?)
+      (compiler-reg-early-scratch-never-spills-ok?)
+      (compiler-reg-early-scratch-exclusion-rehomes-ok?)
+      (compiler-reg-dense-lookups-ok?)
+      (compiler-reg-dense-assignment-snapshot-ok?)
+      (compiler-reg-color-stack-group-ok?)
+      (compiler-reg-color-spill-slot-sharing-ok?)
+      (compiler-reg-color-fusion-pin-slots-ok?)
+      (cfg test (compiler-reg-color-phi-web-slot-sharing-ok?) true)
+      (cfg test (compiler-reg-color-web-merge-ok?) true)
+      (cfg test (compiler-reg-color-carry-priority-ok?) true)
+      (cfg test (compiler-reg-color-witness-chain-ok?) true)
+      (compiler-reg-color-spill-param-pins-ok?)
+      (compiler-reg-color-avx2-param-ranges-ok?)
+      (compiler-reg-color-spill-hole-demand-ok?)
+      (compiler-reg-color-spill-scratch-demand-ok?)
+      (compiler-reg-color-vector-stack-slots-ok?)
+      (compiler-reg-vector-stack-mask-words-ok?)
+      (compiler-reg-color-storage-ranges-ok?)
+      (compiler-reg-stack-only-storage-branch-ok?)
+      (compiler-reg-stack-only-storage-escape-ok?)
       (cfg test (compiler-reg-trace-reason-vocabulary-ok?) true))
     true))
 

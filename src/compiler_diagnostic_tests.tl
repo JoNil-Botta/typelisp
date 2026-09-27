@@ -1,8 +1,8 @@
 ;; compiler_diagnostic_tests.tl - Diagnostic self-check fixtures split
-;; from production compiler_diagnostic.tl (simplify.md A1, #5169 pattern).
+;; from production compiler_diagnostic.tl.
 ;;
 ;; Holds the render/metadata/typecheck-code fixtures, the test-only
-;; compiler-diagnostic-string-eq? helper (its only consumers were these
+;; compiler-diagnostic-string-eq? helper (its only consumers are these
 ;; fixtures), and the compiler-diagnostic-self-test entry that drives them.
 ;; All production rendering and classification machinery stays in
 ;; compiler_diagnostic.tl.

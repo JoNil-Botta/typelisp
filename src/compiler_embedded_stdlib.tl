@@ -8,9 +8,9 @@
   (CompilerEmbeddedStdlibNoSource)
   (CompilerEmbeddedStdlibSomeSource String))
 
-;; Individual embedded source modules are currently below 0.2 MiB. The 16 MiB
-;; ceiling leaves ample growth while rejecting corrupt length headers before
-;; they can request an unbounded allocation.
+;; The 16 MiB ceiling is far above any individual embedded source module while
+;; rejecting corrupt length headers before they can request an unbounded
+;; allocation.
 (define (compiler-embedded-stdlib-source-limit) : i64
   16777216)
 

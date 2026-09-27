@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# Production macro-walk sustained stress for the embedded stdlib TLCI route
-# (#5926). The compiler supplied here is the profile CLI built by
+# Production macro-walk sustained stress for the embedded stdlib TLCI route.
+# The compiler supplied here is the profile CLI built by
 # verify-compile-profile.sh with compile-profile, embedded-stdlib-tlci, and
 # tlci-native-route-stress. Production routing follows normal trusted-source
 # policy on both hosts; the runtime workload variable enables only the durable
@@ -147,8 +147,8 @@ FIXTURE
         # This private projection bridge is the cheapest stable native Expr
         # identity in the measured fixture set. The result is pure and unused,
         # so ordinary optimization removes the expanded field reads while the
-        # production macro walk still performs every native dispatch. Keep the
-        # formerly sustained identities as explicit probes above.
+        # production macro walk still performs every native dispatch. The other
+        # identities are exercised as explicit probes above.
         printf '%s\n' '      (__tl-project-field buf len)' >> "$output"
         index=$((index + 1))
     done
@@ -320,8 +320,8 @@ assert_profile_sum_eq() {
 assert_profile_sum_at_least stdlib_tlci_native_expr_results 25000
 assert_profile_sum_at_least stdlib_tlci_native_module_results "$ROW_COUNT"
 assert_profile_sum_at_least stdlib_tlci_native_decls_results "$ROW_COUNT"
-# #6550 moved text_buf/append! off the final shell. Sustained production
-# routing must now preserve the catalog-wide zero-shell/zero-fallback state.
+# Sustained production routing must preserve the catalog-wide
+# zero-shell/zero-fallback state.
 assert_profile_sum_eq stdlib_tlci_shell_learns 0
 assert_profile_sum_eq stdlib_tlci_interpreted_fallbacks 0
 assert_profile_sum_at_least stdlib_source_interpreted "$ROW_COUNT"
@@ -423,14 +423,14 @@ assert_macro_profile_counts \
 assert_macro_profile_counts \
     "$NATIVE_STDERR" stdlib.core_macros/__tl-box-place 1 1 1 "$ROW_COUNT"
 # The generation-checked formatter writer registry contributes one shared
-# two-operand conjunction to every stress entry. Refs #7655. The exact fused
-# multiply-add in stdlib.math, which stdlib.io imports, adds eight more
-# two-operand conjunctions and four two-operand disjunctions. Refs #7005.
-# The decimal parser adds three two-operand conjunctions and one disjunction;
-# short-string equality adds two more conjunctions in imported stdlib source.
+# two-operand conjunction to every stress entry. The exact fused multiply-add
+# in stdlib.math, which stdlib.io imports, adds eight more two-operand
+# conjunctions and four two-operand disjunctions. The decimal parser adds three
+# two-operand conjunctions and one disjunction; short-string equality adds two
+# more conjunctions in imported stdlib source.
 assert_macro_profile_counts \
     "$NATIVE_STDERR" stdlib.core_macros/and 2 85 85 "$ROW_COUNT"
-# #6984's Windows open-error mapping contributes two more `or` expansions
+# The Windows open-error mapping contributes two more `or` expansions
 # than Linux for every Windows compiler batch entry.
 CORE_OR_CALLS=19
 if [ "$NL_HOST_OS" = windows ]; then
@@ -492,9 +492,9 @@ END_RECORDS=$(awk -F '|' '$8 == "result=006" { n++ } END { print n + 0 }' "$RECO
     fail "expected $ROW_COUNT pass-start records, got $START_RECORDS"
 [ "$END_RECORDS" -eq "$ROW_COUNT" ] ||
     fail "expected $ROW_COUNT pass-end records, got $END_RECORDS"
-# Native Expr, Module, and Decls commits must all appear. Result 004 was the
-# learned-shell marker; #6550's zero-shell end state makes its presence a
-# regression rather than a required coverage point.
+# Native Expr, Module, and Decls commits must all appear. Result 004 is the
+# learned-shell marker; with zero shells its presence is a regression rather
+# than a required coverage point.
 for result in 001 002 003; do
     grep -F "|result=$result|" "$RECORDS" >/dev/null ||
         fail "durable records never observed result kind $result"
@@ -511,10 +511,9 @@ UNIQUE_IDENTITIES=$(awk -F '|' '
     }
     END { for (key in seen) count++; print count + 0 }
 ' "$RECORDS")
-# The former append! shell forced a result-004 record for a fifth identity.
-# Fully native Expr results are sampled at fixed dispatch boundaries instead;
-# require the four independently sampled identities here, while the explicit
-# profile row below proves append!'s own native identity/arity.
+# Fully native Expr results are sampled at fixed dispatch boundaries; require
+# the four independently sampled identities here, while the explicit profile
+# row below proves append!'s own native identity/arity.
 [ "$UNIQUE_IDENTITIES" -ge 4 ] ||
     fail "stress observed only $UNIQUE_IDENTITIES stable identity indexes, expected at least 4"
 

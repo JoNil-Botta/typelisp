@@ -104,7 +104,7 @@
               (set! index (+ index 1))))
           (DocTestExtraction.Extraction out-examples out-errors)))]))
 
-;; Package discovery tolerates a path disappearing before checking, as before.
+;; Package discovery tolerates a path disappearing before checking.
 ;; The source bytes and line/fence scanner are disposable; only extracted code,
 ;; runnable output expectations and errors survive into compiler typechecking.
 (define (doc-test-extract-package-file-text [path : String]) : DocTestExtraction

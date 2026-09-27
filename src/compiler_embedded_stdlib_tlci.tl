@@ -71,7 +71,7 @@
 ;; #5926: bounded lifecycle evidence for the production-route stress compiler.
 ;; These cells are absent from ordinary/published builds. They count successful
 ;; image maps, releases, and callback-host sessions across compile --batch pool
-;; resets; paired canaries make the durable checkpoint fail closed if the old
+;; resets; paired canaries make the durable checkpoint fail closed if
 ;; sustained-dispatch corruption reaches adjacent compiler globals.
 (cfg
   tlci-native-route-stress
@@ -136,16 +136,14 @@
 ;; that first call lands inside a firing declaration's arena generation, which
 ;; is destroyed a couple of batches later -- so anything the session retains
 ;; that was allocated in "whatever arena is current" is a use-after-free at the
-;; next dispatch. Measured: the image was mapped in the generation covering
-;; declarations 33-64, that generation was destroyed entering declaration 97,
-;; and declaration 98's dispatch read the freed host callback table.
+;; next dispatch (the freed host callback table, for example).
 ;;
 ;; The session therefore owns an arena, and that arena is created once and
 ;; NEVER destroyed or reset -- the same shape, and for the same reason, as
 ;; `compiler-ir-label-arena`. Two consequences are deliberate:
 ;;
 ;; * Nothing allocated here can ever dangle, whatever a later packet does to
-;;   the arenas around it. The bug being fixed is a dangling read; an owner
+;;   the arenas around it. The hazard is a dangling read; an owner
 ;;   that is never released cannot reintroduce one, and it needs no
 ;;   head-tracking to keep an overflow segment reachable for a destroy that
 ;;   does not happen (H4).
@@ -179,10 +177,10 @@
 ;; existing parser and mapper, while the source fallback retains its separate
 ;; lazy per-module `include-str-lzss` payloads and decoder.
 ;;
-;; Expansion is per call, exactly where the byte copy used to be: the decoded
-;; image is transient working memory owned by whatever arena the caller made
-;; current, and caching it for the process would retain megabytes. The one
-;; reuse is the driver's surface expansion below, whose owner already keeps it.
+;; Expansion is per call: the decoded image is transient working memory owned
+;; by whatever arena the caller made current, and caching it for the process
+;; would retain megabytes. The one reuse is the driver's surface expansion
+;; below, whose owner already keeps it.
 ;; 256 MiB is far above the current image while bounding a corrupt static
 ;; length before allocation.
 (define (compiler-embedded-stdlib-tlci-raw-limit) : i64
@@ -225,10 +223,10 @@
 ;; The driver builds its surface with its own surface arena current, so those
 ;; bytes already stay mapped for the driver state's whole lifetime; the session
 ;; open that follows in that lifetime (and any nested package's surface) maps
-;; the same bytes instead of expanding the 16 MB image again, which was a tenth
-;; of a mid-sized compile. Nothing outlives its owner: the driver forgets the
-;; bytes before it destroys that arena, and a session opened with no surface
-;; still expands into the caller's current arena as before.
+;; the same bytes instead of expanding the multi-megabyte image again. Nothing
+;; outlives its owner: the driver forgets the bytes before it destroys that
+;; arena, and a session opened with no surface still expands into the caller's
+;; current arena.
 (define compiler-embedded-stdlib-tlci-decoded-owner : i64
   0)
 (define compiler-embedded-stdlib-tlci-decoded : (__tl_dyn-array
@@ -1117,10 +1115,6 @@
                 (__tl-project-field (__tl-box-place diag) message))
               tlci.tlci-host-callback-status-diagnostic)])))))
 
-;; The compiler-owned callback invoke installed into the tlci host callback
-;; table. TypeLisp's native convention passes scalar arguments in the SysV
-;; integer registers, so this function is directly callable from the mapped
-;; image on Linux; the Windows adapter is tracked with the dispatch slice.
 ;; Pop the second then the first operand expression and push the two-operand
 ;; raw-pointer/data node the parser produces: kind 0 is `(ptr-write! p v)`,
 ;; kind 1 is `(ptr-offset p n)`, and kind 2 is `(string-from-bytes d n)`.

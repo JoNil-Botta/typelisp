@@ -19,7 +19,6 @@
 #
 # Setting GIT_DIR/GIT_WORK_TREE to paths that git can resolve makes the same
 # command work, so this is a legibility problem, not a missing capability.
-# Refs #5697.
 #
 # Source it (not exec): `. "$ROOT/scripts/lib-build-provenance.sh"`. POSIX sh
 # only — no `local`, arrays, or bashisms.

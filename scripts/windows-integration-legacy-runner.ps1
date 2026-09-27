@@ -2,10 +2,10 @@
 windows-integration-legacy-runner.ps1 - one-shot compatibility oracle used only
 by verify-integration.sh's Windows queue differential test.
 
-This intentionally retains the previous one-process launch shape. It is not
-used by the manifest runner; keeping the oracle separate lets the integration
-gate compare legacy and queued stdout/stderr/exit results for representative
-already-linked binaries before the old per-case path is retired.
+This intentionally keeps a one-process-per-case launch shape. It is not used by
+the manifest runner; keeping the oracle separate lets the integration gate
+compare one-shot and queued stdout/stderr/exit results for representative
+already-linked binaries.
 #>
 
 Set-StrictMode -Version Latest

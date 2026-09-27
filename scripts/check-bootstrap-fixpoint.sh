@@ -22,8 +22,6 @@ set -eu
 # run into the same-commit embedded-stdlib mutation handoff witness. It copies
 # src/ and stdlib/ below the selected workdir and never edits checked-in
 # sources.
-#
-# refs #47.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

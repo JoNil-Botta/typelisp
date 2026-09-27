@@ -2,8 +2,7 @@
 set -eu
 
 # verify-fs-rooted-linux.sh - adversarial native checks for the private Linux
-# rooted staging, publication, and reusable-read backend. refs #7221, #7409,
-# #7550, #7653, #7662
+# rooted staging, publication, and reusable-read backend.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

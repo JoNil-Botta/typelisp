@@ -775,7 +775,7 @@ run_batched_comparison() {
             batch_index=$((batch_index + 1))
             if chunk_is_timed_selfhost "$left_cases"; then
                 # CI budgets the wall time of these four compiles, so they run
-                # alone, before the pool starts, exactly as they always have.
+                # alone, before the pool starts.
                 run_batch_chunk "opt1-built" "$OPT1_COMPILER" "$opt_level" "$left_chunk" "$left_cases" "$batch_index/$left_chunk_count" "$left_entries" ""
                 run_batch_chunk "opt2-built" "$OPT2_STAGE4" "$opt_level" "$right_chunk" "$right_cases" "$batch_index/$left_chunk_count" "$right_entries" ""
                 compare_batch_cases "$left_cases" "$LEFT_DIR" "$RIGHT_DIR"

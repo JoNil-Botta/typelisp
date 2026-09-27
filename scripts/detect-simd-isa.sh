@@ -8,7 +8,7 @@ set -eu
 # enablement), not merely compile for it.
 #
 # This lets test harnesses gate SIMD *execution* on real capability instead of
-# host OS (refs #1147): the fleet's Windows box has AVX-512, while a generic
+# host OS: the fleet's Windows box has AVX-512, while a generic
 # `windows-latest` runner may not, so host-OS gating is wrong either way.
 #
 # Reusable shared helper:
@@ -17,9 +17,8 @@ set -eu
 #
 # Linux reads /proc/cpuinfo (no build). Windows (Git Bash/MSYS/Cygwin) builds
 # and runs the TypeLisp cpuid detector (scripts/detect_simd_isa.tl, built on
-# stdlib/cpu.tl) with the harness's typelisp ($TYPELISP_BIN, else
-# target/release/typelisp.exe) and caches it under $TMPDIR -- no C component
-# remains in the repo (refs #1168). Unknown hosts print nothing.
+# stdlib/cpu.tl) with the harness's typelisp ($TYPELISP_BIN, else the published
+# stage0) and caches it under $TMPDIR. Unknown hosts print nothing.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 

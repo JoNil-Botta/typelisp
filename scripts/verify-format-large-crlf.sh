@@ -2,12 +2,11 @@
 set -eu
 
 # Exercise the whole-file `fmt --check` diff produced when canonical LF source
-# arrives with CRLF endings. The old immutable-string accumulator retained
-# quadratic intermediate output; a 20,000-line hunk crossed many GiB while
-# the growable render buffer stays comfortably below this gate's 1 GiB Linux
+# arrives with CRLF endings. An immutable-string accumulator retains quadratic
+# intermediate output and crosses many GiB on a 20,000-line hunk, while the
+# growable render buffer stays comfortably below this gate's 1 GiB Linux
 # process-tree limit. Windows runs the same deterministic structural probe
 # without asserting a host-specific memory number.
-# refs #6498, #6193.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

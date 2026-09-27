@@ -3,8 +3,8 @@ set -eu
 
 # run-optimization-benchmarks.sh - local optimizer progress benchmarks.
 #
-# The harness compares paired TypeLisp and C programs from top-level
-# benchmarks/opt_*/ directories that carry optimization.tsv metadata. The
+# The harness compares paired TypeLisp and C programs from every top-level
+# benchmarks/*/ directory that carries optimization.tsv metadata. The
 # default timing report is a local Linux tool. `--correctness` is the
 # required-CI gate and performs no timing work. Linux CI passes positive suite
 # membership from perf/benchmark-ci-cases.tsv.

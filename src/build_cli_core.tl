@@ -7102,8 +7102,9 @@
           (ResultBuildCliConfig.Err "build: -o requires a source file argument")]
         [else (ResultBuildCliConfig.Err "build: expected source path")]))))
 
-;; Build a source file directly. Manifest builds use the older package parser so
-;; `typelisp build` can still discover `typelisp.pkg` from the working tree.
+;; Build a source file directly. Manifest builds go through the package parser
+;; (`build-main-from`) so `typelisp build` discovers `typelisp.pkg` from the
+;; working tree.
 (define (build-source-direct-from [idx : i64] [count : i64]) : i64
   (match (build-cli-config-from idx count)
     [(ResultBuildCliConfig.Ok config)

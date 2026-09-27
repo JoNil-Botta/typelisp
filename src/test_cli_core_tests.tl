@@ -1730,10 +1730,6 @@
           false))
       (not
         (tltest.tltest-package-integration-source?
-          "repo/tests/diagnostics/backend/quote_runtime_value.tl"
-          (owned_view.compiler-owned-shared-view tests-prefix)))
-      (not
-        (tltest.tltest-package-integration-source?
           "repo/tests/format_golden/char_literal.tl"
           (owned_view.compiler-owned-shared-view tests-prefix)))
       (not
@@ -1774,14 +1770,14 @@
         "repo/tests/nested/more.tl"
         (owned_view.compiler-owned-shared-view tests-prefix))
       (tltest.tltest-package-integration-source?
-        "repo/tests/diagnostics_extra/example.tl"
+        "repo/tests/safety_extra/example.tl"
         (owned_view.compiler-owned-shared-view tests-prefix))
       (tltest.tltest-package-integration-source?
         "repo/tests/tlci_extra/example.tl"
         tests-prefix))))
 
 (test
-  test-cli-package-integration-skips-diagnostics-fixtures
+  test-cli-package-integration-skips-reserved-fixtures
   (if (tltest-package-integration-filter-self-test?)
     unit
     (io.panic "test CLI package integration filter mismatch")))

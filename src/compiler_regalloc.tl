@@ -1,8 +1,7 @@
 ;; compiler_regalloc.tl - Planning-only scalar register allocation.
 ;;
-;; This pass mirrors the legacy backend's planning shape without changing
-;; assembly emission. It computes inspectable live intervals, ineligible vars,
-;; and register/spill homes for scalar IR values. The selfhost pools keep
+;; It computes inspectable live intervals, ineligible vars, and register/spill
+;; homes for scalar IR values. The selfhost pools keep
 ;; %rsp/%rbp reserved and admit caller-saved integer/XMM registers only for
 ;; values that cannot be clobbered by call emission.
 (import stdlib.io)
@@ -13,7 +12,7 @@
 (import stdlib.hashmap)
 (import compiler_regalloc_interval_sort as interval_sort)
 
-;; Block labels are interned ids, so their maps are integer-keyed (refs #5718).
+;; Block labels are interned ids, so their maps are integer-keyed.
 (import (hashmap.hashmap i64 i64) as reg_label_i64_map)
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
 (import compiler_ast_types as ast)
@@ -83,8 +82,8 @@
   ;; Rematerialization: a single-def value whose definition is a cheap static
   ;; recompute (a constant or an address materialization `leaq label(%rip)`) is
   ;; not spilled to a slot under pressure -- it is RECOMPUTED at each use and its
-  ;; defining store is dropped. The carried IrValue is exactly what the def Mov
-  ;; produced, so recomputing always yields the identical value.
+  ;; defining store is dropped. The carried CompilerIrValue is exactly what the
+  ;; def Mov produced, so recomputing always yields the identical value.
   (Remat ir.CompilerIrValue))
 
 (defenum CompilerRegMaybeLocation
@@ -247,9 +246,9 @@
 ;;
 ;; `live-union*` is the per-register LiveIntervalUnion (LLVM RAGreedy): the live
 ;; SEGMENTS of every resident of a register, kept sorted by effective start, so
-;; "is this register free for v?" is a stabbing query over v's own (1.37 on
-;; average) segments instead of one segmented-interference predicate call per
-;; resident (22.8 on average). See compiler-reg-live-union-interferes?.
+;; "is this register free for v?" is a stabbing query over v's own segments
+;; instead of one segmented-interference predicate call per resident. See
+;; compiler-reg-live-union-interferes?.
 (defstruct CompilerRegGreedyOccupancy
   (words (__tl_dyn-array i64))
   (word-count i64)
@@ -433,8 +432,7 @@
 (defenum CompilerRegCallRegion
   (CompilerRegCallRegion i64 i64 i64 i64 i64))
 
-;; Accepted placements in ACCEPT order; consumers walk it back to front, which
-;; is the order the former prepend-built cons list presented.
+;; Accepted placements in ACCEPT order; consumers walk it back to front.
 (defstruct CompilerRegCallRegionSeq
   (slots (__tl_dyn-array CompilerRegCallRegion))
   (len i64))
@@ -504,9 +502,8 @@
 ;; (var-id -> caller-saved register ID for its call-free regions, -1 = none),
 ;; the accepted per-call-region placements the backend rewrite realizes, and
 ;; the parked-occupant eviction steps those placements depend on.
-;; The regs map generalizes the former single hardcoded %r9 so multiple
-;; OVERLAPPING call-spanning values can each be kept in a distinct caller-saved
-;; register between the same calls.
+;; The regs map lets multiple OVERLAPPING call-spanning values each be kept in
+;; a distinct caller-saved register between the same calls.
 (defenum CompilerRegCallSplit
   (CompilerRegCallSplit
     live.CompilerLiveI64Set
@@ -655,10 +652,9 @@
   (dst i64)
   (strict bool))
 
-;; Coalesce move candidates in ADD order. The former cons list was built by
-;; prepending, so its head was the newest entry: every order-sensitive consumer
-;; below (mark-strict, class merging, first-wins copy hints) walks index
-;; `len - 1` down to 0.
+;; Coalesce move candidates in ADD order. Every order-sensitive consumer below
+;; (mark-strict, class merging, first-wins copy hints) walks newest first,
+;; index `len - 1` down to 0.
 (defstruct CompilerRegMoveSeq
   (slots (__tl_dyn-array CompilerRegMove))
   (len i64))
@@ -943,21 +939,17 @@
 ;; by the primary pass:
 ;; a value whose live interval spans a call keeps its home across that call
 ;; because the callee preserves these registers, so no spill/reload around the
-;; call is needed. The former pool also offered %r8/%r9, which are caller-saved
+;; call is needed. %r8/%r9 must not be offered here: they are caller-saved
 ;; under both SysV and Win64 and are clobbered by an intervening call — a value
 ;; homed there and read after the call (e.g. the first operand of `(+ a (f))`)
 ;; would silently observe garbage. The five registers below are exactly those
-;; the backend prologue/epilogue save and restore. Mirrors the former Rust
-;; backend's `SYSV_ALLOCATABLE_INTEGER_REGS` (callee-saved only).
+;; the backend prologue/epilogue save and restore.
 ;;
-;; %rbx is callee-saved under both SysV and Win64 and was historically reserved
-;; as the backend's hard scratch register for the right-hand operand of integer
-;; binops/compares/gep/div/shift. That fixed scratch role moved under the
-;; scavenger, freeing %rbx to join the callee-saved pool. It is added LAST so
-;; functions needing four or fewer registers keep their previous r12-r15 homes;
-;; %rbx only homes a value once the four call-safe registers are exhausted, and
-;; when it does the backend prologue/epilogue saves/restores it into a frame slot
-;; exactly like r12-r15.
+;; %rbx is callee-saved under both SysV and Win64; backend scratch comes from
+;; the scavenger, not from a fixed register, so %rbx is free to join the pool.
+;; It is added LAST: %rbx only homes a value once the four call-safe registers
+;; are exhausted, and when it does the backend prologue/epilogue saves/restores
+;; it into a frame slot exactly like r12-r15.
 (define (compiler-reg-sysv-integer-registers) : CompilerRegIdSeq
   (let
     [out : CompilerRegIdSeq (compiler-reg-id-seq-with-capacity 5)]
@@ -973,10 +965,10 @@
 ;; enabled per-function by the backend (compiler-reg-set-rbp-pool-enabled!) when
 ;; the function is frame-pointer-omission eligible: the prologue then addresses
 ;; the frame purely rsp-relative, freeing %rbp to home a value like every other
-;; nonvolatile register. %rbp is added LAST in each ABI pool so lower-pressure
-;; functions keep their existing assignments.
+;; nonvolatile register. %rbp is added LAST in each ABI pool, so it only homes a
+;; value once every other pool register is taken.
 ;; The flag defaults to false, so every non-backend planning path (regalloc unit
-;; tests, SIMD/AVX config, stack-only plans) sees the historical 14-register pool.
+;; tests, SIMD/AVX config, stack-only plans) sees the pool without %rbp.
 (define compiler-reg-rbp-pool-enabled : bool
   false)
 
@@ -1468,7 +1460,7 @@
     [(ast.AstType.Box _) true]
     [(ast.AstType.Array _ _) true]
     [(ast.AstType.DynArray _) true]
-    ;; Bare Slice has no runtime by-value representation in this packet.
+    ;; Bare Slice has no runtime by-value representation.
     [(ast.AstType.Slice _) false]
     [(ast.AstType.Enum _) true]
     [(ast.AstType.EnumArgs _ _) true]
@@ -1786,7 +1778,7 @@
 (define (compiler-reg-move-list-empty? [moves : (& moves CompilerRegMoveSeq)]) : bool
   (= moves.len 0))
 
-;; Marks the NEWEST undirected match (the head of the former cons list) strict.
+;; Marks the NEWEST undirected match strict.
 (define (compiler-reg-move-list-mark-strict
   [moves : CompilerRegMoveSeq]
   [src : i64]
@@ -1929,10 +1921,10 @@
 
 ;; M-C (part 1): a 64-bit-width integer cast (i64 <-> u64) is a pure register
 ;; copy -- the optimizer deliberately KEEPS same-width sign-reinterpreting casts
-;; as IrInstrCast (opt-int-cast-as-mov?) and the backend emits them as a plain
+;; as a `Cast` (opt-int-cast-as-mov?) and the backend emits them as a plain
 ;; `movq src-home, dst-home` (compiler-backend-emit-cast, the same-size arm),
 ;; eliding it when the homes coincide. The bounds-check index temp is exactly
-;; this shape (lower-cast-value i64->u64 feeding IrInstrBoundsCheck). Narrower
+;; this shape (lower-cast-value i64->u64 feeding a `BoundsCheck`). Narrower
 ;; same-width casts (i32<->u32 ...) are excluded: their register homes hold the
 ;; sign/zero-NORMALIZED 64-bit value, which differs between the signednesses,
 ;; so those pairs are not same-valued at the 64-bit register level.
@@ -1978,7 +1970,7 @@
 ;; is why the commuted arm landed inert.
 ;;
 ;; So: for a commutative BinOp whose LHS is a fusable load and whose RHS is not,
-;; prefer the RHS. Every other shape keeps today's LHS preference exactly.
+;; prefer the RHS. Every other shape keeps the LHS preference.
 ;;
 ;; The admission below MIRRORS the backend: the structural conditions are
 ;; restated here rather than shared, because regalloc runs before homes exist and can only
@@ -2220,7 +2212,7 @@
 ;; Built in two probes so the common function pays nothing: the first runs the
 ;; structural match with no use counts (every single-use test admits), and only a
 ;; function that produced a candidate walks its uses and re-runs the match for
-;; real. The corpus census says that is a handful of functions.
+;; real. Few functions produce one.
 (define (compiler-reg-function-alu-prefer-rhs [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
   (match func
@@ -2251,10 +2243,10 @@
   (and (>= var 0) (< var (array-length flags)) (= (array-ref flags var) 1)))
 
 ;; Harvest width-64 int casts as coalescable moves (M-C part 1). Kept SEPARATE
-;; from compiler-reg-function-moves so the SIMD/AVX plan path and the post-hoc
-;; loop-split/remat coalesce rebuilds stay byte-identical; only the scalar-opt2
-;; plan-from seeds its move list with these (appended BEHIND the real moves so
-;; existing first-wins copy-hint priorities are unchanged).
+;; from compiler-reg-function-moves so the SIMD/AVX plan path keeps the plain
+;; move list; only the scalar-opt2 plan-from seeds its move list with these
+;; (appended BEHIND the real moves so the real moves keep first-wins copy-hint
+;; priority).
 (define (compiler-reg-cast-move-instr
   [instr : ir.CompilerIrInstr]
   [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
@@ -3273,13 +3265,12 @@
 
 ;; The live-after half: bridge every value live out of this instruction across
 ;; the `point`/`next` pair. This one stays a word walk and does not become an id
-;; list -- live-after is a whole live row (36.9M of the 39.1M words this walk
-;; reads in an opt2 self-compile), not a one-or-two-bit per-instruction set.
+;; list -- live-after is a whole live row, not a one-or-two-bit per-instruction
+;; set.
 ;;
 ;; A whole row is not a full row, though, and the walk pays for the difference:
-;; of the 26,954,947 words it reads in an opt2 self-compile, 21.1M (78%) are
-;; zero and carry the loop to the next word and nothing else, at 19 instructions
-;; each. Two things are therefore kept out of the per-word step.
+;; most of the words it reads are zero and carry the loop to the next word and
+;; nothing else. Two things are therefore kept out of the per-word step.
 ;; `compiler-live-set-word-at-bounded` reloads the set handle, the array handle
 ;; behind it and the data pointer behind that on every call, so the pointer is
 ;; taken once up front (`compiler-live-set-word-data`; heap allocation is a bump
@@ -3287,15 +3278,14 @@
 ;; nothing here writes to `live-after`, so it stays valid across the calls in
 ;; the body). And the word's bit base belongs to the bits, not to the word:
 ;; computing it in the item expression lets the loop hoist it into the inner
-;; walk's preheader, charging the 5.9M words that carry a bit instead of all
-;; 27.0M. Same words, same order, same values.
+;; walk's preheader, charging only the words that carry a bit instead of every
+;; word. Same words, same order, same values.
 ;;
-;; The per-bit body spells out BOTH bridges instead of calling them. It used to
-;; be a `compiler-reg-segment-note-span!` call -- inlined, since this was its
-;; only call site -- followed by a `compiler-reg-extend-interval` call, which is
-;; NOT inlined because ten other call sites keep it out of line. That second
-;; call cost this walk a call/ret, four argument moves and a second `var < 0`
-;; test on every live bit. The two bridges touch DISJOINT arrays --
+;; The per-bit body spells out BOTH bridges instead of calling them: the segment
+;; note, and the body of `compiler-reg-extend-interval`, which is NOT inlined
+;; because ten other call sites keep it out of line, so calling it would cost
+;; this walk a call/ret, four argument moves and a second `var < 0` test on
+;; every live bit. The two bridges touch DISJOINT arrays --
 ;; `segments`/`segment-starts`/`segment-ends` versus `starts`/`ends` -- so they
 ;; commute, and the fused body applies exactly the same steps to the same slots
 ;; in the same order:
@@ -3314,10 +3304,10 @@
 ;; through backing pointers taken once in the preheader instead of through their
 ;; handles. This is what the fused loop is for: `compiler-reg-segment-flush-var!`
 ;; sits in the cold reopen arm, and a call in the loop stops the optimizer
-;; hoisting anything out of it, so EVERY live bit was re-reading a handle, the
-;; length behind it and the data pointer behind that, then re-testing the same
-;; index -- eight instructions of array metadata per bit for two reads the loop
-;; had already proven in range.
+;; hoisting anything out of it, so through the handles EVERY live bit would
+;; re-read a handle, the length behind it and the data pointer behind that, then
+;; re-test the same index -- array metadata per bit for two reads the loop has
+;; already proven in range.
 ;;
 ;; The guard is what makes the raw indexing sound, and it is proven here rather
 ;; than assumed: `var-limit` is the MINIMUM of all four lengths, so
@@ -4169,9 +4159,9 @@
 ;; per-var segment rows of the phi-touched vars, and takes the coarse
 ;; start/end arrays from the CONSERVATIVE index -- so the EP build's coarse
 ;; interval work is dead, and so is every segment row of a var the mask does
-;; not select (3.16% of vars are phi-touched in an opt2 self-compile). This
-;; build therefore takes the mask up front and writes only the rows that will
-;; be read.
+;; not select (only a small fraction of vars are phi-touched). This build
+;; therefore takes the mask up front and writes only the rows that will be
+;; read.
 ;;
 ;; Row equivalence: every step of the walk reads and writes only the slots of
 ;; the variable it is handling (`segment-starts` / `segment-ends` / `segments`
@@ -4267,15 +4257,16 @@
 ;; ---------------------------------------------------------------------------
 ;; LP-1: the allocation-side EP mode.
 ;;
-;;   0 = off. The allocation interval index is exactly what it was: the
-;;       CONSERVATIVE segment builder run over EDGE-PRECISE liveness (the #6377
-;;       switch), so a phi still contributes a use touch AT the phi point.
+;;   0 = off. The allocation interval index is the CONSERVATIVE segment
+;;       builder run over EDGE-PRECISE liveness, so a phi still contributes a
+;;       use touch AT the phi point.
 ;;   1 = substitute EP SEGMENT rows for safe-mode phi-touched vars.
 ;;   2 = 1, plus tighten those vars' coarse hull to the substituted rows.
 ;;
 ;; This is a compile-time constant, not an escape hatch: there is no per-function
 ;; bail-out. Every relaxation is decided PER VALUE by the safe-mode phi-touched
-;; mask, and a value the mask does not select keeps today's row and today's hull.
+;; mask, and a value the mask does not select keeps its conservative row and
+;; hull.
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-ep-alloc-mode) : i64
   2)
@@ -4365,13 +4356,13 @@
 ;; This is the phi-masked twin of `compiler-reg-extend-segment-after-words!` and
 ;; it takes the same treatment for the same reason. `flush-var!` sits in the
 ;; cold reopen arm, and a call in the loop stops the optimizer hoisting anything
-;; out of it, so every live bit re-read a handle, the length behind it and the
-;; data pointer behind that, for each of the two arrays it touches -- array
-;; metadata for reads the loop had already proven in range. The three word
-;; arrays and the live-after backing are read through pointers taken once in the
-;; preheader, and the word's bit base moves into the item expression so the
-;; inner walk's preheader charges it to the words that carry a bit rather than
-;; to every word. Same words, same order, same values.
+;; out of it, so through the handles every live bit would re-read a handle, the
+;; length behind it and the data pointer behind that, for each of the two arrays
+;; it touches -- array metadata for reads the loop has already proven in range.
+;; The three word arrays and the live-after backing are read through pointers
+;; taken once in the preheader, and the word's bit base moves into the item
+;; expression so the inner walk's preheader charges it to the words that carry a
+;; bit rather than to every word. Same words, same order, same values.
 ;;
 ;; Both range proofs are LOCAL and neither rests on a caller contract:
 ;;   * `limit` is the minimum of `after-words`, `mask-limit` AND the mask array's
@@ -4380,8 +4371,7 @@
 ;;     `(array-length words)` -- but taking it here is what makes the raw mask
 ;;     read sound without knowing that.
 ;;   * `var-limit` is the MINIMUM of the two segment array lengths, so
-;;     `0 <= item-var < var-limit` puts the index inside both. The guard is new
-;;     only in the sense that the bounds check used to be the array-ref's own:
+;;     `0 <= item-var < var-limit` puts the index inside both.
 ;;     `item-var` is already in range on every path (the mask word only carries
 ;;     bits for `v < vars`, and both arrays are `vars` long), so the arm the
 ;;     guard adds is dead. `item-var < 0` cannot happen either -- `index >= 0`
@@ -4841,8 +4831,7 @@
 ;; across the rest of the loop), its edge-precise segment collapses to the tiny
 ;; predecessor-edge slice, understating how entangled it is; coalescing this phi's
 ;; result with a (dead) sibling input then shares a register across a region where the
-;; entangled input is genuinely live, corrupting it (this is exactly the
-;; `compiler-reg-merged-root-index` self-host mis-coalesce the fixpoint caught).
+;; entangled input is genuinely live, corrupting it.
 ;;
 ;; So a phi with ANY live-out input is normally EXCLUDED from EP relaxation: its
 ;; result and inputs fall back to conservative interference. The exceptions are both
@@ -4871,7 +4860,7 @@
 ;;
 ;; A counter that is ALSO read on the exit edge or by an exit phi is `r` in the
 ;; block's live-out and is rejected by (b), keeping its copy. Pure loop/if-merge
-;; carries whose inputs are all dead after the merge stay relaxed as before. Using
+;; carries whose inputs are all dead after the merge stay relaxed. Using
 ;; the sound EP block live-out here can only over-exclude (a missed coalesce), never
 ;; under-exclude.
 ;; ---------------------------------------------------------------------------
@@ -5212,27 +5201,27 @@
 ;; ---------------------------------------------------------------------------
 ;; LP-1: the ALLOCATION interval index -- edge-precise PER VALUE.
 ;;
-;; #6377 moved allocation onto edge-precise LIVENESS, which stopped a loop carry
-;; leaking backward to function entry. It left one conservatism behind: the
-;; SEGMENT builder is still the baseline one, and that builder asks an
+;; Allocation runs on edge-precise LIVENESS, which stops a loop carry leaking
+;; backward to function entry. That leaves one conservatism behind: the
+;; SEGMENT builder is the baseline one, and that builder asks an
 ;; instruction for its uses, so a phi contributes a use touch for every input AT
 ;; THE PHI POINT. A back-edge input therefore still gets a one-point segment at
 ;; the header and, because the header is linearly ahead of the latch, a coarse
 ;; hull that starts at the header and covers the whole loop body -- the
 ;; conservative loop-carry hull. The EP builder (`...-ep-instr-seq`, which asks
-;; for `uses-nophi`) is the row without that touch; until now its only consumer
-;; was the coalescing hybrid.
+;; for `uses-nophi`) is the row without that touch; the coalescing hybrid is its
+;; other consumer.
 ;;
 ;; SUBSTITUTION RULE, per value, fail-closed at every step:
 ;;   * only a var the SAFE-MODE phi-touched mask selects is substituted. That is
 ;;     the same population, built by the same `compiler-reg-function-phi-touched-safe-mode`
 ;;     call, that the coalescer already trusts -- so the live-out-input phi
-;;     exclusion (the `merged-root-index` self-host mis-coalesce the fixpoint
-;;     caught) is applied here unchanged. Every other var keeps today's row.
-;;   * a selected var whose EP row came back EMPTY keeps today's row. An empty
-;;     row proves nothing, and the coarse hull spans a value's holes.
+;;     exclusion (the soundness guard described above) is applied here
+;;     unchanged. Every other var keeps its conservative row.
+;;   * a selected var whose EP row came back EMPTY keeps its conservative row.
+;;     An empty row proves nothing, and the coarse hull spans a value's holes.
 ;;   * a selected var whose conservative hull starts at or before point 0 keeps
-;;     today's row and hull -- see `use-ep?` below.
+;;     its conservative row and hull -- see `use-ep?` below.
 ;;   * the hull is only ever TIGHTENED, never widened: the new start is the MAX
 ;;     of the conservative start and the EP row's first start, the new end the
 ;;     MIN of the conservative end and the EP row's last end. A substitution that
@@ -5313,10 +5302,9 @@
             ;; is built by a walk that never saw that reservation, so
             ;; substituting it would drop the very anchor the reservation exists
             ;; to place -- the prologue writes a register-homed param's home
-            ;; before point 0, which no point model can express. 3.7% of the
-            ;; selected vars on an opt2 self-compile are entry-anchored, and
-            ;; their hulls are the short near-entry ones ([0,8], [0,10]), not the
-            ;; loop carries this packet is after.
+            ;; before point 0, which no point model can express. Entry-anchored
+            ;; hulls are short near-entry ones, not the loop carries the
+            ;; substitution is for.
             [use-ep? : bool (and (> ep-row.len 0) (> old-start 0))]
             [new-start : i64
               (if use-ep?
@@ -5359,7 +5347,7 @@
 ;; Register and stack-slot planning only need, per variable, a single
 ;; [first-live, last-live] interval, which can be built from block-level
 ;; live-in/live-out plus per-instruction mentions. This pass reuses the tested use/def/successor
-;; extraction from compiler-live-build-blocks, then runs the backward dataflow
+;; extraction from compiler-live-build-block-array, then runs the backward dataflow
 ;; fixpoint over MUTABLE i64-word bitsets (in place, no per-operation allocation),
 ;; instead of the shared liveness pass's immutable linked-list bitset unions and
 ;; per-instruction live-after materialization. Block-level live-in/out keeps the
@@ -5923,13 +5911,11 @@
     ;; GAP3b: pin-eligibility matches greedy-eligibility
     ;; (compiler-reg-param-greedy-eligible?). An 8-byte handle (Array/String/
     ;; enum/struct descriptor pointer) arriving in %rdi is pin-identical to a
-    ;; scalar: M-A2/M-C2 established handles as ordinary GP values the backend
-    ;; moves with a plain movq, and M-A already let handle params take greedy
-    ;; CSR homes in every function -- the pin path kept a stale scalar-only
-    ;; restriction from the pre-M-A era, paying an entry copy plus a
-    ;; callee-saved save for every handle param of a zero-clobber leaf
-    ;; (sum_array shape). Floats keep the XMM exclusion; two-word register
-    ;; groups occupy two ABI slots and keep the legacy stack home; genuinely
+    ;; scalar: handles are ordinary GP values the backend moves with a plain
+    ;; movq, and handle params take greedy homes like scalars -- a scalar-only
+    ;; pin rule would pay an entry copy plus a callee-saved save for every
+    ;; handle param of a zero-clobber leaf. Floats keep the XMM exclusion;
+    ;; two-word register groups occupy two ABI slots and keep a stack home; genuinely
     ;; by-reference/address-taken params are excluded upstream by
     ;; base-ineligible (compiler-reg-param-pin-safe?).
     (compiler-reg-register-eligible-type? ty)
@@ -5939,15 +5925,15 @@
 
 ;; M-A (RC1): a non-group register-eligible param that did NOT get
 ;; an ABI pin stays OUT of the ineligible/blocked sets and becomes an ordinary
-;; greedy candidate. R3S-1 restated: its greedy home is no longer restricted to
-;; the CALLEE-SAVED pool. The backend's entry copy still writes the home in the
+;; greedy candidate. Under R3S-1 its greedy home is not restricted to the
+;; CALLEE-SAVED pool. The backend's entry copy writes the home in the
 ;; prologue, but the property that matters is only that the home is not the
 ;; incoming argument register of a LATER param -- `compiler-reg-param-entry-forbidden`
 ;; states exactly that per class, and `spans-call` keeps a call-crossing param
-;; callee-saved-only as before. Handle types (Array/String/enum/struct -- 8-byte
+;; callee-saved-only. Handle types (Array/String/enum/struct -- 8-byte
 ;; descriptors) qualify exactly like scalars. Floats use the same rule over the
 ;; ABI XMM bank: SysV has no nonvolatile suffix, while Win64 may keep an unpinned
-;; parameter in XMM6-XMM15. Two-word register groups keep the legacy stack home.
+;; parameter in XMM6-XMM15. Two-word register groups keep a stack home.
 (define (compiler-reg-param-greedy-eligible?
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
@@ -5975,19 +5961,19 @@
 ;; registers, so the schedule is correct exactly when no parameter's home is the
 ;; incoming argument register of a LATER parameter.
 ;;
-;; That single condition is the whole content of the old `is-param -> csr-only`
-;; rule: the callee-saved set was copy-safe only because it is disjoint from the
-;; incoming argument registers, and paying for it whole-class cost every leaf
-;; helper with more parameters than free callee-saved registers a spill of
-;; parameters that span no call at all. Constraining the HOME instead of the
+;; An `is-param -> csr-only` rule would also satisfy that single condition --
+;; the callee-saved set is copy-safe because it is disjoint from the incoming
+;; argument registers -- but paying for it whole-class costs every leaf helper
+;; with more parameters than free callee-saved registers a spill of parameters
+;; that span no call at all. Constraining the HOME instead of the
 ;; register class lets a parameter that spans no clobber point take a
 ;; caller-saved register like any other value; a parameter that does span a call
 ;; is still callee-saved-only through `spans-call`.
 ;;
 ;; `compiler-reg-param-entry-forbidden` builds that constraint per coalesce
 ;; ROOT (the unit the greedy allocates): the incoming argument registers of the
-;; parameters that follow it. An EMPTY array is the legacy request -- alloc-one!
-;; then keeps every parameter class callee-saved-only, byte-for-byte as before.
+;; parameters that follow it. An EMPTY array is the fallback request --
+;; alloc-one! then keeps every parameter class callee-saved-only.
 ;;
 ;; FLT-1 (wrong-code fix): the parameter shapes whose position -> ABI slot map
 ;; NEITHER this constraint nor the pin walk below models.
@@ -5999,11 +5985,11 @@
 ;;     the incoming STACK area and advances NEITHER argument bank (the
 ;;     private-memory arm of compiler-backend-emit-param-spills-from), consuming
 ;;     `stack-slots-for-size` stack words instead.
-;; The second was invisible to both walks: the transport is a nominal Struct, so
-;; it is register-eligible and is not a register group, and it therefore passed
-;; `compiler-reg-integer-param-type?` and consumed an integer ABI slot that the
-;; backend never gave it. See the pin walk's own note for the miscompile that
-;; produced.
+;; The second is easy to miss: the transport is a nominal Struct, so it is
+;; register-eligible and is not a register group, and it passes
+;; `compiler-reg-integer-param-type?` -- counting it would consume an integer
+;; ABI slot that the backend never gives it. See the pin walk's own note for the
+;; miscompile that produces.
 ;; `compiler-ir-representation-internal-transport?` is the shared recogniser for
 ;; the whole `__tl_internal_abi_` family, so a malformed encoding -- which the
 ;; backend's own size parser answers 0 for -- is refused here as well rather
@@ -6120,7 +6106,7 @@
         (+ position 1)))))
 
 ;; Per-coalesce-root entry-copy constraint, or an empty array when the function
-;; must keep the legacy callee-saved-only parameter rule. A class containing a
+;; must keep the callee-saved-only parameter rule. A class containing a
 ;; parameter carries that parameter's constraint; two parameters never share a
 ;; class (the M-A entry reservation makes every used parameter live at point 0,
 ;; so they all interfere), and a class that merges a parameter with ordinary
@@ -6137,21 +6123,15 @@
 ;;     PIN a parameter there for that reason, and the shrink-wrap prefix guard
 ;;     (compiler-backend-shrinkwrap-compare-value-ready?) records a Win64
 ;;     miscompile of the shape "a large literal staged into %r8 before returning
-;;     the third argument from %r8". Measured on src/main.tl with the former
-;;     instruction-scratch planner enabled: this constraint left a parameter in
-;;     %r8 in 1,256 Windows functions against 360 on Linux.
+;;     the third argument from %r8".
 ;;   * %rsi/%rdi are Win64 NONVOLATILE but SysV volatile; whether scratch use
 ;;     of them must be preserved is decided by a separate plan bit
 ;;     (compiler-backend-scavenge-plan-win64-bit).
-;; CI evidence: a planned-scratch + TLCI-mutation bootstrap fixpoint segfaulted
-;; on Windows only, bisected to this constraint; Linux passed the same gate. This
-;; worktree cannot execute Windows binaries, so no Windows-side narrowing can be
-;; validated here -- and shipping an unvalidated one is what produced the
-;; failure. Answer the legacy empty array for every non-Linux ABI: Windows
-;; codegen is then byte-identical to the pre-constraint compiler by
-;; construction, which restores the gate without guessing. Re-enabling Windows
-;; needs a host that can run the fixpoint, and should start from the two items
-;; above.
+;; A Windows-only bootstrap fixpoint failure was bisected to this constraint,
+;; and no Windows-side narrowing can be validated without a host that runs
+;; Windows binaries. So answer the empty array for every non-Linux ABI: Windows
+;; keeps the callee-saved-only parameter rule. Re-enabling Windows needs a host
+;; that can run the fixpoint, and should start from the two items above.
 (define (compiler-reg-param-entry-forbidden
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
@@ -6320,16 +6300,14 @@
 ;;   * kind 1 (div/mod, constant divisors included): bans any spanned pin.
 ;;     The register hazard alone is only %rax:%rdx, but the canned divmod
 ;;     expansion is SCRATCH-HUNGRY (magic reciprocal + rounding temps), and a
-;;     pin live across it measurably starves the scavenger into per-iteration
-;;     emergency save/restore pairs (qs_checksum: +4 movs/iter for -4
-;;     prologue movs = a net loss in every loop) -- so all pins are refused,
-;;     not just %rdx;
+;;     pin live across it starves the scavenger into per-iteration emergency
+;;     save/restore pairs, which cost more in a loop than the prologue movs
+;;     the pin saves -- so all pins are refused, not just %rdx;
 ;;   * kind 2 (VARIABLE-count shift) hardwires only %rcx/%cl and stages at
 ;;     most the count: bans only a spanned %rcx pin.
-;; Switch dispatches no longer participate in this gate. GAP2b-v2 made the
-;; dispatch emergency scavenge restore borrowed occupants before the indirect
-;; jmp, so the old function-global "any switch bans all pins" guard would now
-;; reject valid placements for a bug that is no longer present.
+;; Switch dispatches do not participate in this gate: the dispatch emergency
+;; scavenge restores borrowed occupants before the indirect jmp (GAP2b-v2), so
+;; an "any switch bans all pins" guard would only reject valid placements.
 ;; "Spanned" is the inclusive-start test: a param whose LAST use is the
 ;; clobbering instruction itself (the dividend/divisor of the div, an
 ;; outgoing argument of the call) is read before the clobber lands, exactly
@@ -6346,12 +6324,11 @@
   [shift-points : (& shift-points live.CompilerLiveI64Set)]
   [var : i64]
   [reg : i64]) : bool
-  ;; GAP2b-v2: the kind-3 (any-switch-refuses-all-pins) clause is REMOVED. The
-  ;; dispatch emitter's emergency scavenge is now sound (it restores every
-  ;; borrowed occupant BEFORE the indirect jmp via a slot-indirect transfer --
-  ;; compiler-backend-emit-switch-dispatch-emergency), so an ABI pin that
-  ;; perturbs occupancy at a dispatch no longer risks the restore-after-jmp
-  ;; miscompile.
+  ;; GAP2b-v2: there is no switch clause. The dispatch emitter's emergency
+  ;; scavenge restores every borrowed occupant BEFORE the indirect jmp via a
+  ;; slot-indirect transfer (compiler-backend-emit-switch-dispatch-emergency),
+  ;; so an ABI pin that perturbs occupancy at a dispatch cannot cause a
+  ;; restore-after-jmp miscompile.
   (and
     (not
       (compiler-reg-param-pin-spans-clobber?
@@ -6430,20 +6407,18 @@
           ;; register group occupies TWO positions, and a Linux by-memory ABI
           ;; transport occupies NONE.
           ;;
-          ;; FLT-1 WRONG-CODE FIX. The group half of that was already fenced;
-          ;; the transport half was not, and it MISCOMPILED. The backend's
-          ;; private-memory arm leaves int-idx and float-idx untouched and reads
-          ;; the incoming stack area, while this walk advanced int-idx for it
-          ;; (the transport type is a nominal Struct, so it is register-eligible
-          ;; and not a register group -- it passed
-          ;; compiler-reg-integer-param-type? outright). Every parameter after
-          ;; such a transport was therefore pinned to the incoming register of
-          ;; its SUCCESSOR, and the prologue's position-ordered entry copies then
-          ;; destroyed each source before the next copy read it. At
-          ;; --opt-level 2 (only the scalar-opt2 stage reaches the pin path;
-          ;; opt0/opt1 were correct, which is why no gate caught it)
+          ;; FLT-1. For a transport, the backend's private-memory arm leaves
+          ;; int-idx and float-idx untouched and reads the incoming stack area,
+          ;; while this walk would advance int-idx for it (the transport type is
+          ;; a nominal Struct, so it is register-eligible and not a register
+          ;; group -- it passes compiler-reg-integer-param-type? outright).
+          ;; Every parameter after such a transport would then be pinned to the
+          ;; incoming register of its SUCCESSOR, and the prologue's
+          ;; position-ordered entry copies would destroy each source before the
+          ;; next copy read it. At --opt-level 2 (only the scalar-opt2 stage
+          ;; reaches the pin path)
           ;;     (define (f [v (Array i64 3)] [a i64] [b i64] [c i64]) ...)
-          ;; emitted
+          ;; would emit
           ;;     movq %rdi, %rsi ; movq %rsi, %rdx ; movq %rdx, %rcx
           ;;     leaq 8(%rsp), %rdi
           ;; giving a == b == c. tests/integration/param_memory_transport_abi.tl
@@ -6467,10 +6442,10 @@
               CompilerRegMaybeId.No)]
           (match reg
             [(CompilerRegMaybeId.Some home)
-              ;; GAP3c: the pin gate is PER-INTERVAL and per-register (the
-              ;; old function-global backend-clobber-point? gate revoked
-              ;; every pin on any call/div/shift anywhere -- apply_op's div
-              ;; disqualified pins its add arm never reached). The pinned
+              ;; GAP3c: the pin gate is PER-INTERVAL and per-register (a
+              ;; function-global clobber gate would revoke every pin on any
+              ;; call/div/shift anywhere, even one on an arm the pinned value
+              ;; never reaches). The pinned
               ;; var is deliberately NOT inserted into `blocked`: the greedy
               ;; skips already-assigned vars, and plan-from's coalesce-hull
               ;; validation (compiler-reg-param-pins-demote!) may still
@@ -6532,7 +6507,7 @@
               ;; No ABI pin available (skipped arg register, stack-passed
               ;; position, post-group position, or non-pinnable type). A
               ;; greedy-eligible param stays unblocked (M-A candidate);
-              ;; group/otherwise-ineligible params keep the legacy
+              ;; group/otherwise-ineligible params keep a
               ;; stack home. base-ineligible members (address-taken, stack
               ;; call args, ...) are already in both sets and stay excluded.
               (if (compiler-reg-param-greedy-eligible?
@@ -6626,11 +6601,11 @@
     ;; A GEP result is a computed scalar pointer (mut-ptr U8); like an AddrOf
     ;; *destination* it is register-eligible. It only needs a memory home if its
     ;; own address is taken, which the AddrOf arm above already covers (it marks
-    ;; the AddrOf *source* ineligible). Unconditionally pinning every GEP result
-    ;; to a stack slot left the backend's register-home GEP fast path dead and
-    ;; forced a reload-into-%r10 per dereference (the #1 movq destination in the
-    ;; mov census). A register-homed GEP is computed straight into its home with
-    ;; a single leaq and dereferenced directly, so it is left eligible here.
+    ;; the AddrOf *source* ineligible). Pinning every GEP result to a stack
+    ;; slot would leave the backend's register-home GEP fast path dead and
+    ;; force a scratch reload per dereference. A register-homed GEP is computed
+    ;; straight into its home with a single leaq and dereferenced directly, so
+    ;; it is left eligible here.
     [_ set]))
 
 (define (compiler-reg-ineligible-instr-seq
@@ -6774,8 +6749,8 @@
 ;; still stay memory-sourced because they use other banks, multiple registers, or
 ;; stack marshalling. Special operands such as indirect call targets and C ABI
 ;; result bases also stay memory-sourced; the backend loads them after user arg
-;; setup. The SIMD path keeps the old block-everything behavior via
-;; compiler-reg-call-arg-vars-blocks (unchanged).
+;; setup. The SIMD path blocks every call arg via
+;; compiler-reg-call-arg-vars-blocks.
 ;; Per-ABI GP integer arg-register count: SysV has 6 (%rdi/%rsi/%rdx/%rcx/%r8/%r9),
 ;; Win64 has 4 (%rcx/%rdx/%r8/%r9). Mirrored in the backend at
 ;; compiler-backend-call-args-gp-parallel-from? -- keep the two in sync.
@@ -6878,32 +6853,27 @@
 
 ;; The same class for a call that OVERFLOWS the ABI's argument registers.
 ;;
-;; The old rule's hard arity bound existed only because the backend's naive
-;; ascending marshalling is sound just while no argument source can be
-;; overwritten before it is read -- which is exactly what a frame home on every
-;; arg var bought. The backend now marshals an overflowing all-GP call
+;; Naive ascending marshalling is sound only while no argument source can be
+;; overwritten before it is read, which a frame home on every arg var would
+;; guarantee. The backend instead marshals an overflowing all-GP call
 ;; stack-first (compiler-backend-emit-call-args-stack-first-into): the stack
 ;; args whose source is a register home are stored before any argument register
 ;; is written, the register prefix goes through the sound parallel move, and the
 ;; memory-sourced stack args follow it. No argument source is destroyed before
-;; it is read at ANY arity, so soundness no longer bounds the rule.
+;; it is read at ANY arity, so soundness does not bound the rule.
 ;;
 ;; What bounds it instead is the allocation it competes for. Every arg var this
 ;; admits is one more candidate in the greedy, and its payoff is its uses AWAY
 ;; from the call: an argument of a very wide call is typically used once, at the
 ;; call, so it pays nothing and still displaces a loop's own value from a
-;; callee-saved home. `liveness_scan`'s hot token loop is the measured case --
-;; two fourteen-argument calls (eight stack slots) in the same function cost it
-;; %r14 and +0.11% -- so the overflow may be at most as wide as the register
-;; window itself. cfg_domloops' seven-argument and gvn_table's eight-argument
-;; calls, which this packet exists for, sit inside that.
+;; callee-saved home. So the overflow may be at most as wide as the register
+;; window itself.
 ;;
 ;; The rule is only for the call kinds whose emitter reaches the stack-first
 ;; path with the whole argument list in hand -- the direct `Call`. Indirect and
 ;; tail shapes keep the arity-bounded rule: their emitters interleave a
-;; closure/callee load or an epilogue with the marshalling, and relaxing
-;; eligibility for an emitter that was not changed is how the first prototype of
-;; this miscompiled.
+;; closure/callee load or an epilogue with the marshalling, so the stack-first
+;; soundness argument does not cover them.
 (define (compiler-reg-call-gp-overflow-from?
   [type-segment-bases : i64]
   [args : ir.CompilerIrCallArgs]
@@ -6991,7 +6961,7 @@
 ;; allocation we retain its home only when it is exactly the ABI destination
 ;; register and demote every other home to a memory source. GP args on a mixed
 ;; call and stack-passed floats remain structurally blocked here. Register groups
-;; use the old all-memory rule because their multi-slot ABI accounting is separate.
+;; stay all-memory because their multi-slot ABI accounting is separate.
 (define (compiler-reg-call-arg-vars-selective-value
   [out : live.CompilerLiveI64Set]
   [value : ir.CompilerIrValue]
@@ -7864,7 +7834,7 @@
 ;; Vector/mask IR values carry their scalar lane type in type-info, so the
 ;; earlier scalar-class greedy can provisionally assign them a GP/XMM home.
 ;; Class-specific allocation owns the final home and must replace that
-;; provisional assignment; the old fixed-candidate allocator did so implicitly.
+;; provisional assignment.
 (define (compiler-reg-unassign-special-candidates!
   [assignments : CompilerRegAssignmentTable]
   [candidates : CompilerRegIntervalSeq]) : unit
@@ -7891,8 +7861,8 @@
         false
         (< left.var right.var)))))
 
-;; Place `item` after every element it does not strictly precede -- the position
-;; the former cons walk chose -- shifting the suffix up one slot.
+;; Place `item` after every element it does not strictly precede, shifting the
+;; suffix up one slot.
 (define (compiler-reg-active-insert
   [active : CompilerRegActiveSeq]
   [item : CompilerRegActive]) : CompilerRegActiveSeq
@@ -7954,11 +7924,9 @@
 ;; on the merged-root index, where each candidate carries complete segments -- a
 ;; singleton its own live range, a class root the union of its members'. Every
 ;; segment hole is therefore genuine deadness, exactly the LLVM LiveInterval
-;; property that makes segment-overlap an exact interference test. The earlier
-;; rule trusted holes only for non-singleton roots, conservatively treating all
-;; other values' segments as if incomplete; the merged-root index guarantees they
-;; are not, so the restriction is dropped. (`hole-aware-vars` is retained on the
-;; signature for the call sites but no longer gates the decision.)
+;; property that makes segment-overlap an exact interference test.
+;; (`hole-aware-vars` is retained on the signature for the call sites but does
+;; not gate the decision.)
 (define (compiler-reg-active-register-conflicts?
   [active : (& active CompilerRegActiveSeq)]
   [reg : i64]
@@ -8261,13 +8229,13 @@
 ;;
 ;; The `left` operand is re-resolved on every query even though the greedy
 ;; allocator's register scans hold it fixed across a whole register's residents.
-;; Hoisting it into a `...-with-left?` entry threaded through the scans was
-;; measured and REJECTED: the resolve is two compares and one bound-checked
-;; load, which is cheaper than carrying the result across the call boundary at
-;; every one of the ~19M queries (opt2 self-compile: +58M instructions net,
-;; from `reg-free?` losing its inlining and the scans paying an extra argument
-;; per query). Reducing this cost needs the query COUNT to drop -- a per-
-;; register interval union -- not a cheaper per-query prologue.
+;; Hoisting it into a `...-with-left?` entry threaded through the scans is a
+;; loss: the resolve is two compares and one bound-checked load, which is
+;; cheaper than carrying the result across the call boundary at every query
+;; (`compiler-reg-greedy-reg-free?` loses its inlining and the scans pay an
+;; extra argument per query). Reducing this cost needs the query COUNT to drop
+;; -- the per-register interval union (compiler-reg-live-union-interferes?) --
+;; not a cheaper per-query prologue.
 (define (compiler-reg-vars-interfere-segmented-index?
   [intervals : (& intervals CompilerRegIntervalIndex)]
   [left : i64]
@@ -8767,8 +8735,8 @@
 ;; overlap test for scalar pairs in compiler-reg-coalesce-vars-compatible?; the
 ;; merged root inherits the union interval/segments (merged-root-index), so
 ;; spans-call/div/shift for the class is the conservative OR of its members.
-;; Only the scalar-opt2 plan builds this relation; SIMD/AVX and the post-hoc
-;; loop-split/remat coalesce rebuilds keep the old builder byte-identical.
+;; Only the scalar-opt2 plan builds this relation; SIMD/AVX keeps the
+;; single-def-only builder.
 ;; ---------------------------------------------------------------------------
 (defstruct CompilerRegSvMultiCtx
   (parents (__tl_dyn-array i64))
@@ -9828,7 +9796,7 @@
       (if (compiler-reg-binop-two-address? op)
         ;; GAP8-C: the hint list is first-wins, so preferring the rhs is exactly
         ;; offering it first. The lhs is still offered behind it -- a flipped
-        ;; binop whose rhs root is already hinted elsewhere keeps the old bias
+        ;; binop whose rhs root is already hinted elsewhere keeps the lhs bias
         ;; rather than losing one. The flag is only ever set for a commutative
         ;; op, so the rhs hint it puts first is one the unflipped path would
         ;; have offered second anyway.
@@ -10308,11 +10276,10 @@
 ;; treating it as call-spanning wrongly bans it from all 9 caller-saved regs
 ;; (start-idx = caller-saved-count) AND excludes its loop-carried phi from
 ;; coalescing (2x slot inflation), forcing array-loop values to spill where clang
-;; keeps them in registers. caller-clobber-instr? stays true for bounds checks so
-;; remat-use-site-ok? remains conservative (the bounds-check cmp's scavenged
-;; scratch could clobber a single-instruction remat home).
+;; keeps them in registers. caller-clobber-instr? still answers true for bounds
+;; checks; this predicate overrides it.
 ;;
-;; IrInstrPack is ALSO not a clobber point. A Pack
+;; A `Pack` is ALSO not a clobber point. A Pack
 ;; (the 16-byte register-resident aggregate build for Maybe/Pair/tuple) never
 ;; clobbers a caller-saved register holding another live value:
 ;; compiler-backend-emit-pack-words takes a pure register-move fast path into the
@@ -10326,9 +10293,9 @@
 ;; push/pop-wrapped when occupied. So a value live across a Pack is never actually
 ;; clobbered; treating it as call-spanning wrongly bans it from all 9 caller-saved
 ;; regs and excludes its loop-carried phi from same-value coalescing (forcing
-;; spills/static reloads where the value could stay register-resident). The emit-
-;; time scavenge freeness self-check is the soundness net. caller-clobber-instr?
-;; stays true for Pack (remat conservatism), same split as bounds checks.
+;; spills/static reloads where the value could stay register-resident).
+;; caller-clobber-instr? still answers true for Pack, the same split as bounds
+;; checks.
 (define (compiler-reg-backend-clobber-point-instr?
   [_type-segment-bases : i64]
   [instr : ir.CompilerIrInstr]) : bool
@@ -10340,14 +10307,12 @@
     ;; %rcx/%cl, so it is NOT a clobber point. Only variable-count shifts (or
     ;; out-of-range constants, which fall back to the %cl register path) remain
     ;; clobber points -- the same rhs/type-aware classification the greedy's
-    ;; kind-2 point set already uses (compiler-reg-clobber-binop-shift?). Before
-    ;; this arm the coarse op-only test (compiler-reg-backend-clobber-binop? via
-    ;; caller-clobber-instr?) counted EVERY shift, so the param ABI-pin gate
-    ;; (compiler-reg-param-assign-plan) stack-homed or CSR-copied all params of
-    ;; zero-call functions whose only "clobbers" were constant shifts
-    ;; (crc_update shape). Divisions keep their rax:rdx clobber classification.
-    ;; compiler-reg-backend-caller-clobber-instr? intentionally stays
-    ;; conservative (remat-use-site-ok? / splitkit range proofs).
+    ;; kind-2 point set already uses (compiler-reg-clobber-binop-shift?).
+    ;; Without this arm the coarse op-only test (compiler-reg-backend-clobber-
+    ;; binop? via caller-clobber-instr?) would count EVERY shift, and the param
+    ;; ABI-pin gate (compiler-reg-param-assign-plan) would stack-home or
+    ;; CSR-copy all params of zero-call functions whose only "clobbers" are
+    ;; constant shifts. Divisions keep their rax:rdx clobber classification.
     [(ir.CompilerIrInstr.BinOp _ op _ rhs ty)
       (or
         (compiler-reg-clobber-binop-div? op)
@@ -10360,7 +10325,7 @@
 ;; div in %r9/%rcx and a shift in %r9/%rdx. These per-kind point sets let the
 ;; greedy forbid only the registers an op actually clobbers.
 ;;   kind 0 = call-like (all caller-saved)   kind 1 = idiv
-;;   kind 2 = shift                          kind 4 = loop-split rdx use
+;;   kind 2 = shift                          kind 4 = rdx use (no caller)
 ;;   kind 6 = call-like MINUS the tail-call family (see kind 6 below)
 (define (compiler-reg-clobber-binop-div? [op : (& op ir.CompilerIrBinOp)]) : bool
   (match op
@@ -10382,14 +10347,14 @@
 ;; rejects as out-of-range (count<0 or count>=type-width) -- is instead moved
 ;; into %rcx and shifted by %cl (compiler-backend-binop-shift-asm). So a value
 ;; live across a constant in-range shift is NEVER actually clobbered in %rcx;
-;; the old op-only test treated every shift as an %rcx clobber point and
-;; needlessly banned such values from %rcx (compiler-reg-greedy-forbidden-regs
+;; an op-only test would treat every shift as an %rcx clobber point and
+;; needlessly ban such values from %rcx (compiler-reg-greedy-forbidden-regs
 ;; via spans-shift). This rhs/type-aware test mirrors the backend's own
 ;; emission predicate compiler-backend-binop-valid-immediate-shift?; the shift
 ;; width is replicated locally (integer byte-size * 8) because regalloc must not
-;; depend on the backend (cf. compiler-abi-gp-arg-register). scavcheck
-;; SELFCHECK_CLEAN is the soundness net: a misclassified count that actually uses
-;; %cl would surface as a %rcx clobber of a live value.
+;; depend on the backend (cf. compiler-abi-gp-arg-register). The two predicates
+;; must agree: a misclassified count that actually uses %cl would clobber a live
+;; value homed in %rcx.
 (define (compiler-reg-clobber-shift-width [ty : ast.AstType]) : i64
   (match ty
     [(ast.AstType.I64) 64]
@@ -10450,12 +10415,10 @@
         [(= kind 2) (compiler-reg-clobber-binop-shift? op rhs ty)]
         [(= kind 4) (compiler-reg-clobber-binop-rdx? op)]
         [else false])]
-    ;; kind 3 = switch dispatch points (GAP3c pin gate only; never kind 0 --
-    ;; a switch clobbers no register per se, but its DISPATCH emitter's
-    ;; emergency scavenge wraps a save/restore around the indirect jmp whose
-    ;; restore lands AFTER the jmp = unreachable (the GAP2b vm_run finding),
-    ;; so occupancy added at a dispatch by an ABI pin must be refused until
-    ;; that emitter is fixed).
+    ;; kind 3 = switch dispatch points (never kind 0 -- a switch clobbers no
+    ;; register per se). No caller asks for kind 3: the dispatch emitter's
+    ;; emergency scavenge restores borrowed occupants before the indirect jmp
+    ;; (GAP2b-v2), so the GAP3c pin gate does not refuse pins at a dispatch.
     [(ir.CompilerIrInstr.Switch _ _ _ _) (= kind 3)]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (= kind 3)]
     [_
@@ -10485,21 +10448,18 @@
         ;; -- a parameter used only by arm 3 has an interval hull covering every
         ;; sibling arm, so it "spans" their tail calls in linear point space
         ;; even though no CFG path carries it across one. Under kind 0 the ABI
-        ;; pin is revoked and the greedy's csr-only rule homed it in
-        ;; %r12-%r15/%rbx/%rbp, and the prologue then paid 2n callee-saved
-        ;; push/mov pairs on every invocation of a function that contains no
-        ;; real call at all. R3S-1 restated: a revoked pin no longer implies a
-        ;; callee-saved home -- the class competes for the whole pool minus the
-        ;; entry-copy schedule set -- but kind 6 still matters here, because
-        ;; under kind 0 the class would read `spans-call` and be forced
-        ;; callee-saved-only for a crossing no path takes.
+        ;; pin would be revoked, and the class would read `spans-call` and be
+        ;; forced callee-saved-only for a crossing no path takes -- the
+        ;; prologue would then pay callee-saved push/pop pairs on every
+        ;; invocation of a function that contains no real call at all. (Under R3S-1 a
+        ;; revoked pin alone does not imply a callee-saved home -- the class
+        ;; competes for the whole pool minus the entry-copy schedule set.)
         ;;
         ;; Kind 6 is used by the ABI-pin gate and the scalar greedy only. The
         ;; conservative kind-0 set stays in force for the consumers that model
         ;; something OTHER than survival across the point (call-region
-        ;; boundaries, the leaf CSR-split gate, the caller-saved rescue), and
-        ;; compiler-reg-backend-caller-clobber-instr? -- remat's use-site
-        ;; conservatism and the Win64 ABI predicate -- still counts tail calls.
+        ;; boundaries, the caller-saved rescue), and
+        ;; compiler-reg-backend-caller-clobber-instr? still counts tail calls.
         [(= kind 6)
           (and
             (compiler-reg-backend-clobber-point-instr?
@@ -10775,28 +10735,25 @@
 
 ;; Loop-depth spill-weight multiplier, applied per ref when the spill-weight
 ;; walk scores a candidate. With allocation running on edge-precise liveness
-;; (see compiler-reg-plan-from), loop-carry classes no longer inflate to
-;; [entry, loop-end], so the legacy 2x ladder ranks per-iteration-hot webs
-;; correctly against genuinely cold cross-loop webs. Steeper bases were tried
-;; in the #6248 campaign and rejected: at 8^depth a depth-(d+1) web outranks
-;; a depth-d web with many more refs even when the outer loop is the
-;; genuinely hotter one (the lex_source regression seen there).
+;; (see compiler-reg-plan-from), loop-carry classes do not inflate to
+;; [entry, loop-end], so the 2x ladder ranks per-iteration-hot webs
+;; correctly against genuinely cold cross-loop webs. Steeper bases are worse:
+;; at 8^depth a depth-(d+1) web outranks a depth-d web with many more refs even
+;; when the outer loop is the genuinely hotter one.
 ;;
-;; The BASE stays 2 for exactly that reason; what changed is that the ladder no
-;; longer FLATTENS at depth 4. `else 16` made every reference at depth 4 or
-;; deeper worth the same, which is not a conservative reading of the frequency
-;; -- it is the statement that an inner loop's own operands are worth no more
-;; than values the inner loop never touches, and it decides the tie against the
-;; inner loop (the comparator's second key is the var id). A merged kernel is
-;; where that bites: inlining intern_table's probe into its driver puts the byte
-;; compare at depth 5 inside a depth-4 probe loop, and the compare's base
-;; pointer -- one reference, 15.2M executions -- ranked exactly level with the
-;; five hoisted Vec headers whose single depth-4 references run 2.5M times, lost
-;; the tie, and spent the whole loop being reloaded through an emergency
-;; scavenge. Block depths are already saturated at `compiler-reg-loop-depth-max`
-;; = 8 by `compiler-reg-loop-nest-depths!`, so continuing the doubling to that
-;; cap is bounded at 256 and leaves every function whose loops are at depth 4 or
-;; less scoring exactly as before.
+;; The BASE stays 2 for exactly that reason, but the ladder does not FLATTEN at
+;; depth 4. A flat cap would make every reference at depth 4 or deeper worth
+;; the same, which is not a conservative reading of the frequency -- it is the
+;; statement that an inner loop's own operands are worth no more than values
+;; the inner loop never touches, and it decides the tie against the inner loop
+;; (the comparator's second key is the var id). A merged kernel is where that
+;; bites: inlining a probe loop into its driver puts a byte compare at depth 5
+;; inside a depth-4 loop, and the compare's base pointer would rank level with
+;; the hoisted values referenced once at depth 4, lose the tie, and spend the
+;; whole loop being reloaded through an emergency scavenge. Block depths are
+;; already saturated at `compiler-reg-loop-depth-max` = 8 by
+;; `compiler-reg-loop-nest-depths!`, so continuing the doubling to that cap is
+;; bounded at 256.
 (define (compiler-reg-loop-depth-weight [depth : i64]) : i64
   (cond
     [(<= depth 0) 1]
@@ -10849,14 +10806,14 @@
 ;; value, the eviction price, the rescue's trip factor -- is only as good as
 ;; that ranking.
 ;;
-;; The estimate this replaces read the block LAYOUT: an edge from position p
-;; back to a position q <= p made every position in [q, p] one level deeper.
+;; Reading the nest off the block LAYOUT -- an edge from position p back to a
+;; position q <= p makes every position in [q, p] one level deeper -- is wrong.
 ;; That is the loop nest only while the layout keeps each loop's blocks
 ;; contiguous and header-first -- which the lowering order happens to do, and a
 ;; legal permutation need not. Rotate a loop so its latch falls through to its
 ;; header, or sink a cold in-loop arm below the latch, and the SAME edges read
-;; as a different, much larger nest; the measured cost of getting it wrong is a
-;; spill blowup in the biggest function of the affected program.
+;; as a different, much larger nest, and getting it wrong can blow up the
+;; spills of a large function.
 ;;
 ;; So take the nest from the CFG, where it actually lives. A back edge is an
 ;; edge q -> h whose target is still on the DFS stack: in a reducible CFG that
@@ -10867,7 +10824,7 @@
 ;; loop with several latches -- a `continue` arm, or two tails of the same
 ;; body -- so they are grouped and their bodies unioned before a level is
 ;; added; charging per edge would read a second latch as a second nesting
-;; level. Layout no longer enters the answer, so a function is ranked the same
+;; level. Layout does not enter the answer, so a function is ranked the same
 ;; way whatever order its blocks are emitted in.
 ;;
 ;; The DFS is a forest, not a single walk from entry: a block unreachable from
@@ -11508,11 +11465,11 @@
 ;; LOWEST block index any member of the loop headed by h occupies and
 ;; spans[2h+1] is the highest. Both are -1 for a block that heads no loop.
 ;;
-;; This is the currency of the consumers that still have to name a CONTIGUOUS
-;; SPAN -- an instruction-point region, a block range to scan. They used to
-;; read "the highest block with an edge into h from at or below it", which is
-;; the same number only while a loop's blocks are laid out contiguously with
-;; the header first, and which answered for blocks heading no loop at all.
+;; This is the currency of the consumers that have to name a CONTIGUOUS
+;; SPAN -- an instruction-point region, a block range to scan. "The highest
+;; block with an edge into h from at or below it" is the same number only while
+;; a loop's blocks are laid out contiguously with the header first, and it
+;; answers for blocks heading no loop at all.
 ;;
 ;; The span is anchored on the loop's lowest MEMBER and not on its header. That
 ;; is what lets it describe a ROTATED loop -- one laid out with its header
@@ -11521,14 +11478,13 @@
 ;; not START at its header, and a hull anchored on the header could only answer
 ;; -1 for it. Answering -1 is sound (every consumer fails closed) but it costs
 ;; the rescues their coverage on exactly the loops a layout pass rewrites, so
-;; the anchor moved and the header travels beside the span instead: it is still
-;; where control enters, still where the loop-carried phis are read, and it is
-;; no longer assumed to be the span's first block.
+;; the header travels beside the span instead: it is where control enters and
+;; where the loop-carried phis are read, and it is not assumed to be the
+;; span's first block.
 ;;
-;; Blocks laid out inside the span that are not members are the same
-;; overapproximation the range encoding always had -- the callers re-prove
-;; single entry over the span they use, now against the header rather than
-;; against the span's first block.
+;; Blocks laid out inside the span that are not members are an
+;; overapproximation -- the callers re-prove single entry over the span they
+;; use, against the header rather than against the span's first block.
 (define (compiler-reg-loop-nest-spans!
   [nest : CompilerRegLoopNest]
   [spans : (&mut spans (__tl_dyn-array i64))]) : unit
@@ -11666,13 +11622,10 @@
 ;;
 ;; The ladder above weighs every block of a loop alike, so a value referenced
 ;; once in each of nine dispatch arms outranks the loop counter referenced
-;; three times per iteration, and the counter is what ends up on the stack:
-;; sccp_lattice's `sccp-process-instr-seq-from` keeps `row` and `last` in
-;; memory across 3.9M iterations (`addq $1, 496(%rsp)`, `cmpq %r8, 496(%rsp)`)
-;; while `dst`, `ty`, `ty2` and `b` -- each read in a fraction of the arms --
-;; hold four of the six callee-saved registers. The ranking note at
-;; compiler-reg-greedy-first-evictable names the cure: a RANKING change
-;; against how often a block actually runs.
+;; three times per iteration, and the counter is what ends up on the stack
+;; while values each read in a fraction of the arms hold the callee-saved
+;; registers. The cure is a RANKING change against how often a block actually
+;; runs.
 ;;
 ;; This is LLVM's static block frequency reduced to the one heuristic that
 ;; matters here: within a loop body, a block runs its predecessor's share
@@ -11688,9 +11641,9 @@
 ;; The share is a fixed-point fraction of compiler-reg-block-frequency-scale,
 ;; propagated in reverse postorder from the entry, so it is exact for a DAG
 ;; and deterministic for anything else; a block the entry cannot reach keeps
-;; the floor of 1. Every function with no conditional control flow weighs
-;; exactly as before, scaled by a constant, so its allocation is unchanged;
-;; what moves is the ranking inside bodies with arms.
+;; the floor of 1. A function with no dispatch block weighs the ladder alone
+;; (FREQ-3 below); what the share changes is the ranking inside bodies with
+;; arms.
 (define (compiler-reg-block-frequency-scale) : i64
   1024)
 
@@ -11699,10 +11652,8 @@
 ;; allocator on a standalone plan of each side and reading the plan in its own
 ;; depth-weighted currency (opt-inline-checked-alloc-cost), and its accept
 ;; window and cap were calibrated against plans ranked by the ladder alone;
-;; ranking those plans by share moves the verdicts it was measured on --
-;; `it-slice-eq?` out of `it-bench` for intern_table +57.1M, `ssa-candidate?`
-;; and `ssa-instr-next` left standing for ssa_construct +67.2M -- while the
-;; allocation itself is what this ranking exists to improve. So the tier
+;; ranking those plans by share moves its inline verdicts the wrong way, while
+;; the allocation itself is what this ranking exists to improve. So the tier
 ;; switches the share off around its plans and every other plan reads it.
 (define compiler-reg-block-weights-frequency? : bool
   true)
@@ -11928,18 +11879,15 @@
 ;; FREQ-2: which blocks SPLIT their share. A Switch (and a total enum switch)
 ;; dispatches to one of N arms, so each arm takes 1/N and the arms add back up
 ;; at their join; a two-way Branch does not split -- both arms carry the whole
-;; share and their join takes the larger of what reaches it. The first model
-;; halved every `if` arm too, and that is measured wrong across the corpus
-;; (+150M net over 23 rows, ssa_construct +51.7M, opt_bytecode_vm +48.0M,
-;; regalloc_greedy +43.0M): the `if` arms of a hot loop body are where the
+;; share and their join takes the larger of what reaches it. Halving every
+;; `if` arm too is worse: the `if` arms of a hot loop body are where the
 ;; body's work is and run on most iterations, while a nine-way dispatch's arm
 ;; really does run about one iteration in nine.
-;; FREQ-3: a function with no dispatch block weighs the ladder alone, exactly
-;; as before. The shares would scale every one of its weights by the same
-;; constant, and the greedy's tie key (compiler-reg-greedy-combine-spill-
-;; weights: `r * span / (max + 1)`) is not scale-invariant, so the constant
-;; alone re-decided ties in switch-free loops for cfg_domloops +12.6M and
-;; ssa_construct +14.7M with nothing in the ranking changed.
+;; FREQ-3: a function with no dispatch block weighs the ladder alone. The
+;; shares would scale every one of its weights by the same constant, and the
+;; greedy's tie key (compiler-reg-greedy-combine-spill-weights:
+;; `r * span / (max + 1)`) is not scale-invariant, so the constant alone would
+;; re-decide ties in switch-free loops with nothing in the ranking changed.
 (define (compiler-reg-block-frequency-any-split?
   [splits : (& splits (__tl_dyn-array i64))]) : bool
   (let
@@ -12203,8 +12151,8 @@
 ;; The per-variable store is spelled inline at each site instead of going
 ;; through a shared helper: that helper would be a real call on the hottest
 ;; edge of the pass (P28's single-caller inlining cliff -- several callers here
-;; would keep it out of line), so the body is written out the way P29 spelled
-;; segment-note-span! inline.
+;; would keep it out of line), so the body is written out the way
+;; compiler-reg-extend-segment-after-words! spells its segment bridge inline.
 (define (compiler-reg-ref-mark-word!
   [marks : (&mut marks (__tl_dyn-array bool))]
   [bits : i64]
@@ -12353,8 +12301,7 @@
 ;; "spilling this range is half price, the reload is a recompute" -- LLVM's
 ;; `TotalWeight *= 0.5F` at CalcSpillWeights.cpp:377-378, which is guarded by
 ;; `isRematerializable` over ALL of the interval's definitions. Function /
-;; String / Bytes materialise as one `leaq label(%rip)` exactly like GlobalAddr
-;; and were simply missing from this list.
+;; String / Bytes materialise as one `leaq label(%rip)` exactly like GlobalAddr.
 (define (compiler-reg-remat-value? [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.I64 _) true]
@@ -12373,11 +12320,9 @@
 ;;
 ;; W3: deliberately NOT extended to a FROZEN cell read. That range is
 ;; rematerialisable under W3 step (c), so the 0.5x discount would be honest --
-;; but discounting it is a measured LOSS: cfg_domloops +158,961 (+0.024%):
-;; `cfg-hash-prime` stops being register-homed (each use folds to
-;; `imulq cfg_hash_prime(%rip), %r14`, which is instruction-neutral) and the
-;; register the allocator frees is then spent worse elsewhere in
-;; `cfg-build-csr`, costing an `xor`/`lea` rewrite and a block-layout flip.
+;; but discounting it is a LOSS: the cell value stops being register-homed
+;; (each use folds to `imulq g(%rip), %r`, which is instruction-neutral) and
+;; the register the allocator frees is then spent worse elsewhere.
 ;; The discount is a global re-ranking, so it needs the frequency-shaped
 ;; weight model (family E-5) before it can be trusted at that granularity;
 ;; the recompute capability itself is unconditional and stands.
@@ -12397,10 +12342,10 @@
 ;; not a property of the instruction.
 ;; The shape the SPILL-WEIGHT DISCOUNT prices: a static address, materialised
 ;; with no operand at all. R5 deliberately does NOT widen this. The discount is
-;; a global re-ranking of every value in the function, and widening it measured
-;; cfg_domloops +38,989,032 (+6.2%) -- the same failure the W3 note above
-;; records for frozen cell reads, an order of magnitude larger, because every
-;; `&Vec` length and every descriptor word in the program then spills first.
+;; a global re-ranking of every value in the function, and widening it is the
+;; same failure the W3 note above records for frozen cell reads, much larger,
+;; because every `&Vec` length and every descriptor word in the program then
+;; spills first.
 ;; The RECOMPUTE capability below is unconditional and stands; only the claim
 ;; "losing this range is half price" stays narrow until the weight model is
 ;; frequency-shaped (family E-5 / packet R2).
@@ -12479,11 +12424,10 @@
 ;; address materialisation (`leaq label(%rip)`), or -- W3 step (a) -- an
 ;; integer/bool/char LITERAL whose type admits it (`xorl`/`movl $K`/`movq $K`,
 ;; LLVM's `MOV32r0`/`MOV64ri32`/`MOV64ri`, X86InstrCompiler.td:327 and
-;; X86InstrMisc.td:371/385). Constants were previously excluded on the argument
-;; that constant propagation inlines them into their uses; that holds for the
+;; X86InstrMisc.td:371/385). Constant propagation inlines constants into the
 ;; uses the backend can spell with an immediate operand, but a constant that
 ;; reaches a phi, a call argument or a two-address operand still lands in a
-;; spillable vreg, which is gvn P8's `xor esi,esi` shape.
+;; spillable vreg.
 ;; CompilerIrValue.Global (a LOAD of a global cell) and CompilerIrValue.F64
 ;; (no scalar backend support) must never be rematerialised here.
 (define (compiler-reg-remat-recompute-value?
@@ -12728,9 +12672,8 @@
                       unit)]
                   [_ unit])]
               ;; A var the greedy left UNASSIGNED keeps its implicit per-var
-              ;; slot: converting those to Remat as well was tried and dropped
-              ;; (no benchmark asm changed -- the shape is rare there -- and it
-              ;; perturbed register homes for nothing).
+              ;; slot: converting those to Remat as well gains nothing (the
+              ;; shape is rare) and perturbs register homes.
               [(CompilerRegMaybeLocation.No) unit])
             unit)
           (set! v (+ v 1))))
@@ -12835,17 +12778,17 @@
 ;; R5. INVARIANT-LOAD FACTS -- "which loads may be recomputed at their uses".
 ;;
 ;; `compiler-reg-remat-invariant-loads-ok?` above answers the question for the
-;; WHOLE function ("no instruction mutates memory"), which no benchmark function
-;; that touches a Vec can pass: writing one element disqualifies every
+;; WHOLE function ("no instruction mutates memory"), which no function that
+;; touches a Vec can pass: writing one element disqualifies every
 ;; descriptor word of every array in the function. LLVM asks the question per
 ;; LOAD instead (`TargetInstrInfo::isReMaterializableImpl` ->
 ;; `MachineInstr::isDereferenceableInvariantLoad`, TargetInstrInfo.cpp:1641), so
-;; a `len`/`data` word of a `&Vec` parameter is recomputed at each use rather
-;; than spilled, whatever the loop body stores into the buffer.
+;; a `len`/`data` word of a `&Vec` parameter can be recomputed at each use
+;; rather than spilled, whatever the loop body stores into the buffer.
 ;;
 ;; The facts here are the ALLOCATOR-side statement of the two rules the
 ;; optimizer's load-CSE alias model already trusts
-;; (compiler_optimize.tl:121708-121741, `opt-load-entry-survives-store-location?`):
+;; (`opt-load-entry-survives-store-location?`):
 ;;
 ;;   (1) ALLOCATION LAYER. An ELEMENT store -- a store through an address
 ;;       derived from a data pointer that was itself LOADED out of a descriptor
@@ -12858,7 +12801,7 @@
 ;;       static class C writes only words whose static type is class C. A
 ;;       descriptor word read at a known class different from every class an
 ;;       element store writes therefore names a different word. The byte/unknown
-;;       class (0) proves nothing and keeps the old conservative answer.
+;;       class (0) proves nothing and keeps the conservative answer.
 ;;
 ;; Anything else that may write memory -- a field/unclassified `StorePtr`, a
 ;; `Store g`, `CopyBytes`, an `Alloc`, a call whose summary is not pure or
@@ -12869,15 +12812,15 @@
 ;; a global cell (the `GlobalField` arm of the same optimizer rule).
 ;;
 ;; Wrong facts here are miscompiles, so the base of an admitted load is
-;; additionally restricted to the shapes the optimizer's `opt-load-hoist-safe-base?`
-;; rule admits (a `&`/`&mut` parameter, a `Global` handle, or another admitted
+;; additionally restricted to safe shapes (`compiler-reg-invariant-base-shape-ok?`:
+;; a `&`/`&mut` parameter, a `Global` handle, or another admitted
 ;; invariant load), it must have exactly ONE definition, and it must not be a
 ;; `Phi` -- a phi is defined once but holds a different value per iteration, so
 ;; recomputing off it at a later use would read a different object.
 ;;
 ;; The facts do NOT decide that a recompute is possible: the base has to be in a
 ;; register and LIVE at the use site as well (LLVM's
-;; `LiveRangeEdit::allUsesAvailableAt`), which only a post-plan rewrite can know.
+;; `LiveRangeEdit::allUsesAvailableAt`), which these facts cannot know.
 (define (compiler-reg-invariant-kind-none) : i64
   0)
 
@@ -13196,7 +13139,7 @@
         (set! (array-ref writes 0) 1)
         unit)]))
 
-;; The base shapes `opt-load-hoist-safe-base?` admits: a `&`/`&mut` parameter
+;; The admissible base shapes: a `&`/`&mut` parameter
 ;; (dereferenceable for the whole activation), a `Global` handle, or another
 ;; word whose own load this pass already admitted (the
 ;; `param -> handle -> len/data` chain). A phi is excluded even though it has
@@ -13601,10 +13544,10 @@
 ;;
 ;; The band sits BELOW the weight, not above it: a local that is genuinely hotter
 ;; than a global still goes first. (The full LLVM ordering, where the band
-;; outranks the weight outright, was measured here and is a large regression:
-;; LLVM can afford it because a global that loses is SPLIT rather than spilled
-;; whole, and because its eviction picks the min-cost register instead of the
-;; first evictable one. See the packet report.)
+;; outranks the weight outright, is a large regression here: LLVM can afford
+;; it because a global that loses is SPLIT rather than spilled whole, and
+;; because its eviction picks the min-cost register instead of the first
+;; evictable one.)
 ;;
 ;; Our worklist key is one i64 per root, read by the heap AND by the eviction
 ;; gate, so the band is packed into the low digits of that same key rather than
@@ -13752,13 +13695,11 @@
 ;; does not exist, so the value costs the same in a register as on the stack.
 ;;
 ;; Pricing such a use at 16x inside a depth-4 loop is what inverts the
-;; allocator's spill choice. cfg-idom-iterate's versioned fast clone is the
-;; measured case: four array lengths, each mentioned only as the LENGTH of a
-;; bounds check but deep in the loop nest, outranked the outer loop counter --
-;; read, incremented and compared every iteration -- and took its register,
-;; leaving the counter to pay a reload, an add, a store and a reload-for-index
-;; per trip while the lengths' "reloads" were compare operands that were never
-;; emitted.
+;; allocator's spill choice: array lengths mentioned only as the LENGTH of a
+;; bounds check deep in a loop nest outrank the outer loop counter -- read,
+;; incremented and compared every iteration -- and take its register, leaving
+;; the counter to pay a reload, an add, a store and a reload-for-index per trip
+;; while the lengths' "reloads" are compare operands that are never emitted.
 ;;
 ;; The rebate returns a foldable mention to a flat 1 rather than 0: a value the
 ;; IR mentions must still outrank one it does not, the density tie-break in
@@ -14019,9 +13960,8 @@
 ;; fixed-use hazards are handled separately: %rcx is offered only when the region
 ;; crosses no variable shift, and %rdx only when it crosses no div/mod/mul fixed
 ;; use. In a clobber-free region a caller-saved reg survives the loop and is
-;; protected from scratch use by the scavenger freeness check (the rescued var's
-;; home is occupied while live) -- exactly as for the callee-saved regs the rescue
-;; already uses, so no prologue save is needed.
+;; protected from scratch use by the scavenger freeness check (a homed value's
+;; register is occupied while live), so no prologue save is needed.
 (define (compiler-reg-loop-split-seq-has-call-or-syscall?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
   (let
@@ -14047,7 +13987,7 @@
           (set! index (+ index 1))))
       found)))
 
-;; The same census restricted to calls that RETURN to this function. A
+;; The same scan restricted to calls that RETURN to this function. A
 ;; `TailCall`/`TailCallIndirect` transfers with the entry %rsp already restored
 ;; by the epilogue, so it needs neither an outgoing area of its own (the
 ;; separate outgoing-frame-space query sizes what it does need) nor a frame slot
@@ -14081,20 +14021,7 @@
       found)))
 
 ;; ===========================================================================
-;; SplitKit step 2 -- MULTI-BLOCK phi-carried homing (the dominant 607 population).
-;;
-;; A real SSA loop-carried value is a phi at the loop HEADER taking the initial
-;; value from the preheader edge and the updated value from the back-edge; the body
-;; that updates it is a SEPARATE block. So it is a MULTI-BLOCK region (header +
-;; body), which the single-block self-loop path (try-var) rejects. Here we home the
-;; whole coalesce group across the natural loop: the back-edge is INTERNAL to the
-;; region (the carry stays in the homed register with NO per-iteration copy), the
-;; preheader edge gets the INTO copy, and live exit edges get the OUT copy (or the
-;; plan is refused on a critical edge). The phi becomes `R = phi [R,..],[R,..]`
-;; (an identity whose per-edge lowering is a self-move) once every group member --
-;; result, back-edge input, preheader input -- is remapped to R; the
-;; phi-correctness gate (every header-phi input is in the group) guarantees that,
-;; so the INTO copy cannot race a real phi-lowering move.
+;; Loop-region helpers for the loop-scoped call-region rows (P11b below).
 ;;
 ;; ADMITTED SHAPE: a natural loop occupying the span [S..E] (the lowest and
 ;; highest block its members reach, spans[2H]/spans[2H+1]) whose blocks OTHER
@@ -14102,17 +14029,8 @@
 ;; region's ONLY entry is H. H is the span's first block unless the loop was
 ;; rotated, in which case control enters the span in the middle -- the witness
 ;; is about the single entry, not about where in the layout it sits.
-;;
-;; That single entry is the soundness witness the
-;; INTO copy needs: the planner places a header-edge INTO copy at PredEnd (H has
-;; >1 predecessor, so SuccEntry is unavailable and a multi-successor preheader is
-;; refused as critical), which puts the `R = slot` load AHEAD of the lowered
-;; header-phi moves. A body-block entry edge would instead place the load at
-;; SuccEntry -- after the phis -- and a phi reading a remapped group member from
-;; the outside predecessor would read an undefined R. E == H+1 with pred-count 1
-;; on the body is the 2-block special case this started as, and stays bit-identical.
 ;; ===========================================================================
-;; Start point (doubled instruction index, matching select-blocks) of each block;
+;; Start point (doubled instruction index, the interval point space) of each block;
 ;; length n+1 so points[n] is the end point of the last block.
 (define (compiler-reg-loop-phi-mb-block-points
   [block-array : (& block-array (__tl_dyn-array ir.CompilerIrBlock))]) : (__tl_dyn-array
@@ -14142,9 +14060,7 @@
 ;; is `h`. The header is skipped by identity and not by position, which is what
 ;; makes the gate hold for a rotated loop whose header sits in the middle -- or
 ;; at the end -- of its own span; with `lo` = `h` the skip lands on the first
-;; block and the walk is the [h+1..end] one this generalizes. With end == h+1
-;; and a body whose one predecessor is h this is still exactly the original
-;; 2-block `pred-counts[h+1] == 1` test.
+;; block and the walk is [h+1..end].
 (define (compiler-reg-loop-phi-mb-body-entered-inside?
   [ranges : (& ranges (__tl_dyn-array i64))]
   [lo : i64]
@@ -14169,27 +14085,22 @@
 ;; ---------------------------------------------------------------------------
 ;; M-G2b -- per-call-region split via the WIDENED caller-saved rescue.
 ;;
-;; Gate autopsy of the pre-M-G2b rescue (fired 6/8,959 spilled call-spanning
-;; roots): (1) it required %r9 free over the var's WHOLE hull -- a
-;; call-spanning hull covers most of the function and %r9 is in the zero-call
-;; scratch pool, so nearly every hull conflicted (the single biggest killer);
-;; (2) `boundary-vars` excluded every var live across ANY block boundary,
-;; i.e. every loop-carried value and every param -- the entire hot
-;; population; (3) `calls == clobbers` rejected any hull containing a
-;; div/shift; (4) `clobber-vars` rejected any var that is an argument or
-;; result of ANY call; (5) the `refs > 2*calls+1` benefit gate charged every
-;; call in the hull two boundary movs even where the value had no uses
-;; between those calls.
+;; Whole-hull shadowing almost never fires: a call-spanning hull covers most of
+;; the function, so nearly every hull conflicts with some occupant of the
+;; shadow register; excluding values live across a block boundary excludes
+;; every loop-carried value and every param -- the entire hot population; and
+;; charging every call in the hull two boundary movs overprices values with no
+;; uses between those calls.
 ;;
-;; The widened design replaces whole-hull shadowing with PER-REGION homing:
+;; The widened design therefore homes PER REGION:
 ;;   region  = maximal run of instrs inside ONE block containing no kind-0
 ;;             clobber (call/syscall/cpuid/xgetbv/...; div/shift are NOT
 ;;             boundaries because the shadow pool never contains
 ;;             rax/rdx/rcx, the only registers they clobber), trimmed to the
 ;;             first/last coalesce-class reference [lo,hi];
 ;;   select  = regions with >= 2 uses AND net memory-op win >= 2, where
-;;             net = uses + defs - entry-reload - exit-store. The SplitKit-M5
-;;             failure mode was boundary movs outweighing the win; this bound
+;;             net = uses + defs - entry-reload - exit-store. Boundary movs
+;;             must not outweigh the win; this bound
 ;;             makes every accepted region profitable BY CONSTRUCTION, both
 ;;             statically and per loop iteration (a block-scoped region's
 ;;             boundary movs execute exactly as often as its uses);
@@ -14197,18 +14108,18 @@
 ;;             preferring regions in loop bodies), 64 regions per function;
 ;;   reg     = first of %r8/%r9/%rsi/%rdi (SysV; %r8/%r9 on Win64 where
 ;;             rsi/rdi are callee-saved) whose segment-precise occupancy is
-;;             free over ALL of the root's selected regions -- the same
-;;             caller-saved subset the loop-split rescue proved safe for
-;;             clobber-free regions (rax/rcx/rdx are fixed-use, r10/r11 are
-;;             the emergency scavenger's preferred picks).
+;;             free over ALL of the root's selected regions -- the
+;;             caller-saved subset that is safe in clobber-free regions
+;;             (rax/rcx/rdx are fixed-use, r10/r11 are the emergency
+;;             scavenger's preferred picks).
 ;; Boundary vars / params / multi-block values are ADMITTED: the home slot
 ;; stays the authoritative location at every region boundary (the entry
 ;; reload reads it; the exit store refreshes it before any code outside the
-;; block can run -- the region is clobber-free straight-line code), which is
-;; the old rescue's slot discipline generalized. The assignment table is NOT
-;; modified: shadow roots stay CompilerRegSpill (their home slot lives on,
-;; and the remat interlock keeps them remat-free); the backend caller-save
-;; rewrite mints the register-homed segment vars from the region table.
+;; block can run -- the region is clobber-free straight-line code). The
+;; assignment table is NOT modified: shadow roots stay `Spill` (their home
+;; slot lives on, and the remat interlock keeps them remat-free); the backend
+;; caller-save rewrite mints the register-homed segment vars from the region
+;; table.
 ;; ---------------------------------------------------------------------------
 ;; Per-region statistics row from the enumeration walk: var, lo, hi, uses,
 ;; defs, first-def (1 = the region's first class ref is a def whose instr
@@ -14226,7 +14137,7 @@
 ;; while every use runs once per iteration, so the two sides sit at different
 ;; frequencies and the score must weight them separately -- that asymmetry, not
 ;; the extra span, is what makes a one-use-per-iteration loop invariant
-;; (liveness_storage's spilled bound, reloaded ~25M times) profitable at all.
+;; profitable at all.
 (defenum CompilerRegCallRegionStat
   (CompilerRegCallRegionStat i64 i64 i64 i64 i64 i64 i64 i64))
 
@@ -14244,7 +14155,7 @@
   2)
 
 ;; One bucket of candidate rows in FLUSH order; the picker walks it back to
-;; front, which is the order the former prepend-built cons bucket presented.
+;; front.
 (defstruct CompilerRegCallRegionStatSeq
   (slots (__tl_dyn-array CompilerRegCallRegionStat))
   (len i64))
@@ -14266,8 +14177,8 @@
     [_ (compiler-reg-backend-clobber-point-instr? type-segment-bases instr)]))
 
 ;; Shadow register pool: caller-saved registers with NO fixed-use hazard
-;; inside a kind-0-free region. Unlike loop-split's guarded rcx/rdx widening,
-;; call-region shadows keep the stable r8/r9/rsi/rdi subset: rax/rcx/rdx carry
+;; inside a kind-0-free region. Call-region shadows keep the stable
+;; r8/r9/rsi/rdi subset: rax/rcx/rdx carry
 ;; div/shift/return fixed uses, r10/r11 are the emergency scavenger's default
 ;; picks. %rsi/%rdi are callee-saved homes on Win64, so shadows there stay on
 ;; the two common caller-saved registers.
@@ -14293,9 +14204,8 @@
 ;;   * FREE OF CHARGE. compiler-backend-callee-needs-save? saves a callee-saved
 ;;     register iff the plan homes a value there, so a register already in that
 ;;     set costs no extra push/pop when the shadow joins it. A register outside
-;;     it would add a prologue/epilogue pair for one loop, which is exactly the
-;;     trade the leaf-CSR-fuse path exists to undo. So the pool is intersected
-;;     with the plan's live register set at selection time.
+;;     it would add a prologue/epilogue pair for one loop. So the pool is
+;;     intersected with the plan's live register set at selection time.
 ;;
 ;;   * IMMUNE TO THE NON-CALL CLOBBERS. A loop region spans whole blocks, so it
 ;;     can contain div/shift BinOps, CopyBytes (`rep movs` -- rsi/rdi/rcx) and
@@ -14334,8 +14244,8 @@
       false)))
 
 ;; The base pool followed by the loop-scoped tail. Loop rows search the whole
-;; array; block rows stop at the base count, so every block-only root picks
-;; bit-for-bit the register it always did. Keeping ONE array (rather than two
+;; array; block rows stop at the base count, so a block-only root picks only
+;; from the caller-saved base pool. Keeping ONE array (rather than two
 ;; pools) matters for the occupancy index: pool-index-of then covers the tail
 ;; too, so a callee-saved occupant is seen by the conflict scan.
 (define (compiler-reg-call-region-pool-with-loop-tail
@@ -15414,9 +15324,8 @@
                 [liveness
                   : live.CompilerFunctionLiveness
                   ;; Phi inputs belong to predecessor edges.  The baseline
-                  ;; block analysis conservatively made back-edge inputs look
-                  ;; live across this preheader call (nine values in the
-                  ;; hashmap helper instead of the three real parameters).
+                  ;; block analysis conservatively makes back-edge inputs look
+                  ;; live across this preheader call.
                   (live.compiler-live-analyze-function-edge-precise
                     (compiler-reg-global-shared-view func))]
                 [call-instrs : ir.CompilerIrInstrSeq
@@ -15498,9 +15407,9 @@
 ;;     calls, in which every value the hot path uses is live across the arm.
 ;;     For a PARAMETER it costs more than the pair, because a param that cannot
 ;;     keep its incoming ABI register has to be copied out of it in the prologue
-;;     as well. (R3S-1 restated: the copy is still paid, but its destination is
-;;     no longer forced callee-saved, so the push/pop half of the price is now
-;;     charged only to params that genuinely span a call.)
+;;     as well. (Under R3S-1 the copy's destination is not forced
+;;     callee-saved, so the push/pop half of the price is charged only to
+;;     params that genuinely span a call.)
 ;;
 ;; Both classes get the same rewrite and the same replan; they differ only in
 ;; what qualifies (`compiler-reg-call-hole-qualifies?`), in what counts as an
@@ -15510,8 +15419,9 @@
 ;; all -- on the pure depth ladder a depth-0 side arm weighs exactly what the
 ;; depth-0 hot path weighs.
 ;;
-;; This round realises that shape as an IR rewrite after the initial plan. A selected spilled value V gets one stack-only carrier
-;; S_V, and every kind-0 clobber `c` that V is live THROUGH becomes
+;; This round realises that shape as an IR rewrite after the initial plan. A
+;; selected spilled value V gets one stack-only carrier S_V, and every kind-0
+;; clobber `c` that V is live THROUGH becomes
 ;;
 ;;     Mov S_V <- V      (elided when S_V already holds V on this path)
 ;;     c
@@ -15539,11 +15449,11 @@
 ;; home for a caller-saved one plus cold carriers is only kept when the trade is
 ;; cheaper in instructions.
 ;;
-;; For a param the caller-saved home is specifically its INCOMING ABI register:
-;; the greedy will not give a param any other caller-saved home, but the ABI-pin
-;; walk hands the incoming one back once the param's interval is clobber-free,
-;; and after this rewrite it is -- the carriers put a hole at every crossing, and
-;; `compiler-reg-param-pin-spans-clobber?` reads the holes off the same
+;; For a param the caller-saved home can be its INCOMING ABI register: the
+;; ABI-pin walk hands the incoming one back once the param's interval is
+;; clobber-free, and after this rewrite it is -- the carriers put a hole at
+;; every crossing, and `compiler-reg-param-pin-spans-clobber?` reads the holes
+;; off the same
 ;; segmented intervals the greedy uses. The replan runs the whole pin walk on
 ;; the rewritten function, so nothing has to be threaded through: the carrier
 ;; `Mov`s are ordinary movs, in no clobber-kind set and taking no address.
@@ -15590,8 +15500,8 @@
 
 ;; Selection weight for one block, for THIS decision only (the greedy's own
 ;; ranking ladder, compiler-reg-loop-depth-weight, is deliberately untouched: it
-;; is a rank-ordering device across a whole function's webs, and 8^depth was
-;; measured to misrank there). Here the two sides of the comparison are the SAME
+;; is a rank-ordering device across a whole function's webs, and 8^depth
+;; misranks there). Here the two sides of the comparison are the SAME
 ;; value's refs against the SAME value's call crossings, so the weight only has
 ;; to model relative execution frequency, and one loop level is worth far more
 ;; than 2x.
@@ -15608,8 +15518,7 @@
 ;; exit-only, and a block that IS exit-only is not a member and never receives
 ;; L's +1 in `compiler-reg-function-loop-depths`. Charging the discount a second
 ;; time would be a second backward walk per loop with provably no effect, so the
-;; weight reads the membership depth directly. `compiler-reg-call-hole-exit-arm-weight-ok?`
-;; pins the property against a loop with an exit-only miss arm.
+;; weight reads the membership depth directly.
 (define (compiler-reg-call-hole-block-weight [depth : i64]) : i64
   (cond
     [(<= depth 0) 4]
@@ -15640,11 +15549,10 @@
 ;; That last clause is what keeps the prediction pointed at real side arms. Not
 ;; taking a grow / rehash / OOM arm costs nothing: the bypass is an empty edge
 ;; to the join. But the same post-dominance test also fires on the FAST arm of a
-;; versioned region -- `stdlib.io/copy-c-string`'s bounds-check-eliminated
-;; `tl_mem_copy_fwd` call, bypassed by the scalar byte loop -- where the arm is
-;; the cheap side and is taken essentially always. Predicting THAT not-taken is
-;; how a once-called startup helper picks up instructions it never gets back
-;; (+4 Ir each in io/copy-c-string and io/arg, visible on six benchmark rows).
+;; versioned region -- a bounds-check-eliminated `tl_mem_copy_fwd` call,
+;; bypassed by the scalar byte loop -- where the arm is the cheap side and is
+;; taken essentially always. Predicting THAT not-taken is how a once-called
+;; helper picks up instructions it never gets back.
 ;; A loop that is reachable from the entry WITHOUT the arm and not reachable
 ;; THROUGH it is exactly "work the bypass does and the arm skips", so a block
 ;; with one is not a detour and keeps its full depth weight.
@@ -15657,12 +15565,9 @@
 ;; by the same 4x the discount assumed. Inside a loop it is not: the arm's
 ;; carriers run per ITERATION while the prologue runs per CALL, so a "cold" arm
 ;; that is in fact taken on one iteration in eight costs the trip count times
-;; what it saves. That is not hypothetical -- P3's own qualification comment
-;; records `it-intern-slice`'s in-loop `it-slice-eq?` arm at +3.57M Ir, and
-;; discounting in-loop call arms measured +1.41% on lex_source (ls_tokenize's
-;; dispatch arms, 1.3M calls per run, predicted cold and taken 12% of the time).
-;; So inside a loop the crossing keeps its full depth weight and the pre-existing
-;; "one loop level colder than the hottest reference" rule decides alone.
+;; what it saves -- in-loop dispatch arms that call are exactly that shape. So
+;; inside a loop the crossing keeps its full depth weight and the "one loop
+;; level colder than the hottest reference" rule decides alone.
 ;;
 ;; The SELF-CALL exclusion is PRED_CALL's own recursion exclusion, carried over
 ;; whole. GCC does not predict a branch leading to a recursive call not-taken;
@@ -15883,8 +15788,7 @@
 ;; the IR's two by-name direct-call forms, and a self-call is name equality on
 ;; the same interned symbol the inliner compares (`ir.compiler-ir-symbol-eq?`).
 ;; Indirect calls carry a value rather than a name and can therefore never be
-;; PROVED self-recursive here, so they are left to the ordinary prediction --
-;; the conservative direction, since that is the pre-existing behaviour.
+;; PROVED self-recursive here, so they are left to the ordinary prediction.
 ;;
 ;; Only one call has to be the self-call: a block that calls `f` and then calls
 ;; itself still runs at the entry frequency, so a block is excluded as soon as
@@ -15979,9 +15883,8 @@
 ;; the same test as the depth-0 rule, evaluated inside the arm's own loop, so
 ;; "a loop" there means one nested strictly deeper than the arm's.
 ;; `compiler-reg-call-hole-loop-arm-weight-ok?` pins the discount, the
-;; every-path in-loop call block that keeps its full weight, and the csr/memory
-;; split; `compiler-reg-call-hole-loop-arm-bypass-loop-ok?` pins the versioned
-;; region.
+;; every-path in-loop call block that keeps its full weight, the csr/memory
+;; split and the versioned region.
 (define (compiler-reg-call-hole-loop-arm-weight [weight : i64]) : i64
   (let
     [half : i64 (/ weight 2)]
@@ -16328,8 +16231,8 @@
 ;; explicit Spill -- a missing assignment is the representation of a value the
 ;; planner never admitted at all), it is a GP register-eligible scalar, and it
 ;; is not one of the values the planner holds ineligible (address-taken, stack
-;; call argument, non-scalar). Params qualify. R3S-1 restated: the old
-;; `is-param -> csr-only` rule no longer stands, so a split param gains whenever
+;; call argument, non-scalar). Params qualify. Under R3S-1 there is no
+;; `is-param -> csr-only` rule, so a split param gains whenever
 ;; ANY pool register is free for the pieces -- carrying its crossings away drops
 ;; `spans-call`, and the pieces then reach the caller-saved prefix too, not only
 ;; a free callee-saved register.
@@ -16432,7 +16335,7 @@
 ;; on the hot path, whether or not the arm that forced the callee-saved home
 ;; ever runs. A value whose only call crossings are on a cold side arm should
 ;; instead live in a caller-saved register and pay carriers around the cold
-;; calls. R3S-1 restated: an unpinned param can now do this directly -- once the
+;; calls. Under R3S-1 an unpinned param can do this directly -- once the
 ;; rewrite carries its crossings away, `spans-call` is false and the class
 ;; reaches the whole caller-saved prefix, not just the incoming ABI register the
 ;; pin walk hands back.
@@ -16503,12 +16406,11 @@
 ;; What a MEMORY home actually costs at one reference. A reference the backend
 ;; serves straight out of the stack slot costs no extra instruction at all, so
 ;; splitting the value around a call buys nothing for it and it must not be
-;; priced as a reload. The measured case is a plain accumulate loop
+;; priced as a reload. The shape is a plain accumulate loop
 ;; (`acc = acc + v` over ten values): with `v` spilled the backend emits
 ;; `addq V(%rsp), %acc`, exactly as many instructions as `addq %v, %acc`, and a
-;; model that charged those mentions at the loop weight "rescued" all ten values
-;; into registers and starved the accumulator chain instead (target/wsl/p3
-;; micro, 208 -> 325 instructions per unrolled body).
+;; model that charges those mentions at the loop weight "rescues" all ten values
+;; into registers and starves the accumulator chain instead.
 ;;
 ;; Two positions are rebated, and both are rebated at most once per instruction,
 ;; because the ladder above also charges a variable at most once per instruction
@@ -16920,17 +16822,15 @@
 ;; inside one block.
 ;;
 ;; MEMORY candidates keep every reload. The elision is sound for them too, but
-;; it is not free: it shortens the estimated carrier cost, and on lex_source it
-;; flipped one marginal memory-class relocation in `ls-tokenize` -- a value whose
-;; crossings are a loop level colder than its references, decided by P3's own
-;; rule -- from refused to accepted, for +412K Ir (the relocation removes a
-;; 10.3M-Ir reload from the loop and pays 8M back in carriers plus an allocation
-;; reshuffle). That trade is the pre-existing one, its rule was measured against
-;; the un-elided rewrite, and nothing in this packet improves it; so the memory
-;; class keeps the rewrite shape it was tuned with, and the elision applies
-;; where the packet's own mechanism needs it. A csr candidate's carriers sit on
-;; a cold arm the hot path never runs, so a reload nothing reads there is pure
-;; code with nothing to trade against.
+;; it is not free: it shortens the estimated carrier cost, which can flip a
+;; marginal memory-class relocation -- a value whose crossings are a loop level
+;; colder than its references, decided by P3's own rule -- from refused to
+;; accepted at a net loss (the carriers plus the allocation reshuffle cost more
+;; than the loop reload they remove). The memory class's rule was tuned against
+;; the un-elided rewrite, so that class keeps the rewrite shape it was tuned
+;; with, and the elision applies only to the csr class. A csr candidate's
+;; carriers sit on a cold arm the hot path never runs, so a reload nothing
+;; reads there is pure code with nothing to trade against.
 (define (compiler-reg-call-hole-reload-needed?
   [type-segment-bases : i64]
   [csr : (& csr (__tl_dyn-array bool))]
@@ -17072,10 +16972,8 @@
 ;; Without the second, the round fires on values whose refs and whose call
 ;; crossings sit in the same loop -- and there the trade is a wash by
 ;; construction (one reload removed per ref, one store and one reload added per
-;; crossing), so any error in either estimate decides it. Two measured cases
-;; landed on the wrong side of that wash: intern_table's `it-intern-slice`,
-;; whose probe-loop value crosses the in-loop `it-slice-eq?` call (+3.57M Ir),
-;; and cfg_domloops/peephole_lines with the same shape. Requiring the crossing
+;; crossing), so any error in either estimate decides it -- e.g. a probe-loop
+;; value that crosses an in-loop compare call. Requiring the crossing
 ;; block to be at least one loop level colder makes the relocation downhill: the
 ;; weight ratio is 8 per level, so no plausible error in the per-crossing
 ;; instruction estimate can flip the comparison. It is also exactly the shape
@@ -17210,14 +17108,13 @@
 ;;
 ;; The P3/P7 design note above specifies both elisions -- a carrier store is
 ;; dead when `S_V` already holds `V` on this path, a carrier reload is dead when
-;; nothing reads `V` before the next crossing -- and the rewrite answered both
-;; questions INSIDE ONE BLOCK: "S_V valid" started false at every block entry
-;; and "nothing reads V" stopped at the block's terminator. Both questions are
-;; ordinary dataflow, and answering them over the whole CFG is what removes the
-;; shapes the accounting measures. At `gvn-kinds-bind` the second crossing's
-;; five stores re-write a slot the first crossing's stores already filled -- the
-;; two crossings sit in different blocks only because a branch separates the two
-;; calls -- and a reload whose next reader is past a second crossing is dead on
+;; nothing reads `V` before the next crossing. Both questions are ordinary
+;; dataflow and are answered over the whole CFG. Answered INSIDE ONE BLOCK
+;; ("S_V valid" false at every block entry, "nothing reads V" stopping at the
+;; block's terminator) they miss the common shapes: a second crossing's stores
+;; re-write a slot the first crossing's stores already filled when the two
+;; crossings sit in different blocks only because a branch separates the two
+;; calls, and a reload whose next reader is past a second crossing is dead on
 ;; the path that takes it.
 ;;
 ;;   * STORE availability is a forward MUST dataflow (available expressions):
@@ -17246,10 +17143,9 @@
 ;; block's whole state and a pass is a walk over the blocks.
 ;;
 ;; Neither fixpoint runs unbounded: `compiler-reg-call-hole-flow-max-passes`
-;; caps the round-robin the way `compiler-reg-region-park-max-blocks` caps the
-;; parking walks, and a run that has not converged inside the cap DISCARDS its
-;; partial answer for the degenerate flow -- `store-in` all zero, `reload-out`
-;; all one -- which is exactly the per-block behaviour this replaces. Stopping a
+;; caps the round-robin, and a run that has not converged inside the cap
+;; DISCARDS its partial answer for the degenerate flow -- `store-in` all zero,
+;; `reload-out` all one -- which is exactly the per-block answer. Stopping a
 ;; must-analysis early is unsound; stopping it and throwing the answer away is
 ;; not.
 ;; ---------------------------------------------------------------------------
@@ -18137,11 +18033,11 @@
 ;; How many parameters the plan does NOT leave in their incoming ABI register.
 ;; Each one costs exactly one instruction in the PROLOGUE -- `mov home, arg` for
 ;; a register home, `mov slot(%rsp), arg` for a memory one -- and it is the
-;; other half of what an unpinned parameter costs. R3S-1 restated: the push/pop
-;; that used to accompany it is no longer automatic (the home is forced
-;; callee-saved only when the param spans a call), so this term is now the WHOLE
-;; price for a non-spanning param and the CSR term below charges the rest only
-;; when a callee-saved home was actually taken.
+;; other half of what an unpinned parameter costs. Under R3S-1 a push/pop does
+;; not automatically accompany it (the home is forced callee-saved only when
+;; the param spans a call), so this term is the WHOLE price for a non-spanning
+;; param and the CSR term below charges the rest only when a callee-saved home
+;; was actually taken.
 ;; Without this term the model cannot see the difference between a param the
 ;; replan pinned and one it merely moved to a different register, which is
 ;; exactly the difference the csr class buys.
@@ -18327,16 +18223,15 @@
 ;; value into the register it vacated, and then the prologue is exactly as long
 ;; as it was and the carriers bought nothing at all.
 ;;
-;; This is the difference between the two shapes the round sees. In the merged
-;; hashmap kernel the freed register is not needed again and the push, the pop
-;; and the three parameter entry copies all disappear (-5 instructions on every
-;; call). In a function whose register pressure genuinely needs the callee-saved
-;; pool -- liveness_storage's `recompute!` (+0.32%) and cfg_domloops'
-;; `cfg-loop-body` (+0.087%) -- the same rewrite frees a register the greedy
-;; immediately refills, and only the carriers remain. Requiring the set to
-;; SHRINK keeps the first and refuses the second, and it asks the replan rather
-;; than a prediction. A selection of MEMORY candidates only is unaffected: that
-;; trade is the pre-existing one and is settled by the plan cost alone.
+;; This is the difference between the two shapes the round sees. In a merged
+;; kernel (a hot path plus a cold calling arm) the freed register is not needed
+;; again and the push, the pop and the parameter entry copies all disappear on
+;; every call. In a function whose register pressure genuinely needs the
+;; callee-saved pool the same rewrite frees a register the greedy immediately
+;; refills, and only the carriers remain. Requiring the set to SHRINK keeps the
+;; first and refuses the second, and it asks the replan rather than a
+;; prediction. A selection of MEMORY candidates only is unaffected: that trade
+;; is settled by the plan cost alone.
 (define (compiler-reg-call-hole-csr-bought-back?
   [ctx : CompilerRegCallHoleContext]
   [csr : (__tl_dyn-array bool)]
@@ -18727,15 +18622,10 @@
 ;; reference to a memory-homed value.
 ;;
 ;; "Did the replan registerise a previously spilled resident of this loop" drives
-;; the RETRY rather than the accept, and that is a deliberate weakening of the
-;; packet's rule, on evidence. The register a park frees frequently reaches the
-;; loop's residents through the LATER rescues -- P11b's loop-scope eviction and
-;; the loop-split homing both run after this round, on the split view -- and not
-;; through the replan itself. On the packet's own micro the replan leaves both
-;; byte-loop base pointers in memory while the loop-split rescue then homes one
-;; of them in exactly the register parking freed, taking the inner loop from ten
-;; instructions to eight (and the whole micro from 2,107,647 to 1,601,661 Ir);
-;; requiring the REPLAN to show the rescue declines that case outright. The
+;; the RETRY rather than the accept, deliberately. The register a park frees can
+;; reach the loop's residents through the LATER P11b loop-scope rescue, which
+;; runs after this round on the split view, and not through the replan itself;
+;; requiring the REPLAN to show the gain would decline such a park outright. The
 ;; estimate stays the guard -- a park that buys nothing is still refused -- and a
 ;; set that does not pay for itself is retried without the loops whose residents
 ;; the replan left in memory.
@@ -18776,7 +18666,7 @@
 ;; on: 4 * 8^depth, EXACT over the whole depth range instead of saturating.
 ;;
 ;; P3's `compiler-reg-call-hole-block-weight` is the same ladder clamped from
-;; depth 4 on, and that clamp is what silently disabled this round on exactly
+;; depth 4 on, and that clamp would silently disable this round on exactly
 ;; the merged kernels it exists for. Every claim the round makes is a claim
 ;; about the RATIO between a block inside L and a block on L's boundary:
 ;; parking V costs W(preheader) plus one W(exit) per live exit, against
@@ -18785,18 +18675,16 @@
 ;; IS that ratio. Once both sides of it land on the clamp the ratio becomes 1,
 ;; the boundary costs at least twice what a single resident reference is worth,
 ;; and `compiler-reg-loop-park-pair!` can never accept -- no matter how hot the
-;; loop actually is. The intern_table merged kernel is the shape: the byte
-;; compare loop sits at depth 5 with its preheader and both exits at depth 4,
-;; so on the clamped ladder its base pointer was priced at 16384 in-loop
-;; against a 49152 boundary and the round declined, while the SAME loop written
-;; as a separate function (depth 1, boundary at depth 0) parks and wins.
+;; loop actually is. A merged kernel is the shape: an inlined byte compare loop
+;; at depth 5 with its preheader and both exits at depth 4 would be declined,
+;; while the SAME loop written as a separate function (depth 1, boundary at
+;; depth 0) parks and wins.
 ;;
-;; Nothing outside this round changes: P3 and P7 keep their own ladder, and the
-;; two agree exactly on depths 0..4, so a function whose loops are all at depth
-;; 4 or less makes literally the same decisions as before. Block depths are
-;; themselves capped at `compiler-reg-loop-depth-max` = 8, so `else` here is
-;; depth 8 and the ladder is bounded at 4 * 8^8; a plan cost is a sum of these
-;; over the references of one function and stays far inside i64.
+;; P3 and P7 keep their own ladder; the two agree exactly on depths 0..4.
+;; Block depths are themselves capped at `compiler-reg-loop-depth-max` = 8, so
+;; `else` here is depth 8 and the ladder is bounded at 4 * 8^8; a plan cost is
+;; a sum of these over the references of one function and stays far inside
+;; i64.
 (define (compiler-reg-loop-park-block-weight [depth : i64]) : i64
   (cond
     [(<= depth 0) 4]
@@ -20981,16 +20869,16 @@
   ;; R4-A (LOCAL SPLIT): both candidate grades. A block row is LLVM's
   ;; tryLocalSplit -- one clobber-free run inside one block, homed in a register
   ;; with the slot authoritative outside it -- and nothing in that shape depends
-  ;; on the root spanning a call. The old `= 1` restricted block rows to
-  ;; call-spanning roots, so the commonest spill under pressure (a loop-carried
+  ;; on the root spanning a call. Restricting block rows to call-spanning roots
+  ;; (`= 1`) would leave the commonest spill under pressure (a loop-carried
   ;; temporary whose hull crosses no call but is denied a register because the
-  ;; loop's invariants own the pool) had no local shape at all: it was spilled
-  ;; WHOLE and paid a reload at every mention plus, at its def, an emergency
-  ;; save/restore of a live register. The region's own occupancy test is
+  ;; loop's invariants own the pool) with no local shape at all: it would be
+  ;; spilled WHOLE and pay a reload at every mention plus, at its def, an
+  ;; emergency save/restore of a live register. The region's own occupancy test is
   ;; segment-precise over [lo,hi], which is far narrower than the hull the greedy
   ;; failed on, so a register is often free exactly where the value is used.
   ;; The profitability floor (>= 2 uses AND net >= 2 after charging the entry
-  ;; reload and exit store) is unchanged and prices the two grades identically --
+  ;; reload and exit store) prices the two grades identically --
   ;; a block region's boundary movs run exactly as often as the refs they serve.
   (if (and (>= v 0) (< v n) (> (array-ref cand v) 0))
     (begin
@@ -21235,19 +21123,17 @@
 ;;
 ;; The enumeration walk above bumps its region id at every BLOCK start, so a
 ;; loop invariant read once per iteration lands in a one-use row and is thrown
-;; away by the >= 2 uses floor. That is the whole liveness_storage flagship:
-;; `recompute!`'s spilled bound sits at one fixed slot and is reloaded at three
-;; loop checks for ~25.0M dynamic instructions, inside loops the versioner had
-;; ALREADY cloned -- the check-removal win handed straight back as spill
-;; traffic. No per-block region can fix it, because the reload and the use it
-;; feeds are the same instruction pair inside the same block: the load has to
-;; leave the loop entirely.
+;; away by the >= 2 uses floor: a spilled loop bound, say, sits at one fixed
+;; slot and is reloaded at every loop check, even inside loops the versioner
+;; has cloned to remove checks. No per-block region can fix it, because the
+;; reload and the use it feeds are the same instruction pair inside the same
+;; block: the load has to leave the loop entirely.
 ;;
-;; So the region model gains a second shape. A LOOP row covers the natural loop
+;; So the region model has a second shape. A LOOP row covers the natural loop
 ;; over the span [s..e] its members reach and is anchored at the LAST
-;; instruction of block s-1 -- the loop's preheader -- which the rewrite already knows how to handle: the
-;; activation mov is emitted just before the anchor instruction, so it runs once
-;; per loop entry, and the remap then covers every use inside the loop.
+;; instruction of block s-1 -- the loop's preheader: the activation mov is
+;; emitted just before the anchor instruction, so it runs once per loop entry,
+;; and the remap then covers every use inside the loop.
 ;;
 ;; SOUNDNESS. The shadow is the block-scoped rescue's model at a wider span: a
 ;; pure copy of a root whose slot stays authoritative, so the only obligations
@@ -21256,23 +21142,22 @@
 ;;
 ;;   (a) DOMINATION. Admission demands that every block of [s..e] other than
 ;;       the header has ALL of its predecessors inside [s..e] (the single-entry
-;;       witness the loop-phi multi-block machinery already uses) AND that the
+;;       witness, compiler-reg-loop-phi-mb-body-entered-inside?) AND that the
 ;;       header's predecessor set is exactly {s-1} plus in-region back edges.
 ;;       Together those make s-1 the sole way in, so the anchor -- the last
 ;;       instruction of s-1, which every edge into h executes -- dominates the
-;;       whole region. The
-;;       back edge stays INSIDE the point span, so the shadow survives across
-;;       iterations with no per-iteration copy; that is where the win comes
-;;       from.
+;;       whole region. The back edge stays INSIDE the point span, so the shadow
+;;       survives across iterations with no per-iteration copy; that is where
+;;       the win comes from.
 ;;
 ;;   (b) NO REWRITE OF EITHER SIDE. The root must not be DEFINED anywhere in
 ;;       [s..e] (the loop-invariant class), which is also why phis are a
 ;;       non-issue: a phi def disqualifies the var outright, so a loop row's
-;;       root never has a header phi to race, and the rewrite's standing
-;;       phi-exclusion rule is left exactly as it was. defs = 0 also means
+;;       root never has a header phi to race, and the rewrite's phi-exclusion
+;;       rule applies unchanged. defs = 0 also means
 ;;       exit = 0: a read-only invariant needs NO write-back, so the region has
 ;;       no exit-edge obligation at all and the block-scoped exit-store path is
-;;       untouched. The span must contain no kind-0 boundary instruction, and
+;;       not involved. The span must contain no kind-0 boundary instruction, and
 ;;       the shadow register comes from the callee-saved loop pool, which no
 ;;       non-call clobber in the span can reach.
 ;;
@@ -21353,7 +21238,7 @@
 ;; Region admission for header `h` over the span [s..e] its loop occupies (both
 ;; from the nest, so `h` heading a loop whose members all lie inside [s..e] is
 ;; already proven). e == s is the single-block self-loop, which is admitted: it
-;; is the flagship's inner shape, and its empty body range makes the
+;; is a common hot inner-loop shape, and its empty body range makes the
 ;; single-entry scan trivially true. `h` is inside [s..e] but need not be `s`:
 ;; a rotated loop is entered in the middle of its own span.
 (define (compiler-reg-call-region-loop-admit?
@@ -21768,23 +21653,21 @@
 ;;
 ;; The rescue is the one consumer that reads it as an absolute frequency, in a
 ;; cost/BENEFIT inequality: it compares reloads removed from a loop body against
-;; movs added at the loop's boundary. Measured consequence of the ladder's
-;; trip-2 assumption (regalloc-evict-census over an opt2 self-compile): 39 of 91
-;; eviction candidates priced out, and NONE of them reached break-even -- a
-;; single reload moved out of a loop cannot pay for a store plus a reload when
-;; the loop is modelled as iterating twice. 85 parked victims sat there
-;; unusable for that reason alone.
+;; movs added at the loop's boundary. Under the ladder's trip-2 assumption no
+;; eviction candidate reaches break-even -- a single reload moved out of a loop
+;; cannot pay for a store plus a reload when the loop is modelled as iterating
+;; twice -- so every parked victim would sit unusable.
 ;;
 ;; So the rescue -- and nothing else -- multiplies the body side by T per loop
 ;; level the use sits below the cost point. The global ladder is untouched, so
-;; every spill and eviction decision elsewhere in the allocator is unchanged.
+;; every spill and eviction decision elsewhere in the allocator is unaffected.
 ;;
 ;; T = 8 is the base the house depth currency already uses (the ladder's own
 ;; step, and the inliner's depth currency), so the two frequency models agree
 ;; rather than inventing a third number; combined with the ladder's own factor
 ;; of 2 per level it prices a loop at ~16 iterations, which is conservative for
-;; the hot loops the rescue targets. Capped at two levels, exactly as the depth
-;; ladder saturates, so a deep nest cannot manufacture an unbounded benefit.
+;; the hot loops the rescue targets. Capped at two levels, so a deep nest
+;; cannot manufacture an unbounded benefit.
 (define (compiler-reg-call-region-trip-factor) : i64
   8)
 
@@ -21839,7 +21722,7 @@
 
 ;; Does [lo,hi] touch any already-picked range for this root? The walk's own
 ;; rows never overlap (each is one rid run), so for a bucket of pure block rows
-;; this is exactly the old "same lo" identity test. A loop row, however, spans
+;; this is exactly a "same lo" identity test. A loop row, however, spans
 ;; the block rows nested inside it: taking both would spend budget on a region
 ;; the rewrite then declines (one shadow per root is active at a time) and
 ;; would drag the shared register search over a range already covered.
@@ -22036,15 +21919,13 @@
 ;; P11b PHASE 3: loop-scope EVICTION of a PARKED occupant.
 ;;
 ;; Phase 2 homes a spilled loop invariant in a pool register that is FREE over
-;; the whole region. Measurement says the flagship never gets that far: in
-;; liveness_storage's versioned `recompute!` clones every one of the nine pool
-;; registers is held by a value live across the ENCLOSING loop, so the
-;; find-a-free-register model has nothing to find and the invariant keeps its
-;; three per-iteration reloads.
+;; the whole region. In a hot inner loop every pool register is often held by
+;; a value live across the ENCLOSING loop, so the find-a-free-register model
+;; has nothing to find and the invariant keeps its per-iteration reloads.
 ;;
-;; This is the missing lever. When the search fails, look for an occupant that
-;; is merely PARKED across the region -- live over it, mentioned nowhere inside
-;; it -- and lend its register out for the region's extent:
+;; So when the search fails, look for an occupant that is merely PARKED across
+;; the region -- live over it, mentioned nowhere inside it -- and lend its
+;; register out for the region's extent:
 ;;
 ;;      anchor:  Mov S <- O          (one store, once per loop ENTRY)
 ;;               Mov W <- V          (the Phase 2 shadow load)
@@ -22379,11 +22260,11 @@
 ;;     is live, and a live victim means no other value can be sharing its
 ;;     register at that point -- they would interfere.
 ;;
-;; Measurement is what forced this: on the liveness/gvn/cfg corpus EVERY exit
-;; edge of a rescue region is critical (versioned loop clones merge into shared
-;; tails), so an anchor-saved eviction could never place a single reload.
+;; This matters because the exit edges of a rescue region are typically all
+;; critical (versioned loop clones merge into shared tails), so an
+;; anchor-saved eviction could almost never place a reload.
 ;;
-;; 0 = usable; the nonzero codes name the refusals for the census.
+;; 0 = usable; the nonzero codes name the refusals.
 (define (compiler-reg-call-region-evict-exit-target-status
   [bslots : (& bslots (__tl_dyn-array ir.CompilerIrBlock))]
   [nblocks : i64]
@@ -22692,22 +22573,19 @@
 ;;
 ;; The 2x margin stays ON TOP of the trip estimate. It is what still refuses a
 ;; region whose only justification is a use that does not sit below the cost
-;; point at all (delta 0 -> multiplier 1, the old arithmetic), and a victim whose
-;; store lands in an enclosing loop.
+;; point at all (delta 0 -> multiplier 1), and a victim whose store lands in an
+;; enclosing loop.
 ;;
-;; SINGLE-USE FLOOR, and it is measured, not assumed. An eviction is not a free
+;; SINGLE-USE FLOOR. An eviction is not a free
 ;; rescue: the victim's save sits at its DEFINITION, which for the parameter
 ;; victims this pass actually finds is the function entry -- so the store runs on
 ;; every call, including calls that never reach the region, while the benefit
 ;; accrues only when the loop is entered. No depth model sees that asymmetry:
 ;; the ladder rates a function-entry block and an unconditionally-reached
-;; preheader as equally frequent. Landing the trip factor without this floor
-;; activated exactly one site in the whole 22-row corpus --
-;; liveness_storage's live_out_into_bang, two victims serving ONE in-region use
-;; each -- and cost 878,505 Ir there (+0.116% on the row), while the flagship
-;; recompute_bang did not move at all. Two or more in-region uses is the same
-;; floor the block rows have carried since M-G2b, and it is the margin the
-;; conditional-entry gap needs.
+;; preheader as equally frequent, so evicting victims to serve ONE in-region
+;; use each is a net loss. Two or more in-region uses is the same floor the
+;; block rows carry (M-G2b), and it is the margin the conditional-entry gap
+;; needs.
 (define (compiler-reg-call-region-evict-use-floor) : i64
   2)
 
@@ -22854,9 +22732,7 @@
                   (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
                   (let
                     ;; Victim search first, exits second. Both orders decide the
-                    ;; same candidates; this one makes the census say whether a
-                    ;; corpus lacks PARKED VALUES or merely lacks placeable
-                    ;; exits, which are different problems with different fixes.
+                    ;; same candidates.
                     [raw-exits : i64 0]
                     [stamp : (__tl_dyn-array i64)
                       (__tl_make-array
@@ -23027,22 +22903,18 @@
 ;; to reload from) and record their ids in walk order in `order`. Returns the
 ;; candidate count.
 ;;
-;; TWO candidate grades, because the two region shapes want different
-;; populations:
+;; TWO candidate grades:
 ;;
 ;;   cand = compiler-reg-call-region-cand-full (1): the hull ALSO spans a
-;;   kind-0 clobber. This is the block-region population and it is unchanged --
-;;   the enumeration walk and every block row test for exactly this value, so
-;;   block-scoped codegen is bit-for-bit what it was.
+;;   kind-0 clobber -- the call-bridging population.
 ;;
 ;;   cand = compiler-reg-call-region-cand-loop (2): everything above EXCEPT the
-;;   kind-0 span. The block rescue exists to bridge calls, so a value that never
-;;   crosses one was rightly out of scope for it. Loop rows are a different
-;;   class entirely: their cost is pure register PRESSURE inside a call-free
-;;   loop, and measurement says that is where the flagship lives -- in
-;;   liveness_storage's `recompute!` ten of the spilled values covering the hot
-;;   versioned clone report k0 = 0, so the kind-0 gate alone was hiding the
-;;   whole target population. Loop rows therefore accept both grades.
+;;   kind-0 span. Loop rows are a different class from call bridging: their
+;;   cost is pure register PRESSURE inside a call-free loop, and the spilled
+;;   values covering a hot versioned loop clone often span no kind-0 clobber at
+;;   all, so the kind-0 gate alone would hide the whole target population.
+;;   Loop rows therefore accept both grades, and so do block rows (R4-A, see
+;;   compiler-reg-call-region-note-var!).
 (define (compiler-reg-call-region-mark-candidates
   [candidates : CompilerRegIntervalSeq]
   [index : i64]
@@ -24038,9 +23910,8 @@
 ;; walk (compiler-backend-collect-program-collections-with-iag, a TOTAL match
 ;; over the IR that already visits every operand of every instruction of every
 ;; function AND every global initializer, so a new IR shape cannot silently
-;; escape it), and
-;; `known?` gates every answer: any path that reaches the allocator without that
-;; walk having run gets `false` and the old behaviour.
+;; escape it), and `known?` gates every answer: any path that reaches the
+;; allocator without that walk having run gets `false` (no cell is frozen).
 (define compiler-reg-nonfrozen-globals : reg_i64_i64_map.Map
   (reg_i64_i64_map.with-capacity 8))
 (define compiler-reg-frozen-globals-known? : bool
@@ -24473,11 +24344,10 @@
 ;; The spill-weight eviction scores a candidate by its use count,
 ;; but a merged class root carries only its OWN var's weight -- which can be the
 ;; least-used member of the class (e.g. a phi result used once), so the eviction
-;; underweights a hot coalesced loop value and spills it (crc32's accumulator).
+;; underweights a hot coalesced loop value (an accumulator, say) and spills it.
 ;; Give the root the MAX weight over its members: that captures the class's
 ;; hottest reference rate (enough to keep a hot loop value resident) without
-;; SUM's over-weighting, which would evict hot singletons that share the loop
-;; (the reps var in spmd_reduce).
+;; SUM's over-weighting, which would evict hot singletons that share the loop.
 (define (compiler-reg-merge-ref-counts
   [coalesce : (& coalesce CompilerRegCoalesceMap)]
   [ref-counts : (__tl_dyn-array i64)]
@@ -24523,11 +24393,10 @@
 ;;     value whose live range crosses a call (the regmask clobbers it);
 ;;   * COPY-HINT biasing: try the copy-neighbour's register first;
 ;;   * remat-aware spill-weight EVICTION + the RS_* stage machine: clear a register
-;;     all of whose interferers are strictly lower weight, else (split-eligible)
-;;     mark RS_Split for the region-split post-pass, else spill. Strict weight order
-;;     => terminating. Group/pair roots are left UNASSIGNED (backend stack-homes
-;;     them); the call-spanning save/restore rescue then runs over the integer
-;;     result.
+;;     all of whose interferers are strictly lower weight, else spill. Strict
+;;     weight order => terminating. Group/pair roots are left UNASSIGNED
+;;     (backend stack-homes them); the call-spanning save/restore rescue then
+;;     runs over the integer result.
 (define (compiler-reg-greedy-pool-index-capacity) : i64
   (+ cabi.compiler-reg-id-mask-base cabi.compiler-reg-id-mask-count))
 
@@ -24573,14 +24442,13 @@
 ;; ---------------------------------------------------------------------------
 ;; Per-register live-interval union (LLVM RAGreedy LiveIntervalUnion).
 ;;
-;; The greedy allocator asks "is register r free for v?" 833k times per opt2
-;; self-compile and answered it by walking r's occupancy bitset and calling the
-;; segmented interference predicate once per resident: 19.0M predicate calls,
-;; 97% of which answer "disjoint". A per-query prologue hoist was measured and
-;; rejected (see compiler-reg-vars-interfere-segmented-index?) -- at this volume
-;; only dropping the QUERY COUNT wins. Keeping the residents' segments sorted by
-;; start per register turns the scan into a stabbing query: a binary search per
-;; segment of the candidate (1.37 on average), with zero per-resident calls.
+;; The greedy allocator asks "is register r free for v?" very often, and
+;; walking r's occupancy bitset to call the segmented interference predicate
+;; once per resident makes most of those calls answer "disjoint". A per-query
+;; prologue hoist is a loss (see compiler-reg-vars-interfere-segmented-index?)
+;; -- only dropping the QUERY COUNT wins. Keeping the residents' segments sorted
+;; by start per register turns the scan into a stabbing query: a binary search
+;; per segment of the candidate, with zero per-resident calls.
 ;;
 ;; ENTRY LAYOUT. `live-union[reg].slots` is a flat i64 array of
 ;; compiler-reg-live-union-entry-words per entry:
@@ -25157,7 +25025,7 @@
 
 ;; Can `var` take pool register `reg-index` without interfering with a resident?
 ;;
-;; DECISION IDENTITY with the per-resident scan it replaces. `interferer-max`
+;; DECISION IDENTITY with the per-resident scan (`interferer-max`). It
 ;; returns -1 exactly when no resident other than `var` itself interferes:
 ;; ref-counts entries are built by accumulating loop-depth weights (>= 1) into a
 ;; zeroed array and are only ever halved by the remat discount, so every real
@@ -25168,10 +25036,9 @@
 ;;     the union does not model), and
 ;;   * the candidate is not itself a resident of this register (the scan skips
 ;;     `other = var`; the union cannot tell its own entries apart).
-;; Any of those three sends the query to the original scan, so the answer is the
-;; old answer in every case. Over a full opt2 self-compile all three guards are
-;; measured never to fire, so the fallback is a correctness backstop, not a
-;; performance path.
+;; Any of those three sends the query to the per-resident scan, so the answer is
+;; the scan's answer in every case. The guards practically never fire, so the
+;; fallback is a correctness backstop, not a performance path.
 (define (compiler-reg-greedy-reg-free?
   [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : (& interval-index CompilerRegIntervalIndex)]
@@ -25210,9 +25077,9 @@
         (- 0 1)))))
 
 ;; {rax,rdx}: the registers an idiv hard-clobbers (rax:rdx outputs). The INT_MIN/-1
-;; overflow guard temps are no longer hardcoded to %r10/%r11 -- the guard scavenges
-;; free registers (compiler-backend-div-overflow-guard-asm-with-plan), avoiding any
-;; div-spanning value via the live query, so a div-spanning var may now use
+;; overflow guard temps are not fixed registers -- the guard scavenges free
+;; registers (compiler-backend-div-overflow-guard-asm-with-plan), avoiding any
+;; div-spanning value via the live query, so a div-spanning var may use
 ;; %r10/%r11. rax stays reserved.
 (define (compiler-reg-greedy-div-clobber-registers) : CompilerRegIdSeq
   (compiler-reg-id-seq-prepend
@@ -25398,54 +25265,40 @@
             best))))))
 
 ;; ---------------------------------------------------------------------------
-;; MEASURED AND REFUTED (RG-1): a SECOND chance at the callee-saved pool.
+;; TRIED AND REJECTED (RG-1): a SECOND chance at the callee-saved pool.
 ;;
 ;; The obvious next idea at this gate is that a call-spanning value the
 ;; worklist left in memory should be revisited once the landscape has settled:
 ;; the greedy gives such a value one attempt, and a value that loses it is
 ;; spilled for its whole interval and never reconsidered, while the values that
-;; beat it can be evicted and requeued and land elsewhere. Counting functions
-;; from the `--trace-passes` home tracer makes that look like a large class --
-;; 43 of the 28 benchmarks' functions and 1,153 of the opt2 self-compile's
-;; 18,642 hold a call-crossing value in memory while SOME callee-saved register
-;; holds a value of strictly lower weighted reference count (cg-scc-compute! 16
-;; against %r14's 5; sccp-process-instr-seq-from 8 against %r13's 6;
-;; ssa-materialize 20 against %rbx's 10).
+;; beat it can be evicted and requeued and land elsewhere. The `--trace-passes`
+;; home tracer makes that look like a large class: many functions hold a
+;; call-crossing value in memory while SOME callee-saved register holds a value
+;; of strictly lower weighted reference count.
 ;;
-;; It was built (both clauses: evict a strictly-lower occupant; or RELOCATE a
+;; Built (both clauses: evict a strictly-lower occupant; or RELOCATE a
 ;; non-crossing occupant to a free caller-saved register, which costs it
-;; nothing) and measured: every one of the 28 rows moved +0.000000%, and the
-;; self-compile paid 0.045% for it. The census counts the wrong pairs. It pairs
-;; the hottest memory-homed crosser with the COLDEST occupant of a register
-;; ANYWHERE in the function, and those two usually never interfere. At the only
-;; level where a register can change hands -- the residents whose live ranges
-;; actually overlap the candidate's -- the answer over 41,691 blocked attempts
-;; in one opt2 self-compile is:
-;;
-;;     heaviest interfering resident of the cheapest register, vs the candidate
-;;       strictly lighter (would already have been evicted here) ....       0
-;;       exactly equal (this strict `<` refuses, and must) ......... 12,493 (30%)
-;;       1.0-1.5x heavier ...........................................  5,976 (14%)
-;;       1.5-2x heavier .............................................  7,097 (17%)
-;;       2-4x heavier ............................................... 12,082 (29%)
-;;       >=4x heavier ...............................................  4,043 (10%)
+;; nothing), it gains nothing and costs compile time. That count pairs the
+;; wrong values: the hottest memory-homed crosser with the COLDEST occupant of a
+;; register ANYWHERE in the function, and those two usually never interfere.
+;; Among the residents whose live ranges actually overlap the candidate's --
+;; the only level where a register can change hands -- the heaviest interfering
+;; resident of the cheapest register is never strictly lighter than the
+;; candidate (it would already have been evicted), often exactly equal (this
+;; strict `<` refuses, and must), and mostly heavier.
 ;;
 ;; The callee-saved registers are held by values the cost model prices ABOVE
 ;; the ones in memory, and the occupants that could be relocated are themselves
-;; call-crossing. cg-census-blocks, the packet case, is the same story read from
-;; the other end: `position`'s seven references per iteration are three FOLDED
-;; memory operands (`addq $1,0x68(%rsp)`, two `cmp`s), one store and two real
-;; loads, so the foldable-operand rebate scores it 9 while %rbx's and %r15's
-;; depth-3 occupants score 16 and %r12's score 34 -- and registerising it can
-;; only remove the two loads (~3.2M Ir, 0.47% of the row). The model declines
-;; correctly.
+;; call-crossing. A value whose references are mostly FOLDED memory operands
+;; scores low under the foldable-operand rebate, and registerising it can only
+;; remove its few real loads. The model declines correctly.
 ;;
 ;; So the class is real but it is not reachable from here. What it needs is a
 ;; RANKING change -- the 2^depth ladder (compiler-reg-loop-depth-weight) against
 ;; real trip counts, since these inner loops run less often than the depth
 ;; implies -- or per-range splitting so a register can be handed over for part
-;; of an interval instead of all of it. Re-deriving the numbers above costs one
-;; traced compile; do that before building the second chance again.
+;; of an interval instead of all of it. Re-check that interference-level
+;; distribution with one traced compile before building the second chance again.
 ;; ---------------------------------------------------------------------------
 ;; First pool register all of whose interferers are STRICTLY lower weight than
 ;; `weight` (so clearing it costs less than spilling `var`) AND none of which is
@@ -25579,26 +25432,13 @@
 ;; stage:
 ;;   RS_Assign (1) -- got a register (hint reg, free reg, or by evicting strictly
 ;;                    lower-weight interferers).
-;;   RS_Split  (2) -- no register, but the spilled root has a split-eligible
-;;                    (multi-segment / loop-carried) live range, so the function-
-;;                    level region-splitter (compiler-reg-loop-split-*, run as the
-;;                    backend post-pass on THIS plan) will rescue it: rewrite the
-;;                    hot region to a fresh register-resident var + cold-edge
-;;                    boundary copies, cost-gated by mentions x loop-depth. The
-;;                    greedy returns a CompilerRegPlan (not a rewritten function),
-;;                    so the IR-rewriting split necessarily lives in that post-pass;
-;;                    this stage records the selectOrSplit decision.
-;;   RS_Spill  (3) -- no register and not split-eligible: stack-home it.
-;; The plan output is identical to the single-pass M1 (every non-assigned root is
-;; spilled either way); the stage is the explicit decision the post-pass consumes.
+;;   RS_Spill  (3) -- no register: stack-home it. The trace still records
+;;                    whether the root had a multi-segment live range.
 (define (compiler-reg-greedy-stage-rs-new) : i64
   0)
 
 (define (compiler-reg-greedy-stage-rs-assign) : i64
   1)
-
-(define (compiler-reg-greedy-stage-rs-split) : i64
-  2)
 
 (define (compiler-reg-greedy-stage-rs-spill) : i64
   3)
@@ -25606,8 +25446,8 @@
 ;; Physical-register preference (arg-var -> ABI-arg-register coalescing). For an
 ;; OUTGOING call-argument var the plan records the greedy-integer-pool INDEX of the
 ;; SysV register it will be marshalled into (arg position i ->
-;; compiler-backend-arg-reg i: 0=%rdi,1=%rsi,2=%rdx,3=%rcx,4=%r8,5=%r9). Homing the
-;; arg value directly in that register turns the backend's `movq <home>, %rdi`
+;; compiler-abi-gp-arg-register i: 0=%rdi,1=%rsi,2=%rdx,3=%rcx,4=%r8,5=%r9).
+;; Homing the arg value directly in that register turns the backend's `movq <home>, %rdi`
 ;; marshalling move into a `movq %rdi, %rdi` self-move that the peephole drops.
 ;; SOUND because an arg value is consumed AT the call (not live across it):
 ;;   * `spans-call` vars are gated out, so a genuinely call-spanning value is NEVER
@@ -25723,12 +25563,12 @@
             (compiler-reg-global-shared-view interval-index)
             shift-points
             var))]
-      ;; R3S-1. The old rule was `csr-only = (or spans-call is-param)`: a param
-      ;; class took a CALLEE-SAVED home whatever its interval did, because the
-      ;; entry copy writes the home in the prologue and a caller-saved home could
-      ;; be the incoming argument register of a LATER param, whose entry copy had
-      ;; not run yet. The callee-saved set is copy-safe only because it is
-      ;; disjoint from the incoming argument registers.
+      ;; R3S-1. The entry copy writes a param's home in the prologue, and a
+      ;; caller-saved home could be the incoming argument register of a LATER
+      ;; param, whose entry copy has not run yet. `csr-only = (or spans-call
+      ;; is-param)` would avoid that by giving every param class a CALLEE-SAVED
+      ;; home whatever its interval did: the callee-saved set is copy-safe only
+      ;; because it is disjoint from the incoming argument registers.
       ;;
       ;; `param-entry-forbidden` states that condition directly, per class: the
       ;; incoming argument registers of the params that follow this one (see
@@ -25739,8 +25579,8 @@
       ;; a caller-saved register like any other value; one that DOES span a call
       ;; is still callee-saved-only through `spans-call`.
       ;;
-      ;; An EMPTY array is the legacy request (a function whose parameter shape
-      ;; the constraint builder refuses): the class stays callee-saved-only.
+      ;; An EMPTY array is the fallback request (a function whose parameter
+      ;; shape the constraint builder refuses): the class stays callee-saved-only.
       [param-entry-scheduled? : bool (> (array-length param-entry-forbidden) 0)]
       [csr-only : bool
         (or spans-call (and is-param (not param-entry-scheduled?)))]
@@ -25757,8 +25597,8 @@
           (array-ref scratch-excluded var)
           (compiler-reg-id-seq-empty))]
       ;; The entry-copy schedule constraint. Empty for every non-param class and
-      ;; for every class in a legacy-mode function, so the appended sequence is
-      ;; identical to the old one there.
+      ;; for every class in a function that got the empty (callee-saved-only)
+      ;; request, so nothing is appended there.
       [param-forbidden : CompilerRegIdSeq
         (if (and
           is-param
@@ -25899,9 +25739,9 @@
                     ev)
                   (compiler-reg-greedy-stage-rs-assign))
                 ;; Synthetic scratch requirements have no stack representation:
-                ;; leave an impossible placement unassigned for the retained
-                ;; post-pass/scavenger fallback. Real values keep the ordinary
-                ;; whole-interval spill path.
+                ;; leave an impossible placement unassigned for the scavenger
+                ;; fallback. Real values keep the ordinary whole-interval
+                ;; spill path.
                 (if (and (>= unspillable-from 0) (>= var unspillable-from))
                   (begin
                     (compiler-reg-trace-note!
@@ -25920,7 +25760,7 @@
                         (compiler-reg-trace-note!
                           var
                           (compiler-reg-trace-reason-spill-split-eligible))
-                        (compiler-reg-greedy-stage-rs-split))
+                        (compiler-reg-greedy-stage-rs-spill))
                       (begin
                         (compiler-reg-trace-note!
                           var
@@ -26043,14 +25883,12 @@
         (set! i (+ i 1))))))
 
 ;; Order the first `count` entries of `arr` by
-;; `compiler-reg-greedy-weight-before?`. This was an insertion sort, whose
-;; quadratic comparison count is charged entirely to the few hundred-to-
-;; thousand-candidate functions (491,190 sorted entries cost 8.44M comparisons
-;; in an opt2 self-compile). The comparator is a strict total order and both
-;; insertion sort and this bottom-up merge are STABLE, so they agree on the
-;; permutation for every input -- including one with repeated ids, where the
-;; comparator reports neither element before the other. The eviction order the
-;; greedy then walks is therefore bit-identical.
+;; `compiler-reg-greedy-weight-before?` with a bottom-up merge sort: an
+;; insertion sort's quadratic comparison count lands entirely on the few
+;; hundred-to-thousand-candidate functions. The merge is STABLE, so it gives
+;; the same permutation as any stable sort under this comparator -- including
+;; for repeated ids, where the comparator reports neither element before the
+;; other.
 (define (compiler-reg-greedy-sort!
   [arr : (&mut arr (__tl_dyn-array i64))]
   [ref-counts : (& ref-counts (__tl_dyn-array i64))]
@@ -26085,8 +25923,8 @@
 ;; (discounted == raw) outranks a remat value of equal raw, so remat is still
 ;; preferred for spilling.
 ;;
-;; The tie-break is COMPRESSED into `tie-span` buckets (raw scaled by maxRaw + 1,
-;; the old radix) rather than carried at full width, because the pair now has to
+;; The tie-break is COMPRESSED into `tie-span` buckets (raw scaled by
+;; maxRaw + 1) rather than carried at full width, because the pair has to
 ;; leave room for the priority band packed above it in the same integer
 ;; (compiler-reg-priority-keys!). Ten bits is far more resolution than a discount
 ;; collision needs -- the discount halves a ladder sum, so the values it collides
@@ -26138,8 +25976,8 @@
       out)))
 
 ;; Binary max-heap over (spill weight desc, var-id asc) -- the exact
-;; compiler-reg-greedy-weight-before? total order the O(n) pending-array scan
-;; selected, so pops are bit-identical while costing O(log n). The pending array
+;; compiler-reg-greedy-weight-before? total order, so a pop selects what an
+;; O(n) pending-array scan would, at O(log n). The pending array
 ;; stays authoritative for membership: entries it no longer marks are lazily
 ;; discarded on pop, so evict-requeue never needs a decrease-key.
 (defstruct CompilerRegGreedyHeap
@@ -26429,14 +26267,13 @@
 
 ;; Staged worklist driver (RAGreedy Component 1): re-entrant evict-and-requeue
 ;; priority worklist over the unassigned root set, processing highest-current-
-;; weight first. Replaces the static forward recursion: when a higher-weight root
-;; evicts a lower-weight resident, the resident is UNASSIGNED and RE-ENQUEUED for
-;; another allocation attempt (instead of being whole-spilled with no second
-;; chance) -- the foundation Component 2 (split-on-spill) builds on. With no
-;; eviction firing (the strict descending-weight order makes tryEvict dead for
-;; the initial pass) the worklist pops the same sorted sequence and produces the
-;; same plan as the old forward pass. `arr[i..count)` are the sorted roots; the
-;; per-root terminal RS_* stage is recorded in `stages` for the post-pass split.
+;; weight first: when a higher-weight root evicts a lower-weight resident, the
+;; resident is UNASSIGNED and RE-ENQUEUED for another allocation attempt
+;; (instead of being whole-spilled with no second chance). With no eviction
+;; firing (the strict descending-weight order makes tryEvict dead for the
+;; initial pass) the worklist pops the sorted sequence in order.
+;; `arr[i..count)` are the sorted roots; each root's terminal RS_* stage is
+;; recorded in `stages`.
 (define (compiler-reg-greedy-alloc-all!
   [arr : (__tl_dyn-array i64)]
   [i : i64]
@@ -26576,16 +26413,15 @@
             scratch-excluded))
         unit))))
 
-;; Unified Greedy integer register pool: caller-saved zero-call scratch
-;; (%r9/%rcx/%rdx) FIRST so non-call-spanning values prefer them -- no
-;; prologue/epilogue save/restore, the LLVM CSR-cost try-order -- then the other
-;; caller-saved pool members (%r10/%r11/%r8), then the callee-saved pool. The
+;; Unified Greedy integer register pool: the caller-saved registers
+;; (%rax/%rsi/%rdi/%r9/%rcx/%rdx/%r10/%r11/%r8) FIRST so non-call-spanning
+;; values prefer them -- no prologue/epilogue save/restore, the LLVM CSR-cost
+;; try-order -- then the callee-saved pool. The
 ;; first `caller-saved-count` entries are caller-saved: a value whose live range
 ;; spans a backend clobber-point (call site / op that clobbers caller-saved regs)
 ;; may NOT use them (it would be clobbered across the clobber), exactly the
 ;; regmask-as-interference rule. Such values start their register search at the
-;; callee-saved offset. This folds the old prepass-partition +
-;; caller-saved-overflow into ONE allocation pass.
+;; callee-saved offset, so ONE allocation pass serves both kinds of value.
 (define (compiler-reg-greedy-integer-pool) : CompilerRegIdSeq
   (compiler-reg-id-seq-prepend
     cabi.compiler-reg-id-rax
@@ -26612,7 +26448,7 @@
     (compiler-reg-id-seq-count (compiler-reg-greedy-integer-pool))
     (compiler-reg-id-seq-count (compiler-reg-sysv-integer-registers))))
 
-;; ABI-aware GP greedy pool. SysV is the byte-identical default pool above. Win64
+;; ABI-aware GP greedy pool. SysV is the default pool above. Win64
 ;; differs ONLY in the caller/callee SPLIT: %rsi/%rdi are NONVOLATILE (callee-
 ;; saved) on Win64, so they must live in the callee-saved suffix (saved/restored
 ;; by the prologue, kept across calls) rather than the caller-saved prefix --
@@ -26626,8 +26462,8 @@
     ;; M-G3 stage 2: when the backend enabled the per-function FPO flag, %rbp
     ;; joins as the LAST callee-saved register (index 14; the caller-saved
     ;; boundary stays 9 -- compiler-reg-greedy-caller-saved-count is derived
-    ;; from the base pool, unchanged). Functions needing <= 5 CSRs keep their
-    ;; previous homes.
+    ;; from the base pool), so it only homes a value once the other five
+    ;; callee-saved registers are taken.
     [(cabi.CompilerRegTargetAbi.Linux)
       (if compiler-reg-rbp-pool-enabled
         (compiler-reg-id-seq-prepend
@@ -26652,10 +26488,10 @@
         (compiler-reg-greedy-integer-pool))]
     [(cabi.CompilerRegTargetAbi.Windows)
       ;; Win64: %rsi/%rdi are nonvolatile (callee-saved). The backend prologue/
-      ;; epilogue saves them with the Win64 callee-save suffix. Keep the existing
-      ;; r12-r15,rbx order first so old homes are stable until pressure reaches
-      ;; the two extra Win64 nonvolatile registers. An FPO-eligible function
-      ;; appends %rbp after both, preserving every existing home.
+      ;; epilogue saves them with the Win64 callee-save suffix. The r12-r15,rbx
+      ;; order comes first, so the two extra Win64 nonvolatile registers only
+      ;; take a value once pressure reaches them. An FPO-eligible function
+      ;; appends %rbp after both.
       ;; caller-saved (volatile) first: rax,rcx,rdx,r8,r9,r10,r11 (7), then the
       ;; backend-saved callee suffix r12-r15,rbx,rsi,rdi[,rbp].
       (let
@@ -26699,21 +26535,19 @@
       (cabi.compiler-abi-caller-saved-gp-register-count target-abi)]))
 
 ;; Clobber-span test: must var's value SURVIVE any clobber-point?
-;; (The clobber-span half of the old per-register zero-call gate, sans the
-;; conflict check which the LiveIntervalUnion test already covers.)
+;; (Register conflicts are the LiveIntervalUnion test's job, not this one's.)
 ;; Out-of-range -> conservative spanning (callee-saved only).
 ;;
 ;; The coarse [start,end] hull runs first: it is one masked word test and it is
 ;; an exact superset of the segment answer, so a value with no clobber in its
-;; hull is decided without touching the segment table -- byte-identical work for
-;; every value the hull already cleared. A value the HULL rejects then gets the
-;; precise question: is the clobber inside one of its live SEGMENTS, or in a
-;; HOLE? A hole is genuine deadness (see compiler-reg-segments-span-clobber?),
-;; and pinning a value into a callee-saved home for a call it is provably dead
-;; across is what makes a multi-arm dispatcher save and restore registers it
-;; never needed. Indices without segment data (the hull-only
-;; compiler-reg-interval-index-build variant the SIMD/AVX plan uses) keep the
-;; coarse answer, so those paths are unchanged.
+;; hull is decided without touching the segment table. A value the HULL rejects
+;; then gets the precise question: is the clobber inside one of its live
+;; SEGMENTS, or in a HOLE? A hole is genuine deadness (see
+;; compiler-reg-segments-span-clobber?), and pinning a value into a
+;; callee-saved home for a call it is provably dead across is what makes a
+;; multi-arm dispatcher save and restore registers it never needed. Indices
+;; without segment data (the hull-only compiler-reg-interval-index-build
+;; variant the SIMD/AVX plan uses) keep the coarse answer.
 (define (compiler-reg-greedy-var-spans-clobber?
   [interval-index : CompilerRegIntervalIndex]
   [clobber-points : (& clobber-points live.CompilerLiveI64Set)]
@@ -26776,7 +26610,7 @@
       (compiler-reg-id-seq-index-of pool reg 0))))
 
 ;; Record arg-var -> ABI-register preference (greedy-pool index) for one call
-;; argument at integer position `pos`. Only IrValueVar args take a home; the
+;; argument at integer position `pos`. Only `Var` args take a home; the
 ;; var is mapped to its coalesce root (parents) like the copy hints, and the first
 ;; preference for a root wins. Stack-passed positions yield -1 and are skipped.
 (define (compiler-reg-arg-pref-value!
@@ -26933,12 +26767,13 @@
 ;; coalesce root, tried free-only in alloc-one! (never evicts), declined for
 ;; csr-only roots (%rax is illegal across a kind-0 clobber anyway), and filtered
 ;; against the per-root forbidden set (a div-spanning root already excludes
-;; %rax). R3S-1 restated: csr-only is now exactly the clobber-span rule, so a
-;; PARAM class may reach this bias -- it is still free-only, and the param's
-;; entry-copy schedule set is part of the same per-root forbidden sequence. Float results return in %xmm0 --
-;; skipped. Group results use the return register PAIR -- their dst is a group
-;; var alloc-one! skips before reading prefs, so a stray pref would be inert;
-;; the C-ABI StoreResult forms write memory slots and are omitted entirely.
+;; %rax). Under R3S-1 csr-only is exactly the clobber-span rule, so a PARAM
+;; class may reach this bias -- it is still free-only, and the param's
+;; entry-copy schedule set is part of the same per-root forbidden sequence.
+;; Float results return in %xmm0 -- skipped. Group results use the return
+;; register PAIR -- their dst is a group var alloc-one! skips before reading
+;; prefs, so a stray pref would be inert; the C-ABI StoreResult forms write
+;; memory slots and are omitted entirely.
 ;; Registered AFTER the arg walk so an existing arg-register preference keeps
 ;; priority (either bias elides exactly one mov for arg-and-result vars).
 (define (compiler-reg-result-pref-var!
@@ -27772,8 +27607,8 @@
           1)
           1
           (array-length (compiler-reg-assignment-table-present assignments))))]
-    ;; RS_* stage per root (RS_New until selectOrSplit runs); the post-pass region
-    ;; split rescues the RS_Split entries.
+    ;; RS_* stage per root (RS_New until selectOrSplit runs): records each
+    ;; root's terminal stage.
     [stages : (__tl_dyn-array i64)
       (__tl_make-array
         i64
@@ -27859,7 +27694,7 @@
 ;; ============================================================================
 ;; GAP2b: register-PAIR homing for 16-byte group values. The greedy
 ;; structurally excludes group vars (2-word aggregates) from scalar candidates,
-;; so CompilerRegRegisterPair -- a fully-plumbed location the backend already
+;; so CompilerRegLocation.RegisterPair -- a fully-plumbed location the backend
 ;; supports (emit-pack / group-word-operand / scavenge occupancy masks / CSR
 ;; save detection / storage-coloring rebuild) -- is assigned here, after the
 ;; scalar homes are final.
@@ -27877,8 +27712,7 @@
 ;;    never mint a scalar home into either pair half.
 ;;  * Phi endpoints are admitted: compiler_parallel_move represents both pair
 ;;    halves as resources, so a scalar phi copy that writes either half blocks
-;;    until the pair source has been read. The old whole-location exclusion was
-;;    made obsolete by that solver.
+;;    until the pair source has been read.
 ;;  * group Movs are handled by CO-ASSIGNMENT: Mov-connected components under
 ;;    the same-value proof (BOTH endpoints single-def, so the component
 ;;    carries exactly one value and may share one home even under hull
@@ -27968,7 +27802,7 @@
     [_ set]))
 
 ;; Read-only fold over the instruction stream: scan the sequence in place
-;; instead of materialising it as a cons list first. refs #5726
+;; instead of materialising it as a cons list first.
 (define (compiler-reg-group-pair-caller-unsafe-instr-seq
   [set : live.CompilerLiveI64Set]
   [instrs : ir.CompilerIrInstrSeq]) : live.CompilerLiveI64Set
@@ -28443,7 +28277,6 @@
 ;; indicates incomplete group-identity propagation rather than a normal copy.
 ;; Read-only scan (its writes go to the union-find/poison side arrays, never to
 ;; the IR): walk the contiguous sequence instead of materialising a cons list.
-;; refs #5726
 (define (compiler-reg-group-pair-mov-edges-instr
   [instr : ir.CompilerIrInstr]
   [group-vars : (& group-vars live.CompilerLiveI64Set)]
@@ -28602,8 +28435,8 @@
   ;; incoming table is returned untouched. Everything the body computes first
   ;; (the excluded / caller-unsafe point sets, the def counts, the Mov-edge
   ;; union-find and the two per-var walks) writes only to locals, so returning
-  ;; `assignments` here yields the identical table by construction. Group-free
-  ;; functions are 91.4% of the calls in an opt2 self-compile.
+  ;; `assignments` here yields the identical table by construction. Most
+  ;; functions are group-free.
   (if (= (live.compiler-live-set-word-count group-vars) 0)
     assignments
     (match (compiler-reg-global-shared-view func)
@@ -29408,8 +29241,8 @@
     ;; caller-saved registers instead of being pinned into a callee-saved home
     ;; the prologue must then push. The conservative kind-0 set remains in force
     ;; where the question is NOT survival: call-region boundaries
-    ;; (compiler-reg-call-region-boundary-instr?), the leaf CSR-split gate, and
-    ;; the caller-saved rescue all still compute kind 0 for themselves.
+    ;; (compiler-reg-call-region-boundary-instr?) and the caller-saved rescue
+    ;; both compute kind 0 for themselves.
     [clobber-points : live.CompilerLiveI64Set
       (if ignore-single-cold-call?
         (live.compiler-live-set-empty)
@@ -29419,11 +29252,11 @@
           6))]
     ;; Per-register clobber point sets (15c): kind 1 = idiv (rax:rdx), kind 2 =
     ;; variable shift (rcx). Bound once here and reused both for the destructive
-    ;; tie exclusion below and for the GAP3c pin demotion / greedy further down;
-    ;; each was previously walked twice per function.
+    ;; tie exclusion below and for the GAP3c pin demotion / greedy further down,
+    ;; so each is walked once per function.
     ;; `compiler-reg-clobber-kind-points` is a pure fold over the function's
     ;; blocks and `compiler-live-set-union` never writes through its operands,
-    ;; so the shared sets are the same values the two walks produced.
+    ;; so the shared sets are the same values two separate walks would produce.
     [div-points : live.CompilerLiveI64Set
       (compiler-reg-clobber-kind-points
         type-segment-bases
@@ -29449,8 +29282,8 @@
         storage-identity-vars)]
     ;; GAP8-C operand-tie flips, shared by BOTH tie mechanisms below (the
     ;; destructive-tie move harvest and the copy hints) so the shape is derived
-    ;; once per function. Scalar-opt2 only: the SIMD/AVX plan keeps its move list
-    ;; and hints byte-identical, and the empty array admits nothing there.
+    ;; once per function. Scalar-opt2 only: the SIMD/AVX plan keeps its plain
+    ;; move list and hints, and the empty array admits nothing there.
     [alu-prefer-rhs : (__tl_dyn-array i64)
       (if allow-caller-saved-zero-call
         (compiler-reg-function-alu-prefer-rhs
@@ -29459,11 +29292,10 @@
     [raw-moves
       : CompilerRegMoveSeq
       ;; Phi back-edge moves NON-strict so loop-carried phi/copy pairs coalesce
-      ;; (then merge into one root via coalescing-by-rename). SIMD already
-      ;; passed false here; only the scalar-opt2 plan gains the loop coalescing.
+      ;; (then merge into one root via coalescing-by-rename). SIMD passes false
+      ;; too; only the scalar-opt2 plan gets the loop coalescing.
       ;; Scalar opt2 additionally harvests bounded destructive-binop chain ties,
-      ;; then width-64 int casts as copies. SIMD/AVX keeps the plain move list
-      ;; byte-identical.
+      ;; then width-64 int casts as copies. SIMD/AVX keeps the plain move list.
       (if allow-caller-saved-zero-call
         (compiler-reg-function-moves-with-destructive-and-casts-eligible
           (compiler-reg-global-shared-view func)
@@ -29490,7 +29322,7 @@
     ;; shift -> {rcx}): the coalesced root inherits the union interval and the
     ;; greedy forbids exactly those registers, so the value keeps every other
     ;; register and is never clobbered. Excluding such div/shift-spanning
-    ;; same-values from coalescing (as the merged set did) needlessly inflated
+    ;; same-values from coalescing (as the merged set would) needlessly inflates
     ;; register pressure. Bounds-check and Pack are already absent from both sets
     ;; (clobber-point-instr? returns false for them), so only div/shift differ.
     ;; XMM-family ABI volatility is narrower than the GP clobber model above.
@@ -29500,9 +29332,8 @@
     ;; tail-call family: the same never-returns argument would license dropping
     ;; them here too, but over-approximating a clobber set is always sound, this
     ;; set is also the SIMD/AVX mask ineligibility input
-    ;; (compiler-reg-ineligible-vars-simd), and no measured row depends on
-    ;; XMM-homed values crossing a tail-call hull -- so it stays conservative and
-    ;; the vector paths stay byte-identical.
+    ;; (compiler-reg-ineligible-vars-simd), and XMM-homed values crossing a
+    ;; tail-call hull are rare -- so it stays conservative.
     [xmm-call-points : live.CompilerLiveI64Set
       (compiler-reg-call-points (compiler-reg-global-shared-view func))]
     ;; #2 same-value overlap coalescing: single-def direct copy pairs carry one
@@ -29572,8 +29403,7 @@
           (compiler-reg-liveness-handle-edge-precise liveness-handle)
           (= (live.compiler-live-set-word-count destructive-fixed-points) 0))
         (__tl_make-array i64 0))]
-    ;; The coalescer's rows: NO live-in bridge, byte-identical to what it read
-    ;; before this packet.
+    ;; The coalescer's rows: NO live-in bridge.
     [ep-coalesce-segs : (__tl_dyn-array CompilerRegIntervalSeq)
       (if ep-relax?
         (compiler-reg-live-interval-selection-ep-segments
@@ -29619,10 +29449,10 @@
             ;; keeps a baseline-liveness index -- computed on the coalescing
             ;; branch only, so move-free functions never pay the second
             ;; interval-selection walk. The M-A (RC1) param extension is
-            ;; applied as well, keeping the gate's param hulls identical to
-            ;; what it read before the EP switch. The cold-split plan's
-            ;; allocation index is edge-precise at both levels, exactly what
-            ;; it fed this gate before, so it keeps that same object.
+            ;; applied as well, so the gate's param hulls carry the entry
+            ;; reservation. The cold-split plan's allocation index is
+            ;; edge-precise at both levels, so it feeds this gate that same
+            ;; object.
             ;; Keyed on the cold-split CLAIM and not on the threshold: the
             ;; call-hole split also forces a carrier range to memory, but its
             ;; function still contains every one of its calls, so it must keep
@@ -29647,7 +29477,7 @@
               ep-phi-touched))
           interval-index))]
     ;; LP-1: the index the GREEDY, its eviction logic, the rescue rounds and the
-    ;; spill machinery see. Mode 0 hands back today's object unchanged.
+    ;; spill machinery see. Mode 0 hands back `interval-index` unchanged.
     [alloc-index : CompilerRegIntervalIndex
       (if (and ep-relax? (> (compiler-reg-ep-alloc-mode) 0))
         (compiler-reg-ep-alloc-index
@@ -29693,10 +29523,9 @@
           div-points
           shift-points)
         unit)]
-    ;; Literal SafeDiv/SafeMod used to grow the ordinary coloring worklist with
-    ;; five speculative pseudos. Keep ordinary coloring independent of synthetic
-    ;; scratch demand: the early-scratch model below colors those pseudos in a
-    ;; separate phase after the base allocation.
+    ;; Literal SafeDiv/SafeMod need speculative scratch pseudos. Keep ordinary
+    ;; coloring independent of synthetic scratch demand: the early-scratch model
+    ;; below colors those pseudos in a separate phase after the base allocation.
     [early-scratch-model : CompilerRegEarlyScratchModel
       (compiler-reg-early-scratch-model
         (compiler-reg-global-shared-view func)
@@ -29729,11 +29558,11 @@
     ;; copy-hint biasing: per-root preferred move-neighbour for the integer passes.
     [copy-hints
       : (__tl_dyn-array i64)
-      ;; Built unconditionally now that the greedy allocates the SIMD-integer path
+      ;; Built unconditionally because the greedy allocates the SIMD-integer path
       ;; too: with the empty false-path coalesce, copy-hints-add-move! falls back to
       ;; identity roots, so this yields direct var->move-neighbour hints -- letting
       ;; the SIMD-integer greedy bias a copy's dst onto its src register (LLVM-style
-      ;; copy hint for every class), which the old linear-scan did via `moves`.
+      ;; copy hint for every class).
       ;; The scalar float->XMM greedy consumes the same hints over its XMM pool.
       (compiler-reg-function-copy-hints
         moves
@@ -29773,15 +29602,16 @@
           (compiler-reg-global-shared-view blocked))
         blocked)]
     ;; M-A (RC1): param var ids mapped to their coalesce ROOTS -- each greedy
-    ;; allocates class roots. R3S-1 restated: a class containing a param is no
-    ;; longer restricted to callee-saved homes; this set now marks the classes
+    ;; allocates class roots. Under R3S-1 a class containing a param is not
+    ;; restricted to callee-saved homes; this set marks the classes
     ;; that (a) take the inclusive-start clobber-span test, because a param is
     ;; defined by the prologue before point 0, and (b) carry the entry-copy
     ;; schedule constraint below. It still forces callee-saved-only whenever
     ;; that constraint is refused (an empty `param-entry-forbidden`). Reuses the
-    ;; ineligible-params walk as a plain param-id collector. Scalar-opt2 only: the SIMD path stack-homes every
-    ;; param (ineligible-vars-simd). Integer and float candidates consume the
-    ;; same root set over their respective callee-saved banks.
+    ;; ineligible-params walk as a plain param-id collector. Scalar-opt2 only:
+    ;; the SIMD path stack-homes every param (ineligible-vars-simd). Integer and
+    ;; float candidates consume the same root set over their respective
+    ;; callee-saved banks.
     [param-roots : live.CompilerLiveI64Set
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-root-set-from-vars
@@ -29831,14 +29661,13 @@
     [base-eviction-ref-counts : (__tl_dyn-array i64)
       (if allow-caller-saved-zero-call
         ;; The greedy ALWAYS uses remat-discounted spill weights for its priority
-        ;; order (LLVM RAGreedy always computes spill weights). The old
-        ;; remat-weight-needed gate compared total candidates to the full
-        ;; (8-register) pool, so a call-spanning function -- whose values may only
-        ;; use only the ABI callee-saved suffix and so oversubscribe even below
-        ;; the full scalar pool size -- got an empty weight array and fell back to var-id
-        ;; order, keeping the rematerialisable constant in a register and spilling
-        ;; a more expensive non-remat value. Always scoring fixes that (each
-        ;; coalesced class scored by its hottest member). The discounted
+        ;; order (LLVM RAGreedy always computes spill weights). Gating the
+        ;; weights on total candidates versus the full pool would give a
+        ;; call-spanning function -- whose values may only use the ABI
+        ;; callee-saved suffix and so oversubscribe even below the full pool
+        ;; size -- var-id order, keeping a rematerialisable constant in a
+        ;; register and spilling a more expensive non-remat value. Each
+        ;; coalesced class is scored by its hottest member. The discounted
         ;; weight is combined with the RAW use-density as a tie-break (combine-
         ;; spill-weights) so that among equal-discounted values the genuinely
         ;; coldest one spills, not an arbitrary tied one. The combined weights
@@ -29916,11 +29745,10 @@
           (compiler-reg-greedy-caller-saved-count-for-abi target-abi)
           -1)
         ;; SIMD/AVX integer allocation: same unified greedy, over the 5 callee-saved
-        ;; integer registers (= the old SIMD pool) with caller-saved-count=0 so every
-        ;; register is treated callee-saved (no caller-saved-first ordering; the SIMD
-        ;; path never partitioned). ref-counts/copy-hints are empty here -> the
-        ;; greedy's bounds-guarded spill-weight/hint accesses fall back to var-id
-        ;; order / no-hint, matching the old linear-scan's defaults.
+        ;; integer registers with caller-saved-count=0 so every register is
+        ;; treated callee-saved (no caller-saved-first ordering).
+        ;; ref-counts/copy-hints are empty here -> the greedy's bounds-guarded
+        ;; spill-weight/hint accesses fall back to var-id order / no-hint.
         (let
           [param-roots (live.compiler-live-set-empty)]
           (compiler-reg-greedy-state
@@ -30749,7 +30577,7 @@
         ;; [entry, loop-end] and the greedy sees one giant cross-function web
         ;; -- hot loop-carried counters lose first-free against every sibling
         ;; loop's residents and spill whole, fragmenting into per-iteration
-        ;; mem-to-mem copies (the cfg_domloops/CSR defect, #6248). The EP
+        ;; mem-to-mem copies. The EP
         ;; analysis (compiler-live-analyze-function-edge-precise) attributes
         ;; each phi input to its own predecessor edge -- the exact SSA
         ;; interference, identical to the baseline for every var that is not
@@ -30758,8 +30586,7 @@
         ;; coalescing hybrid alone keeps a conservative index (computed on
         ;; its own branch in compiler-reg-plan-from): the live-out-input phi
         ;; exclusion is specified against conservative segments. The
-        ;; cold-split caller already used EP for this selection, so it sees
-        ;; no change.
+        ;; cold-split caller uses EP for this selection too.
         (compiler-reg-live-interval-selection
           (compiler-reg-global-shared-view func)
           (compiler-reg-liveness-handle-edge-precise liveness-handle))
@@ -31446,9 +31273,8 @@
 ;; IR, and the rebuilt per-id type table keeps ONE type. The backend recovers
 ;; operand width/signedness/float-ness from that table (e.g.
 ;; compiler-backend-binop-operand-ty for bit ops), so merging an i64 with a
-;; bool would emit `andb` for a 64-bit bit-and -- a real M-A2 bring-up
-;; miscompile (compiler-live-set-minus-words). Only type-identical variables
-;; may merge.
+;; bool would emit `andb` for a 64-bit bit-and -- a miscompile. Only
+;; type-identical variables may merge.
 (define (compiler-reg-color-find-slot
   [type-segment-bases : i64]
   [slot-ends : (__tl_dyn-array i64)]
@@ -32844,7 +32670,7 @@
       out)))
 
 ;; --- M-B: stack-homed register-group Mov coalescing -------------------------
-;; A group-typed `IrInstrMov dst <- src` between two slot-resident group vars
+;; A group-typed `Mov dst <- src` between two slot-resident group vars
 ;; round-trips both 8-byte words through the group-return register pair into a
 ;; SECOND slot pair (4 movs per enum/struct copy, e.g. every match-scrutinee
 ;; binding). When src's live range ends exactly where dst's begins -- at the
@@ -32857,7 +32683,7 @@
 ;;   * dst != src, both group vars (fn-group-vars) of ast-type-eq? types --
 ;;     same word count and SSE word classes, and the rebuilt per-id type
 ;;     table entry stays exact for the merged id;
-;;   * both slot-resident (CompilerRegNoLocation): never register/pair (their
+;;   * both slot-resident (no assignment): never register/pair (their
 ;;     homes differ), never Spill (a spilled group uses the adjacent
 ;;     [offset, offset-8] layout, not the two-region formula slots), never
 ;;     Remat;
@@ -32869,11 +32695,11 @@
 ;;     are unique per instruction (2 coords each), so this equality proves
 ;;     the same instruction carries src's LAST liveness event (a read; src is
 ;;     not in its live-after) and dst's FIRST (its def) -- and that
-;;     instruction is this mov. Vars minted by the caller-save/loop-split/
-;;     remat/splitkit rewrites have no plan interval and fail the hull check;
-;;     those rewrites only insert reads where a value is genuinely live and
-;;     only redefine register-homed values, so the plan hulls remain valid
-;;     order witnesses for the NoLocation vars admitted here.
+;;     instruction is this mov. Vars minted by the caller-save rewrite have no
+;;     plan interval and fail the hull check; that rewrite only inserts reads
+;;     where a value is genuinely live and only redefines register-homed
+;;     values, so the plan hulls remain valid order witnesses for the
+;;     unassigned vars admitted here.
 (define (compiler-reg-color-hull-bounds
   [intervals : CompilerRegIntervalSeq]
   [starts : (&mut starts (__tl_dyn-array i64))]
@@ -33075,13 +32901,13 @@
 ;; same home) makes the backend's leading-phi-copy builder drop the copy before
 ;; emission, and a Mov between merged ids is a same-home no-op.
 ;;
-;; INTERFERENCE MODEL. The plan's intervals are no longer the fully conservative
-;; hulls this rule was first written against, and the difference is worth stating
-;; because the rule reads them. #6377 moved scalar-opt2 allocation onto
-;; EDGE-PRECISE liveness, and LP-1 (`compiler-reg-ep-alloc-index`) additionally
-;; substitutes the edge-precise SEGMENT rows -- and their tightened hulls -- for
-;; every safe-mode phi-touched var, so a loop carry no longer leaks backward
-;; around its own loop. What survives is the residue: a var the safe-mode mask
+;; INTERFERENCE MODEL. The plan's intervals are not fully conservative hulls,
+;; and the difference is worth stating because the rule reads them. Scalar-opt2
+;; allocation runs on EDGE-PRECISE liveness, and LP-1
+;; (`compiler-reg-ep-alloc-index`) additionally substitutes the edge-precise
+;; SEGMENT rows -- and their tightened hulls -- for every safe-mode
+;; phi-touched var, so a loop carry does not leak backward around its own
+;; loop. What remains is the residue: a var the safe-mode mask
 ;; does not select, or one anchored at entry, still carries the conservative row,
 ;; which treats a phi as USING every input AT THE PHI BLOCK.
 ;; Legality here is still judged on EDGE-PRECISE hulls (LLVM PHIElimination
@@ -33089,10 +32915,10 @@
 ;; SSA interference model the register coalescer already trusts, recomputed here
 ;; over the FINAL rewritten blocks so its point coordinates describe the IR the
 ;; backend actually emits -- the plan's own hulls are built over the PRE-rewrite
-;; blocks and cannot answer for them. The plan's hulls keep their existing job
-;; unchanged -- deciding which OTHER variable may reuse a slot -- through the
-;; ordinary disjoint-interval walk, which now sees the whole web as one variable
-;; and therefore reserves the UNION of the members' hulls.
+;; blocks and cannot answer for them. The plan's hulls keep their own job --
+;; deciding which OTHER variable may reuse a slot -- through the ordinary
+;; disjoint-interval walk, which sees the whole web as one variable and
+;; therefore reserves the UNION of the members' hulls.
 ;;
 ;; WEB RULE (conservative; when in doubt, no alias). Membership is decided by
 ;; PAIRWISE EP-hull disjointness: a web may absorb another web only when EVERY
@@ -33107,30 +32933,27 @@
 ;; position -- the same hazard that makes compiler-reg-color-find-slot demand a
 ;; STRICT `<`.
 ;;
-;; ORDER INDEPENDENCE (M-B3). The rule above replaces a monotone one: a variable
-;; used to join only when its hull started strictly after the web's LATEST end
-;; (`web-end`), and only while still virgin. Both guards made the result depend
-;; on the order links are offered, and rejected merges that do not interfere at
-;; all. In intern_table's it-intern-slice all three loop carries lost their
-;; carry-to-phi merge that way: the web absorbed the LATER back-edge member
-;; first, after which `web-end` sat past the earlier member's start even though
-;; the two hulls are disjoint; and a phi dst that had already joined one web
-;; could never be joined to a second. Both are now expressible: webs are unioned
-;; (not just extended), and the admission test looks at all member pairs instead
-;; of a single running maximum.
+;; ORDER INDEPENDENCE (M-B3). A monotone rule -- join only when the hull starts
+;; strictly after the web's LATEST end (`web-end`), and only while still virgin
+;; -- would make the result depend on the order links are offered, and reject
+;; merges that do not interfere at all: a web that absorbs the LATER back-edge
+;; member first has `web-end` past the earlier member's start even though the
+;; two hulls are disjoint, and a phi dst that already joined one web could
+;; never be joined to a second. So webs are unioned (not just extended), and
+;; the admission test looks at all member pairs instead of a single running
+;; maximum.
 ;;
-;; The old monotone test is still tried FIRST and, when it passes, takes exactly
-;; the old action -- so the Mov at-boundary allowance keeps its precise shape and
-;; every merge the previous rule would have made at a given state is still made:
+;; The monotone test is still tried FIRST and, when it passes, takes its own
+;; action -- so the Mov at-boundary allowance keeps its precise shape:
 ;; `web-end(root) < start(later)` implies `end(m) <= web-end(root) < start(later)`
 ;; for every member m, which is the all-pairs test. The pass therefore admits a
-;; superset of the old merges at each decision point.
+;; superset of the monotone rule's merges at each decision point.
 ;;
 ;; COST. Webs are held as an intrusive circular member list (`web-next`, a
 ;; singleton points at itself) with a size counter, and merges are gated on the
 ;; combined size fitting `compiler-reg-color-scalar-web-cap`. One link attempt is
-;; O(1) when either web is a singleton -- the overwhelmingly common case, and
-;; exactly today's cost -- and at worst O(cap^2) bounded array reads. The splice
+;; O(1) when either web is a singleton -- the overwhelmingly common case --
+;; and at worst O(cap^2) bounded array reads. The splice
 ;; itself is O(size(absorbed)) and re-points every absorbed member directly at the
 ;; surviving root, so `alias` stays the depth-one forest the remap propagation and
 ;; interval rewrite expect.
@@ -33141,10 +32964,10 @@
 ;; hand-off contract), never `ineligible` (AddrOf'd vars, whose intervals
 ;; understate pointer-mediated reads), never already remapped (parameter
 ;; identity pins), never register-homed (their homes are not slots),
-;; ast-type-identical (the rebuilt per-id type table keeps ONE type for the
+;; type-identical (the rebuilt per-id type table keeps ONE type for the
 ;; merged id, and the backend recovers operand width from it), and a plan
-;; interval must exist -- vars minted by the caller-save/loop-split/remat
-;; rewrites have none and the walk never colors them.
+;; interval must exist -- vars minted by the caller-save rewrite have none and
+;; the walk never colors them.
 (define (compiler-reg-color-ep-hull-seq!
   [instrs : ir.CompilerIrInstrSeq]
   [live-afters : live.CompilerLiveInstrSetVec]
@@ -33310,7 +33133,7 @@
 
 ;; Largest web the all-pairs admission test will build. Bounds every member walk
 ;; below and keeps a link attempt's worst case at a few hundred array reads; real
-;; webs are far smaller (the deepest in the benchmark corpus is 7).
+;; webs are far smaller.
 (define compiler-reg-color-scalar-web-cap : i64
   16)
 
@@ -33326,10 +33149,9 @@
 
 ;; R4-C: WITNESSES ARE A RELATION, NOT ONE PAIR.
 ;;
-;; The rule above admitted the Mov/step witness for the pair the CURRENT link
-;; offers and for no other, so a web could hold at most one touching pair. A
-;; loop-carried accumulator's chain has one touch per link and needs them all at
-;; once. intern_table's it-bench is the measured case (2.7d):
+;; Admitting the Mov/step witness only for the pair the CURRENT link offers
+;; would let a web hold at most one touching pair. A loop-carried
+;; accumulator's chain has one touch per link and needs them all at once:
 ;;
 ;;   %573 = phi [... , %606]        acc, the loop carry
 ;;   %91  = mul %573, 1000003       touches %573 at its own point
@@ -33340,17 +33162,17 @@
 ;; %94 cannot: offered against the web through the ADD witness it is refused by
 ;; its touch with %606, and offered through the MOV witness it is refused by its
 ;; touch with %91 -- each refusal naming a pair that has a witness of its own,
-;; just not the one being offered. So the add's result took a second stack slot
-;; and the block stored the same register to two slots on every identifier.
+;; just not the one being offered. The add's result would take a second stack
+;; slot and the block would store the same register to two slots per trip.
 ;;
-;; The fix is to carry the witnesses as a per-variable relation instead of a pair
+;; So the witnesses are carried as a per-variable relation instead of a pair
 ;; of ids: `wit-a[d]` / `wit-b[d]` are the operands of d's defining Mov or
 ;; step-BinOp (a Mov has one, a two-operand ALU op at most two).
 ;; compiler-reg-color-scalar-witnessed-touch? then answers "may THIS pair touch"
 ;; for any pair the all-pairs walk reaches.
 ;;
 ;; SOUNDNESS is the same argument, applied pairwise rather than once. For every
-;; pair of members the walk now proves either strict hull disjointness or a touch
+;; pair of members the walk proves either strict hull disjointness or a touch
 ;; at a single point `end(src) == start(dst)` that is the def point of `dst` and
 ;; carries `src` as an operand of the instruction defining it. The endpoint
 ;; equality still proves src's LAST liveness event and dst's FIRST are that one
@@ -33360,7 +33182,7 @@
 ;; every program point at most one member of the web holds a live value, with the
 ;; hand-off inside the witnessing instruction -- which is what one shared home
 ;; requires. A pair that merely touches with no witness, and any containment
-;; (where the endpoint equality cannot hold), is refused exactly as before.
+;; (where the endpoint equality cannot hold), is refused.
 ;;
 ;; Multiple defs of one id cannot forge a witness: `ep-starts[d]` is the EARLIEST
 ;; def point, and an operand of a LATER def is live at that later point, so its
@@ -33564,7 +33386,7 @@
       (set! (array-ref web-size root-a) (+ (array-ref web-size root-a) count))
       unit)))
 
-;; Join the web owning `later` to the web owning `earlier`. The old monotone test
+;; Join the web owning `later` to the web owning `earlier`. The monotone test
 ;; (web's latest EP hull end strictly before `later`'s start, or exactly at it for
 ;; a Mov witness) is tried first and keeps its exact shape; when it does not
 ;; apply, the webs merge if EVERY cross pair of members has disjoint hulls. See
@@ -33680,11 +33502,7 @@
 ;; That is the profitable choice: the carry's web already spans the header phi and
 ;; the back-edge phi, so joining it turns several edges' copies into same-home
 ;; no-ops, while joining a computed value's singleton web can only ever silence
-;; the one edge that value arrives on. In it-intern-slice this is exactly
-;; `%208 = phi [%187, if_else.36], [%210, if_then.35]`: `%187` (an `add`) truly
-;; overlaps `%210` at its own def point, so only one of the two can be joined, and
-;; taking `%210` retires the copies on the if_then.35 and if_merge.37 edges
-;; (4.15M dynamic) at the cost of one on if_else.36 (0.79M).
+;; the one edge that value arrives on.
 (define (compiler-reg-color-scalar-alias-phi-inputs!
   [type-segment-bases : i64]
   [alias : (__tl_dyn-array i64)]
@@ -33789,9 +33607,7 @@
 ;; all-pairs disjointness rule -- `cur` is live from the header down to the step
 ;; and `next` from the step to the back edge, so the two hulls TOUCH at the step
 ;; instruction -- and a spilled counter then pays, every iteration, a second slot
-;; plus a slot-to-slot phi copy through a scratch register (measured in
-;; cfg_domloops: eight instructions per iteration to decrement `pos` and branch,
-;; where three suffice).
+;; plus a slot-to-slot phi copy through a scratch register.
 ;;
 ;; The Mov witness's own argument covers this shape unchanged. Interval points are
 ;; two coordinates per instruction: an instruction's uses and its def are both
@@ -34355,16 +34171,15 @@
 ;; already decided per variable in `slot-eligible`. None of those conditions
 ;; changes while the walk runs, so the walk would visit such an interval only to
 ;; skip it without touching any state; dropping it here is invisible to the
-;; result and takes ~99% of the entries out of the sort, the extent scan and the
-;; walk. The one remaining skip -- `remap` filled in BY the walk for a split
+;; result and takes nearly all of the entries out of the sort, the extent scan
+;; and the walk. The one remaining skip -- `remap` filled in BY the walk for a split
 ;; interval's earlier sibling -- is dynamic and stays in the walk.
 ;;
 ;; Every interval of one variable shares one web root and therefore one verdict,
 ;; which is what keeps compiler-reg-color-extent-ends exact on the survivors for
 ;; the variables the walk actually reads. The kept entries still carry their
-;; ORIGINAL variable, so the sort key below is the one the full array used;
-;; compiler-reg-color-alias-rewrite-intervals! retargets them afterwards exactly
-;; as it did before.
+;; ORIGINAL variable, so the sort key below is the one the full array would
+;; use; compiler-reg-color-alias-rewrite-intervals! retargets them afterwards.
 (define (compiler-reg-color-walk-interval-fill
   [intervals : CompilerRegIntervalSeq]
   [items : (&mut items (__tl_dyn-array CompilerRegInterval))]
@@ -34552,7 +34367,7 @@
               (compiler-reg-plan-types (compiler-reg-global-shared-view plan))
               (&mut colorable))
             ;; Scratch pseudo-vars are consumed through planned registers or
-            ;; the legacy scavenger, never through formula stack slots.
+            ;; the scavenger, never through formula stack slots.
             (let
               [i : i64 slot-candidate-vars]
               (while (< i vars)
@@ -34935,8 +34750,7 @@
 ;; A 1:1 var remap: the output is exactly as long as the input, so it is
 ;; written straight into a right-sized dense sequence instead of through a
 ;; cons spine. The output is FRESH and the input is never written through, so
-;; the aliasing graph is unchanged and no unique-ownership argument is needed
-;; (refs #5726).
+;; the aliasing graph is unchanged and no unique-ownership argument is needed.
 (define (compiler-reg-remap-instr-seq
   [remap : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
@@ -35161,7 +34975,7 @@
 ;; A scratch requirement is an instruction-selection temporary that must have a
 ;; physical register for a bounded point range.  The typed constraint carries
 ;; the register file and legal-home policy.  An empty assigned register is an
-;; explicit "use the legacy scavenger" outcome.
+;; explicit "use the scavenger" outcome.
 (defenum CompilerRegScratchClass
   (Gp)
   (Xmm))
@@ -35193,7 +35007,7 @@
   (ir.compiler-ir-binop-compare? op))
 
 ;; AVX2 i64 min/max needs a third family for its comparison mask. The
-;; reduction source is an input, never an implicit scratch home (#7821).
+;; reduction source is an input, never an implicit scratch home.
 (define (compiler-reg-vector-reduce-mask-scratch?
   [op : ir.CompilerIrVectorReduceOp]
   [lanes : i64]
@@ -36281,7 +36095,7 @@
 ;; starts after the leading phis, and a loop region's root is by admission
 ;; never phi-defined). The minted W assignments join the plan, so the
 ;; downstream scavenge-interval rebuild sees W's register occupied over
-;; exactly the region -- the same soundness net the loop-split rescue uses.
+;; exactly the region.
 ;;
 ;; SPAN. Block rows sit inside one block; loop rows (P11b) run from their
 ;; preheader anchor through the loop's last block, so the walk must survive
@@ -36295,7 +36109,7 @@
   [regions : (& regions CompilerRegCallRegionSeq)]) : i64
   regions.len)
 
-;; Newest-accepted region first, matching the walk order of the former list.
+;; Newest-accepted region first.
 (define (compiler-reg-call-region-fill-arrays!
   [regions : CompilerRegCallRegionSeq]
   [r-var : (&mut r-var (__tl_dyn-array i64))]
@@ -36369,8 +36183,7 @@
 
 ;; Exit stores for every active root whose region ends at `point` (emitted
 ;; only when the region redefined the value and it lives on -- exit-flag).
-;; Pushed in increasing `active` order, matching the program order the old
-;; reversed-cons accumulator produced after its final flip (refs #5726).
+;; Pushed in increasing `active` order, which is program order.
 (define (compiler-reg-call-region-exit-stores
   [active : (& active (__tl_dyn-array i64))]
   [active-n : i64]
@@ -36608,12 +36421,9 @@
                         [i : i64 0]
                         ;; Forward scan into a builder, interleaving
                         ;; region-entry movs and control-flow exit stores in
-                        ;; program order. The old shape built a REVERSED cons
-                        ;; accumulator and flipped it with
-                        ;; `compiler-ir-instr-list-reverse-onto`; the forward
-                        ;; scan emits the same final order with no list at all
-                        ;; (refs #5726). Seeded at the block's own length:
-                        ;; caller-save only ever appends those movs/stores.
+                        ;; program order, with no list at all. Seeded at the
+                        ;; block's own length: caller-save only ever appends
+                        ;; those movs/stores.
                         [builder : ir.CompilerIrInstrBuilder
                           (ir.compiler-ir-instr-builder-with-capacity ilen)]
                         (begin
@@ -36798,7 +36608,7 @@
                           ;; Defensive drain. A loop row deliberately outlives
                           ;; its first block -- the back edge is INSIDE the
                           ;; span, which is where its win comes from -- so the
-                          ;; drain can no longer be unconditional. It now drops
+                          ;; drain cannot be unconditional. It drops
                           ;; only rows whose hi was walked past without the
                           ;; per-instruction deactivation firing (must not
                           ;; happen); a row with hi still ahead stays active
@@ -36931,8 +36741,7 @@
             unit)]
         [(ir.CompilerIrInstr.AddrOf _ src)
           ;; Address-taken values need stable storage. Mark the source as
-          ;; poisoned so the use-site remat rewrite cannot replace it with a
-          ;; freshly materialized temporary.
+          ;; poisoned so it is never treated as rematerialisable.
           (if (and (>= src 0) (< src (array-length candidates)))
             (begin
               (set! (array-ref candidates src) 2)

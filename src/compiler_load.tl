@@ -9387,8 +9387,8 @@
 ;; A declaration is "ordinary" exactly when it reaches the `[_ ...]` arm of
 ;; `compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head`
 ;; below: it is not a module body, an import, or one of the four include forms.
-;; Ordinary declarations are ~99% of a module's top level and contribute one row
-;; to each of the three output lists without touching `seen`, so
+;; Ordinary declarations are nearly all of a module's top level and contribute
+;; one row to each of the three output lists without touching `seen`, so
 ;; `compiler-load-decls-with-module-and-roots-cfg-root-with-pools` folds a whole
 ;; run of them in a loop. Keep the six constructors here and that match's arms in
 ;; sync; the arm order below mirrors the arm order there so they cannot drift.
@@ -9996,14 +9996,13 @@
 
 ;; Entry point of the loader's declaration walk.
 ;;
-;; Recursing once per declaration made the walk's depth equal to the module's
-;; top-level declaration count. The walked frame carries the per-arm clones and
-;; the return temporaries of nine recursive call sites, so a module with a few
-;; thousand top-level forms was within reach of the Windows 256 MB stack reserve
-;; and crossed it. The list length is a module property, not a bound the loader
-;; controls, so the recursion is replaced here by iteration over the maximal run
-;; of ordinary declarations; only module bodies, imports and includes still cost
-;; a frame.
+;; Recursing once per declaration would make the walk's depth equal to the
+;; module's top-level declaration count. The walked frame carries the per-arm
+;; clones and the return temporaries of nine recursive call sites, so a module
+;; with a few thousand top-level forms could exhaust the Windows stack reserve.
+;; The list length is a module property, not a bound the loader controls, so the
+;; walk iterates over the maximal run of ordinary declarations; only module
+;; bodies, imports and includes still cost a frame.
 ;;
 ;; A declaration list is a flat slice, so the run needs no side table: the walk's
 ;; `decls` at run position `i` is exactly `ast-decl-list-step`'s `rest` applied
@@ -10403,15 +10402,13 @@
 
 ;; Parse a module source directly in the active (program-lifetime) arena.
 ;;
-;; A scratch-arena variant used to parse large files into a throwaway arena and
-;; `clone` the result back out to cap cold self-build peak memory. That cannot
-;; work with the flat-node AST: `AstExpr`/`AstType`/`SpannedSexpr` nodes live in
-;; persistent GLOBAL pools, not the active arena, so destroying the scratch arena
-;; left the cloned program pointing at pool slots whose backing list/string data
-;; had been freed -- a segfault on the next self-build. The scratch path was
-;; already disabled (its size threshold was raised past any real input); it has
-;; now been removed. Recovering its memory benefit needs pool-aware reclamation
-;; (e.g. truncating the node pools after escaping), not arena destruction.
+;; Parsing into a throwaway scratch arena and `clone`-ing the result back out
+;; cannot work with the flat-node AST: `AstExpr`/`AstType`/`SpannedSexpr` nodes
+;; live in persistent GLOBAL pools, not the active arena, so destroying the
+;; scratch arena leaves the cloned program pointing at pool slots whose backing
+;; list/string data has been freed. Reclaiming parse memory needs pool-aware
+;; reclamation (e.g. truncating the node pools after escaping), not arena
+;; destruction.
 (define (compiler-load-parse-source-diagnostic-escaping
   [path : String]
   [source : String]

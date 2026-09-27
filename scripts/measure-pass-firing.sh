@@ -18,7 +18,7 @@
 # programs whose IR dump fails, e.g. src/main.tl) reads only the trace: a slot
 # changed a function when its block or instruction count moved. That is a lower
 # bound: pure moves (LICM, sinks) and in-place rewrites go unseen.
-# Unobserved steps (const-length rewrite, loop_bce, prune, LGA-1 specialize,
+# Unobserved steps (const-length rewrite, prune, LGA-1 specialize,
 # the late scratch reset, ...) are charged to the next observed slot. The
 # runtime module is left out: every program carries the same copy.
 #

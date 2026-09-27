@@ -266,8 +266,8 @@
     [(backend.ResultCompilerBackendBuffer.Err message)
       (backend.ResultCompilerBackend.Err message)]))
 
-;; String-returning shim for the outgoing stack-argument emitter, for the same
-;; reason: its Ok payload is the planned stage register, not the emitted text.
+;; String-returning shim for the outgoing stack-argument emitter: it appends
+;; into a caller-owned buffer, so its Ok payload is not the emitted text.
 (define (compiler-backend-test-emit-scalar-stack-call-arg-text
   [type-segment-bases : i64]
   [target : backend.CompilerBackendTarget]
@@ -317,7 +317,7 @@
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
 ;; String-returning shim for instruction-sequence emission. Emission appends
-;; into a caller-owned body buffer and its Ok payload is no longer the text, so
+;; into a caller-owned body buffer and its Ok payload is not the text, so
 ;; these assertions own the buffer and hand back what was written.
 ;;
 ;; The emit spine takes an `(instrs, index)` cursor over a block's contiguous
@@ -5209,21 +5209,20 @@
 
 ;; #4720: an outlined shifted loop bound becomes `0 < word-count` after loop
 ;; rotation. On Win64, word-count may be homed in %r9; materialising the
-;; immediate LHS into that same register silently changed the pre-test into a
-;; self-compare. Keep the function address-taken so opt2 cannot inline away the
+;; immediate LHS into that same register would silently turn the pre-test into
+;; a self-compare. Keep the function address-taken so opt2 cannot inline away the
 ;; allocation shape, then emit the full lower -> opt2 -> scalar-regalloc path.
 ;;
 ;; The address-take is a GLOBAL initialised with the function, and every fixture
-;; below that needs one spells it the same way. The older spelling was a
-;; `(define (keep [f : T]) : i64 0)` wrapper called from `main`, and that stopped
-;; holding anything: a wrapper whose body ignores its parameter is inlined at
-;; its site, the argument goes with it, and the subject is then unreferenced and
-;; pruned before it is ever emitted. That was already true at an ordinary call
-;; site and became true at a tail call site too once opt-inline-try-with-spans
-;; grew its TailCall arm. A global holding the address is not a call at all, so
-;; nothing can dissolve it: the census reads it as address-taken (so the subject
-;; is never inlined) and the pruner reads it as a root (so the subject is always
-;; emitted).
+;; below that needs one spells it the same way. A wrapper such as
+;; `(define (keep [f : T]) : i64 0)` called from `main` does not hold anything:
+;; a wrapper whose body ignores its parameter is inlined at its site (a tail
+;; call site included, via opt-inline-try-with-spans's TailCall arm), the
+;; argument goes with it, and the subject is then unreferenced and pruned
+;; before it is ever emitted. A global holding the address is not a call at
+;; all, so nothing can dissolve it: the census reads it as address-taken (so the
+;; subject is never inlined) and the pruner reads it as a root (so the subject
+;; is always emitted).
 (define compiler-backend-shifted-loop-bound-source : String
   "(define (array-zero-count [buf : (MutPtr u8)] [byte-count : i64]) : i64
   (let
@@ -5401,11 +5400,11 @@
 ;; Tail-call dispatcher shape. A multi-arm dispatch whose every arm is a TAIL
 ;; CALL contains no instruction control ever returns from, so no value in it has
 ;; to survive anything: the four parameters must keep their incoming argument
-;; registers and the function must save NO callee-saved register at all. Before
-;; tail calls were removed from the allocator's clobber-point set (kind 6,
-;; compiler-reg-clobber-instr-kind?) each parameter's coarse interval hull
-;; covered the sibling arms' tail calls, so all four were homed in %r12-%r15 and
-;; every invocation paid four pushes, four entry copies and four pops.
+;; registers and the function must save NO callee-saved register at all. Tail
+;; calls stay out of the allocator's clobber-point set (kind 6,
+;; compiler-reg-clobber-instr-kind?); otherwise each parameter's coarse interval
+;; hull would cover the sibling arms' tail calls and home all four in
+;; callee-saved registers, with a push, an entry copy and a pop per invocation.
 ;;
 ;; Arm 1 marshals (k, y, x): %rdi keeps k while %rsi and %rdx must SWAP. That is
 ;; a true 2-cycle for the argument parallel move
@@ -5506,7 +5505,7 @@
         ;; `movq $imm` form -- it is materialized once where that Mov landed.
         (asm-has? asm "    movq $146028910097")
         ;; ...and never as an operand materialization at the test itself, which
-        ;; is what folding the literal into the shift used to emit per entry.
+        ;; is what folding the literal into the shift would emit per entry.
         (asm-lacks? asm "movabsq $146028910097"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -5618,11 +5617,10 @@
 
 ;; M9: both `if`s test the same comparison, so GVN leaves ONE compare with two
 ;; branch readers. The backend fuses a compare into `cmp`/`jcc` only when every
-;; reader is a branch fed by its own adjacent compare, so the shared boolean
-;; used to be materialised (`cmp`/`setl`/`movzbq`) and tested at each site --
-;; seven instructions where two fused pairs cost four. The late duplication pass
-;; gives each branch its own copy. The address-taking global keeps opt2 from
-;; inlining the shape away.
+;; reader is a branch fed by its own adjacent compare, so a shared boolean is
+;; materialised (`cmp`/`setl`/`movzbq`) and tested at each site. The late
+;; duplication pass gives each branch its own copy. The address-taking global
+;; keeps opt2 from inlining the shape away.
 (define compiler-backend-shared-compare-source : String
   "(define (cd-two-branch [a : i64] [b : i64] [c : i64]) : i64
   (let
@@ -5888,12 +5886,12 @@
 ;; length per array, so the descriptors are live across every loop and the
 ;; register pool is exhausted at the unrolled clear loop -- exactly the shape
 ;; that makes the allocator spill the clear loop's single-use address temps.
-;; Slot coloring then used to merge all of those spilled temps onto ONE id whose
-;; use count (recomputed on the remapped blocks) is in the dozens, which turned
-;; off `compiler-backend-var-single-use?` and dropped every store onto the
+;; Were slot coloring to merge all of those spilled temps onto ONE id, its use
+;; count (recomputed on the remapped blocks) would be in the dozens, which turns
+;; off `compiler-backend-var-single-use?` and drops every store onto the
 ;; generic staged emitter: two scratch registers saved to and restored from
-;; their homes around a leaq, plus a home round-trip for the address, eleven
-;; instructions where one indexed move does the job.
+;; their homes around a leaq, plus a home round-trip for the address, where one
+;; indexed move does the job.
 (define compiler-backend-fusion-pin-pressure-source : String
   "(define g-seed : (__tl_dyn-array i64)
   (__tl_make-array i64 4))
@@ -7123,10 +7121,10 @@
           (string.eq asm "    movq $7, -16(%rbp)\n")]
         [(backend.ResultCompilerBackend.Err _) false]))))
 
-;; Staging through the planned scratch is what a MEMORY-to-memory move needs,
+;; Staging through a scavenged scratch is what a MEMORY-to-memory move needs,
 ;; and it is all it is for: the source is spilled, so the value has to be in a
-;; register before it can be stored, and that register is the planned scratch
-;; and never %rax. A register-homed source does NOT take this path -- see
+;; register before it can be stored, and that register comes from the scavenger
+;; and is never %rax. A register-homed source does NOT take this path -- see
 ;; compiler-backend-mov-register-to-slot-ok?.
 (define (compiler-backend-mov-scratch-staging-ok?) : bool
   (let
@@ -7170,15 +7168,13 @@
 ;; the move through a scratch (`movq %r12, %r8 ; movq %r8, -16(%rbp)`) spends an
 ;; instruction to reach the same state. The P3/P7 call-hole carriers are made of
 ;; exactly this Mov -- the carrier is forced to a frame slot by construction --
-;; so every crossing the rewrite inserts used to pay for it.
+;; so every crossing the rewrite inserts would pay for it.
 ;;
 ;; Both memory destinations are covered: a var the plan spilled, and a var it
 ;; never assigned at all (the bare slot). The narrow type pins the width claim
 ;; the register-destination fast path already relies on -- a var's register home
-;; holds the normalized 64-bit value, so the copy needs no per-type narrowing,
-;; and emitting that narrowing into the scratch was the only reason the old path
-;; could not simply drop it. The planned scratch is named on every call and must
-;; not appear in the output: this arm asks the scavenger for nothing.
+;; holds the normalized 64-bit value, so the copy needs no per-type narrowing.
+;; No scratch appears in the output: this arm asks the scavenger for nothing.
 (define (compiler-backend-mov-register-to-slot-ok?) : bool
   (let
     [index : backend.CompilerBackendProgramIndex
@@ -13952,9 +13948,8 @@ g:
 
 ;; The cycle fixture's "back" -> "join" edge is a BACK edge: "join" is the first
 ;; (and only) block, so its P22-B target point is 0, and `emit-instr-post-base`
-;; is pinned above it here so the edge classifies as backward however the
-;; preceding tests left that global. A back edge keeps the pushq/popq staging
-;; bracket; the forward case is pinned by
+;; is pinned above it here so the edge runs backward however the preceding
+;; tests left that global. The forward case is pinned by
 ;; `compiler-backend-phi-forward-edge-unbracket-ok?` below.
 (define (compiler-backend-phi-parallel-copy-ok?) : bool
   (let
@@ -14006,11 +14001,10 @@ g:
                 (asm-has? cycle "    movq -512(%rbp), %r10\n")
                 (asm-has? cycle "    movq %r10, -16(%rbp)\n")
                 ;; The spilled mem->mem copy of the break stages through the
-                ;; scavenged GP register. It used to carry a pushq/popq bracket
-                ;; around the staging register; #phi-staged-copy proves the
-                ;; register free per edge (no register homes exist in this
-                ;; assignment table, and no copy dst homes one), so the bracket is
-                ;; gone and the pair itself is what the shape asserts.
+                ;; scavenged GP register. #phi-staged-copy proves the register
+                ;; free per edge (no register homes exist in this assignment
+                ;; table, and no copy dst homes one), so there is no pushq/popq
+                ;; bracket and the pair itself is what the shape asserts.
                 (asm-has? cycle "    movq -16(%rbp), %r8\n")
                 (asm-has? cycle "    movq %r8, -8(%rbp)\n")
                 (asm-lacks? cycle "    pushq %r8\n")
@@ -14028,13 +14022,12 @@ g:
         (set-state-emit-instr-post-base! backend-state prev-post-base))]
     ok))
 
-;; P22-B: the same cycle fixture emitted across a FORWARD edge drops the
-;; pushq/popq staging bracket. "join" is the only block, so its target point is
-;; 0; pinning `emit-instr-post-base` to 0 makes the edge run forward (target at
-;; or past the end of the block being emitted), which is the case where every
-;; var live at the target's entry already reads OCCUPIED in the point-local
-;; scavenge query. The four marshalling movq lines must be unchanged -- only the
-;; two bracket instructions go.
+;; P22-B: the same cycle fixture emitted across a FORWARD edge. "join" is the
+;; only block, so its target point is 0; pinning `emit-instr-post-base` to 0
+;; makes the edge run forward (target at or past the end of the block being
+;; emitted). The target-entry query is asked on either kind of edge, so the
+;; four marshalling movq lines are unchanged and no pushq/popq staging bracket
+;; appears.
 (define (compiler-backend-phi-forward-edge-unbracket-ok?) : bool
   (let
     [program-index : backend.CompilerBackendProgramIndex
@@ -14568,7 +14561,7 @@ g:
           : bool
           ;; tl_alloc obtains memory via VirtualAlloc and, on exhaustion,
           ;; tail-jumps to the `tl_oom_abort` runtime-prelude handler —
-          ;; it no longer inlines a kernel32 WriteFile for the OOM message.
+          ;; it does not inline a kernel32 WriteFile for the OOM message.
           (backend.backend-and4
             (asm-has? asm ".globl tl_alloc\n")
             (asm-has? asm "    call VirtualAlloc\n")
@@ -16344,9 +16337,7 @@ g:
 ;; The per-case edge blocks a phi target needs spell the case VALUE into their
 ;; label, and `-` is an operator in the assembler's expression grammar, not a
 ;; symbol character: `.Lf0_entry_switch_case_-1:` is not read as a label at all.
-;; GNU as sees a line starting with `.` and reports `unknown pseudo-op`, which
-;; is how this first surfaced -- as a stage2 assembly failure once the inliner
-;; formed such a table in src/main.tl.
+;; GNU as sees a line starting with `.` and reports `unknown pseudo-op`.
 ;;
 ;; Base -1 with cases -1, 0, and 1 puts every relevant spelling in one
 ;; emission: the negative key must appear as `m1`, zero as `0`, and the
@@ -24295,9 +24286,9 @@ g:
 
 ;; #7927: the cpuid operand registers are allocator-pooled. A leaf homed in
 ;; %rcx -- the first Win64 argument register, so every non-inlined wrapper --
-;; must reach %rax BEFORE the subleaf is moved into %rcx; the old subleaf-first
-;; pair of independent loads ran such a cpuid with the subleaf as its leaf. A
-;; conflict-free pair keeps the subleaf-first order it always had.
+;; must reach %rax BEFORE the subleaf is moved into %rcx; a subleaf-first pair
+;; of independent loads would run such a cpuid with the subleaf as its leaf. A
+;; conflict-free pair keeps the subleaf-first order.
 (define (compiler-backend-cpuid-operand-asm
   [leaf-home : i64]
   [subleaf-home : i64]) : String
@@ -25305,7 +25296,7 @@ g:
     (__tl_string_length (var-value \"TYPELISP_TEST_ENV\"))
     (__tl_string_length (path-separator))))")
 
-;; Environment helpers are no longer emitted as backend asm — `stdlib/env.tl`
+;; Environment helpers are not emitted as backend asm — `stdlib/env.tl`
 ;; implements them in TypeLisp. A program that externs the legacy symbols sees
 ;; them as plain undefined externs, with no backend-emitted allocator or helper
 ;; definitions and no `getenv`/`strlen` shim calls.
@@ -25729,8 +25720,7 @@ g:
 
 ;; Confirm the refutable literal payload reaches valid assembly: the
 ;; function compiles and emits a `payload_ok` block (the in-bounds branch of the
-;; payload comparison). `compiler-backend-asm-ok?` is smoke-source specific, so
-;; check source-specific markers instead.
+;; payload comparison).
 (define (compiler-backend-literal-payload-ok?) : bool
   (match (backend.compiler-backend-emit-source
     (compiler-backend-literal-payload-source))
@@ -28996,7 +28986,7 @@ g:
     (compiler-backend-register-f32-aggregate-target-ok?
       (backend.CompilerBackendTarget.Windows))))
 
-;; A SysV call with seven integer args no longer rejects as "too many
+;; A SysV call with seven integer args does not reject as "too many
 ;; call args". Source-level numeric literals are lowered into locals before
 ;; call-arg emission, so the 7th and 8th args still exercise the variable
 ;; stack-store path while `add8` reads them back from 16(%rbp)/24(%rbp).
@@ -29887,12 +29877,11 @@ g:
 
 ;; Under FPO the source params spill to rsp-relative slots whose offsets
 ;; depend on each fixture's frame size (and target), so slot0/slot1 are passed
-;; per call site instead of the old fixed -8/-16(%rbp). On Linux these
-;; forwarders are call-free (a tail `jmp` is not a call), so T1-6 (a) puts
-;; their slots in the RED ZONE and the offsets are negative; Win64 has no red
-;; zone and keeps its positive frame. A "" slot1 means the
-;; second param is not spilled (correctly optimised away — e.g. the `finish x x`
-;; duplicated fixture, where the dead y param is never stored).
+;; per call site. On Linux these forwarders are call-free (a tail `jmp` is not
+;; a call), so T1-6 (a) puts their slots in the RED ZONE and the offsets are
+;; negative; Win64 has no red zone and keeps its positive frame. A "" slot1
+;; means the second param is not spilled (correctly optimised away — e.g. the
+;; `finish x x` duplicated fixture, where the dead y param is never stored).
 (define (compiler-backend-direct-tail-call-i64-keeps-spills?
   [source : String]
   [target : backend.CompilerBackendTarget]
@@ -29918,7 +29907,7 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Under FPO the f64 params spill to rsp-relative slots (offsets differ by
-;; target), passed per call site instead of the old fixed -8/-16(%rbp).
+;; target), passed per call site.
 (define (compiler-backend-direct-tail-call-f64-keeps-spills?
   [target : backend.CompilerBackendTarget]
   [slot0 : String]
@@ -31495,7 +31484,7 @@ g:
       ;; `Pair` is a 16-byte all-integer struct, so it is register-resident
       ;; -- `id-pair` is a register-pair passthrough that carries both words in
       ;; registers end-to-end. The function is still emitted, but it does NOT do
-      ;; the old pointer-load / pointer-store byte-copy ("(%r11), %rax" then
+      ;; the pointer-load / pointer-store byte-copy ("(%r11), %rax" then
       ;; "%rax, (%r10)") that a memory aggregate required.
       (backend.backend-and4
         (asm-has? asm "id_pair")
@@ -33085,9 +33074,9 @@ g:
 
 ;; A region's free candidate registers go to the constants with the most static
 ;; sites, because each hoisted site drops one in-region constant load. The
-;; measured forcing case is a leaf loop holding a single-site wide literal and a
-;; multi-site divmod magic: program order handed the only free register to the
-;; literal, so the magic reloaded its `movabsq` at every site on every
+;; forcing case is a leaf loop holding a single-site wide literal and a
+;; multi-site divmod magic: program order would hand the only free register to
+;; the literal, so the magic would reload its `movabsq` at every site on every
 ;; iteration. `values`/`wide` carry six entries -- literal L (one site, written
 ;; FIRST), magic M (three sites), magic N (two sites) -- so the award sequence
 ;; must be M, N, L even though L occurs first.
@@ -33349,9 +33338,9 @@ g:
                                       [_ false])))))]
                           [_ false]))])))]))))))
 
-;; Win64 passes the third integer argument in %r8. A non-imm32 guard used to
-;; scavenge %r8 before the prologue and then return that clobbered register on
-;; the bare path. Scratch-requiring prefixes must fail closed to the ordinary
+;; Win64 passes the third integer argument in %r8. A non-imm32 guard that
+;; scavenged %r8 before the prologue would return that clobbered register on
+;; the bare path, so scratch-requiring prefixes must fail closed to the ordinary
 ;; always-framed function until prefix emission has a dedicated live-in-aware
 ;; scratch plan.
 (define compiler-backend-shrinkwrap-large-guard-source : String
@@ -33504,8 +33493,8 @@ g:
 ;; that calls.  The arms are SIBLINGS, so the nearest common dominator of the
 ;; frame's uses is the entry itself and no single Save/Restore pair can serve
 ;; them (the same limitation LLVM's ShrinkWrap has: one pair per function).
-;; Entry placement is the correct, documented answer -- the alternative is a
-;; region split, which is not this packet.
+;; Entry placement is the correct, documented answer -- the alternative would
+;; be a region split.
 (define compiler-backend-swb-dispatch-source : String
   "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
 (define (swb-step-a [x : i64]) : i64 (opaque (+ x 1)))
@@ -34398,14 +34387,13 @@ g:
 ;; into the header, and the LATCH (`lat`) sits ABOVE it, so the genuine back
 ;; edge `lat -> head` runs FORWARD in emission order. The obligation the staged
 ;; copy has to discharge on that edge -- "the staging register is free at the
-;; TARGET block's entry" -- used to be asked only when `target <= point`, i.e.
-;; only when the edge also ran backward in emission order. On this layout that
-;; test reads the back edge as a forward edge, and a register holding a value
-;; live into the header would lose its pushq/popq bracket.
+;; TARGET block's entry" -- is asked on every edge. An emission-order test
+;; (`target <= point`) reads this back edge as a forward edge, and a register
+;; holding a value live into the header would lose its pushq/popq bracket.
 ;;
 ;; `v4` opens at the header's first instruction and is homed in %r8, so %r8 is
 ;; FREE across the staging window at the latch's edge point and OCCUPIED at the
-;; header's entry point: exactly the split the emission-point comparison got
+;; header's entry point: exactly the split an emission-point comparison gets
 ;; wrong.
 (define (compiler-backend-phi-rotated-back-edge-blocks) : ir.CompilerIrBlockList
   (irt.blocks

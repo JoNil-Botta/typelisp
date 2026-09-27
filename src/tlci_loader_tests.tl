@@ -528,8 +528,8 @@
 
 ;: Owner arena for the loader's own self-test loads. Every one of them either
 ;: rejects the image or releases it before returning, so the arena that is
-;: current at the load already outlives the image. Named once here so the seven
-;: call sites below still have to state an owner without repeating the reason.
+;: current at the load already outlives the image. Named once here so the call
+;: sites below still have to state an owner without repeating the reason.
 (define (tlci-loader-test-owner-arena) : i64
   (arena.tl_arena_current))
 

@@ -3,7 +3,7 @@
 ;; This module is the OS boundary only: it allocates page-backed memory, copies
 ;; synthetic byte buffers into it, flips code pages from RW to RX, keeps data
 ;; pages non-executable, and releases the mapping. Container parsing, fixups,
-;; callback ABI entry, and real comptime images belong to later tlci slices.
+;; and callback ABI entry belong to tlci_loader.
 (import stdlib.io)
 (cfg test (import stdlib.string))
 (import stdlib.str_cat_runtime as str_cat)
@@ -144,8 +144,8 @@
     [src : (Ptr u8)]
     [count : i64]) : unit (:symbol "tl_memcpy")))
 
-;; The runtime's bulk copy: mapping the embedded stdlib image copies all 16 MB
-;; of it here, which a byte loop spent ~56M instructions on per compile.
+;; The runtime's bulk copy: mapping the embedded stdlib image copies the whole
+;; image here, too much for a byte loop on every compile.
 (define (tlci-pages-copy-bytes!
   [dst : (MutPtr u8)]
   [src : (Ptr u8)]

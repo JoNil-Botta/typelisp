@@ -131,7 +131,7 @@
   ;; It is first so hot bind paths can read it directly through the capability
   ;; without copying the larger table carrier.
   (mode i64)
-  ;; The measured hot prefix of renderable names uses bounded epoch-stamped
+  ;; The hot prefix of renderable names uses bounded epoch-stamped
   ;; dense lanes. Higher typed IDs use a sparse overflow map, so an ID's numeric
   ;; value never forces allocation up to that value. Structural and marker keys
   ;; take a distinct explicit path into the same map; the validated renderable
@@ -4469,8 +4469,8 @@
 ;; Transitional owner for a resolver result consumed by paths that still read
 ;; nested type ids through the installed compatibility reader. An explicitly
 ;; installed ctx already names those cells. A captured ctx does not: until its
-;; consumers are threaded, reconstruct into the installed live cells exactly
-;; as the historical global constructors did. The explicit resolver below is
+;; consumers are threaded, reconstruct into the installed live cells. The
+;; explicit resolver below is
 ;; available to callers whose whole consumer chain carries `pools`.
 (define (tc-context-type-resolution-pools [ctx : TcContext]) : ast.AstNodePoolContext
   (let
@@ -4483,8 +4483,8 @@
 
 ;; Type segment-bases for a pure read under `ctx`. Lifetime-elision walks may
 ;; append reconstructed nodes, but never install a different pool; the table is
-;; stable across push/grow. Compatibility callers continue following the
-;; installed pool that their historical no-context API selected.
+;; stable across push/grow. Compatibility callers keep following the
+;; installed pool that their no-context API selects.
 (define (tc-context-type-bases [ctx : TcContext]) : i64
   (if (ast.ast-node-pool-compat-context-active?)
     (let
@@ -4499,10 +4499,10 @@
 ;; at the walk's entry and threaded down as a scalar.
 ;;
 ;; Reading through `AstNodePoolContext` per node is not an option on this path:
-;; at opt2 `tc-context-expr-get` is 30 instructions against `ast-node-get`'s 14,
-;; because the context struct is copied to the stack for every call. The scalar
-;; token is 13, so a converted walk is cheaper than the global reader it
-;; replaces, and the hoist is what makes that true rather than the conversion.
+;; `tc-context-expr-get` copies the context struct to the stack for every call,
+;; which makes it about twice the cost of `ast-node-get`. The hoisted scalar
+;; token avoids that copy, so a converted walk is no dearer than the global
+;; reader; the hoist, not the conversion, is what makes that true.
 ;;
 ;; A compatibility pool context suppresses the ctx install (see
 ;; `tc-context-install-pools!`), so under one the walk must follow the installed
@@ -7315,9 +7315,9 @@
   (set! (array-ref store.caches index) cache))
 
 ;; Hot persistent-env walkers expand these address/field reads at their direct
-;; match sites. Returning an enum-shaped view per node was measurably expensive
-;; here: it copied the store and the largest cache payload even when a walker
-;; only needed the binding key and parent. Arena segments are never moved, so a
+;; match sites. Returning an enum-shaped view per node is expensive here: it
+;; copies the store and the largest cache payload even when a walker only
+;; needs the binding key and parent. Arena segments are never moved, so a
 ;; snapshot head remains a valid element address after later segments are added.
 ;; `tc-type-env-raw-layout-smoke?` pins the word offsets used by these hot
 ;; accessors without adding byte-offset conversion work to each expansion.
@@ -7566,15 +7566,13 @@
       raw-name-id)))
 
 ;; --- top-env build membership side table ------------------------------------
-;; The whole-program top-level env is an UNCACHED spine of ~46K binds. The
+;; The whole-program top-level env is an UNCACHED spine of every top bind. The
 ;; threshold-compaction machinery (tc-env-compact-local-if-threshold) is for
 ;; single-bind function scopes and does not fire here: unsafe/c-abi decls
 ;; prepend two binds at once, breaking the exact-"32 binds above a cache"
 ;; alignment it needs, so the top env stays a plain list. The enum-variant
 ;; binder uses `tc-bind-alias-id-if-free`, whose guard `tc-name-bound-id?`
-;; rescans that whole spine per variant -> O(decls^2) (measured: 46.4M node
-;; visits, ~120ms of the top-env build of a self-compile, with the guard never
-;; once finding a name already bound).
+;; rescans that whole spine per variant -> O(decls^2).
 ;;
 ;; This is a job-owned membership bloom keyed by name identity: every name
 ;; bound during the build (plus the seeded base env) is stamped with the
@@ -7592,8 +7590,8 @@
 ;; conservative). A stamped id is therefore definitely bound, so the guard can
 ;; skip without the O(spine) scan.
 ;; Self-compiles repeat enum-variant names (Ok/Err/None/Nil/...) across
-;; hundreds of enums; every repeat after the first used to rescan the whole
-;; spine from the head down to the first binding. Ids that are bloom-marked but
+;; hundreds of enums; without bit 1 every repeat after the first would rescan
+;; the spine from the head down to the first binding. Ids that are bloom-marked but
 ;; not bound-stamped (e.g. spine binds made outside the alias binder) still
 ;; take the exact scan, so results are identical either way.
 (define (tc-topenv-membership-state-present? [state : TcTopEnvMembershipState]) : bool
@@ -8190,7 +8188,7 @@
     ;; The state owns only the fixed carrier, dense lanes, and memo cells.
     ;; Scoped stacks are transient pass data and must follow the caller's
     ;; current scratch arena; retaining every function's stack in the state
-    ;; arena makes a self-compile consume hundreds of megabytes unnecessarily.
+    ;; arena would keep them all alive for the whole compile.
     (TcTypeEnvScopedStack
       state.address
       (__tl_make-array
@@ -9552,16 +9550,14 @@
           false))
       false)))
 
-;; Cache construction is the dominant i64 map workload of a self-compile
-;; (~16% of stage2 CPU before this change): the previous shape walked the
-;; spine FOUR times per compaction (entry count, shadow count, entry fill,
-;; shadow fill) and built a second whole-env map just to answer "is this
-;; default builtin shadowed?". Default-shadow membership is now a per-entry
-;; flag array parallel to `values`/`unsafe-flags`, computed during the single
-;; entry fill walk: an entry's low bit is set when its head-most binding sits
-;; above the first default-boundary marker. Head-first walk order means a
-;; name bound both above and below the boundary keeps its head-most (above)
-;; occurrence, which matches the old any-occurrence-above map exactly.
+;; Cache construction is the dominant i64 map workload of a self-compile, so
+;; it walks the spine once per compaction and builds no second whole-env map
+;; to answer "is this default builtin shadowed?". Default-shadow membership is
+;; a per-entry flag array parallel to `values`/`unsafe-flags`, computed during
+;; the single entry fill walk: an entry's low bit is set when its head-most
+;; binding sits above the first default-boundary marker. Head-first walk order
+;; means a name bound both above and below the boundary keeps its head-most
+;; (above) occurrence, so the bit is set exactly when any occurrence is above.
 (define (tc-env-cache-add!
   [ids : (&mut ids tc_i64_i64_map.Map)]
   [values : (&mut values (__tl_dyn-array ast.AstType))]
@@ -9886,14 +9882,11 @@
 ;;
 ;; `tc-env-with-cache-layer-over-explicit` pushes one explicit layer per module
 ;; extension / additive splice, each layer's `below` being the layer
-;; it extends. A self-compile builds 343 such layers over 2 explicit roots, and
-;; because splices and module extensions re-extend older base snapshots the
-;; result is a FOREST, not a stack (measured: 214 of 343 pushes did not sit on
-;; the previous tip; max depth 128, mean creation depth 52). Every layer is a
-;; correct non-membership filter, so lookups fall through them one map probe at
-;; a time: 31.2M probes per opt1 self-compile, most of them from walks 12-18
-;; layers deep. With the index the same compile does 3.18M probes plus 0.53M
-;; version-list steps (0.17 per probe, 32 at worst).
+;; it extends. A self-compile builds hundreds of such layers, and because
+;; splices and module extensions re-extend older base snapshots the result is
+;; a deep FOREST, not a stack. Every layer is a correct non-membership filter,
+;; so without the index lookups fall through them one map probe at a time,
+;; most of them many layers deep.
 ;;
 ;; The index replaces that per-layer fall-through with one probe. Per store it
 ;; keeps a single map from binding key to the packed reference of the NEWEST
@@ -14546,15 +14539,14 @@
 ;; hygiene global boundary, at the first non-scan-through cache, or at the root?
 ;; Module-local overlay construction asks it once per declaration against a
 ;; chain that grows one binding at a time, so the plain walk below is quadratic
-;; in the number of declarations a module contributes (measured: 15.5M chain
-;; steps for 161K queries in one opt1 self compile, 99.99% of them answering
-;; "no").
+;; in the number of declarations a module contributes, and nearly every query
+;; answers "no".
 ;;
 ;; The span of a chain head is `delta ++ span(parent head)`, so a single-entry
 ;; index of the last queried head answers repeated queries without rewalking:
 ;; binding keys go into an open-addressed key set and cache nodes into a short
 ;; list that is probed as before. Only the bindings pushed since the previous
-;; query are walked (measured: 23.8K walk steps instead of 15.5M).
+;; query are walked.
 ;;
 ;; Soundness. The chain below a head is immutable and binding/cache records are
 ;; append-only within a store, so a recorded key set stays exact for as long as
@@ -19915,8 +19907,7 @@
 ;; Shape code of one declaration as the index build reads it: a module marker
 ;; carries its module id (never negative), imports are -1, everything else -2.
 ;; Reads the tag through a borrow and the module id straight out of the row, so
-;; the whole-program shape sweep no longer copies a 104 B `AstDecl` per
-;; declaration (twice over, once into `ast-decl-unwrapped` and once back out).
+;; the whole-program shape sweep never copies an `AstDecl` per declaration.
 (define (tc-module-decl-index-shape-code-at
   [decls : (& decls ast.AstDeclList)]
   [index : i64]) : i64
@@ -21638,10 +21629,10 @@
   [name-id : i64]
   [check-local-field : bool]) : ResultTcString
   ;; Intern `name` once; every metadata query below reads the id-keyed slots
-  ;; instead of re-hashing the string. This is the hottest name-resolution
-  ;; function, previously hashing each name 3-4x (slash-qualified?, first-dot,
-  ;; leading-segment, bound-exact?). The already-interned `name-id` is threaded
-  ;; from the caller (AST field or upstream intern) so this hot path no longer
+  ;; instead of re-hashing the string for each of slash-qualified?, first-dot,
+  ;; leading-segment and bound-exact?. This is the hottest name-resolution
+  ;; function. The already-interned `name-id` is threaded
+  ;; from the caller (AST field or upstream intern) so this hot path never
   ;; re-interns the string; the public String wrappers below intern once.
   (if (tc-source-slash-qualified-id?
     (tc-context-structural-session ctx)
@@ -22778,10 +22769,9 @@
         ty))))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
-  ;; Concrete leaves already returned directly from this match. Keep that
-  ;; 17M-call selfhost path free of pool selection, and consult the recursive
-  ;; job-owned predicate only for composite shapes that the old resolver would
-  ;; otherwise rebuild unconditionally.
+  ;; Concrete leaves return directly from this match. Keep that hot path free
+  ;; of pool selection, and consult the recursive job-owned predicate only for
+  ;; composite shapes, so they are rebuilt only when they need resolution.
   (match (tc-global-shared-view ty)
     [(ast.AstType.CFunc _ _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.Func _ _) (tc-resolve-type-composite ctx ty)]
@@ -32655,7 +32645,7 @@
         (tc-private-string-intrinsic-type ctx env lookup-id))]
     [_ (ResultTcType.Err "")]))
 
-;; Source-level builtin dispatch historically observed module-local declaration
+;; Source-level builtin dispatch observes module-local declaration
 ;; copies through `tc-name-bound-id?`. Dotted modules keep the authoritative
 ;; declaration under its qualified top-env key instead, so consult symbol
 ;; ownership when the exact environment lookup misses. Lexical and imported
@@ -33285,8 +33275,8 @@
 
 ;; A speculative typecheck whose failure the caller discards (a macro operand
 ;; probe) must not pay for a "did you mean" suggestion: finalizing one unbound
-;; name scans every visible name, about 7.5M instructions, and a self-compile
-;; discards about a thousand such errors. The depth lives in the job-owned scoped
+;; name scans every visible name, and a self-compile discards many such
+;; errors. The depth lives in the job-owned scoped
 ;; state reached through the environment, so no other job is affected and no
 ;; signature has to carry it. Only a caller that drops the error unconditionally
 ;; may open this scope; a reported diagnostic must keep its suggestion.
@@ -47216,9 +47206,9 @@
 
 ;; Enum queries are frequent during macro expansion, and the generated-name
 ;; compatibility path cannot always use CompilerSymbols. Index the flat
-;; program view by the same source and module-qualified ids that the old string
-;; scan compared. The index is rebuilt at the existing macro-splice cache
-;; boundary, so a replaced ComptimeDecl template cannot leave a stale name.
+;; program view by source and module-qualified ids. The index is rebuilt at the
+;; existing macro-splice cache boundary, so a replaced comptime template
+;; declaration cannot leave a stale name.
 (define tc-program-enum-index-ready : bool
   false)
 (define tc-program-enum-index-decl-count : i64
@@ -48556,12 +48546,11 @@
         (ResultTcInlineAggregateLayout.Err message)])))
 
 ;; --- full inline-aggregate layout memo ---------------------------------------
-;; The Superluminal profile of the stage2 self-compile shows ~18% of CPU inside
-;; the tc-inline-aggregate-* layout walk: every struct-get field offset, enum
-;; payload offset, and lower-type-size query on a nominal recomputes the whole
-;; recursive layout (the scalar caches only memoized the final size and the
-;; register-word count as scalars). This cache memoizes the COMPLETE
-;; TcInlineAggregateLayout per type name. Unlike the scalar handle-index caches,
+;; Without it, every struct-get field offset, enum payload offset, and
+;; lower-type-size query on a nominal recomputes the whole recursive
+;; tc-inline-aggregate-* layout (the scalar caches memoize only the final size
+;; and the register-word count as scalars). This cache memoizes the COMPLETE
+;; TcInlineAggregateLayout per type name. Like the scalar caches,
 ;; this cache is keyed by the intern id of the nominal name: symbol handles can
 ;; be reassigned when specialization rebuilds the symbol table, while intern ids
 ;; are stable until intern-reset!. The cached value's final-size backing arrays
@@ -48805,7 +48794,7 @@
 
 ;; Borrowed slices are represented physically as a data pointer plus a signed
 ;; length.  Their referent is stored in the type pool, so inspect that node
-;; here rather than treating every Ref/MutRef as the historical one-word
+;; here rather than treating every Ref/MutRef as a one-word
 ;; pointer.  Region wrappers on either the reference itself (stripped by the
 ;; caller) or its immediate referent do not change the representation.
 (define (tc-inline-aggregate-reference-to-slice?
@@ -48977,9 +48966,9 @@
     name-id
     TcStringList.Nil))
 
-;; Compile-time cache: memoize the inline-aggregate SIZE. tc-inline-aggregate-
-;; layout-for re-walks the whole layout on every lower-type-size query, which is
-;; ~70% of the -O1 lower phase. The cache must do NO allocation during lowering
+;; Compile-time cache: memoize the inline-aggregate SIZE. Without it,
+;; tc-inline-aggregate-layout-for-with-stack re-walks the whole layout on every
+;; lower-type-size query. The cache must do NO allocation during lowering
 ;; (the scratch-arena hazard makes a grown map / cached field-list dangle):
 ;; so it is a FIXED job-owned i64 array, allocated lazily in the owning compiler
 ;; job's lifetime arena and only read/written by that job thereafter. It is keyed
@@ -48993,8 +48982,8 @@
 (define tc-agg-scalar-cache-capacity : i64
   400000)
 
-;; These scalar caches used to be keyed by symbol-handle INDEX, which is
-;; only meaningful for one snapshot of a program's symbol table. Specialization
+;; These scalar caches are keyed by intern id, not by symbol-handle INDEX, which
+;; is only meaningful for one snapshot of a program's symbol table. Specialization
 ;; rebuilds that table after inserting generated declarations, so a cached value
 ;; under an old handle index could be returned for a different type whose new
 ;; handle reuses the same index. Intern ids are stable across that rebuild.
@@ -49182,7 +49171,7 @@
 ;; Compile-time cache: memoize a bare aggregate's register-resident word count
 ;; (0 = not register-resident, else 1 or 2). Same arena-safe intern-id keyed
 ;; fixed array as the size cache; this is the hot query for every aggregate
-;; construct / struct-get / copy (lower-name-register-words). Encoded as
+;; construct / struct-get / copy (lower-type-register-words). Encoded as
 ;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
 ;; Same per-program keying as the size cache, so it is gated on
 ;; intern-generation and explicitly invalidated at lower boundaries.
@@ -54281,9 +54270,8 @@
     [(ast.AstReduceOp.All) "typecheck: spmd-scan all requires a bool type"]
     [(ast.AstReduceOp.Any) "typecheck: spmd-scan any requires a bool type"]))
 
-;; spmd-reduce purity/effect rules (SPEC.md 5.15): mirror the Rust
-;; typechecker's `check_spmd_reduce_value`. The first reduction slice accepts a
-;; narrow, clearly-pure surface and rejects everything else with a focused
+;; spmd-reduce purity/effect rules (SPEC.md 5.15). The first reduction slice
+;; accepts a narrow, clearly-pure surface and rejects everything else with a focused
 ;; diagnostic rather than guessing at varying/uniform semantics not yet
 ;; implemented: the varying index, uniform variables, and literals;
 ;; arithmetic/comparison/boolean operators over those; `ann`/`cast` wrappers;
@@ -60912,11 +60900,9 @@
 ;; --- shared empty moved-set id map -----------------------------------------
 ;;
 ;; Branch checking clones the moved-set at every arm/branch entry, and the
-;; census says the id-map copies are overwhelmingly empty: 2,036,034 copies per
-;; self-compile carry 1,722,057 entries in total, and only 237,294 of them are
-;; non-empty. Allocating a private empty table for the other 1,798,740 is pure
-;; waste, so an empty table is ALIASED instead of copied, with copy-on-write at
-;; the writers.
+;; id-map copies are overwhelmingly empty. Allocating a private empty table for
+;; each of those is pure waste, so an empty table is ALIASED instead of copied,
+;; with copy-on-write at the writers.
 ;;
 ;; The sharing invariant has two halves, both checked locally:
 ;;
@@ -60928,8 +60914,7 @@
 ;;      the two removers. Every inserting site takes private storage first via
 ;;      `tc-moved-id-map-own`. The removers need no guard: `remove-ref!` writes
 ;;      only after its probe finds an Occupied slot, and the shared map has
-;;      none -- exactly how the freshly allocated empty copy this replaces
-;;      behaved.
+;;      none -- exactly how a freshly allocated empty copy would behave.
 ;;   2. The "is this the shared map?" test is exact. Every private moved-set map
 ;;      is born at `with-capacity 8` (from `tc-moved-id-map-own`) or copied at
 ;;      its source's capacity, and `grow!` only doubles, so private capacities
@@ -60944,8 +60929,8 @@
   (= (tc_i64_i64_map.capacity map) 1))
 
 ;; Give an inserting writer private storage when it holds the shared empty map.
-;; The replacement is the capacity the old code handed a fresh branch copy, so
-;; only the shared alias pays an allocation here.
+;; The replacement starts at the private-map birth capacity, so only the shared
+;; alias pays an allocation here.
 (define (tc-moved-id-map-own [map : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
   (if (tc-moved-id-map-shared-empty? (& map))
     (tc_i64_i64_map.with-capacity 8)
@@ -61239,13 +61224,13 @@
 
 (define (tc-moved-clone-id-map [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
   ;; Counting down the entry count skips the scan-to-capacity tail entirely;
-  ;; branch moved-sets are usually empty or tiny, so the old full-capacity
-  ;; walk was almost all empty slots.
+  ;; branch moved-sets are usually empty or tiny, so a full-capacity walk
+  ;; would be almost all empty slots.
   (let
     [remaining : i64 (tc_i64_i64_map.len src)]
     (if (= remaining 0)
-      ;; The empty copy this used to allocate had no content and no identity of
-      ;; its own -- it existed only so a later insert could not reach the
+      ;; An empty copy would have no content and no identity of its own -- it
+      ;; would exist only so a later insert could not reach the
       ;; source's slots. `tc-moved-id-map-own` provides that separation at the
       ;; insert instead, so the empty case aliases the shared map and allocates
       ;; nothing. Lookups and removals see an empty table either way.
@@ -61269,7 +61254,7 @@
 ;; Hand the shared map straight back when the source already IS it. That is the
 ;; same value `tc-moved-clone-id-map` returns, and recognizing it here -- rather
 ;; than inside the call -- keeps the by-value map argument and return off the
-;; 1.8M-per-self-compile empty path.
+;; common empty path.
 (define (tc-moved-clone-id-map-or-shared [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
   (if (tc-moved-id-map-shared-empty? src)
     (tc-global-shared-view tc-moved-shared-empty-id-map)
@@ -70592,7 +70577,7 @@
 ;; capabilities are 0 = shared/reusable, 1 = exclusive/reusable (FnMut), and
 ;; 2 = consuming (FnOnce). A local lambda binding stores that capability in a
 ;; disjoint Copy/non-Copy range inside the existing locals map; ordinary locals
-;; retain the historical -1 sentinel. This keeps concrete environment
+;; keep the -1 sentinel. This keeps concrete environment
 ;; copyability available after a fact-preserving local alias without making a
 ;; plain `(-> ...)` type depend on one particular lambda value.
 (define (tc-closure-call-capability-shared) : i64
@@ -79698,7 +79683,7 @@
 ;; creation, consuming Box dereference, `with-region` blocks, calls to functions
 ;; whose signature mentions a region, and region-typed parameters/results
 ;; (which seed borrowed places). A body with none of those checks out as a pure
-;; pass-through (measured: 72.6% of self-compile bodies), so the gate answers
+;; pass-through, so the gate answers
 ;; `Ok` without walking. A call whose recorded callee type (the body type
 ;; facts from the tc-expr walk) contains no region keeps its Fallback lifetime
 ;; handling, which cannot error either; a fact Miss stays conservative.
@@ -81082,12 +81067,12 @@
 ;; lookup in `macro-call-decl`. Populated once per expansion run.
 ;; Exact module-qualified macro identities whose transformer bodies can call
 ;; `expr-type`. Only those macros need fixed `Expr` operands to carry produced
-;; type metadata. Keep the hot per-call membership check ID-keyed: the former
-;; TcStringList compared module/name strings linearly for every expansion.
+;; type metadata. Keep the hot per-call membership check ID-keyed rather than
+;; comparing module/name strings linearly for every expansion.
 ;; Cached CTFE base environment (reflection + layout metadata) for the current
-;; expansion run. `macro-expand-call` rebuilt this via `tc-ctfe-env` -- which runs
-;; `ctfe-reflections-from-program` over the WHOLE program (O(program)) -- on EVERY
-;; macro call, costing ~150MB per call on a self-compile. Reuse it across the
+;; expansion run. Building it via `tc-ctfe-env` runs
+;; `ctfe-reflections-from-program` over the WHOLE program (O(program)), so it is
+;; not rebuilt per macro call: reuse it across the
 ;; run unless a splice materializes a reflection-relevant nominal declaration.
 ;; Whether the cached CTFE env was built with the full reflection/layout metadata
 ;; (plan P2). The cache is built once per expansion run and reused across every
@@ -81440,7 +81425,7 @@
 ;; immediately rebuild it. The one other exception is a run whose first build
 ;; did not need metadata (empty env) and a later rebuild that does; the
 ;; has-metadata guard rebuilds for that case. On reuse the cached env is only
-;; rebased onto the active pools (cheap); a full build otherwise costs ~150MB.
+;; rebased onto the active pools (cheap); a full build walks the whole program.
 (define (macro-expand-ctfe-env-build-once! [ctx : TcContext]) : unit
   (let
     [state : TcMacroState (tc-context-macro-state ctx)]
@@ -81978,43 +81963,15 @@
 ;; still copied out at every declaration boundary -- that is what makes the
 ;; garbage droppable -- but a fresh arena is only cut every
 ;; `macro-decl-generation-batch-size` declarations. One arena costs a reserve
-;; and a release syscall pair. #5893 measured 13,820 generation entries (9,498
-;; attributed firing declarations) on a Linux opt1 self-compile: batch 32 used
-;; 432 arenas and retained 106,558,504 non-output bytes, while batch 8 used
-;; 1,728 arenas and retained 77,175,304 bytes without a work regression. Batch
-;; 1 retained only 27,169,064 bytes, but paid 13,820 arena pairs and raised
-;; fired-declaration self time by 9.4%. Eight was the measured memory/work knee;
-;; after the dependency-TLCI dispatch graph crossed the 25% proportional
-;; retention budget, seven first restored it. On the later combined
-;; optimizer/SPMD graph, seven retained 102,860,432 bytes (25.39%) while five
-;; retained 75,241,224 bytes (18.58%) with 815 additional arena pairs. The
-;; count cadence is alignment-sensitive -- six retained 130,882,560 bytes -- so
-;; five is the measured current knee. Three same-source Windows selfhosts kept
-;; median macro-walk time flat (1,985 ms versus 1,988 ms at seven) and emitted
-;; byte-identical assembly. #6318's combined source graph later shifted an
-;; unphased batch five to 111,472,912 / 417,176,320 non-output bytes (26.72%).
-;; Starting the ring with one four-declaration batch, then keeping steady-state
-;; batches at five, restored 78,932,232 / 405,167,800 (19.48%) without changing
-;; the 2,860 rotations. A global batch four retained 73,602,040 / 405,151,072
-;; (18.17%) but raised rotations to 3,574. Interleaved three-run Windows
-;; profile-selfhost medians were 14.686 s unphased, 14.966 s phase-shifted, and
-;; 14.986 s at global batch four.
-;;
-;; #6737 demonstrated that the one-time phase shift was not an invariant: an
-;; unrelated optimizer-local source change moved phase-shifted batch five back
-;; to 112,556,344 / 405,175,936 (27.78%), while restoring the original local
-;; declaration count did not change that result. Use the already-measured
-;; global batch four cadence; the current-source Windows rerun retained
-;; 73,601,960 / 405,151,936 bytes (18.17%) with the same 3,574 rotations. This
-;; leaves ordinary source growth room instead of silently retuning the ring
-;; across the 25% gate. #6470 then added 39 firing declarations and exposed
-;; the remaining count-alignment hazard: batch four retained 146,458,816 /
-;; 438,276,576 bytes (33.41%), and batch three retained 173,114,304 /
-;; 438,278,064 bytes (39.50%). The full batch-two gate retained 64,818,672 /
-;; 438,276,424 bytes (14.79%) with no measured macro-walk regression (2,312 ms
-;; versus 2,718 ms in the same Windows profile probe).
-;; Use that cadence for enough source-growth headroom that declaration ordering
-;; cannot immediately move a large batch back across the proportional gate.
+;; and a release syscall pair, so a batch of one pays that pair per firing
+;; declaration and slows the walk, while larger batches retain more superseded
+;; garbage. Retention is alignment-sensitive: which large declarations share a
+;; batch decides it, so an ordinary source change can push a mid-size batch
+;; across the proportional retention gate. Shifting the ring's phase (a smaller
+;; first batch) does not fix that; an unrelated source change moves it back.
+;; The batch of two set in `tc-macro-walk-state-new` leaves enough
+;; source-growth headroom that declaration ordering cannot immediately move a
+;; large batch back across the gate.
 ;;
 ;; Retention is bounded by one batch, not by the walk. Make `next` the live
 ;; generation and destroy the completed batch at this next-entry handoff.
@@ -82084,8 +82041,8 @@
 ;; That is the cadence rule this packet is built on: A GENERATION'S DESTROY
 ;; CADENCE MUST BE THE RESET CADENCE OF THE CACHES THAT ALLOCATE INTO IT. The
 ;; declaration-generation batch ring destroys on a counter with no relation to
-;; the splice cadence, and putting the placeholder arm on it SIGSEGVs the
-;; linux-x86_64 self-compile between the 4th splice and the next.
+;; the splice cadence, and putting the placeholder arm on it crashes the
+;; self-compile.
 ;;
 ;; State that outlives the reset -- the two generated-module/decls memos, which
 ;; are per-RUN, not per-splice -- is not covered by the cadence argument and is
@@ -82161,8 +82118,7 @@
 ;; `macro-generated-decls-memo-*`), and a later splice reads that entry -- and,
 ;; on a module-memo hit, SPLICES the recorded catalog straight into the program.
 ;; Those entries are built from the arena current at record time, so without
-;; this they are a use-after-free two splices later. It reproduces immediately
-;; as `tl: array index out of bounds` on the self-compile.
+;; this they are a use-after-free two splices later.
 ;;
 ;; The memo puts stay exactly where they are -- so a nested read inside the same
 ;; expansion still sees the entry it just wrote -- but they NOTE their key here,
@@ -85477,9 +85433,8 @@
 ;; only an alias/marker import. The memo persists across the whole expansion run
 ;; (it is only reset at the per-program macro-expand entry and self-clears when the
 ;; intern generation changes), which is what makes the identity shortcut
-;; authoritative. This replaces the replay-compare/fingerprint
-;; machinery: a memoized module is never re-expanded, so there is nothing to
-;; compare.
+;; authoritative. A memoized module is never re-expanded, so there is nothing
+;; to replay or compare.
 (defenum MacroGeneratedCatalogClosure
   (Full))
 
@@ -90219,7 +90174,7 @@
 
 ;; A transformer appends newly constructed syntax after its bound operands and
 ;; captured source syntax. Hygiene may therefore rewrite a fresh node in place
-;; when it has one reachable occurrence, while preserving the old copy path for
+;; when it has one reachable occurrence, while keeping the copy path for
 ;; source/captured nodes and DAG nodes reused in multiple lexical contexts.
 ;;
 ;; Refcounts are saturated at two. When a second path reaches a node, its whole
@@ -93008,14 +92963,14 @@
     [_ (MacroMaybeDecl.No)]))
 
 ;; Resolve a macro decl from its symbol-table index in O(1). The symbols decls
-;; array is populated (compiler-symbols-index-decl!) at the SAME index that
+;; array is populated (compiler-symbols-index-decl) at the SAME index that
 ;; compiler-symbol-handle-index returns: build-compiler-symbol-list-in-module
 ;; writes the array slot and registers the handle with one shared `index`,
-;; skipping the identical Import/IncludeStr/IncludeBin/Export/Module/Test set
-;; that the old linear scan skipped. The array already stores the unwrapped decl
+;; skipping the Import/IncludeStr/IncludeBin/Export/Module/Test set. The array
+;; already stores the unwrapped decl
 ;; (compiler-symbol-indexed-decl peels AstDecl.Unsafe the same
 ;; way macro-decl-from-decl does), so direct module lookups return the identical
-;; MacroMaybeDecl.Some the previous O(decls) macro-find-decl-by-index walk produced.
+;; MacroMaybeDecl.Some an O(decls) declaration scan would produce.
 (define (macro-decl-owner-module-or
   [symbols : (& symbols csym.CompilerSymbols)]
   [target : i64]
@@ -93046,11 +93001,10 @@
         target)]
     [(parser.ResultAstDecl.Err _) (MacroMaybeDecl.No)]))
 
-;; The module accumulator and the current module compare as INTERN IDS: the
-;; previous String-based walk converted every AstDecl.Module's interned name
-;; back to a fresh String (`intern-str` allocates) and string-compared it, for
-;; every declaration walked, on every qualified-alias resolution -- 11.6% of
-;; the stage2 self-compile CPU profile. Import aliases still compare by
+;; The module accumulator and the current module compare as INTERN IDS, so a
+;; qualified-alias resolution never converts a walked AstDecl.Module's interned
+;; name back to a fresh String (`intern-str` allocates) to string-compare it.
+;; Import aliases still compare by
 ;; content, but only for imports declared in the current module.
 (define (macro-import-kind-module-alias? [kind : ast.AstImportKind]) : bool
   (match kind
@@ -93728,11 +93682,10 @@
                 (set! steps (+ steps 1)))))))
       unit)))
 
-;; One-pass eager build of every module's flat-import target list. Each
-;; per-module cache miss used to rescan the ENTIRE declaration list (with a
-;; ~100B AstDecl unwrap copy per declaration), and the cache resets at every
-;; in-pass splice rebuild, so a self-compile re-paid those whole-program scans
-;; per module per epoch. Lists are appended in program order, matching
+;; One-pass eager build of every module's flat-import target list. The cache
+;; resets at every in-pass splice rebuild, so a per-module miss that rescanned
+;; the whole declaration list would repeat that scan per module per epoch.
+;; Lists are appended in program order, matching
 ;; macro-flat-import-targets-from-list exactly. If the table's half-load insert
 ;; cap is hit, complete stays false and misses fall back to the exact scan, so
 ;; only memoization -- never correctness -- degrades.
@@ -94125,11 +94078,10 @@
 
 ;; One-pass eager index over the program's aliased imports: record every
 ;; (module, alias) -> target mapping in program order (first import wins,
-;; matching macro-import-alias-target-ids' first-match scan). Each per-pair
-;; cache miss used to rescan the ENTIRE declaration list -- and the cache is
-;; reset at every in-pass splice rebuild, so a self-compile re-paid those
-;; whole-program scans (with a ~100B AstDecl unwrap copy per declaration)
-;; hundreds of times. One pass makes every later query O(1); if the table's
+;; matching macro-import-alias-target-ids' first-match scan). The cache is
+;; reset at every in-pass splice rebuild, so a per-pair miss that rescanned the
+;; whole declaration list would repeat that scan after every splice. One pass
+;; makes every later query O(1); if the table's
 ;; half-load insert cap is ever hit, complete stays false and misses fall back
 ;; to the exact scan, so only memoization -- never correctness -- degrades.
 (define (macro-alias-cache-build!
@@ -100222,8 +100174,8 @@
       expr
       fires)))
 
-;; One subtree scan per visit: the no-fire majority used to pay the scan
-;; twice (once in the branch condition, once to pick the no-fire arm).
+;; One subtree scan per visit: the caller's single `fires` answer both picks
+;; the no-fire arm and gates this call.
 (define (macro-expand-expr-fire
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -102706,9 +102658,9 @@
 ;; ids below it are pre-existing committed nodes that must not be copied (that
 ;; is what keeps the id map per-declaration sized instead of whole-pool sized),
 ;; and every node the expansion creates is at or above it. The in-place hygiene
-;; rewrite in `macro-hygiene-expr` only touches ids at or above
-;; `macro-hygiene-produced-floor`, which is itself taken during the expansion,
-;; so it can never mutate a shared node into the generation.
+;; rewrite in `macro-hygiene-expr` only touches ids at or above the
+;; `TcMacroHygieneProducedStateData` floor, which is itself taken during the
+;; expansion, so it can never mutate a shared node into the generation.
 ;;
 ;; The pool's base arena IS the enclosing arena here. Arena handles are stable
 ;; roots, so a type push can grow its physical chain without changing the
@@ -103105,9 +103057,9 @@
 ;; Macro-expansion skip analysis. Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in
 ;; the program (all imported modules), which redundantly re-typechecks match
-;; scrutinees / let bindings and rebuilds the entire AST -- ~1.7GB and >1s on a
-;; self-compile. The vast majority of decls call no macro at all, so this work is
-;; pure waste. These predicates detect whether a decl actually contains a macro
+;; scrutinees / let bindings and rebuilds the entire AST. The vast majority of
+;; decls call no macro at all, so this work is pure waste. These predicates
+;; detect whether a decl actually contains a macro
 ;; (or `when`/`unless` compat) call using the SAME resolution as the expander
 ;; (`macro-call-decl`), so a decl with none can be shared unchanged. They are
 ;; conservative: any unrecognized expression variant returns `true` (expand), so
@@ -104714,8 +104666,7 @@
 ;; module placeholders resolve in this same pass. Generated *file* imports (a
 ;; generated module body importing a source file, or a generated module import
 ;; of a not-yet-loaded module) are loaded inline through the threaded loader
-;; context (stdlib-roots + cfgs) exactly as the retired fixed-point loop's
-;; macro-materialize-generated-imports step did -- there is no deferred
+;; context (stdlib-roots + cfgs) -- there is no deferred
 ;; fallback pass and no follow-up worklist.
 (define (macro-expand-decls
   [load-state : cload.CompilerLoadSessionState]
@@ -104834,10 +104785,8 @@
                             compile-profile
                             (compiler-tc-walk-decl-sample-note! 3))
                           ;; R3-P2b: an import placeholder's expansion is
-                          ;; the single largest allocator left in the splice
-                          ;; family (measured 113.1 MB retained over 88 events
-                          ;; on the opt1 self-compile, 53% of the family) and
-                          ;; R3-P1 left it on the ambient arena. Run it in its
+                          ;; the single largest allocator in the splice
+                          ;; family. Run it in its
                           ;; own generation, on the SPLICE ring -- see
                           ;; macro-splice-generation-enter! for why the ring,
                           ;; and not R3-P1's batch ring, is the sound one.
@@ -106489,9 +106438,7 @@
       ;; modules through the content-equivalence cache. Extra non-stdlib roots
       ;; (for example `src` during a self-compile) do not disable the route, while
       ;; modified/untrusted stdlib source never receives embedded provenance.
-      ;; #5926 exercised the real macro walk beyond the historical failure point
-      ;; and across five reset/release/remap cycles on hosted Linux and Windows,
-      ;; so production routing now uses this same policy on both hosts. The
+      ;; Production routing uses this same policy on every host. The
       ;; stress-only cfg controls durable telemetry, not route selection.
       (tc-macro-walk-set!
         (tc-job-state-macro-state job-state)
@@ -107487,8 +107434,8 @@
         (set! data.fn-return-arena 0)
         (tc-scratch-arena-state-data-set! state data)))))
 
-;; Function bodies dominate typecheck allocation (~96% of the phase's live
-;; delta) and the check returns only unit -- everything it allocates
+;; Function bodies dominate typecheck allocation and the check returns only
+;; unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
 ;; frees it. Run each body check through with-escape so the checker sees the
 ;; scratch extent and clones the error diagnostic out before rewinding (do NOT
@@ -108499,9 +108446,7 @@
   (No)
   (Some i64))
 
-;; Keep construction and append as ordinary declaration boundaries. Before the
-;; dotted-constructor cache-domain fix (#6451), these exact helpers changed the
-;; direct-mapped cache collision order and exposed #6324 during profile selfhost.
+;; Keep construction and append as ordinary declaration boundaries.
 (cfg
   compile-profile
   (define (tc-poison-name-list-new) : TcPoisonNameList

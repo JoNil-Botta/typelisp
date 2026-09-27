@@ -1103,7 +1103,7 @@
 ;; arena is still live, so it performs the same cache/intern/lower teardown as a
 ;; full file reset but leaves only a one-slot pool context behind. The next
 ;; entry's normal reset grows a fresh load pool after the old scratch chain is
-;; gone instead of keeping a 4.39M-slot replacement live between entries.
+;; gone instead of keeping a full-size replacement live between entries.
 (define (compiler-driver-state-release-file-state!
   [state : CompilerDriverState]) : unit
   (begin
@@ -2096,9 +2096,9 @@
 
 ;; The lowered IR functions live in a dedicated arena
 ;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every
-;; surviving function out of it, so the arena is dead weight (~172MB on a
-;; cli.tl self-compile) once optimization returns. At level 0 the lowered
-;; program flows to the backend unchanged and the arena must stay alive.
+;; surviving function out of it, so the arena is dead weight once optimization
+;; returns. At level 0 the lowered program flows to the backend unchanged and
+;; the arena must stay alive.
 (define (compiler-driver-release-lowered-ir! [opt-level : i64]) : unit
   (if (>= opt-level 1)
     (compiler_lower.lower-ir-arena-release!)
@@ -4424,11 +4424,12 @@
             (compiler_lower.compiler-lower-profile-pools "source_load" pools)
             unit)
           ;; Load has returned its declaration list, so the lexer token buffer
-          ;; and the unspanned reader pool are dead scan scratch that would
-          ;; otherwise sit on the retain.program/retain.release peak for the
-          ;; rest of the process. Retire them here, on the same uncached
-          ;; single-entry gate the source-arena retirement uses, so a session
-          ;; that reuses loader state across jobs keeps its warm capacity.
+          ;; and the reader node pool's spare capacity are dead scan scratch
+          ;; that would otherwise sit on the retain.program/retain.release
+          ;; peak for the rest of the process. Retire them here, on the same
+          ;; uncached single-entry gate the source-arena retirement uses, so a
+          ;; session that reuses loader state across jobs keeps its warm
+          ;; capacity.
           (if route-source-allocations?
             (compiler_load.compiler-load-transfer-frontend-handoff!)
             unit)

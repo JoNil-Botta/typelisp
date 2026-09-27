@@ -3,7 +3,7 @@
 (import stdlib.io)
 
 (test
-  test-cli-package-integration-skips-diagnostics-fixtures
+  test-cli-package-integration-skips-reserved-fixtures
   (if (tltest_tests.tltest-package-integration-filter-self-test?)
     unit
     (io.panic "test CLI package integration filter mismatch")))

@@ -803,8 +803,7 @@
     compiler-comptime-host-callback-expr-string-from-bytes
     compiler-comptime-host-callback-expr-array-data
     ;; expr-ptr-cast pops the type value then the pointer expression, the order
-    ;; expr-make-array uses. Held back from #5703 because the type walker could
-    ;; not render `(Ptr T)`; the composite type callbacks fix that. Refs #5605.
+    ;; expr-make-array uses. Refs #5605.
     compiler-comptime-host-callback-expr-ptr-cast
     ;; The literal text of a string-literal `Expr`, pushed as the comptime
     ;; String value the interpreted `comptime.expr-string-value` yields -- the
@@ -857,15 +856,12 @@
     ;; literal-template macro opens with, with the same negative
     ;; malformed-request sentinel as the other operand probes. Refs #5701.
     compiler-comptime-host-callback-operand-expr-string?
-    ;; Composite type templates (refs #5605).
-    ;; `embedded-native-template-type-ops` rendered only `AstType.Var` and
-    ;; scalars, which is what actually kept the `stdlib.text_buf_family`
-    ;; generators and generated vector modules on the interpreted route -- their
-    ;; annotations are `(__tl_dyn-array String)`, `(Ptr u8)`, `(MutPtr i64)`,
-    ;; `(& text str)` and `(&mut buf TextBuf)`, not any missing expression node
-    ;; kind. Each callback pops the element/inner type value and pushes the
-    ;; wrapper, so a nested annotation builds bottom-up like an expression
-    ;; template does. type-ptr and type-ref select mutability with immediate
+    ;; Composite type templates (refs #5605), for annotations such as
+    ;; `(__tl_dyn-array String)`, `(Ptr u8)`, `(MutPtr i64)`, `(& text str)` and
+    ;; `(&mut buf TextBuf)` in the `stdlib.text_buf_family` generators and
+    ;; generated vector modules. Each callback pops the element/inner type value
+    ;; and pushes the wrapper, so a nested annotation builds bottom-up like an
+    ;; expression template does. type-ptr and type-ref select mutability with immediate
     ;; `a`; type-array takes its element count in `a`; type-ref takes the
     ;; lifetime name in `b`/`c`. type-var-args takes a lifetime count in `a` and
     ;; a count-validated newline-delimited nominal/lifetime payload in `b`/`c`,
@@ -1474,9 +1470,9 @@
 ;;     h = 1;  h = (h * 131 + b) mod p   for each byte b,   p = 2^31 - 1
 ;;
 ;; and are part of the format, so they must keep their exact values. Computing
-;; them a byte at a time costs a 64-bit modulo per byte, which made verifying
-;; the embedded stdlib image (16 MB) most of a hello-world compile. Eight bytes
-;; at a time is the same polynomial, reduced once:
+;; them a byte at a time costs a 64-bit modulo per byte, too slow for verifying
+;; the whole embedded stdlib image on every compile. Eight bytes at a time is
+;; the same polynomial, reduced once:
 ;;
 ;;     h' = h * 131^8 + (((b0 * 131 + b1) * 131 + ...) * 131 + b7)   (mod p)
 ;;

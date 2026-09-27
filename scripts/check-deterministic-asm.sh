@@ -31,7 +31,7 @@ done
 # default linux-x86_64 backend emits identical `.s` text regardless of host; no
 # assembler/linker is invoked) twice and `cmp`s the outputs. Allow it on Linux
 # and on Windows hosts (Git Bash / MSYS / Cygwin) so the Windows CI job can run
-# it for parity (#755). Other hosts stay gated until the check is exercised
+# it for parity. Other hosts stay gated until the check is exercised
 # there.
 case "$(uname -s)" in
     Linux* | MINGW* | MSYS* | CYGWIN*) ;;

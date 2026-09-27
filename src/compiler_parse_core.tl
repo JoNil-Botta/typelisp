@@ -627,8 +627,8 @@
             (= entry.slot slot))
             (begin
               ;; Sidecar storage is append-only between resets. Replacing an
-              ;; existing slot therefore preserves the old scan's latest-wins
-              ;; behavior when an address is reused or an alias is superseded.
+              ;; existing slot therefore keeps latest-wins behavior when an
+              ;; address is reused or an alias is superseded.
               (set!
                 (array-ref compiler-parse-semantic-origin-lookup-slots cursor)
                 (CompilerParseSemanticOriginLookupSlot

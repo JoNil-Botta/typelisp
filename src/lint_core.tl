@@ -3799,7 +3799,7 @@
 
 ;; Program-wide struct shapes: collected once in declaration order through a
 ;; single owner, so the append reuses spare capacity. Lookups scan from the
-;; newest entry to keep the shadowing order of the old prepend-built list.
+;; newest entry, so a later shape shadows an earlier one.
 (defstruct LintCopyOnUpdateStructList
   (slots (__tl_dyn-array LintCopyOnUpdateStructShape))
   (len i64))
@@ -4607,9 +4607,8 @@
   (valid bool)
   (used bool))
 
-;; Tracked cells in reverse discovery order: the newest candidate is the last
-;; slot, so `slots[len - 1]` is the old list head and every walk that consumed
-;; the cons list head-first now counts down. Entries are unique by name and
+;; Tracked cells: the newest candidate is the last slot, and every walk counts
+;; down from `slots[len - 1]`, newest first. Entries are unique by name and
 ;; updates copy into a right-sized array so branches never share a slot.
 (defstruct LintSingleElementArrayCandidateList
   (slots (__tl_dyn-array LintSingleElementArrayCandidate))
@@ -5983,11 +5982,10 @@
   (reportable bool)
   (type-operand bool))
 
-;; Scope bindings and the scope stack, both in reverse cons order: the newest
-;; entry is the last slot, so every walk that consumed the old list head-first
-;; counts down from `len - 1`. Frames are pushed and popped by a single
-;; threaded state and each frame owns its bindings array, so appends reuse
-;; spare capacity instead of rebuilding.
+;; Scope bindings and the scope stack: the newest entry is the last slot, and
+;; every walk counts down from `len - 1`, newest first. Frames are pushed and
+;; popped by a single threaded state and each frame owns its bindings array, so
+;; appends reuse spare capacity instead of rebuilding.
 (defstruct LintUnusedVariableBindingList
   (slots (__tl_dyn-array LintUnusedVariableBinding))
   (len i64))
@@ -6025,8 +6023,8 @@
     (__tl_make-array LintUnusedVariableBindingList 0)
     0))
 
-;; Highest index of `bindings` naming `name`, or -1. Counting down keeps the
-;; innermost-first order of the old cons walk.
+;; Highest index of `bindings` naming `name`, or -1. Counting down finds the
+;; innermost binding first.
 (define (lint-unused-variable-binding-index
   [bindings : (& bindings LintUnusedVariableBindingList)]
   [name : String]
@@ -7460,8 +7458,8 @@
     0))
 
 ;; Params are scanned in signature order so the source cursor advances, but the
-;; slot order is reversed: the old cons list carried the first param at its
-;; head, which is now the last slot.
+;; slot order is reversed: the first param ends up in the last slot, where the
+;; counting-down walks see it first.
 (define (lint-unused-variable-param-bindings-at
   [params : (& params ast.AstParamList)]
   [source : (& source str)]
@@ -8513,8 +8511,8 @@
     [cursor : i64 fallback-start]
     (begin
       ;; The body span is inside this declaration. Searching backward finds the
-      ;; nearest declaration head in work proportional to its signature, while
-      ;; the old forward scan restarted at byte zero for every declaration.
+      ;; nearest declaration head in work proportional to its signature; a
+      ;; forward scan would restart at byte zero for every declaration.
       (while (and (< found 0) (>= cursor 0))
         (let
           [candidate : i64

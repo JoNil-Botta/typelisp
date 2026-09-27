@@ -80,7 +80,7 @@
 ;; computed integer match binds the scrutinee's generated i64 variable, so a
 ;; later `(comptime.expr-int n)` reads the count as data instead of a literal.
 ;; A scalar `let` binding over comptime data joins the same table, which is why
-;; the budget is well above the two binder arms #5617 needed: the scanner
+;; the budget is well above what binder arms alone need: the scanner
 ;; bodies bind six at once, while the shared format-spec plan keeps its option
 ;; scalars live beside the existing display-dispatch probes. Keep the producer
 ;; table aligned with the host session's immediate-slot budget. Refs #5617,
@@ -280,15 +280,11 @@
 (define embedded-native-interpreted-arm-code : String
   "  ;; tlci-interpreted-arm\n  0\n")
 
-;: Entries that compiled natively but still contain at least one interpreted
-;: arm site.
 ;; Why the last body compiled fell back to a registration shell. The producer
-;; decides eligibility across a dozen return points and, until now, said only
-;; "shell" -- so every remaining #5596 family was investigated by inferring the
-;; blocker from an AST histogram, which mis-predicted the residue twice
-;; (#5605, #5600). The reason is recorded where the decision is actually made
-;; and reported per identity, and it never reaches generated text, so images
-;; stay byte-identical. Refs #5596.
+;; decides eligibility across a dozen return points, so the reason is recorded
+;; where the decision is actually made (rather than inferred afterwards from
+;; the body's AST) and reported per identity. It never reaches generated text,
+;; so images stay byte-identical. Refs #5596.
 (define embedded-native-fallback-reason : (__tl_dyn-array String)
   (__tl_make-array ""))
 
@@ -526,6 +522,8 @@
     [(compiler_ast_types.AstExpr.MakeArray _ _) "__tl_make-array"]
     [_ "unclassified"]))
 
+;: Entries that compiled natively but still contain at least one interpreted
+;: arm site.
 (define embedded-stdlib-tlci-native-report-partial-count : (__tl_dyn-array i64)
   (__tl_make-array 0))
 
@@ -577,9 +575,9 @@
   (Err String))
 
 ;; Per-body op budget. A template node costs its construction op plus the
-;; span op that rebuilds the parser's wrapper, so the largest bodies sit near
-;; twice the op count they had before spans were carried; 4096 dropped
-;; `stdlib.text_buf_family/owned` back to a registration shell.
+;; span op that rebuilds the parser's wrapper, so a body needs about two ops
+;; per template node; a 4096 cap drops `stdlib.text_buf_family/owned` back to a
+;; registration shell.
 (define embedded-native-ops-cap : i64
   8192)
 
@@ -2790,9 +2788,8 @@
           "      )))\n"))
       out)))
 
-;; Full source for the native package: the host extern plus one entry function
-;; per identity in catalog order. Keep small entries byte-shaped as before and
-;; use bounded status chunks only when the old chain would be too deep.
+;; Keep ordinary-sized arms in the legacy nested shape and use bounded status
+;; chunks only when that chain would be too deep.
 (define (embedded-native-arm-block-with-final
   [ops : (__tl_dyn-array String)]
   [ops-count : i64]
@@ -7210,10 +7207,9 @@
                   ")))\n")))]
           ;; A wildcard arm ends the chain: nothing after it is reachable, so
           ;; its body compiles as the final alternative instead of handing the
-          ;; scrutinee back to the interpreter. This is the whole of the
-          ;; `partial-entries` gap -- `stdlib.eq/inline-eq` raises a
-          ;; comptime-error here and `stdlib.hash/hash` generates its module for
-          ;; every type except `unit`. Refs #5658.
+          ;; scrutinee back to the interpreter (`stdlib.eq/inline-eq` raises a
+          ;; comptime-error there; `stdlib.hash/hash` generates its module for
+          ;; every type except `unit`). Refs #5658.
           [(compiler_ast_types.AstPattern.Wildcard)
             (let
               [arm-code : String (embedded-native-body-code params body-node)]
@@ -8096,6 +8092,8 @@
 (define (embedded-native-host-externs) : String
   (tlci_core.tlci-host-callback-table embedded-native-host-extern-text))
 
+;; Full source for the native package: the host extern plus one entry function
+;; per identity in catalog order.
 (define (embedded-native-source
   [names : (__tl_dyn-array String)]
   [captures : (& captures TlciNativeMacroCaptures)]) : String
@@ -8260,8 +8258,8 @@
 ;; tested for a nonzero status. Straight from lowering, every argument and
 ;; status is a separately stored temporary, and the object backend gives each
 ;; one a stack slot. The opt-1 pipeline propagates the constant arguments and
-;; drops the copies. That shrinks the stdlib image's code section by a quarter
-;; (15.4 MB to 11.7 MB), and every compile expands and hashes the whole image.
+;; drops the copies. That shrinks the stdlib image's code section
+;; substantially, and every compile expands and hashes the whole image.
 ;; Keep this at 1: switch formation runs at opt 2, and the object backend's
 ;; switch emitter emits no phi edge copies, so a switch whose targets open with
 ;; phis would miscompile.

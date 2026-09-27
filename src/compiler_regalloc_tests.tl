@@ -1,5 +1,5 @@
 ;; compiler_regalloc_tests.tl - Selfhost register-allocator fixtures split
-;; from production (#5169).
+;; from production.
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_regalloc as reg)
 (import compiler_profile_state as profile_state)
@@ -196,50 +196,9 @@
             coalesce)
           counts))]))
 
-;; Group-aware planning for the SplitKit phi-carried homing: `members` is the
-;; coalesce group's bitset; boundary edges are tested against any-member liveness.
 (define (compiler-reg-plan-function-avx2 [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
   (compiler-reg-plan-function-avx2-for-abi cabi.CompilerRegTargetAbi.Linux func))
 
-;; Scalar register plan (#perf, opt level 2): full dataflow live intervals for
-;; ALL functions, structural ineligibility that keeps call-spanning
-;; integers/handles in callee-saved registers and applies ABI XMM clobber
-;; constraints to float candidates.
-;;
-;; The precise (segmented, hole-aware) interval builder feeds
-;; compiler-reg-vars-interfere-segmented-index?, whose exact segment-overlap test
-;; only fires when BOTH values carry segments; otherwise it falls back to the
-;; coarse whole-[start,end] overlap, which manufactures phantom conflicts between
-;; values whose live ranges are actually disjoint. The cheap block-level builder
-;; (compiler-reg-block-intervals) leaves segments empty, so every function on it
-;; is stuck with that conservative fallback.
-;;
-;; History (M-D): precise intervals were once limited to 2-10-block functions,
-;; then extended to >= 100 blocks (#regalloc: -90 net static stack reloads in
-;; the self-host's huge walkers, full-liveness compile cost negligible). The
-;; 11-99-block band and single-block functions were deliberately kept coarse
-;; because a measurement AT THAT TIME showed precise intervals in the medium
-;; band perturbed the greedy spill-victim/eviction heuristics non-monotonically
-;; and net-regressed reloads. That measurement predates params-as-greedy-
-;; candidates (M-A) and dead result-store elision (M-B), which reshaped the
-;; interference/pressure landscape; re-measured after M-B, precise intervals
-;; everywhere are a net win, so every scalar-mode function now gets the precise
-;; builder (single-block functions included: multi-def vars with disjoint
-;; single-block ranges suffer the same phantom conflicts under the coarse
-;; fallback, and the M-A param entry-extension below runs on the interval
-;; index regardless of builder). This predicate also gates the loop-split
-;; rescue passes, which require the precise index; they now run for every
-;; function shape. The coarse compiler-reg-block-intervals branch in
-;; compiler-reg-plan-function-scalar-for-abi is kept as the fallback: flipping
-;; this predicate is the single switch back should a pathological shape appear.
-;;
-;; NOTE: enabling this detonated a LATENT BACKEND BUG, fixed together with it:
-;; precise mid-band plans saturate the register pool, so the backend's
-;; EMERGENCY scavenge (all pool regs occupied) started firing in fused
-;; destructure emitters, where its candidate pick ignored the sibling load's
-;; register home and the emergency-wrap restore overwrote the just-loaded
-;; result (false OOB abort in lex-parse-based-int). See the M-D clobber fix in
-;; compiler-backend-emit-load-from-gep-pair / compiler-backend-emit-load-load.
 (cfg
   test
   (define (compiler-reg-early-exit-general-test-function) : ir.CompilerIrFunction
@@ -986,10 +945,8 @@
 ;; carrier already holds the value on this path.
 ;;
 ;; The reload after `call f` is DEAD -- nothing reads `%0` before `call g`
-;; restores it -- and after E-1 that is decided for BOTH candidate classes, so
-;; the run costs two stores and two reloads rather than two stores and three.
-;; It used to be a csr-only relaxation gated on the `csr` flags array; the flow
-;; answers the same question exactly, and the class no longer enters into it.
+;; restores it -- and the flow decides that for BOTH candidate classes, so the
+;; run costs two stores and two reloads rather than two stores and three.
 (cfg
   test
   (define (compiler-reg-call-hole-rewrite-function) : ir.CompilerIrFunction
@@ -2917,8 +2874,8 @@
 ;; A hand-inlined kernel puts its hottest loop DEEP. `it-intern-slice` inlined
 ;; into its driver leaves the byte compare at loop depth 5, inside a depth-4
 ;; probe loop, inside the per-symbol / per-pass / per-round loops. Two frequency
-;; ladders used to flatten at depth 4, and both of them then decided that loop
-;; against itself:
+;; ladders read that depth, and either one flattening at depth 4 decides that
+;; loop against itself:
 ;;
 ;;   * P3c's parking cost model (`compiler-reg-loop-park-block-weight`). The
 ;;     round prices "park a value the loop never touches" as W(preheader) plus
@@ -2928,10 +2885,10 @@
 ;;     reference and `compiler-reg-loop-park-pair!` can never accept -- however
 ;;     hot the loop actually is.
 ;;
-;;   * the greedy's spill weight (`compiler-reg-loop-depth-weight`). A reference
-;;     at depth 5 scored exactly as much as one at depth 4, so the byte loop's
-;;     own base pointer ranked level with the hoisted Vec headers the loop never
-;;     touches, and lost the tie on var id.
+;;   * the greedy's spill weight (`compiler-reg-loop-depth-weight`). Flattened,
+;;     a reference at depth 5 scores exactly as much as one at depth 4, so the
+;;     byte loop's own base pointer ranks level with the hoisted Vec headers the
+;;     loop never touches, and loses the tie on var id.
 ;;
 ;; `loop_park_deep_nest` is that shape reduced to its skeleton: four plain outer
 ;; loops around a ROTATED inner loop in the versioner's `__bce_fast` form -- a
@@ -3381,8 +3338,7 @@
 ;; spill weights. Base pointer %1 has one reference INSIDE the inner loop plus
 ;; its definition one level out; %67 is a value the inner loop never touches
 ;; with two references at that outer level. Flattened at depth 4 the two score
-;; identically, and an exact tie is broken by var id rather than by frequency --
-;; which is how a 15.2M-execution reference lost its register to a 2.5M one.
+;; identically, and an exact tie is broken by var id rather than by frequency.
 ;; Continued to the nest cap, the loop's own operand wins on frequency.
 (cfg
   test
@@ -3888,7 +3844,7 @@
   ;; it (last use point 4) -- must NOT keep its pin, while v0 (%rdi, ends
   ;; point 0) and v1 (%rsi, the divisor, last-used AT the div = read before
   ;; the clobber) keep theirs.
-  ;; R3S-1: the demoted v2 no longer falls to a callee-saved home. It is the
+  ;; R3S-1: the demoted v2 does not fall to a callee-saved home. It is the
   ;; LAST parameter, so its entry copy is the last one emitted and no schedule
   ;; constraint applies; it spans no CALL, so it is not csr-only; and it spans
   ;; the div, so `forbidden` still excludes exactly {%rax,%rdx}. First free in
@@ -4142,7 +4098,7 @@
   ;; stack-homed.
   ;; WIN1: R3S-1's entry-copy schedule constraint is answered EMPTY for every
   ;; non-Linux ABI (compiler-reg-param-entry-forbidden), so a Windows parameter
-  ;; class stays callee-saved-only and this expectation is the pre-R3S-1 one.
+  ;; class stays callee-saved-only.
   ;; The companion test below pins that refusal directly.
   (define (compiler-reg-scalar-windows-param-registers-ok?) : bool
     (match (reg.compiler-reg-plan-function-scalar-for-abi
@@ -4336,8 +4292,8 @@
 
 (cfg
   test
-  ;; FLT-1 fail-closed shape gate, the by-memory half: the transport used to
-  ;; pass the gate, and both this constraint and the pin walk then shifted every
+  ;; FLT-1 fail-closed shape gate, the by-memory half: a transport that passed
+  ;; the gate would make both this constraint and the pin walk shift every
   ;; LATER position's ABI index by one -- a wrong-code bug, not a missed
   ;; optimisation (see compiler-reg-param-assign-walk's note and
   ;; tests/integration/param_memory_transport_abi.tl). The builder must answer
@@ -4521,7 +4477,7 @@
 
 (cfg
   test
-  ;; M-A (RC1): a clobber-point function no longer stack-homes its params. The
+  ;; M-A (RC1): a clobber-point function does not stack-home its params. The
   ;; scalar param cannot keep its ABI pin (the call clobbers %rdi) but becomes
   ;; an ordinary greedy candidate restricted to callee-saved homes: it wins the
   ;; first callee-saved register and is copied there once at entry instead of
@@ -4542,7 +4498,7 @@
   ;; GAP3b: an aggregate-HANDLE param (8-byte struct descriptor) is
   ;; pin-eligible exactly like a scalar (integer-param-type? widened to
   ;; register-eligible), so in this zero-clobber function it keeps its
-  ;; incoming %rdi instead of the M-A-era greedy callee-saved home.
+  ;; incoming %rdi instead of taking a greedy callee-saved home.
   (define (compiler-reg-scalar-aggregate-param-pinned-ok?) : bool
     (match (reg.compiler-reg-plan-function-scalar-for-abi
       cabi.CompilerRegTargetAbi.Linux
@@ -4556,12 +4512,12 @@
 
 ;; M-A (RC1): a used param's interval is force-extended to the function's first
 ;; point (the entry copy writes its home register in the prologue), so the
-;; live-in gap param now spans [0,4] instead of the precise builder's [1,4].
+;; live-in gap param spans [0,4] instead of the precise builder's [1,4].
 (cfg
   test
   ;; Zero-call function with six scalar params, only `f` (var 5) used. The
   ;; unused params 0-4 have no interval, so they can be neither pinned nor
-  ;; greedy-allocated (before AND after M-A); var 5 keeps its %r9 ABI pin. The
+  ;; greedy-allocated; var 5 keeps its %r9 ABI pin. The
   ;; zero-call locals 6..12 then fill the caller-saved pool head in candidate
   ;; order -- %rax/%rsi/%rdi with the current pool ordering -- skipping the
   ;; pinned %r9; nothing spills.
@@ -5207,8 +5163,7 @@
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup assignments 0))
             ;; W3 step (a): var5's def is an i64 literal, so the victim keeps no
-            ;; frame slot at all -- it is rematerialised at its one use (was: a
-            ;; Spill at stack slot 5).
+            ;; frame slot at all -- it is rematerialised at its one use.
             (compiler-reg-maybe-location-remat?
               (reg.compiler-reg-assignment-lookup assignments 5)))]))))
 
@@ -5255,7 +5210,7 @@
           (compiler-reg-location-any-register?
             (reg.compiler-reg-assignment-lookup assignments 0))
           ;; W3 step (a): the victim's def is an i64 literal, so it leaves no
-          ;; frame slot behind (was: a Spill at stack slot 1).
+          ;; frame slot behind.
           (compiler-reg-maybe-location-remat?
             (reg.compiler-reg-assignment-lookup assignments 1))
           (compiler-reg-location-any-register?
@@ -5312,8 +5267,7 @@
             (> (array-ref weighted-counts 0) (array-ref weighted-counts 1))
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup assignments 0))
-            ;; W3 step (a): the victim's def is an i64 literal (was: a Spill at
-            ;; stack slot 1).
+            ;; W3 step (a): the victim's def is an i64 literal.
             (compiler-reg-maybe-location-remat?
               (reg.compiler-reg-assignment-lookup assignments 1))
             (compiler-reg-location-any-register?
@@ -5724,7 +5678,7 @@
             ;; register-homes the hot call-spanning value (spill-weight priority)
             ;; and the single-use overflow (var 6) takes no register. W3 step
             ;; (a): both overflows are i64 literals, so they rematerialise
-            ;; instead of taking frame slots (was: 2 spills, var 6 at slot 6).
+            ;; instead of taking frame slots.
             (= (compiler-reg-spill-count assignments) 0)
             (compiler-reg-maybe-location-remat?
               (reg.compiler-reg-assignment-lookup assignments 6))
@@ -6434,15 +6388,13 @@
       0
       1)))
 
-;; (e) PRICING, in its final shape: a trip-amplified benefit, a 2x margin, and a
-;; two-use floor.
+;; (e) PRICING: a trip-amplified benefit, a 2x margin, and a two-use floor.
 ;;
-;; The fixture's ONE in-region use is refused by the floor -- and that is the
-;; case that regressed the flagship row when the trip factor landed without it.
-;; The victim's save sits at its definition, which for a parameter is the
-;; function entry, so it runs on every CALL while the benefit needs the loop to
-;; be entered; no depth model sees that asymmetry. Two uses in the same fixture
-;; pay: 2*2*8 = 32 >= 2*(2*1 + 1).
+;; The fixture's ONE in-region use is refused by the floor, which the trip
+;; factor needs beside it: the victim's save sits at its definition, which for
+;; a parameter is the function entry, so it runs on every CALL while the
+;; benefit needs the loop to be entered; no depth model sees that asymmetry.
+;; Two uses in the same fixture pay: 2*2*8 = 32 >= 2*(2*1 + 1).
 (cfg
   test
   (define (compiler-reg-evict-price-refused?) : bool
@@ -6637,9 +6589,9 @@
               0)))))))
 
 ;; A sibling's read is the class's read: with v5 (used inside the loop) coalesced
-;; onto v3, v3 is no longer parked and the verifier says so. This is the exact
-;; shape that made the first cut of this pass miscompile -- the root's hull
-;; covered the region BECAUSE a member was read inside it.
+;; onto v3, v3 is no longer parked and the verifier says so. Checking the root
+;; alone miscompiles this shape: the root's hull covers the region BECAUSE a
+;; member is read inside it.
 (cfg
   test
   (define (compiler-reg-evict-class-mention-ok?) : bool
@@ -8226,13 +8178,13 @@
 ;; %3 dies in `entry`, %0 in `body`, %1 in `merge`, %2 in `latch` -- so ONE slot
 ;; serves the whole chain.
 ;;
-;; The pre-M-B3 monotone rule could not see that. Visiting `header` first it
-;; joined %2 to %0 (the only pair whose hulls are ordered the way the rule
-;; wanted), which pushed the web's running end out to %2's; %3 and %1 both start
-;; before that end and were refused even though neither overlaps anything in the
-;; web, and %1's own web could never be joined to a second web anyway. Result: 3
-;; slots and two surviving slot-to-slot phi copies per iteration. With all-pairs
-;; disjointness plus web-to-web merging the chain collapses to 1 slot.
+;; A monotone rule cannot see that. Visiting `header` first it joins %2 to %0
+;; (the only pair whose hulls are ordered the way the rule wants), which pushes
+;; the web's running end out to %2's; %3 and %1 both start before that end and
+;; are refused even though neither overlaps anything in the web, and %1's own
+;; web can never be joined to a second web anyway, leaving 3 slots and two
+;; slot-to-slot phi copies per iteration. With all-pairs disjointness plus
+;; web-to-web merging the chain collapses to 1 slot.
 ;;
 ;; `overlap` injects a genuine interference to prove the test still refuses: the
 ;; exit returns %1, so %1 stays live from `merge` past `latch` and really does
@@ -8331,10 +8283,10 @@
 ;; The induction-step witness. Same fixture idea as the web-merge case above, cut
 ;; down to the counter itself: `%0 = phi(%2 entry, %1 latch)` with the back-edge
 ;; value produced by `%1 = %0 + 1` -- a BinOp, which is what every counted loop
-;; writes and what the Mov-only witness could not see. The two hulls TOUCH at the
+;; writes and what a Mov-only witness cannot see. The two hulls TOUCH at the
 ;; step (the counter's last event and the step's definition are the same
-;; instruction), so the all-pairs disjointness rule refuses them and the pair used
-;; to cost a second slot plus a slot-to-slot phi copy on the back edge.
+;; instruction), so the all-pairs disjointness rule alone refuses them and the
+;; pair would cost a second slot plus a slot-to-slot phi copy on the back edge.
 ;;
 ;; `outlives` is the negative: `exit` returns the COUNTER, so %0's hull runs past
 ;; the step into a later block and the equality that carries the witness no longer
@@ -8432,10 +8384,10 @@
 ;;
 ;; The phi visit joins %3 to the carry first, so when %2 is offered through the
 ;; ADD witness the all-pairs walk meets the %2/%3 touch -- a pair with a witness
-;; of its own, but not the one being offered. The old single-pair rule refused
-;; it there, and offering %2 again through the MOV witness met the %1/%2 touch
-;; and refused it again, so the add's result took a second slot and the block
-;; stored one register to two slots every iteration.
+;; of its own, but not the one being offered. A single-pair rule refuses it
+;; there, and offering %2 again through the MOV witness meets the %1/%2 touch
+;; and refuses it again, so the add's result would take a second slot and the
+;; block would store one register to two slots every iteration.
 ;;
 ;; `outlives` is the negative: `exit` returns %2, so %2 is still live where %3
 ;; is defined, the endpoint equality that carries the witness no longer holds,
@@ -8980,7 +8932,7 @@
 
 (define (compiler-reg-scratch-borrow-masks-ok?) : bool
   (and
-    ;; The SCR-1 borrow estimator follows the same ABI split as the backend:
+    ;; The scratch-borrow estimator follows the same ABI split as the backend:
     ;; %rsi is an unconditional candidate on SysV, but on Win64 it is available
     ;; only through the plan-saved nonvolatile mask.
     (not
@@ -10222,9 +10174,9 @@
           (reg.compiler-reg-assignment-lookup assignments 4)
           (cabi.compiler-abi-xmm-register-id 6)))]))
 
-;; SIMD plan (#perf): an integer value live across a call now keeps a callee-saved
-;; register home (the SIMD integer pool is the 5 callee-saved registers, which the
-;; callee preserves), exactly like the scalar plan -- it is no longer force-spilled.
+;; SIMD plan: an integer value live across a call keeps a callee-saved register
+;; home (the SIMD integer pool is the 5 callee-saved registers, which the callee
+;; preserves), exactly like the scalar plan.
 ;; The unit call result (var 1) stays ineligible (non-scalar).
 (define (compiler-reg-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-live-function))
@@ -10552,12 +10504,10 @@
           ;; spanning values cannot use caller-saved across the call). The greedy's
           ;; spill-weight priority keeps the hottest value (var 5, stored 3x)
           ;; register-homed and spills the single-use overflow; var 6 overflows to
-          ;; the stack and needs no save/restore rescue. (The old allocator spilled
-          ;; var 5 then save/restored it; the unified greedy's weight ordering
-          ;; avoids that round-trip -- a strict improvement.)
+          ;; the stack and needs no save/restore rescue.
           ;; W3 step (a): both overflow values are single-def i64 literals, so
           ;; the spills the weight order picked become rematerialisations
-          ;; instead of frame slots (was: 2 spills, var 6 at stack slot 6).
+          ;; instead of frame slots.
           (= (compiler-reg-spill-count assignments) 0)
           (compiler-reg-maybe-location-remat?
             (reg.compiler-reg-assignment-lookup assignments 6))
@@ -13419,16 +13369,15 @@
 ;; The const-hoist reads the same nest, but it does not want a DEPTH: it wants
 ;; the loop as a SET, because everything it has to prove -- nothing enters the
 ;; loop except at the header, so a load placed before the header runs before
-;; every site -- is a question about membership, and the answers the index
-;; range gave to it were answers about the emitted order.
+;; every site -- is a question about membership, and an index range answers
+;; it in terms of the emitted order.
 ;; entry / body / latch / header / exit, with the header laid out BELOW the
-;; blocks it heads: what a rotation produces, and the shape the index range
-;; cannot read. `loop-ends` records a back edge only when the source is at or
-;; after the target, so the real latch (block 2, jumping UP to block 3) is
-;; invisible to it; it reads block 1 as a header instead, over the range
-;; [1..3], and then rejects the loop outright, because `entry` -- outside that
-;; range -- branches to block 3, strictly inside it. That false side entry is
-;; the refusal the hoist measured. As a member set the same loop is
+;; blocks it heads: what a rotation produces, and the shape an index range
+;; cannot read. A range that records a back edge only when the source is at or
+;; after the target never sees the real latch (block 2, jumping UP to block
+;; 3); it reads block 1 as a header instead, over the range [1..3], and then
+;; rejects the loop outright, because `entry` -- outside that range --
+;; branches to block 3, strictly inside it. As a member set the same loop is
 ;; unremarkable: {header, body, latch}, entered only at the header, with
 ;; `entry` the header's one predecessor from outside it.
 (define (compiler-reg-loop-nest-rotated-blocks) : ir.CompilerIrBlockList
@@ -13559,10 +13508,10 @@
       (not (= side-header 0))
       (= (reg.compiler-reg-loop-nest-member-lo side side-header side-total) 0))))
 
-;; The two shapes the range encoding overcharged, read as membership. `early`
+;; Two shapes an index-range encoding overcharges, read as membership. `early`
 ;; is laid out inside the loop's span but reaches the exit and never the latch,
-;; so it is not a member: the leaf scan skips it, and a call there no longer
-;; costs the loop its hoist. The sunk `cold` block's backward-in-layout jump
+;; so it is not a member: the leaf scan skips it, and a call there does not
+;; cost the loop its hoist. The sunk `cold` block's backward-in-layout jump
 ;; closes no cycle at all, so the nest offers the hoist no region there to
 ;; consider in the first place.
 (define (compiler-reg-loop-nest-non-member-ok?) : bool
@@ -13667,12 +13616,12 @@
 
 ;; --- CFG loop nest: the layout span, and the preheader spliced on it --------
 ;;
-;; The last readers of the index range are the ones that still have to speak in
-;; SPANS: the loop-split rescue's region, the leaf-CSR region, the call
-;; region's loop row. What those want is not "the highest block with an edge
-;; into h from at or below it" but "the block range h's loop actually occupies"
-;; -- the same numbers only for a layout that keeps every loop contiguous and
-;; header-first, and an answer at all for blocks that head no loop whatever.
+;; Some readers still have to speak in SPANS: the call region's loop rows and
+;; its loop-scope eviction. What those want is not "the highest block with an
+;; edge into h from at or below it" but "the block range h's loop actually
+;; occupies" -- the same numbers only for a layout that keeps every loop
+;; contiguous and header-first, and an answer at all for blocks that head no
+;; loop whatever.
 ;;
 ;; The span is anchored on the loop's lowest MEMBER, so a ROTATED loop -- one
 ;; whose header is laid out below the body it dominates -- gets a span too;
@@ -13730,18 +13679,17 @@
       (= (compiler-reg-loop-nest-span-hi early 1) 4)
       (= (compiler-reg-loop-nest-span-hi early 3) (- 0 1))
       ;; The sunk cold block's backward-in-layout jump closes no cycle, so no
-      ;; block is given a span at all -- where the range encoding published one
-      ;; covering [join, cold] and charged a rescue region for it.
+      ;; block is given a span at all.
       (= (compiler-reg-loop-nest-span-hi sunk 0) (- 0 1))
       (= (compiler-reg-loop-nest-span-hi sunk 1) (- 0 1))
       (= (compiler-reg-loop-nest-span-hi sunk 2) (- 0 1))
       (= (compiler-reg-loop-nest-span-hi sunk 3) (- 0 1))
       ;; A ROTATED loop is contiguous but does not START at its header: the
       ;; span is [body..header] and it is published under the header, block 3.
-      ;; A hull anchored on the header could only answer -1 here, which is what
-      ;; used to cost every rotated loop its rescue. No other block heads
-      ;; anything -- in particular block 1, which the range encoding read as a
-      ;; header with no out-of-loop predecessor at all.
+      ;; A hull anchored on the header could only answer -1 here, which would
+      ;; cost every rotated loop its rescue. No other block heads anything --
+      ;; in particular block 1, which a back-edge index range reads as a header
+      ;; with no out-of-loop predecessor at all.
       (= (compiler-reg-loop-nest-span-lo rotated 3) 1)
       (= (compiler-reg-loop-nest-span-hi rotated 3) 3)
       (= (compiler-reg-loop-nest-span-hi rotated 0) (- 0 1))

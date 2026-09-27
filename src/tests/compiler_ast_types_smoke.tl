@@ -232,7 +232,7 @@
 
 (define (compiler-ast-state-owned-type-dedup-budget-smoke?) : bool
   ;; Keep the source-macro self-host uniqueness budget from silently shrinking
-  ;; back below the measured 37.5K-node surface.
+  ;; (see `ast-type-node-pool-state-dedup-capacity`).
   (>=
     (array-length
       (__tl-project-field (ast.ast-type-node-pool-state-create 1) dedup-slots))

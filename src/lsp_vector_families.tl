@@ -170,9 +170,8 @@
   (emit bool))
 
 ;; Deliberately a hand-grown `(__tl_dyn-array LspFoldRange)` rather than a
-;; generated `(vector.vector LspFoldRange core)`: one family instantiation
-;; measures +87,721,964 Ir (+0.158%) of self_compile on its own, which is 31% of
-;; the CI-gated budget for a single collection type (#5646). This is the same
+;; generated `(vector.vector LspFoldRange core)`: every family instantiation
+;; adds its own self-compile cost (#5646). This is the same
 ;; growth shape `TlciNativeMacroCaptures` uses in the tlci producer. Revert to
 ;; the generated vector once #5646 makes instantiation cheap.
 (defstruct LspFoldRanges

@@ -423,9 +423,9 @@
         ;; its table's direct entry is decoded right here, exactly as the first
         ;; branch of decode-symbol would; every other symbol -- a longer code,
         ;; or one within 16 bits of the stream's end -- goes through
-        ;; decode-symbol itself on a reader rebuilt from the locals. Once per
-        ;; symbol of a 16 MB image, the call, its Result and a reader behind a
-        ;; reference were most of a small program's compile.
+        ;; decode-symbol itself on a reader rebuilt from the locals, so the
+        ;; call, its Result and a reader behind a reference are not paid once
+        ;; per symbol of a multi-megabyte image.
         (let
           [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
           [out-index : i64 0]
@@ -449,7 +449,7 @@
             ;; and its index is 16 bits. A token that needs anything else (a
             ;; longer code, or a match the general loop would reject) leaves
             ;; this loop before consuming a bit, and the general loop below
-            ;; decodes it, errors included, exactly as it always has.
+            ;; decodes it, errors included.
             (let
               [lookup-size : i64
                 (compiler-embedded-stdlib-tlci-codec-lookup-size)]

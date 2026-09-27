@@ -2,7 +2,6 @@
 set -eu
 
 # verify-doc-site.sh - build and validate the selfhost docs site, no publish.
-# refs #873
 #
 # Builds the static stdlib/API and language-reference HTML site via
 # tools/doc-site/doc_site.tl, runs the
@@ -14,7 +13,7 @@ set -eu
 #
 # It drives the published/staged selfhost
 # compiler. CI runs it on pull requests and default-branch pushes WITHOUT
-# deploying; #874 consumes it as the gate before the Pages publish step. Set
+# deploying; the docs Pages workflow runs it as the gate before publishing. Set
 # DOC_SITE_OUT to choose the generated-site directory and DOC_SITE_WORK to
 # choose the scratch directory for native builders, logs, and objects.
 #
@@ -308,7 +307,7 @@ hidden_payload=$(find "$SITE" -mindepth 1 -maxdepth 1 -name '.*' | head -n 1)
 stdlib_pages=$(find "$SITE" -maxdepth 1 -type f -name 'stdlib-*.html' | wc -l)
 [ "$stdlib_pages" -ge 1 ] || fail "no stdlib-*.html module pages were generated"
 
-# Completeness (#5689): every top-level stdlib module has a published page and
+# Completeness: every top-level stdlib module has a published page and
 # no published page is stale. The site derives this set from stdlib/ through
 # tools/doc-site/doc_site_stdlib_manifest.tl; this independent shell derivation
 # catches a broken walk in either direction. Module names separate words with
@@ -346,8 +345,7 @@ doc_site_search_validate_manifests "$SITE" "$WORK" "$SEARCH_INDEX" "$HTML_PAGES"
 search_record_count=$DOC_SITE_SEARCH_RECORD_COUNT
 
 # doc-site-search-index-scan-guard: page-loop-begin
-# One awk pass over the pages checks the markers, links and anchors that a
-# per-page, per-link grep loop checked before (#8063); see
+# One awk pass over the pages checks the markers, links and anchors; see
 # scripts/lib-doc-site-page-checks.sh.
 link_count=$(doc_site_check_pages "$SITE" "$HTML_PAGES") ||
     fail "docs-site page and link checks failed"

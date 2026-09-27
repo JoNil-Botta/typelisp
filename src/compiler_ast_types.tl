@@ -1,8 +1,5 @@
 ;; compiler_ast_types.tl - Self-hosted model of the real TypeLisp AST.
 ;;
-;; This module is intentionally separate from ast_types.tl, which remains the
-;; smaller compile_smoke AST. The types below mirror Rust's src/ast.rs and
-;; src/types.rs closely enough for the Sexpr -> real-AST parser to target them.
 ;; Parser result/error wrappers, typechecker registries, inferred types, and
 ;; lowered IR metadata live elsewhere.
 (import stdlib.str_cat_runtime as str_cat)
@@ -792,12 +789,12 @@
   (len i64))
 
 ;; Boxed payload for `AstExpr.Lambda`. Lambdas are rare in the AST, but their
-;; inline payload (AstParamList ~80 B + AstMaybeType ~48 B) made
-;; `AstExpr.Lambda` the single largest `AstExpr` variant at 144 B -- and because
-;; a defenum is laid out as `tag + max(variant)`, every one of the ~2M nodes in
-;; the flat node pool paid that 144 B. Boxing the payload collapses the variant
-;; to one word, shrinking every node (pool footprint and the per-node
-;; `ast-node-get` copy) without slowing the common small variants.
+;; inline payload (an AstParamList plus an AstMaybeType) would make
+;; `AstExpr.Lambda` the largest `AstExpr` variant -- and because a defenum is
+;; laid out as `tag + max(variant)`, every node in the flat node pool would pay
+;; for it. Boxing the payload collapses the variant to one word, shrinking every
+;; node (pool footprint and the per-node `ast-node-get` copy) without slowing
+;; the common small variants.
 (defenum AstLambda
   (Lambda AstParamList AstMaybeType i64))
 
@@ -832,7 +829,7 @@
         body-box)]))
 
 ;; Boxed payload for `AstExpr.SpmdScan`. With ten fields including two
-;; inline `AstType`s, the variant is 152 B -- the largest `AstExpr` variant,
+;; inline `AstType`s, the variant would be the largest `AstExpr` variant,
 ;; which sets the size of every node in the flat pool. spmd-scan is rare, so
 ;; boxing its payload collapses the variant to one word and shrinks every node.
 (defenum AstSpmdScan
@@ -860,9 +857,9 @@
     (unsafe
       (ptr-read (int->ptr (cast address : u64) : (Ptr AstSpmdCompact))))))
 
-;; Boxed payloads for the 104 B AstExpr tier.
+;; Boxed payloads for wide AstExpr variants.
 ;; AstExpr.Let inlines AstLetBindingList; AstExpr.SpmdReduce has
-;; an inline AstType plus six scalars. Boxing both drops the node to 80 B.
+;; an inline AstType plus six scalars. Boxing both keeps them off the row size.
 (defenum AstLet
   (Let AstLetBindingList i64))
 
@@ -885,10 +882,10 @@
     (unsafe
       (ptr-read (int->ptr (cast address : u64) : (Ptr AstSpmdReduce))))))
 
-;; Boxed payloads for the 80 B AstExpr tier.
+;; Boxed payloads for wide AstExpr variants.
 ;; AstExpr.Foreach inlines an AstType plus four scalars;
-;; AstExpr.WithResource inlines two list heads. Boxing both drops the node to
-;; 56 B (bounded by the AstType-carrying variants like Cast/Ann/Init).
+;; AstExpr.WithResource inlines two list heads. Boxing both keeps them off the
+;; row size.
 (defenum AstForeach
   (Foreach i64 AstType i64 i64 i64))
 
@@ -911,10 +908,10 @@
     (unsafe
       (ptr-read (int->ptr (cast address : u64) : (Ptr AstWithResource))))))
 
-;; Boxed payload for `AstExpr.Match`. After boxing AstExpr.Lambda/AstExpr.SpmdScan,
-;; `AstExpr.Match i64 AstMatchArmList` is the largest variant at 112 B
-;; (its arm list inlines AstMatchArm -> AstPattern -> AstMaybeType -> AstType).
-;; Boxing it collapses the variant to one word, dropping the node to 104 B.
+;; Boxed payload for `AstExpr.Match`. `AstExpr.Match i64 AstMatchArmList` would
+;; be one of the largest variants (its arm list inlines AstMatchArm ->
+;; AstPattern -> AstMaybeType -> AstType). Boxing it collapses the variant to
+;; one word.
 (defenum AstMatch
   (Match i64 AstMatchArmList))
 
@@ -1027,8 +1024,7 @@
   ;; Null raw-pointer construction `(ptr-null : T)` where `T` is `(Ptr U)` or
   ;; `(MutPtr U)`. Lowers to a pointer-sized zero; type is `T`.
   ;; The operand is an AstTypeId into the owning context's type pool, not an
-  ;; inline AstType: an inline AstType is 24 B and would hold the AstExpr row
-  ;; at its 40 B ceiling (see target/r1-design.md 1.1). Resolve it with the
+  ;; inline AstType, which would widen the AstExpr row. Resolve it with the
   ;; reader that matches the pool the node came from.
   (PtrNull i64)
   ;; Null check `(ptr-null? p)` on a raw pointer. Result is `bool`.
@@ -1104,15 +1100,16 @@
 ;; --- segmented AST node pool ---
 ;; AstExpr nodes live in fixed-size segments, referenced by AstNodeId (a flat
 ;; logical index) instead of i64. Parsing appends nodes without per-node boxes,
-;; traversal resolves a segment and offset, and growth never relocates nodes.
+;; traversal resolves a segment and offset, and growth never relocates nodes,
 ;; and the loader needs no per-file deep clone (nodes already persist in the pool).
 ;; The pool is process-global and reset per compile (see ast-node-pool-reset!),
 ;; reusing its allocated segments; AstNodeId values stay valid because the pool only
-;; grows within a compile (callers truncate via ast-node-pool-mark/reset on parse
-;; error). The process-global pool is only the compatibility fallback: compiler
-;; and lint drivers install state-owned pools sized for their workloads before
-;; parsing. Keep enough room for direct parser/typechecker smoke users without
-;; permanently paying for a second selfhost-sized backing array. The fallback
+;; grows within a compile (callers truncate via ast-node-pool-len and
+;; ast-node-pool-reset-to! on parse error). The process-global pool is only the
+;; compatibility fallback: compiler and lint drivers install state-owned pools
+;; sized for their workloads before parsing. Keep enough room for direct
+;; parser/typechecker smoke users without permanently paying for a second
+;; selfhost-sized backing array. The fallback
 ;; retains the proven grow path for larger legacy callers.
 ;; Plain mutable globals keep the hot compatibility path simple and avoid the
 ;; global-struct reassignment that previously tripped an opt2 miscompile.
@@ -1157,8 +1154,7 @@
 (define ast-expr-span-slot-bytes : i64
   4)
 (define ast-expr-semantic-wrapper-fuel-limit : i64
-  ;; Public corpus measurement found at most 18 nested source views. Keep a
-  ;; generous fixed guard so malformed/cyclic in-place rewrites fail closed
+  ;; Keep a generous fixed guard so malformed/cyclic in-place rewrites fail closed
   ;; without walking a multi-million-node pool before every span write.
   256)
 (define ast-expr-spanned-storage-tag : i64
@@ -1228,18 +1224,16 @@
 ;; Two other spellings have been investigated:
 ;;
 ;;   * A literal-initialised global folds to the same immediate, but naming the
-;;     stride that way perturbs the SEED compiler's inliner. Measured:
-;;     `target/stage0/typelisp` then inlines `ty-node-get` into
-;;     `ty-node-shallow-eq?`, moves 32k lines of stage1 assembly, and the
+;;     stride that way perturbs the SEED compiler's inliner: the stage0
+;;     compiler then inlines `ty-node-get` into `ty-node-shallow-eq?`, and the
 ;;     resulting stage1 segfaults in `tc-move-check-expr`.
-;;   * A `defmacro` was historically blocked because the macro expander did not
-;;     descend into `(int->ptr x : (Ptr T))` operands. That traversal gap is
-;;     fixed by #6029; changing this performance-sensitive representation still
-;;     requires its own bootstrap measurement rather than riding that fix.
+;;   * A `defmacro` was blocked because the macro expander did not descend into
+;;     `(int->ptr x : (Ptr T))` operands. That traversal gap is fixed; changing
+;;     this performance-sensitive representation still requires its own
+;;     bootstrap check rather than riding that fix.
 ;;
 ;; A zero-arg function inlines and folds to the same immediate the literal
-;; produced, and stage1.s stays byte-identical to the pre-consolidation tree.
-;; See target/r1p1-notes.md 1.3.
+;; produced.
 (define (ast-expr-node-bytes) : i64
   32)
 
@@ -1258,10 +1252,9 @@
   4096)
 
 ;; --- sentinel encodings for the AstExpr row ---
-;; `AstExpr.Init` and `AstExpr.Borrow` used to inline an `AstMaybeType`
-;; (8 + AstType 24 = 32 B) and an `AstBorrowLifetime` (16 B). Both held the
-;; row at its 40 B ceiling. They now carry a single i64 with -1 as the
-;; "absent" encoding, which is safe in both cases: an AstTypeId is a pool
+;; `AstExpr.Init` and `AstExpr.Borrow` carry a single i64 instead of an inline
+;; `AstMaybeType` or `AstBorrowLifetime`, which would widen the row, with -1 as
+;; the "absent" encoding, which is safe in both cases: an AstTypeId is a pool
 ;; index (>= 0) and a borrow lifetime name is an intern id (>= 0).
 ;;
 ;; The AstMaybeType twins are pool-aware because the payload is a type; the
@@ -1350,7 +1343,7 @@
 ;; array here too, otherwise -- if the grow fires while a transient scratch arena
 ;; is active (lowering/optimize) -- the regrown global array is freed when that
 ;; scratch arena is destroyed, leaving the pool dangling (a non-deterministic
-;; use-after-free). This is why the pool previously failed closed.
+;; use-after-free).
 (define node-pool-base-arena : i64
   (arena.tl_arena_current))
 
@@ -2804,7 +2797,7 @@
 ;: Add one fixed-size backing segment without relocating earlier nodes.
 ;;
 ;; Type IDs use the same stable segment/offset mapping as expression IDs. The
-;; smaller segment size follows the measured hash-consed selfhost population.
+;; smaller segment size reflects the much smaller hash-consed type population.
 (define (ty-node-pool-grow!) : unit
   (let
     [segment-index : i64 ty-node-pool-segment-count]
@@ -2927,11 +2920,10 @@
   (let
     [want
       : i64
-      ;; Large ordinary transformer bodies can exceed the old half-full
-      ;; 8K/32K uniqueness budgets before the rest of a self-host check begins.
-      ;; The scalar `for` source port measures about 37.5K distinct nodes in a
-      ;; full check; retain headroom instead of falling back to millions of
-      ;; duplicate raw type nodes.
+      ;; Large ordinary transformer bodies (the scalar `for` source port, for
+      ;; one) need a large uniqueness budget in a self-host check; retain
+      ;; headroom instead of falling back to millions of duplicate raw type
+      ;; nodes.
       (if (< capacity 131072)
         131072
         capacity)]
@@ -3204,12 +3196,12 @@
 ;; Type nodes are immutable and constructed
 ;; bottom-up, so identical subtrees can share one id: children are already
 ;; deduplicated when their parent is pushed, which makes shallow field
-;; equality (child ids included) exact structural equality. A cli.tl compile
-;; previously pushed >8M nodes for a few thousand distinct types; hash-consing
-;; collapses the pool by orders of magnitude, shrinking both the node-slot
-;; footprint and the pre-sized pool itself. The dedup table is a growable
-;; open-addressing map from node hash to id (+1; 0 = empty), cleared on pool
-;; truncate/reset. Passing half load doubles the table and rehashes
+;; equality (child ids included) exact structural equality. Without it a
+;; compile pushes millions of nodes for a few thousand distinct types;
+;; hash-consing collapses the pool by orders of magnitude, shrinking both the
+;; node-slot footprint and the pre-sized pool itself. The dedup table is a
+;; growable open-addressing map from node hash to id (+1; 0 = empty), cleared
+;; on pool truncate/reset. Passing half load doubles the table and rehashes
 ;; (`ty-node-dedup-grow!`) instead of degrading: a table that stopped indexing
 ;; left equal types with distinct ids, which both balloons the pool and busts
 ;; every id-keyed downstream cache.
@@ -3230,7 +3222,7 @@
 
 ;; Upper bound on the doubling above: 2^24 slots indexes 8.4M distinct type
 ;; nodes for 128 MiB of table. No self-host workload comes within an order of
-;; magnitude of it; it exists so a pathological input degrades to the old
+;; magnitude of it; it exists so a pathological input degrades to
 ;; plain-append behaviour rather than to an unbounded table.
 (define ty-node-dedup-max-capacity : i64
   16777216)
@@ -3286,10 +3278,8 @@
 ;; `constant + id` -- `(AstType.Var name)` is `4062 + name`, `(AstType.Box
 ;; inner)` is `3014 + inner`, and so on for Struct/Enum/DynArray/Ptr/MutPtr/
 ;; Consume -- so masking the raw hash piles every one of them into the same few
-;; thousand low slots while the rest of the table stays empty. Measured on an
-;; opt1 self-compile: 22.4K live entries in a 131,072-slot table took 56.5M
-;; probe steps for 1.93M pushes (29.3 per push, worst chain 1880) because those
-;; entries occupy a ~24K-slot window at ~90% local load.
+;; thousand low slots while the rest of the table stays empty, and probe chains
+;; grow long at that high local load.
 ;;
 ;; A Fibonacci/Knuth multiply spreads them: consecutive ids step through the
 ;; table by a fixed odd stride instead of landing next to each other, and two
@@ -3805,15 +3795,14 @@
 ;; context is built -- the same invariant `node-pool-base-arena` above states
 ;; for the pool backing arrays, one level up.
 ;;
-;; It was invisible while every transient arena that could be current here was
-;; REWOUND rather than DESTROYED. It becomes a hard use-after-free the moment
-;; macro expansion runs under a per-declaration generation that is
-;; `tl_arena_destroy`d: an import-placeholder expansion rebases the active pools
-;; onto captured CTFE syntax pools, the context it installs owns cells in that
-;; declaration's generation, and the next `capture-active!` -- two splices later,
-;; after the generation is gone -- writes into freed pages. Reproducer:
-;; `tests/integration/compile_profile_cross_file_single_compilation`; the class
-;; is pinned by `tests/integration/arena_pool_context_escape.tl`.
+;; A transient arena that is only REWOUND hides a violation; one that is
+;; DESTROYED turns it into a hard use-after-free, and macro expansion runs under
+;; a per-declaration generation that is `tl_arena_destroy`d: an
+;; import-placeholder expansion rebases the active pools onto captured CTFE
+;; syntax pools, the context it installs owns cells in that declaration's
+;; generation, and the next `capture-active!` -- two splices later, after the
+;; generation is gone -- writes into freed pages. The class is pinned by
+;; `tests/integration/arena_pool_context_escape.tl`.
 ;;
 ;; THE RULE, stated once so every constructor below can be checked against it:
 ;;
@@ -3823,18 +3812,17 @@
 ;; Every constructor names that owner explicitly:
 ;;
 ;;   * `ast-node-pool-context-new-with-capacities-in-arena` describes a FRESH
-;;     pool, so the owner is that pool's own `shared-arena`. It has always said
-;;     so ("the context cells are part of the pool's retained ownership graph").
+;;     pool, so the owner is that pool's own `shared-arena` ("the context cells
+;;     are part of the pool's retained ownership graph").
 ;;   * `ast-node-pool-context-capture-active-raw` describes the ACTIVE pool, so
 ;;     the owner is `node-pool-base-arena` -- the arena that same file already
 ;;     requires the pool's backing arrays to live in.
 ;;   * `ast-node-pool-context-new` takes the owner as an argument and has no
 ;;     default, so a new call site cannot silently inherit the current arena.
 ;;
-;; R3-P2c: the earlier form of this fix gated a redirect INSIDE
+;; R3-P2c: an earlier form of this fix gated a redirect INSIDE
 ;; `ast-node-pool-context-new` on a global flag set while a macro-walk
-;; generation was live. That was wrong in both directions and is the defect this
-;; revision closes:
+;; generation was live. That was wrong in both directions:
 ;;
 ;;   * it OVERRODE a caller that had already chosen a deliberate owner.
 ;;     `-new-with-capacities-in-arena` sets the arena to the new pool's
@@ -3843,8 +3831,7 @@
 ;;     during an expansion described itself with cells owned by a different
 ;;     arena's lifetime. On an `embedded-stdlib-tlci` build the default native
 ;;     stdlib route re-hydrates the surface through exactly that constructor
-;;     from inside macro expansion, which is why it surfaced on the comptime
-;;     host-metadata smoke and on no workload this packet had measured.
+;;     from inside macro expansion.
 ;;   * it was BYPASSABLE. Any future constructor that built cells without
 ;;     consulting the flag was silently outside the rule.
 ;;
@@ -3926,10 +3913,9 @@
 ;; R3-P2c: THE BACKSTOP, and the answer to "what prevents the next one".
 ;;
 ;; Naming an owner at every constructor (above) is a rule a NEW call site can
-;; still get wrong, and the class has now fired five times, each time from a
-;; producer nobody had enumerated. So the guard is moved off the producers and
-;; onto the one place every escape of this class must pass: the moment a
-;; transient generation is destroyed.
+;; still get wrong, typically from a producer nobody had enumerated. So the
+;; guard is moved off the producers and onto the one place every escape of this
+;; class must pass: the moment a transient generation is destroyed.
 ;;
 ;; `ast-node-pool-context-transient-witness` is the generation handle that is
 ;; live right now, published by the macro walk around each expansion.
@@ -4442,8 +4428,8 @@
 ;; than a pool value, mirroring `ast-type-segment-bases-get` on the type side.
 ;; Addressing is `ast-node-get`'s without its process-global load, so a
 ;; read-only walk that hoists the pointer once pays less per node than the
-;; installed-pool fast path (13 instructions against 14 at opt2) instead of the
-;; 30 a per-node `AstNodePoolContext` read costs.
+;; installed-pool fast path, and much less than a per-node
+;; `AstNodePoolContext` read.
 (define (ast-expr-segment-bases-get [segment-bases : i64] [id : i64]) : AstExpr
   (let
     [biased-base : i64
@@ -5018,8 +5004,7 @@
 ;; is false at capacity 0 -- so one program-lifetime array is safe to hand to
 ;; every empty list. Only the `slots` fat pointer is shared; the list struct
 ;; itself is a per-value copy, so a later `grow` rebinds that copy's field and
-;; leaves this array untouched. Same discipline as
-;; `tc-moved-exact-path-index-empty-facts`.
+;; leaves this array untouched.
 ;;
 ;; This global is initialized at startup in the program arena, so it outlives
 ;; every per-phase arena that can hold a list pointing at it.
@@ -5958,10 +5943,10 @@
 
 ;; One shared fallback value instead of one per call.
 ;;
-;; Every one of this function's ~55 call sites is the default argument of a
+;; Every one of this function's call sites is the default argument of a
 ;; bounds-checked `ast-variant-def-list-get`, so the value is built eagerly on
-;; every lookup and discarded on every hit -- 1.71M constructions in a
-;; self-compile, each allocating two list structs plus the enum. Sharing is safe
+;; every lookup and discarded on every hit, each construction allocating two
+;; list structs plus the enum. Sharing is safe
 ;; for the same reason the hit path is: `ast-variant-def-list-get` hands back a
 ;; value callers only destructure and read (a caller that mutated it would
 ;; already be writing into the stored element on the hit path), and both payload
@@ -6423,9 +6408,9 @@
 ;;
 ;; `ast-expr-fold-children` evaluates to `seed` for a node without children
 ;; and otherwise to `(combine (... (combine seed child0) ...) childN)`, each
-;; child being the matching hook's result. `ast-expr-for-each-child` and
-;; `ast-expr-any-child?` are that fold with `begin`/unit and short-circuit
-;; `or`/false.
+;; child being the matching hook's result. `ast-expr-for-each-child` is that
+;; fold with `begin`/unit; a short-circuit query folds with `ast-fold-or` and
+;; false.
 (defmacro (ast-fold-seq [acc : Expr] [value : Expr]) : Expr
   `(begin
     ,acc
@@ -10040,16 +10025,15 @@
 
 ;; `source-expr-bases` is the source pool's segment-bases pointer, resolved once
 ;; when the remap is built. `ast-compaction-remap-expr-id` reads a source node
-;; per reachable expression and used to re-chase that pointer through the pool
-;; cell every time; compaction only reads `source-pools`, and the pointer is
-;; stable across reads (see `ast-node-pool-context-expr-segment-bases`), so one
-;; resolution serves the whole walk.
+;; per reachable expression; compaction only reads `source-pools`, and the
+;; pointer is stable across reads (see `ast-node-pool-context-expr-segment-bases`),
+;; so one resolution serves the whole walk.
 ;; `shared-expr-base` / `shared-type-base` split the source id space in two. An
 ;; id below its base is ALREADY in the destination with destination-owned
 ;; payloads, so the walk returns it unchanged and never descends into it; only
 ;; ids at or above the base are copied, and the id maps are indexed relative to
 ;; the base so they cover `[base, len)` rather than the whole pool. Whole-pool
-;; callers pass 0 and get the original behaviour. The per-declaration macro
+;; callers pass 0. The per-declaration macro
 ;; generation (`macro-expand-decl-with-path-generational`) passes the pool
 ;; lengths taken before the expansion, which bounds one copy-out to the nodes
 ;; that expansion actually created.
@@ -11094,7 +11078,7 @@
 ;: `ast-program-copy-append-above-with-pools` with the id maps supplied by the
 ;: caller. A caller that already owns a short-lived arena (the per-declaration
 ;: macro generation) allocates them there and saves the reserve/release syscall
-;: pair a private map arena costs -- 9,061 of them on a self-compile.
+;: pair a private map arena costs.
 ;: The maps must be zero-filled: zero is the "unseen"/"unvisited" sentinel.
 ;: Their addresses point directly at fixed-length backing storage and must stay
 ;: valid until this copy and every escape-persistence walk using the maps ends.

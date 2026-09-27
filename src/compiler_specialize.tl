@@ -1272,9 +1272,9 @@
     (string.int->string n)))
 
 ;; Build the "_<code>" tail into `buf` without re-copying the accumulated
-;; prefix per character. The old recursive string.append form cost O(n^2) per
-;; key, and macro-identity-key-sexpr applies this to already-encoded sub-keys,
-;; which made deep syntax identities allocate gigabytes on a self-compile.
+;; prefix per character. A recursive string.append form costs O(n^2) per key,
+;; and macro-identity-key-sexpr applies this to already-encoded sub-keys, so
+;; deep syntax identities would allocate quadratically.
 (define (spec-string-key-from-into
   [text : String]
   [idx : i64]

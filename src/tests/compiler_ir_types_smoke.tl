@@ -1471,9 +1471,9 @@
           (string.int->string (ci.intern-capacity))
           "> i64)")))))
 
-;; The derived-symbol table exists because the fixed intern pool ran out of
-;; generated ids on a whole-program self-compile (refs #6293), so what has to
-;; hold is: one id per spelling and that spelling back unchanged, growth past
+;; The derived-symbol table exists because the fixed intern pool cannot hold
+;; the generated ids of a whole-program self-compile (refs #6293), so what has
+;; to hold is: one id per spelling and that spelling back unchanged, growth past
 ;; the initial slab without losing earlier entries, a capacity-independent
 ;; one-word domain that cannot collide with any u32 source handle or neighboring
 ;; compiler identity, and no cost at all to the intern lanes -- the budget the
@@ -1557,7 +1557,7 @@
         (compiler_ir_types.compiler-ir-symbol-domain? first)
         (set! ok false))
       (unless (not (ci.intern-renderable-id? first)) (set! ok false))
-      ;; More than today's 131,072 possible source handles -- including the old
+      ;; More than today's `intern-capacity` source handles -- including the old
       ;; 4*capacity collision point -- all fail ownership and slot decoding.
       ;; This deliberately uses raw u32-domain handles because today's fixed
       ;; pool cannot allocate the future values the namespace must reserve.

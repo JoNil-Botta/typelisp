@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-safety-corpus.sh - safe-code contract corpus (#1102).
+# verify-safety-corpus.sh - safe-code contract corpus.
 #
 # The manifest pairs small TypeLisp fixtures with check/run expectations for the
 # SPEC.md "Safe code: no undefined behavior" table.
@@ -58,7 +58,7 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
-# wide_struct_literal_reject imports the generated #7921 declarations.
+# wide_struct_literal_reject imports the generated wide-struct declarations.
 awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
 mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 

@@ -348,12 +348,12 @@
         (backend.ResultCompilerBackend.Err diagnostic)])))
 
 ;; String-returning shim for the load-var emitter. The production emitter now
-;; appends straight into a body buffer (`...-with-plan-into`); its store sibling
+;; appends straight into a body buffer (`...-into`); its store sibling
 ;; kept a String wrapper for callers that need one, but the load side did not,
 ;; so these assertions render one line into a scratch buffer themselves. Test
 ;; helper only -- adding the wrapper back to compiler_backend.tl would put a
 ;; production-dead function in every compiler binary.
-(define (compiler-backend-test-emit-load-var-with-plan
+(define (compiler-backend-test-emit-load-var
   [assignments : regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]) : String
@@ -365,7 +365,7 @@
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     (begin
-      (backend.compiler-backend-emit-load-var-with-plan-into
+      (backend.compiler-backend-emit-load-var-into
         (&mut line)
         assignments
         var-id
@@ -6015,10 +6015,10 @@
         (ci.intern-compat-state-capture-active))]
     (and
       (string.eq
-        (compiler-backend-test-emit-load-var-with-plan assignments 0 "%rax")
+        (compiler-backend-test-emit-load-var assignments 0 "%rax")
         "    movq %r8, %rax\n")
       (string.eq
-        (backend.compiler-backend-emit-store-var-with-plan
+        (backend.compiler-backend-emit-store-var
           assignments
           1
           "%rax"
@@ -6957,25 +6957,19 @@
       (reg-homes "%0=%r12 %2=%r12")]
     [casted : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r12 %2=%r13")]
     (and
+      (string.eq (compiler-backend-test-emit-load-var assignments 0 "%r12") "")
       (string.eq
-        (compiler-backend-test-emit-load-var-with-plan assignments 0 "%r12")
-        "")
-      (string.eq
-        (backend.compiler-backend-emit-store-var-with-plan
+        (backend.compiler-backend-emit-store-var
           assignments
           0
           "%r12"
           backend-state)
         "")
       (string.eq
-        (compiler-backend-emit-load-f64-var-with-plan
-          assignments
-          1
-          "%xmm0"
-          backend-state)
+        (compiler-backend-emit-load-f64-var assignments 1 "%xmm0" backend-state)
         "    movsd %xmm2, %xmm0\n")
       (string.eq
-        (compiler-backend-emit-store-f64-var-with-plan
+        (compiler-backend-emit-store-f64-var
           assignments
           1
           "%xmm0"
@@ -8859,7 +8853,7 @@
     [_slot : unit (set-scratch-emergency-slot-offset! function-state -64)]
     [_pending : unit
       (backend.compiler-backend-emergency-add! function-state "%r9")]
-    (match (backend.compiler-backend-emit-branch-with-plan
+    (match (backend.compiler-backend-emit-branch
       (regalloc.compiler-reg-assignment-table-empty)
       "global_branch_restore"
       (ir.CompilerIrValue.Global (ci.intern "global_branch_restore_condition"))
@@ -9434,7 +9428,7 @@
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-peephole-assignments)]
-    (match (compiler-backend-emit-binop
+    (match (backend.compiler-backend-emit-binop
       (ast.ast-node-pool-reader-type-segment-bases)
       (regalloc.compiler-reg-var-types-empty)
       (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -9447,7 +9441,7 @@
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(backend.ResultCompilerBackend.Ok add-asm)
-        (match (compiler-backend-emit-binop
+        (match (backend.compiler-backend-emit-binop
           (ast.ast-node-pool-reader-type-segment-bases)
           (regalloc.compiler-reg-var-types-empty)
           (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -9460,7 +9454,7 @@
           (backend.compiler-backend-state-new
             (ci.intern-compat-state-capture-active)))
           [(backend.ResultCompilerBackend.Ok mul-asm)
-            (match (compiler-backend-emit-binop
+            (match (backend.compiler-backend-emit-binop
               (ast.ast-node-pool-reader-type-segment-bases)
               (regalloc.compiler-reg-var-types-empty)
               (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -9473,7 +9467,7 @@
               (backend.compiler-backend-state-new
                 (ci.intern-compat-state-capture-active)))
               [(backend.ResultCompilerBackend.Ok shl-asm)
-                (match (compiler-backend-emit-binop
+                (match (backend.compiler-backend-emit-binop
                   (ast.ast-node-pool-reader-type-segment-bases)
                   (regalloc.compiler-reg-var-types-empty)
                   (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -9486,7 +9480,7 @@
                   (backend.compiler-backend-state-new
                     (ci.intern-compat-state-capture-active)))
                   [(backend.ResultCompilerBackend.Ok cmp-asm)
-                    (match (compiler-backend-emit-branch
+                    (match (backend.compiler-backend-emit-branch
                       assignments
                       "peephole"
                       (ir.CompilerIrValue.Var 0)
@@ -11290,7 +11284,7 @@
           (ast.AstType.I64))
         0
         (ast.AstType.I64))]
-    (match (backend.compiler-backend-emit-binop-with-plan
+    (match (backend.compiler-backend-emit-binop
       (ast.ast-node-pool-reader-type-segment-bases)
       (regalloc.compiler-reg-var-types-empty)
       (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -11303,7 +11297,7 @@
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(backend.ResultCompilerBackend.Ok add-asm)
-        (match (backend.compiler-backend-emit-binop-with-plan
+        (match (backend.compiler-backend-emit-binop
           (ast.ast-node-pool-reader-type-segment-bases)
           cmp-types
           (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -12723,7 +12717,7 @@ g:
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-peephole-assignments)]
-    (match (compiler-backend-emit-branch
+    (match (backend.compiler-backend-emit-branch
       assignments
       "branch"
       (ir.CompilerIrValue.Var 0)
@@ -12733,7 +12727,7 @@ g:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(backend.ResultCompilerBackend.Ok false-fallthrough)
-        (match (compiler-backend-emit-branch
+        (match (backend.compiler-backend-emit-branch
           assignments
           "branch"
           (ir.CompilerIrValue.Var 0)
@@ -12752,7 +12746,7 @@ g:
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-zero-load-ok?) : bool
-  (match (backend.compiler-backend-emit-load-value-with-plan
+  (match (backend.compiler-backend-emit-load-value
     (regalloc.compiler-reg-assignment-table-empty)
     (ir.CompilerIrValue.I64 0)
     "%rax"
@@ -12764,7 +12758,7 @@ g:
 (define (compiler-backend-zero-compare-ok?) : bool
   (and
     (asm-ok?
-      (compiler-backend-emit-binop
+      (backend.compiler-backend-emit-binop
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-var-types-empty)
         (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -12779,7 +12773,7 @@ g:
       (has "    testq %r13, %r13\n    sete %r13b\n")
       (lacks "    cmpq $0"))
     (asm-ok?
-      (compiler-backend-emit-binop
+      (backend.compiler-backend-emit-binop
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-var-types-empty)
         (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -12794,7 +12788,7 @@ g:
       (has "    testq %r13, %r13\n    setg %r13b\n")
       (lacks "    cmpq $0"))
     (asm-ok?
-      (compiler-backend-emit-binop
+      (backend.compiler-backend-emit-binop
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-var-types-empty)
         (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -26213,7 +26207,7 @@ g:
 (define (compiler-backend-direct-float-binop-asm
   [op : ir.CompilerIrBinOp]
   [ty : ast.AstType]) : backend.ResultCompilerBackend
-  (compiler-backend-emit-binop
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -26255,7 +26249,7 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-spill-float-arith-asm [ty : ast.AstType]) : backend.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop-with-plan
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -26338,7 +26332,7 @@ g:
       "    setae %r12b\n    movzbq %r12b, %r12\n")))
 
 (define (compiler-backend-direct-float-compare-asm [ty : ast.AstType]) : backend.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop-with-plan
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -26384,7 +26378,7 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-spill-float-compare-asm [ty : ast.AstType]) : backend.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop-with-plan
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -26432,7 +26426,7 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-fallback-float-self-rhs-asm [ty : ast.AstType]) : backend.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop-with-plan
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -26451,7 +26445,7 @@ g:
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-fallback-float-compare-asm [ty : ast.AstType]) : backend.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop-with-plan
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -26502,7 +26496,7 @@ g:
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (backend.compiler-backend-emit-binop-return-with-plan
+    (backend.compiler-backend-emit-binop-return
       (ast.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
@@ -26559,7 +26553,7 @@ g:
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (backend.compiler-backend-emit-binop-return-with-plan
+    (backend.compiler-backend-emit-binop-return
       (ast.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
@@ -26585,7 +26579,7 @@ g:
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (backend.compiler-backend-emit-binop-return-with-plan
+    (backend.compiler-backend-emit-binop-return
       (ast.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
@@ -26656,7 +26650,7 @@ g:
         (set-state-emit-current-count! backend-state 1))]
     [name-id : i64 (ci.intern "ret_int")]
     [result : backend.ResultCompilerBackend
-      (backend.compiler-backend-emit-binop-return-with-plan
+      (backend.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         name-id
@@ -26686,7 +26680,7 @@ g:
     [assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%rax %1=%rsi")]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return-with-plan
+      (backend.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare")
@@ -26710,7 +26704,7 @@ g:
     [assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%rax %1=spill:-16")]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return-with-plan
+      (backend.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_memory")
@@ -26742,7 +26736,7 @@ g:
             (regalloc.CompilerRegLocation.Remat (ir.CompilerIrValue.I64 0)))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return-with-plan
+      (backend.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_remat")
@@ -26775,7 +26769,7 @@ g:
               (ir.CompilerIrValue.Global (ci.intern "tls_current_arena"))))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return-with-plan
+      (backend.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_global")
@@ -26798,7 +26792,7 @@ g:
         (ci.intern-compat-state-capture-active))]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%rsi")]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return-with-plan
+      (backend.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_reuse_lhs")
@@ -26822,7 +26816,7 @@ g:
     [assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=spill:-8 %1=%rax")]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return-with-plan
+      (backend.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_rax_frame")
@@ -26858,7 +26852,7 @@ g:
               (ir.CompilerIrValue.I64 0x7ff0000000000000)))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return-with-plan
+      (backend.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_swapped_memory")
@@ -26895,7 +26889,7 @@ g:
               (ir.CompilerIrValue.I64 0x7ff0000000000002)))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return-with-plan
+      (backend.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_remat_frame")
@@ -27025,7 +27019,7 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-condition-branch-ok?) : bool
-  (match (compiler-backend-emit-branch
+  (match (backend.compiler-backend-emit-branch
     (reg-homes "%0=%r12")
     "bool_branch"
     (ir.CompilerIrValue.Var 0)
@@ -27034,7 +27028,7 @@ g:
     (backend.CompilerBackendMaybeLabel.No)
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
     [(backend.ResultCompilerBackend.Ok reg-asm)
-      (match (compiler-backend-emit-branch
+      (match (backend.compiler-backend-emit-branch
         (reg-homes "%0=spill:-24")
         "bool_branch"
         (ir.CompilerIrValue.Var 0)
@@ -27267,7 +27261,7 @@ g:
 
 (define (compiler-backend-bit-and-low-mask-direct-asm
   [rhs : ir.CompilerIrValue]) : backend.ResultCompilerBackend
-  (compiler-backend-emit-binop
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-empty)
@@ -27304,7 +27298,7 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-compare-asm [rhs : ir.CompilerIrValue]) : backend.ResultCompilerBackend
-  (compiler-backend-emit-binop
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -27350,7 +27344,7 @@ g:
 (define (compiler-backend-direct-immediate-shift-asm
   [op : ir.CompilerIrBinOp]
   [ty : ast.AstType]) : backend.ResultCompilerBackend
-  (compiler-backend-emit-binop
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -27391,7 +27385,7 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-rcx-shift-asm [op : ir.CompilerIrBinOp]) : backend.ResultCompilerBackend
-  (compiler-backend-emit-binop
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -27442,7 +27436,7 @@ g:
   [op : ir.CompilerIrBinOp]
   [rhs : i64]
   [result-ty : ast.AstType]) : backend.ResultCompilerBackend
-  (compiler-backend-emit-binop
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -27533,7 +27527,7 @@ g:
           (ast.AstType.I64))
         0
         (ast.AstType.I64))]
-    (match (compiler-backend-emit-binop
+    (match (backend.compiler-backend-emit-binop
       (ast.ast-node-pool-reader-type-segment-bases)
       vars
       (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -27601,7 +27595,7 @@ g:
       (asm-has? spilled "    popq %rbp\n"))))
 
 (define (compiler-backend-direct-immediate-zero-asm [op : ir.CompilerIrBinOp]) : backend.ResultCompilerBackend
-  (compiler-backend-emit-binop
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -27653,7 +27647,7 @@ g:
 (define (compiler-backend-spill-source-binop-asm
   [op : ir.CompilerIrBinOp]
   [result-ty : ast.AstType]) : backend.ResultCompilerBackend
-  (compiler-backend-emit-binop
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -28132,7 +28126,7 @@ g:
   [op : ir.CompilerIrBinOp]
   [rhs : ir.CompilerIrValue]
   [ty : ast.AstType]) : backend.ResultCompilerBackend
-  (compiler-backend-emit-binop
+  (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-divrem-binop-types
       (owned_view.compiler-owned-shared-view ty))
@@ -28220,7 +28214,7 @@ g:
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r12 %1=%rax")]
-    (match (compiler-backend-emit-binop
+    (match (backend.compiler-backend-emit-binop
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-divrem-binop-types (ast.AstType.I64))
       (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -28520,7 +28514,7 @@ g:
   [result-ty : ast.AstType]
   [needle : String]
   [bad : String]) : bool
-  (match (compiler-backend-emit-binop
+  (match (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-narrow-binop-types lhs-ty rhs-ty)
     (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -28656,7 +28650,7 @@ g:
     (compiler-backend-test-two-i64-globals "g_next" 0 "g_cap" 0)))
 
 (define (compiler-backend-global-compare-binop-ok?) : bool
-  (match (compiler-backend-emit-binop
+  (match (backend.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-empty)
     (compiler-backend-global-compare-types)
@@ -28742,7 +28736,7 @@ g:
   (let
     [rhs-spill : regalloc.CompilerRegAssignmentTable (reg-homes "%1=spill:-16")]
     (asm-ok?
-      (compiler-backend-emit-binop
+      (backend.compiler-backend-emit-binop
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-var-types-empty)
         (backend.CompilerBackendGlobalTypeTable.Empty)
@@ -36761,7 +36755,7 @@ b_keep:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [asm : String
-      (backend.compiler-backend-div-overflow-guard-asm-with-plan
+      (backend.compiler-backend-div-overflow-guard-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         ty
         "%r8"
@@ -36804,7 +36798,7 @@ b_keep:
       "%rax"
       "%r8")
     (string.eq
-      (backend.compiler-backend-div-overflow-guard-asm-with-plan
+      (backend.compiler-backend-div-overflow-guard-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (ast.AstType.U64)
         "%r8"
@@ -37400,24 +37394,24 @@ b_keep:
     backend.compiler-backend-function-i64-rax-forward-pending-var
     value))
 
-(define (compiler-backend-emit-load-f64-var-with-plan
+(define (compiler-backend-emit-load-f64-var
   [assignments : regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [backend-state : backend.CompilerBackendState]) : String
-  (backend.compiler-backend-emit-load-float-var-with-plan
+  (backend.compiler-backend-emit-load-float-var
     assignments
     var-id
     (ast.AstType.F64)
     reg
     backend-state))
 
-(define (compiler-backend-emit-store-f64-var-with-plan
+(define (compiler-backend-emit-store-f64-var
   [assignments : regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [backend-state : backend.CompilerBackendState]) : String
-  (backend.compiler-backend-emit-store-float-var-with-plan
+  (backend.compiler-backend-emit-store-float-var
     assignments
     var-id
     reg
@@ -37495,46 +37489,6 @@ b_keep:
             (ir.compiler-ir-test-symbol "missing"))
             [(regalloc.CompilerRegMaybeType.No) true]
             [_ false]))))))
-
-(define (compiler-backend-emit-binop
-  [type-segment-bases : i64]
-  [types : regalloc.CompilerRegVarTypes]
-  [global-types : backend.CompilerBackendGlobalTypeTable]
-  [assignments : regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : ir.CompilerIrBinOp]
-  [lhs : ir.CompilerIrValue]
-  [rhs : ir.CompilerIrValue]
-  [ty : ast.AstType]
-  [backend-state : backend.CompilerBackendState]) : backend.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop-with-plan
-    type-segment-bases
-    types
-    global-types
-    assignments
-    dst
-    op
-    lhs
-    rhs
-    ty
-    backend-state))
-
-(define (compiler-backend-emit-branch
-  [assignments : regalloc.CompilerRegAssignmentTable]
-  [function : String]
-  [cond : ir.CompilerIrValue]
-  [true-label : i64]
-  [false-label : i64]
-  [fallthrough : backend.CompilerBackendMaybeLabel]
-  [backend-state : backend.CompilerBackendState]) : backend.ResultCompilerBackend
-  (backend.compiler-backend-emit-branch-with-plan
-    assignments
-    function
-    cond
-    true-label
-    false-label
-    fallthrough
-    backend-state))
 
 (define (compiler-backend-program-index-build-with-profile-state
   [type-segment-bases : i64]

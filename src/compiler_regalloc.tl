@@ -24717,7 +24717,7 @@
 
 ;; {rax,rdx}: the registers an idiv hard-clobbers (rax:rdx outputs). The INT_MIN/-1
 ;; overflow guard temps are not fixed registers -- the guard scavenges free
-;; registers (compiler-backend-div-overflow-guard-asm-with-plan), avoiding any
+;; registers (compiler-backend-div-overflow-guard-asm), avoiding any
 ;; div-spanning value via the live query, so a div-spanning var may use
 ;; %r10/%r11. rax stays reserved.
 (define (compiler-reg-greedy-div-clobber-registers) : CompilerRegIdSeq
@@ -33189,7 +33189,7 @@
 ;; destination home written before a source home is read, which is what a parallel
 ;; copy at a block edge can do. A BinOp is not a parallel copy: the emitter stages
 ;; the LHS into a register, applies the operator against the RHS operand, and only
-;; then writes the destination home (`compiler-backend-binop-asm-with-plan` builds
+;; then writes the destination home (`compiler-backend-binop-asm` builds
 ;; exactly that sequence), so BOTH operands are consumed before the destination is
 ;; written. That is what makes either operand a legal witness, whatever the other
 ;; one is.

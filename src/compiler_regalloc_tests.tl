@@ -1688,7 +1688,7 @@
   test
   (define (compiler-reg-call-hole-declines-ok?) : bool
     (let
-      [func : ir.CompilerIrFunction (compiler-reg-leaf-csr-split-function)]
+      [func : ir.CompilerIrFunction (compiler-reg-call-free-loop-function)]
       [type-info : reg.CompilerRegVarTypes
         (reg.compiler-reg-function-var-types func)]
       [plan : reg.CompilerRegPlan
@@ -6738,9 +6738,9 @@
 
 (cfg
   test
-  (define (compiler-reg-edge-copy-linear-function) : ir.CompilerIrFunction
+  (define (compiler-reg-linear-jump-function) : ir.CompilerIrFunction
     (irt.func
-      "function @edge_copy_linear() -> i64 vars 1 {
+      "function @linear_jump() -> i64 vars 1 {
        entry:
          %0 = mov 7 : i64
          jump hot
@@ -6750,9 +6750,9 @@
 
 (cfg
   test
-  (define (compiler-reg-leaf-csr-split-function) : ir.CompilerIrFunction
+  (define (compiler-reg-call-free-loop-function) : ir.CompilerIrFunction
     (irt.func
-      "function @leaf_csr_split() -> i64 vars 2 {
+      "function @call_free_loop() -> i64 vars 2 {
        entry:
          %0 = mov 7 : i64
          jump loop
@@ -7088,7 +7088,7 @@
   test
   (define (compiler-reg-liveness-handle-ok?) : bool
     (let
-      [func : ir.CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
+      [func : ir.CompilerIrFunction (compiler-reg-linear-jump-function)]
       [profile : profile_state.CompilerProfileState
         (profile_state.compiler-profile-state-new)]
       [metrics : profile_state.CompilerProfileMetrics
@@ -7169,7 +7169,7 @@
               (owned_view.compiler-owned-shared-view left))]
           [_right : reg.CompilerRegLivenessHandle
             (reg.compiler-reg-liveness-handle-make
-              (compiler-reg-edge-copy-linear-function)
+              (compiler-reg-linear-jump-function)
               true
               (owned_view.compiler-owned-shared-view right))]
           (begin

@@ -74,7 +74,7 @@ input recovered from the output, and the self-check proves it.
    `compiler-backend-frame-offset-render` memoize the first 8-byte-aligned slot
    spellings in an epoch-stamped table, so a repeated `-1904(%rbp)` costs a
    lookup rather than a render. Keeping the cache would measure an array probe;
-   the packet's subject is the render, so every operand is rendered every time —
+   this benchmark's subject is the render, so every operand is rendered every time —
    which is exactly what the uncached arm of both functions does (and the only
    arm for offsets past the cache capacity). Both languages skip the cache
    identically.
@@ -86,8 +86,8 @@ input recovered from the output, and the self-check proves it.
    compile to. Nothing about the rendered bytes changes.
 3. **Emission decisions are not re-made.** Instruction selection, the register
    allocator and the peephole already ran — their results *are* the corpus. This
-   benchmark is the text stage only, which is where the ~62 MB a stage1
-   self-compile writes is actually produced.
+   benchmark is the text stage only, which is where a self-compile's assembly
+   text is actually produced.
 4. **Registers outside `compiler-backend-reg-part`'s table** (`%rsp`, `%xmm*`,
    `%fs:...`) are plain symbol operands, because that is how they reach the text
    in the compiler too: `compiler-backend-reg-part` panics on them and
@@ -101,8 +101,8 @@ input recovered from the output, and the self-check proves it.
    not present**, because the corpus was compiled without debug line tables. The
    function's other half — the finished body appended into the module TextBuf —
    is kept.
-7. **`compiler-backend-asm-buf-splice!`** (the emergency-spill wrap that shifts
-   a live tail right) is not exercised: nothing in the corpus records where the
+7. **`compiler-backend-asm-buf-insert-at!`** (the emergency-spill wrap that
+   shifts a live tail right) is not exercised: nothing in the corpus records where the
    register allocator wanted one. It is a rare cold path off the append cursor.
 
 ## Corpus
@@ -137,8 +137,8 @@ one name per line in id order; the kernel reads them once into a `String` array
 and the tape refers to them by id. Heads carry their indent and trailing space
 (`"    movq "`, `".globl "`), so a name may end in a space.
 
-Provenance: `target/bench6-dumps/compiler_load.opt2.s`, the 15.6 MB `.s` the
-stage0 compiler writes for `src/compiler_load.tl` at `--opt-level 2`. A chunk
+Provenance: the 15.6 MB `.s` the stage0 compiler of the export commit wrote for
+`src/compiler_load.tl` at `--opt-level 2`. A chunk
 starts at a line whose first non-space bytes are `.globl` and runs to just
 before the next one, the same chunking the `peephole_lines` exporter used. The
 kept range is the contiguous run of chunks 1151..3241: chunk 1151 is the
@@ -155,24 +155,19 @@ self-check would abort.
 
 ### Regeneration
 
-The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
-exported at commit `933fdf56c` (#7382) by a Python exporter that read the
-compiler's own `--opt-level 2` assembly of that time. The exporter and its
-regeneration commands were deleted once the corpus was committed;
-`git log --diff-filter=D -- benchmarks/asm_render/tools` finds the deleting
-commit, whose parent still has both, including the exporter's header that
-documents the full corpus format.
+Exported at `933fdf56c` (#7382) from the compiler's own `--opt-level 2`
+assembly; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed. The names file is the sibling `asm-names.txt` in the same directory, derived identically on both sides |
-| rounds | argument 2, `10` in `optimization.tsv` | tunes TypeLisp Ir to 0.88 G and C to 0.63 G |
+| names file | the sibling `asm-names.txt` of the corpus path | derived identically on both sides |
 | round rotation | starting function chunk advances by one per round | a chunk is the backend's own emission unit, so rotating them is faithful; the output is a permutation of the same bytes, so every round's FNV differs while the byte count does not. The round index and the rotation index are folded too |
 | self-check | round 0 (rotation 0) asserts `length == 3444536` and `FNV == -4053354006740075984` | the re-rendered text is the corpus slice byte for byte; a mismatch aborts with a message |
 | body buffer | `64 × lines` per function chunk, floor 16, doubling growth | `compiler-backend-asm-bytes-per-instr` and `compiler-backend-asm-buf-grow!` |
 | chunk store | first capacity 32, doubling with a prefix copy; render copies chunks of 16 bytes or fewer byte-wise | `text-buf-store-new`, `text-buf-store-copy-and-commit`, `render-small-chunk-limit` |
 | arena | one round-scoped arena, reset per round | the backend's operand storage arena is reset per function/per compile; nothing rendered outlives its round |
-| checksum | 64-bit FNV-1a, no division | identical bits in TypeLisp i64 and C `uint64_t`; no `%` on a live loop-carried dividend (#5982) |
 | folded per round | round index, rotation index, output length, FNV of the whole output, and the line count of each of the five line kinds | the required quantities |

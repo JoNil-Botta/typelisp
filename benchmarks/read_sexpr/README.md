@@ -16,7 +16,11 @@ view steps per pass, all through non-tail recursion in both languages.
 
 ## Mirrored compiler functions
 
-All in `src/read.tl` unless noted:
+All in `src/read.tl` at the export commit unless noted. The kernel mirrors the
+unspanned reader of that commit; the compiler has since kept only the spanned
+reader (`form-spanned-result`, `list-spanned-result`,
+`bracket-list-spanned-result`), which runs the same descent with a
+`token.SourceSpan` on every node.
 
 | Compiler function | What the kernel replicates |
 |---|---|
@@ -86,11 +90,10 @@ their payloads the way the TypeLisp enums do.
    arenas. The kernel grows with a plain allocation, since the arena plumbing
    is a lifetime concern and not part of the descent; both sides still copy the
    live prefix forward on every doubling.
-7. **The spanned reader.** `form-spanned-result` and friends are the production
-   path. They are the same descent with a `token.SourceSpan` merged into every
-   node and an extra `BracketList` variant; the unspanned twin the packet names
-   measures the same control flow with a narrower node. The per-top-level-form
-   pool discipline is taken from the spanned loader
+7. **The spans.** The production spanned reader is the same descent with a
+   `token.SourceSpan` merged into every node and an extra `BracketList`
+   variant; the unspanned port measures the same control flow with a narrower
+   node. The per-top-level-form pool discipline is taken from the loader
    (`parse-ast-program-forms-into-vec`), which is where the reader is really
    driven over a whole file.
 8. **The lexer.** The corpus *is* the lexer's output, so the byte scanner is
@@ -106,8 +109,7 @@ Provenance: the token stream `src/lex.tl` produces for `src/lex.tl`,
 `intern_table` corpora use. Each file is lexed on its own and terminated with
 its own `End` token, exactly as `lex.result` does, and the four streams are
 concatenated; the kernel recovers the file boundaries by scanning for the four
-`End` tags. No IR dump is involved, so the `--dump-ir` crash on current `main`
-(tracked by the orchestrator) does not affect this corpus.
+`End` tags. No IR dump is involved.
 
 Layout: header comments, then `ntokens nfiles`, then one `tag payload` pair per
 token. `#` starts a comment to end of line. `tag` is the integer
@@ -160,25 +162,18 @@ records themselves, checks both against the header, and checks that `(`/`)` and
 
 ### Regeneration
 
-The corpus is frozen: the committed `Ir` baselines pin it byte for byte. It was
-exported at commit `933fdf56c` (#7382) by a Python exporter that read the
-checked-in compiler sources of that time. The exporter and its regeneration
-commands were deleted once the corpus was committed;
-`git log --diff-filter=D -- benchmarks/read_sexpr/tools` finds the deleting
-commit, whose parent still has both, including the exporter's header that
-documents the full corpus format.
+Exported at `933fdf56c` (#7382) from the checked-in compiler sources; function
+names in this README refer to that commit. The exporter's header documents the
+full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `10` in `optimization.tsv` | tunes TypeLisp Ir to 0.80 G and C to 0.67 G |
-| round rotation | the starting FILE advances by one per round | each round folds the same four per-file checksums in a different order, so no round repeats an earlier accumulator and nothing can be hoisted out of the round loop |
+| round rotation | the starting FILE advances by one per round | each round folds the same four per-file checksums in a different order |
 | pool reset | per top-level form (`sexpr-node-pool-reset!`) | exactly what `result` does, and what the loader's per-form pool bound achieves |
 | pool storage | grown 1024-then-doubling, never freed or shrunk | the compiler retains its pool arena across resets; the pool settles at 4,523 slots after the first large form and never grows again |
-| checksum | 64-bit FNV-1a, `h = (h ^ x) * 1099511628211`, basis `1469598103934665603` | wrapping multiply and xor only — no division or `%`, so TypeLisp `i64` and C `uint64_t` produce identical bits |
 | folded per form | every atom payload and every `Nil` depth the recursive `sexpr-view` walk reaches, in walk order | covers the tree shape, the Sym ids, the Int values and the nesting depth |
 | folded per round | top-level form count, pool node count, walk-call count, max walk depth | the self-check quantities plus the traversal's own totals |
 | self-check | `3002` top-level forms and `270063` pool nodes per pass | both computed independently by the exporter, which replayed `form-result` / `list-result-with-close` in Python; both kernels assert them every round and abort otherwise |
-| shipped args | `benchmarks/read_sexpr/data/tokens.txt 10` | |

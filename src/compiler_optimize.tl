@@ -86706,108 +86706,60 @@
 (define (opt-bce-tighten-max-checks) : i64
   4)
 
-;; `inext` is `iphi + 1`, and the latch compares it `Lt` against a loop-invariant
-;; limit on a signed type.
-(define (opt-bce-tighten-latch
+;; `value` is defined directly as `iphi + 1` on a signed type.
+(define (opt-bce-tighten-unit-increment?
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
-  [defs : (& defs opt_i64_i64_map.Map)]
-  [cond-var : i64]
-  [iphi : i64]) : OptBceTightenCounter
-  (match (opt-bce-mb-find-def body-blocks cond-var)
-    [(OptMaybeInstr.No) (OptBceTightenCounter.No)]
-    [(OptMaybeInstr.Some cmp)
-      (match cmp
-        [(ir.CompilerIrInstr.BinOp _ op cmp-lhs cmp-rhs ty)
-          (if (not
-            (and
-              (match op
-                [(ir.CompilerIrBinOp.Lt) true]
-                [_ false])
-              (opt-bce-version-cond-signed-type? ty)
-              (opt-unroll-invariant-bound? defs cmp-rhs)))
-            (OptBceTightenCounter.No)
-            (match (compiler-opt-global-shared-view cmp-lhs)
-              [(ir.CompilerIrValue.Var next-id)
-                (match (opt-bce-mb-find-def body-blocks next-id)
-                  [(OptMaybeInstr.No) (OptBceTightenCounter.No)]
-                  [(OptMaybeInstr.Some step)
-                    (match step
-                      [(ir.CompilerIrInstr.BinOp
-                          _
-                          step-op
-                          step-lhs
-                          step-rhs
-                          step-ty)
-                        (if (and
-                          (match step-op
-                            [(ir.CompilerIrBinOp.Add) true]
-                            [_ false])
-                          (opt-bce-version-cond-signed-type? step-ty)
-                          (opt-bce-hoist-var? step-lhs iphi)
-                          (match step-rhs
-                            [(ir.CompilerIrValue.I64 k) (= k 1)]
-                            [_ false]))
-                          (OptBceTightenCounter.Some
-                            iphi
-                            (ir.CompilerIrValue.I64 0)
-                            cmp-lhs
-                            cmp-rhs
-                            ty)
-                          (OptBceTightenCounter.No))]
-                      [_ (OptBceTightenCounter.No)])])]
-              [_ (OptBceTightenCounter.No)]))]
-        [_ (OptBceTightenCounter.No)])]))
+  [value : (& value ir.CompilerIrValue)]
+  [iphi : i64]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var id)
+      (match (opt-bce-mb-find-def body-blocks (deref id))
+        [(OptMaybeInstr.Some instr)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (and
+                (match op
+                  [(ir.CompilerIrBinOp.Add) true]
+                  [_ false])
+                (opt-bce-version-cond-signed-type? ty)
+                (opt-bce-hoist-var? lhs iphi)
+                (match rhs
+                  [(ir.CompilerIrValue.I64 k) (= k 1)]
+                  [_ false]))]
+            [_ false])]
+        [(OptMaybeInstr.No) false])]
+    [_ false]))
 
-;; The counter phi of the header, with the seed the preheader carries.
-(define (opt-bce-tighten-counter-of
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [phi-count : i64]
-  [body-blocks : ir.CompilerIrBlockList]
+;; The counter the multi-block versioner recovers from the latch compare
+;; (opt-bce-mb-counter-step), narrowed to the one form the argument above is
+;; stated for: a unit step and the unshifted `inext < limit` on I64, with no
+;; invariant offset, where `inext`, the compare's own left operand, is
+;; `iphi + 1` itself.
+(define (opt-bce-tighten-counter
+  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [latch : i64]
   [preheader : i64]
   [cond-var : i64]) : OptBceTightenCounter
-  (if (>= index phi-count)
-    (OptBceTightenCounter.No)
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
-      [(ir.CompilerIrInstr.Phi dst inputs _)
-        (match (opt-unroll-split-phi-inputs inputs latch)
-          [(OptUnrollPhiSplit.No)
-            (opt-bce-tighten-counter-of
-              instrs
-              (+ index 1)
-              phi-count
-              body-blocks
-              defs
-              latch
-              preheader
-              cond-var)]
-          [(OptUnrollPhiSplit.Split seed _ pred-label)
-            (if (not (= pred-label preheader))
-              (opt-bce-tighten-counter-of
-                instrs
-                (+ index 1)
-                phi-count
-                body-blocks
-                defs
-                latch
-                preheader
-                cond-var)
-              (match (opt-bce-tighten-latch body-blocks defs cond-var dst)
-                [(OptBceTightenCounter.No)
-                  (opt-bce-tighten-counter-of
-                    instrs
-                    (+ index 1)
-                    phi-count
-                    body-blocks
-                    defs
-                    latch
-                    preheader
-                    cond-var)]
-                [(OptBceTightenCounter.Some _ _ inext limit ty)
-                  (OptBceTightenCounter.Some dst seed inext limit ty)]))])]
-      [_ (OptBceTightenCounter.No)])))
+  (match (opt-bce-mb-counter-step body-blocks defs latch preheader cond-var)
+    [(OptBceMbMaybeCounter.Some iphi seed _ _ step delta _ offset)
+      (if (and (= step 1) (= delta 0) (opt-bce-mb-counter-offset-none? offset))
+        (match (opt-bce-mb-find-def body-blocks cond-var)
+          [(OptMaybeInstr.Some cmp)
+            (match cmp
+              [(ir.CompilerIrInstr.BinOp _ op cmp-lhs cmp-rhs ty)
+                (if (and
+                  (match op
+                    [(ir.CompilerIrBinOp.Lt) true]
+                    [_ false])
+                  (opt-bce-version-cond-signed-type? ty)
+                  (opt-bce-tighten-unit-increment? body-blocks cmp-lhs iphi))
+                  (OptBceTightenCounter.Some iphi seed cmp-lhs cmp-rhs ty)
+                  (OptBceTightenCounter.No))]
+              [_ (OptBceTightenCounter.No)])]
+          [(OptMaybeInstr.No) (OptBceTightenCounter.No)])
+        (OptBceTightenCounter.No))]
+    [(OptBceMbMaybeCounter.No) (OptBceTightenCounter.No)]))
 
 ;; The header's leading window of checks ON THE COUNTER against a loop-invariant
 ;; length. Same window rule as the hoist: a barrier or a check on anything else
@@ -87396,10 +87348,7 @@
                                 (opt-bce-mb-collect-defs
                                   body-blocks
                                   (opt_i64_i64_map.with-capacity 64))]
-                              (match (opt-bce-tighten-counter-of
-                                instrs
-                                0
-                                phi-count
+                              (match (opt-bce-tighten-counter
                                 body-blocks
                                 defs
                                 latch

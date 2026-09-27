@@ -52392,8 +52392,7 @@
 (define (opt-call-block-scan-snapshot
   [blocks : ir.CompilerIrBlockList]
   [count : i64]
-  [known : i64]
-  [unresolved : i64]) : OptCallBlockScanSnapshot
+  [known : i64]) : OptCallBlockScanSnapshot
   (let
     [params : ir.CompilerIrParamSeq (opt-call-block-scan-params)]
     [sources : opt.OptValueSources
@@ -52403,7 +52402,6 @@
     [roots : opt.OptLicmRootEnv
       (opt.opt-licm-root-env-with-capacity 1 (opt_i64_i64_map.with-capacity 1))]
     [summaries : opt_i64_i64_map.Map (opt-call-memory-test-map known 1)]
-    [functions : opt_i64_i64_map.Map (opt-call-memory-test-map unresolved 1)]
     [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     (begin
       (opt.opt-licm-root-env-seed-params!
@@ -52423,16 +52421,14 @@
             (opt-call-block-scan-root-code (& roots) 999)
             (opt.opt-call-memory-blocks-need-roots? summaries blocks)
             (opt.opt-call-memory-blocks-write-memory? blocks)
-            (opt.opt-call-memory-candidate-code
-              (opt.opt-call-memory-candidate-blocks
-                type-segment-bases
-                (opt.OptCallMemoryCandidate.Known 8)
-                summaries
-                functions
-                params
-                roots
-                (opt_i64_i64_map.with-capacity 1)
-                blocks))))))))
+            (opt.opt-call-memory-candidate-blocks
+              type-segment-bases
+              8
+              summaries
+              params
+              roots
+              (opt_i64_i64_map.with-capacity 1)
+              blocks)))))))
 
 (define (opt-call-block-scan-case?
   [count : i64]
@@ -52449,15 +52445,13 @@
       (opt-call-block-scan-snapshot
         (owned_view.compiler-owned-shared-view linked)
         count
-        known
-        unresolved)]
+        known)]
     [actual : OptCallBlockScanSnapshot
       (opt-call-block-scan-snapshot
         (ir.CompilerIrBlockList.Array
           (owned_view.compiler-owned-shared-view seq))
         count
-        known
-        unresolved)]
+        known)]
     [prefix : ir.CompilerIrBlock
       (ir.CompilerIrBlock.Block
         900
@@ -52474,25 +52468,22 @@
           (ir.CompilerIrBlockList.Array
             (owned_view.compiler-owned-shared-view seq)))
         count
-        known
-        unresolved)]
+        known)]
     [mixed-expected : OptCallBlockScanSnapshot
       (opt-call-block-scan-snapshot
         (ir.compiler-ir-block-cons prefix linked)
         count
-        known
-        unresolved)]
+        known)]
     [again : OptCallBlockScanSnapshot
       (opt-call-block-scan-snapshot
         (ir.CompilerIrBlockList.Array seq)
         count
-        known
-        unresolved)]
+        known)]
     [writes? : bool (and (> count 0) (or (= mode 1) (= mode 4) (= mode 6)))]
     [needs? : bool (or writes? (and (> count 0) (= mode 2)))]
     [summary : i64
       (if (and (> count 0) (= mode 3))
-        -1
+        (bit-or 8 (opt.opt-call-memory-unknown-bit))
         (bit-or
           8
           (if (and (> count 0) (= mode 5))
@@ -52521,9 +52512,8 @@
       (opt-call-block-scan-same? expected again)
       (opt-call-block-scan-same? mixed-expected mixed))))
 
-;; Later writes cannot replace an unresolved candidate or a true predicate.
-;; Disposable visit-counter mutation probes additionally verify the cutoff
-;; itself without relying on malformed IR or out-of-bounds internal reads.
+;; Later writes cannot replace a true predicate, and they still add their bits
+;; after a call to a name with no row (an extern: `unknown`).
 (define (opt-call-block-scan-tail-block) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     999
@@ -52547,26 +52537,18 @@
       (ir.CompilerIrBlockList.Array
         (ir.CompilerIrBlockSeq builder.slots builder.len)))))
 
-(define (opt-call-block-scan-early-candidate
-  [blocks : ir.CompilerIrBlockList]
-  [candidate : opt.OptCallMemoryCandidate]
-  [unresolved : i64]) : i64
-  (opt.opt-call-memory-candidate-code
-    (let
-      [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
-      [summaries (opt_i64_i64_map.with-capacity 1)]
-      [function-set (opt-call-memory-test-map unresolved 1)]
-      (opt.opt-call-memory-candidate-blocks
-        type-segment-bases
-        candidate
-        summaries
-        function-set
-        (ir.compiler-ir-param-seq-empty)
-        (opt.opt-licm-root-env-with-capacity
-          1
-          (opt_i64_i64_map.with-capacity 1))
-        (opt_i64_i64_map.with-capacity 1)
-        blocks))))
+(define (opt-call-block-scan-early-candidate [blocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [summaries (opt_i64_i64_map.with-capacity 1)]
+    (opt.opt-call-memory-candidate-blocks
+      type-segment-bases
+      0
+      summaries
+      (ir.compiler-ir-param-seq-empty)
+      (opt.opt-licm-root-env-with-capacity 1 (opt_i64_i64_map.with-capacity 1))
+      (opt_i64_i64_map.with-capacity 1)
+      blocks)))
 
 (define (opt-call-block-scan-early-exits? [unresolved : i64]) : bool
   (let
@@ -52584,19 +52566,10 @@
         (opt.opt-call-memory-blocks-need-roots? summaries writes))
       (opt.opt-call-memory-blocks-write-memory? writes)
       (=
-        (opt-call-block-scan-early-candidate
-          call
-          (opt.OptCallMemoryCandidate.Known 0)
-          unresolved)
-        -1)
-      (=
-        (opt-call-block-scan-early-candidate
-          (ir.compiler-ir-block-cons
-            (opt-call-block-scan-tail-block)
-            (ir.CompilerIrBlockList.Nil))
-          (opt.OptCallMemoryCandidate.Unresolved)
-          unresolved)
-        -1))))
+        (opt-call-block-scan-early-candidate call)
+        (bit-or
+          (opt.opt-call-memory-unknown-bit)
+          (opt.opt-call-memory-global-bit))))))
 
 (define (compiler-optimize-call-memory-dense-scan-self-test) : bool
   (let

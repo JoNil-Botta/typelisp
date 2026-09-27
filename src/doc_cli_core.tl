@@ -68,7 +68,7 @@
 (define (doc-print-wrote [output-path : String]) : unit
   (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n")))
 
-(define (doc-write-text [output-path : String] [contents : String]) : unit
+(define (doc-write-text [output-path : (& output-path str)] [contents : String]) : unit
   (io.write-file output-path (byte_buf.str-as-bytes (& contents))))
 
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
@@ -77,9 +77,7 @@
     [markdown : String
       (doc_render.doc-render-markdown (doc_extract.doc-extract-source source))]
     (begin
-      (doc-write-text
-        (owned_view.compiler-owned-shared-view output-path)
-        markdown)
+      (doc-write-text output-path markdown)
       (doc-print-wrote output-path)
       0)))
 
@@ -124,7 +122,7 @@
 
 (define (doc-modules-from-package-sources-relative-from
   [paths : (& paths doc_svec.Vec)]
-  [root : String]
+  [root : (& root str)]
   [index : i64]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
   (if (>= index (doc_svec.len (& paths)))
@@ -132,9 +130,7 @@
     (let
       [path : String (doc_svec.get (& paths) index "")]
       [relative : String
-        (compiler_load.compiler-load-root-relative-path
-          (owned_view.compiler-owned-shared-view root)
-          (owned_view.compiler-owned-shared-view path))]
+        (compiler_load.compiler-load-root-relative-path root path)]
       (begin
         (doc_module_vec.push-ref!
           modules
@@ -223,7 +219,7 @@
               path
               docs
               (owned_view.compiler-owned-shared-view stdlib-roots)
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (owned_view.compiler-owned-shared-view intern-state))
               [(doc_expand.ResultDocExpandedModules.Ok head-modules)
                 (match (doc-generated-modules-from-source-paths-into
@@ -297,7 +293,7 @@
   [load-state : compiler_load.CompilerLoadSessionState]
   [pools : ast.AstNodePoolContext]
   [intern-state : ci.InternCompatState]
-  [input-path : String]
+  [input-path : (& input-path str)]
   [stdlib-roots : doc_svec.Vec]) : compiler_load.ResultCompilerLoadWithPaths
   (let
     [intern-state : ci.InternCompatState intern-state]
@@ -305,8 +301,7 @@
       (compiler_load.compiler-load-session-state-use-with-intern-state!
         (owned_view.compiler-owned-shared-view load-state)
         (owned_view.compiler-owned-shared-view intern-state))
-      (ast.ast-node-pool-context-install!
-        (owned_view.compiler-owned-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (ci.intern-compat-state-install!
         (owned_view.compiler-owned-shared-view intern-state))
       (let
@@ -324,7 +319,7 @@
             (sym_i64_env.sym-i64-empty)
             stdlib-roots
             (sym_i64_env.sym-i64-empty)
-            (owned_view.compiler-owned-shared-view pools))]
+            pools)]
         [_publish : unit
           (begin
             ;; The stateful loader extends the explicit segmented context. Do not
@@ -351,15 +346,15 @@
       (ci.intern-compat-state-capture-active)]
     (match (doc-load-file-with-all-import-paths
       (owned_view.compiler-owned-shared-view load-state)
-      (owned_view.compiler-owned-shared-view pools)
+      pools
       (owned_view.compiler-owned-shared-view intern-state)
-      (owned_view.compiler-owned-shared-view input-path)
+      input-path
       (owned_view.compiler-owned-shared-view stdlib-roots))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (match (doc-generated-modules-from-source-paths
           (owned_view.compiler-owned-shared-view load-state)
           job-state
-          (owned_view.compiler-owned-shared-view pools)
+          pools
           (owned_view.compiler-owned-shared-view intern-state)
           (ast.ast-decl-root-path-cons
             (owned_view.compiler-owned-shared-view input-path)
@@ -385,7 +380,7 @@
                     (doc_module_vec.new)])]
               (begin
                 (doc-write-text
-                  (owned_view.compiler-owned-shared-view output-path)
+                  output-path
                   (doc-render-loaded-markdown
                     input-path
                     paths
@@ -523,12 +518,12 @@
               (doc-write-text
                 search-path
                 (doc_local_site.doc-local-site-search-index
-                  (owned_view.compiler-owned-shared-view compiler-identity)
-                  (owned_view.compiler-owned-shared-view source-identity)
-                  (owned_view.compiler-owned-shared-view package-identity)
+                  compiler-identity
+                  source-identity
+                  package-identity
                   (owned_view.compiler-owned-shared-view modules)))
               (doc-write-text
-                (owned_view.compiler-owned-shared-view index-path)
+                index-path
                 (doc_local_site.doc-local-site-render-index
                   manifest.name
                   compiler-identity
@@ -561,7 +556,7 @@
         [(DocMaybeString.Some out)
           (begin
             (doc-write-text
-              (owned_view.compiler-owned-shared-view out)
+              out
               (doc_render.doc-render-module-graph-markdown
                 (doc-modules-from-package-sources source-set.sources)))
             (doc-print-wrote out)
@@ -576,7 +571,7 @@
         (io.read-file (owned_view.compiler-owned-shared-view input-path)))]
     [html : String (doc_html.doc-html-render-source input-path source)]
     (begin
-      (doc-write-text (owned_view.compiler-owned-shared-view output-path) html)
+      (doc-write-text output-path html)
       (doc-print-wrote output-path)
       0)))
 
@@ -585,7 +580,7 @@
     [modules : doc_module_vec.Vec (doc-read-modules 2 (- (io.arg-count) 1))]
     (begin
       (doc-write-text
-        (owned_view.compiler-owned-shared-view output-path)
+        output-path
         (doc_html.doc-html-render-module-graph modules))
       (doc-print-wrote output-path)
       0)))
@@ -655,7 +650,7 @@
         (- (doc_svec.len (& paths)) 1))]
     (begin
       (doc-write-text
-        (owned_view.compiler-owned-shared-view output-path)
+        output-path
         (doc_render.doc-render-module-graph-markdown modules))
       (doc-print-wrote output-path)
       0)))

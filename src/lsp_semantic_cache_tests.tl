@@ -31,8 +31,7 @@
         (unsafe
           (arena.tl_arena_set owner))]
       [draft : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-copy-in-current
-          (lsp.lsp-global-shared-view state))]
+        (lsp.lsp-server-state-copy-in-current state)]
       (begin
         (lsp.lsp-workspace-index-add-text-source!
           (&mut draft.workspace)
@@ -72,8 +71,7 @@
         (unsafe
           (arena.tl_arena_set owner))]
       [draft : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-copy-in-current
-          (lsp.lsp-global-shared-view state))]
+        (lsp.lsp-server-state-copy-in-current state)]
       (begin
         (lsp.lsp-workspace-semantic-cache-invalidate-path!
           (&mut draft.semantic-cache)
@@ -94,8 +92,7 @@
         (unsafe
           (arena.tl_arena_set owner))]
       [draft : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-copy-in-current
-          (lsp.lsp-global-shared-view state))]
+        (lsp.lsp-server-state-copy-in-current state)]
       (begin
         (lsp.lsp-workspace-index-add-text-source!
           (&mut draft.workspace)
@@ -308,10 +305,7 @@
           (& shared-doc.semantic.index)
           (& definition))]
       [cold-query : lsp.LspWorkspaceSemanticQuery
-        (lsp.lsp-workspace-semantic-query
-          (& cold-state)
-          roots
-          (lsp.lsp-global-shared-view canonical-key))]
+        (lsp.lsp-workspace-semantic-query (& cold-state) roots canonical-key)]
       [cold-records : i64
         (lsp-workspace-semantic-test-retained-records (& cold-state))]
       [cold-owners : i64
@@ -323,10 +317,7 @@
           cold-state
           (lsp.lsp-global-shared-view roots))]
       [warm-query : lsp.LspWorkspaceSemanticQuery
-        (lsp.lsp-workspace-semantic-query
-          (& warm-state)
-          roots
-          (lsp.lsp-global-shared-view canonical-key))]
+        (lsp.lsp-workspace-semantic-query (& warm-state) roots canonical-key)]
       [warm-records : i64
         (lsp-workspace-semantic-test-retained-records (& warm-state))]
       [warm-owners : i64

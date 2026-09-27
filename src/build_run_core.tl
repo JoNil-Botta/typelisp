@@ -257,7 +257,7 @@
 
 (define (source-tool-linux-crt-entry?
   [target : backend.CompilerBackendTarget]
-  [link-inputs : SourceToolLinkInputs]) : bool
+  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : bool
   (match target
     [(backend.CompilerBackendTarget.Linux)
       (not (source-tool-link-inputs-empty? link-inputs))]
@@ -535,7 +535,7 @@
 (define (source-tool-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
 
-(define (source-tool-has-path-separator? [path : String]) : bool
+(define (source-tool-has-path-separator? [path : (& path str)]) : bool
   (let
     [n : i64 (string.string-length path)]
     [i : i64 0]
@@ -554,25 +554,25 @@
     tool
     (source-tool-fs-path-join dir tool)))
 
-(define (source-tool-fs-path-join [left : String] [right : String]) : String
-  (fs.path-join (& left) (& right)))
+(define (source-tool-fs-path-join [left : (& left str)] [right : String]) : String
+  (fs.path-join left (& right)))
 
-(define (source-tool-fs-basename [path : String]) : String
-  (fs.basename (& path)))
+(define (source-tool-fs-basename [path : (& path str)]) : String
+  (fs.basename path))
 
-(define (source-tool-try-file-exists? [path : String]) : io.ResultIoBool
-  (io.try-file-exists? (& path)))
+(define (source-tool-try-file-exists? [path : (& path str)]) : io.ResultIoBool
+  (io.try-file-exists? path))
 
-(define (source-tool-try-read-file [path : String]) : io.ResultIoString
-  (match (io.try-read-file (& path))
+(define (source-tool-try-read-file [path : (& path str)]) : io.ResultIoString
+  (match (io.try-read-file path)
     [(io.OkIoBytes contents) (io.OkIoString (byte_buf.to-string contents))]
     [(io.ErrIoBytes error) (io.ErrIoString error)]))
 
-(define (source-tool-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
-  (fs.try-remove-file-if-exists (& path)))
+(define (source-tool-try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
+  (fs.try-remove-file-if-exists path))
 
-(define (source-tool-try-remove-dir-if-exists [path : String]) : io.ResultIoUnit
-  (fs.try-remove-dir-if-exists (& path)))
+(define (source-tool-try-remove-dir-if-exists [path : (& path str)]) : io.ResultIoUnit
+  (fs.try-remove-dir-if-exists path))
 
 (define (source-tool-stdout-write [text : String]) : unit
   (io.stdout-write (byte_buf.str-as-bytes (& text))))
@@ -580,7 +580,7 @@
 (define (source-tool-stderr-write [text : String]) : unit
   (io.stderr-write (byte_buf.str-as-bytes (& text))))
 
-(define (source-tool-path-command-exists? [candidate : String]) : bool
+(define (source-tool-path-command-exists? [candidate : (& candidate str)]) : bool
   (match (source-tool-try-file-exists? candidate)
     [(io.OkIoBool exists) exists]
     [(io.ErrIoBool _) false]))
@@ -604,8 +604,7 @@
         (source-tool-path-entry-command
           (env.string-list-ref paths index)
           (owned_view.compiler-owned-shared-view tool))]
-      (if (source-tool-path-command-exists?
-        (owned_view.compiler-owned-shared-view candidate))
+      (if (source-tool-path-command-exists? candidate)
         candidate
         (let
           [exe-candidate : String
@@ -613,8 +612,7 @@
               (owned_view.compiler-owned-shared-view candidate))]
           (if (and
             (not (string.eq exe-candidate candidate))
-            (source-tool-path-command-exists?
-              (owned_view.compiler-owned-shared-view exe-candidate)))
+            (source-tool-path-command-exists? exe-candidate))
             exe-candidate
             (source-tool-find-command-on-path-from tool paths (+ index 1))))))))
 
@@ -624,8 +622,7 @@
   (source-tool-find-command-on-path-from tool paths 0))
 
 (define (source-tool-resolve-command [tool : String]) : String
-  (if (source-tool-has-path-separator?
-    (owned_view.compiler-owned-shared-view tool))
+  (if (source-tool-has-path-separator? tool)
     tool
     (let
       [name : String "PATH"]
@@ -714,17 +711,19 @@
     [(backend.CompilerBackendTarget.Windows)
       (str_cat.str-cat name (source-tool-static-library-extension target))]))
 
-(define (source-tool-artifact-stem [source : String]) : String
+(define (source-tool-artifact-stem [source : (& source str)]) : String
   (source-tool-replace-extension (source-tool-fs-basename source) ""))
 
-(define (source-tool-asm-path [temp-dir : String] [source : String]) : String
+(define (source-tool-asm-path
+  [temp-dir : (& temp-dir str)]
+  [source : (& source str)]) : String
   (source-tool-fs-path-join
     temp-dir
     (str_cat.str-cat (source-tool-artifact-stem source) ".s")))
 
 (define (source-tool-obj-path
-  [temp-dir : String]
-  [source : String]
+  [temp-dir : (& temp-dir str)]
+  [source : (& source str)]
   [target : backend.CompilerBackendTarget]) : String
   (source-tool-fs-path-join
     temp-dir
@@ -734,8 +733,8 @@
       (source-tool-object-extension target))))
 
 (define (source-tool-temp-bin-path
-  [temp-dir : String]
-  [source : String]
+  [temp-dir : (& temp-dir str)]
+  [source : (& source str)]
   [target : backend.CompilerBackendTarget]) : String
   (source-tool-fs-path-join
     temp-dir
@@ -765,9 +764,8 @@
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
-  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
-  (match (source-tool-try-read-file
-    (owned_view.compiler-owned-shared-view source))
+  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
+  (match (source-tool-try-read-file source)
     [(io.ErrIoString error)
       (ResultSourceToolString.Err
         (source-tool-cannot-read-module-message source error))]
@@ -954,16 +952,16 @@
       haystack)))
 
 (define (source-tool-write-file
-  [path : String]
-  [contents : String]
+  [path : (& path str)]
+  [contents : (& contents str)]
   [context : String]) : SourceToolCommandStatus
-  (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
+  (match (io.try-write-file path (byte_buf.str-as-bytes contents))
     [(io.OkIoUnit) SourceToolCommandStatus.Ok]
     [(io.ErrIoUnit error)
       (SourceToolCommandStatus.Err
         (str_cat.str-cat context ": " (io.error-message error)))]))
 
-(define (source-tool-forward-output [output : process.ProcessOutput]) : unit
+(define (source-tool-forward-output [output : (& output process.ProcessOutput)]) : unit
   (begin
     (source-tool-stdout-write (process.output-stdout output))
     (source-tool-stderr-write (process.output-stderr output))))
@@ -979,8 +977,7 @@
     (match (process.output command-to-run)
       [(process.OkProcessOutput output)
         (begin
-          (source-tool-forward-output
-            (owned_view.compiler-owned-shared-view output))
+          (source-tool-forward-output output)
           (if (process.success? output)
             SourceToolCommandStatus.Ok
             (SourceToolCommandStatus.Err
@@ -1414,7 +1411,7 @@
     (cast (+ (cast c : i64) 32) : char)
     c))
 
-(define (source-tool-ascii-case-eq [left : String] [right : String]) : bool
+(define (source-tool-ascii-case-eq [left : (& left str)] [right : String]) : bool
   (let
     [left-n : i64 (string.string-length left)]
     [right-n : i64 (string.string-length right)]
@@ -1431,22 +1428,18 @@
           (set! i (+ i 1))))
       same)))
 
-(define (source-tool-windows-llvm-archiver-name? [command : String]) : bool
+(define (source-tool-windows-llvm-archiver-name? [command : (& command str)]) : bool
   (let
     [basename : String (source-tool-fs-basename command)]
     (or
-      (source-tool-ascii-case-eq
-        (owned_view.compiler-owned-shared-view basename)
-        "llvm-ar")
+      (source-tool-ascii-case-eq basename "llvm-ar")
       (source-tool-ascii-case-eq basename "llvm-ar.exe"))))
 
-(define (source-tool-windows-msvc-archiver-name? [command : String]) : bool
+(define (source-tool-windows-msvc-archiver-name? [command : (& command str)]) : bool
   (let
     [basename : String (source-tool-fs-basename command)]
     (or
-      (source-tool-ascii-case-eq
-        (owned_view.compiler-owned-shared-view basename)
-        "lib")
+      (source-tool-ascii-case-eq basename "lib")
       (source-tool-ascii-case-eq basename "lib.exe"))))
 
 (define (source-tool-windows-llvm-archiver-command
@@ -1467,15 +1460,13 @@
         name
         (source-tool-resolve-command "llvm-ar"))]
     (cond
-      [(source-tool-windows-llvm-archiver-name?
-          (owned_view.compiler-owned-shared-view command))
+      [(source-tool-windows-llvm-archiver-name? command)
         (ResultSourceToolCommand.Ok
           (source-tool-windows-llvm-archiver-command
             command
             obj-path
             archive-path))]
-      [(source-tool-windows-msvc-archiver-name?
-          (owned_view.compiler-owned-shared-view command))
+      [(source-tool-windows-msvc-archiver-name? command)
         (ResultSourceToolCommand.Ok
           (process.command
             command
@@ -1609,10 +1600,7 @@
   [link-inputs : SourceToolLinkInputs]
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
-  (match (source-tool-write-file
-    (owned_view.compiler-owned-shared-view obj-path)
-    obj
-    context)
+  (match (source-tool-write-file obj-path obj context)
     [(SourceToolCommandStatus.Err message)
       (SourceToolDirectObjectStatus.Err message)]
     [(SourceToolCommandStatus.Ok)
@@ -1627,10 +1615,7 @@
   [target : backend.CompilerBackendTarget]
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
-  (match (source-tool-write-file
-    (owned_view.compiler-owned-shared-view obj-path)
-    obj
-    context)
+  (match (source-tool-write-file obj-path obj context)
     [(SourceToolCommandStatus.Err message)
       (SourceToolDirectObjectStatus.Err message)]
     [(SourceToolCommandStatus.Ok)
@@ -1677,23 +1662,12 @@
 
 (define (source-tool-temp-files
   [dir : String]
-  [source : String]
+  [source : (& source str)]
   [target : backend.CompilerBackendTarget]) : SourceToolTempFiles
   (let
-    [asm : String
-      (source-tool-asm-path
-        (owned_view.compiler-owned-shared-view dir)
-        (owned_view.compiler-owned-shared-view source))]
-    [obj : String
-      (source-tool-obj-path
-        (owned_view.compiler-owned-shared-view dir)
-        (owned_view.compiler-owned-shared-view source)
-        target)]
-    [bin : String
-      (source-tool-temp-bin-path
-        (owned_view.compiler-owned-shared-view dir)
-        source
-        target)]
+    [asm : String (source-tool-asm-path dir source)]
+    [obj : String (source-tool-obj-path dir source target)]
+    [bin : String (source-tool-temp-bin-path dir source target)]
     (SourceToolTempFiles dir asm obj bin)))
 
 (define (source-tool-clean-temp-files
@@ -1744,13 +1718,12 @@
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
+  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
   (let
     [crt-entry : bool (source-tool-linux-crt-entry? target link-inputs)]
     (match program
       [(SourceToolProgram.Source stdlib-roots cfgs)
-        (match (source-tool-try-read-file
-          (owned_view.compiler-owned-shared-view source))
+        (match (source-tool-try-read-file source)
           [(io.ErrIoString error)
             (ResultSourceToolString.Err
               (source-tool-cannot-read-module-message source error))]
@@ -1807,7 +1780,7 @@
         request.target
         request.opt-level
         request.mode
-        (owned_view.compiler-owned-shared-view request.link-inputs))
+        request.link-inputs)
         [(ResultSourceToolString.Ok obj)
           (source-tool-write-direct-object-and-link
             request.files.obj
@@ -1829,7 +1802,7 @@
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
+  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
   (match program
     [(SourceToolProgram.Source stdlib-roots cfgs)
       (source-tool-emit-assembly
@@ -1880,12 +1853,12 @@
         request.target
         request.opt-level
         request.mode
-        (owned_view.compiler-owned-shared-view request.link-inputs))
+        request.link-inputs)
         [(ResultSourceToolString.Err message)
           (SourceToolCommandStatus.Err message)]
         [(ResultSourceToolString.Ok asm)
           (match (source-tool-write-file
-            (owned_view.compiler-owned-shared-view request.files.asm)
+            request.files.asm
             asm
             request.write-context)
             [(SourceToolCommandStatus.Err message)
@@ -1941,10 +1914,7 @@
   [temp-dir : String]) : i64
   (let
     [files : SourceToolTempFiles
-      (source-tool-temp-files
-        temp-dir
-        (owned_view.compiler-owned-shared-view source)
-        target)]
+      (source-tool-temp-files temp-dir source target)]
     [status : i64
       (begin
         ;; The executable goes beside the source (or to -o), not in the temp dir.
@@ -2058,10 +2028,7 @@
   [temp-dir : String]) : i64
   (let
     [files : SourceToolTempFiles
-      (source-tool-temp-files
-        temp-dir
-        (owned_view.compiler-owned-shared-view source)
-        target)]
+      (source-tool-temp-files temp-dir source target)]
     [status : i64
       (match (source-tool-link-inputs-for-source
         (owned_view.compiler-owned-shared-view source)

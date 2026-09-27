@@ -1147,10 +1147,10 @@
 
 (define (spec-template-env-shadow-params
   [templates : (& templates SpecTemplateEnv)]
-  [params : ast.AstParamList]) : SpecTemplateEnv
+  [params : (& params ast.AstParamList)]) : SpecTemplateEnv
   (spec-template-env-shadow-params-at
     (spec-template-env-shared-view templates)
-    (& params)
+    params
     0))
 
 (define (spec-template-env-shadow-params-at
@@ -1169,10 +1169,10 @@
 
 (define (spec-template-env-shadow-let-binding-names
   [templates : (& templates SpecTemplateEnv)]
-  [bindings : ast.AstLetBindingList]) : SpecTemplateEnv
+  [bindings : (& bindings ast.AstLetBindingList)]) : SpecTemplateEnv
   (spec-template-env-shadow-let-binding-names-at
     (spec-template-env-shared-view templates)
-    (& bindings)
+    bindings
     0))
 
 (define (spec-template-env-shadow-let-binding-names-at
@@ -1291,14 +1291,14 @@
 
 (define (spec-decl-list-append
   [front : ast.AstDeclList]
-  [back : ast.AstDeclList]) : ast.AstDeclList
+  [back : (& back ast.AstDeclList)]) : ast.AstDeclList
   (let
     [out : ast.AstDeclList
       (ast.ast-decl-list-with-capacity
-        (+ (ast.ast-decl-list-len (& front)) (ast.ast-decl-list-len (& back))))]
+        (+ (ast.ast-decl-list-len (& front)) (ast.ast-decl-list-len back)))]
     (begin
       (ast.ast-decl-list-append-from (&mut out) (& front) 0)
-      (ast.ast-decl-list-append-from (&mut out) (& back) 0)
+      (ast.ast-decl-list-append-from (&mut out) back 0)
       out)))
 
 (define (spec-decl-path-list-append
@@ -2752,12 +2752,10 @@
         [_ false])]))
 
 (define (gen-test-metadata-eq?
-  [a : ast.AstTestMetadata]
-  [b : ast.AstTestMetadata]) : bool
+  [a : (& a ast.AstTestMetadata)]
+  [b : (& b ast.AstTestMetadata)]) : bool
   (and
-    (=
-      (ast.ast-test-metadata-slow? (owned_view.compiler-owned-shared-view a))
-      (ast.ast-test-metadata-slow? (owned_view.compiler-owned-shared-view b)))
+    (= (ast.ast-test-metadata-slow? a) (ast.ast-test-metadata-slow? b))
     (match (ast.ast-test-metadata-ignore-reason a)
       [(ast.AstTestIgnoreReason.No)
         (match (ast.ast-test-metadata-ignore-reason b)
@@ -3357,10 +3355,10 @@
 
 (define (gen-key-exprs-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [exprs : ast.AstExprList]
+  [exprs : (& exprs ast.AstExprList)]
   [env : (& env ctfe.CtfeEnv)]
   [fuel : i64]) : ResultGenKey
-  (gen-key-exprs-at-with-owner owner (& exprs) 0 env fuel))
+  (gen-key-exprs-at-with-owner owner exprs 0 env fuel))
 
 (define (gen-key-exprs-at-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -3439,7 +3437,7 @@
 (define (gen-decls-macro-key? [key : (& key str)]) : bool
   (gen-key-prefix? key "decls:"))
 
-(define (gen-metadata-key-normalizable? [key : String]) : bool
+(define (gen-metadata-key-normalizable? [key : (& key str)]) : bool
   (or (string.eq key "") (gen-full-key? key) (gen-decls-macro-key? key)))
 
 (define (gen-registration-key
@@ -3541,7 +3539,7 @@
 (define (gen-metadata-arg-key-with-owner
   [owner : (& owner SpecOwnerContext)]
   [meta-key : String]
-  [args : ast.AstExprList]
+  [args : (& args ast.AstExprList)]
   [env : (& env ctfe.CtfeEnv)]) : ResultGenKey
   (if (> (string.string-length meta-key) 0)
     (ResultGenKey.Ok meta-key (ctfe.ctfe-fuel-limit))
@@ -3604,7 +3602,7 @@
           (match (gen-metadata-arg-key-with-owner
             owner
             (spec-place-shared-view meta-key)
-            (spec-place-shared-view args)
+            args
             env)
             [(ResultGenKey.Ok arg-key _)
               (gen-register-generated-decl-with-owner
@@ -3642,8 +3640,7 @@
         [(ast.AstGeneratedDeclMeta.No)
           (ResultGenDecl.Ok (gen-single-decl-list decl) registry module-id)]
         [(ast.AstGeneratedDeclMeta.Some generator item args meta-key)
-          (if (not
-            (gen-metadata-key-normalizable? (spec-place-shared-view meta-key)))
+          (if (not (gen-metadata-key-normalizable? meta-key))
             (ResultGenDecl.Ok (gen-single-decl-list decl) registry module-id)
             (gen-rewrite-generated-decl-with-owner
               owner
@@ -4295,10 +4292,10 @@
 
 (define (spec-value-subst-remove-params
   [subs : (& subs SpecValueSubst)]
-  [params : ast.AstParamList]) : SpecValueSubst
+  [params : (& params ast.AstParamList)]) : SpecValueSubst
   (spec-value-subst-remove-params-at
     (spec-value-subst-shared-view subs)
-    (& params)
+    params
     0))
 
 (define (spec-value-subst-remove-params-at
@@ -4409,11 +4406,8 @@
 
 (define (spec-type-subst-remove-params
   [subs : (& subs SpecTypeSubst)]
-  [params : ast.AstParamList]) : SpecTypeSubst
-  (spec-type-subst-remove-params-at
-    (spec-type-subst-shared-view subs)
-    (& params)
-    0))
+  [params : (& params ast.AstParamList)]) : SpecTypeSubst
+  (spec-type-subst-remove-params-at (spec-type-subst-shared-view subs) params 0))
 
 (define (spec-type-subst-remove-params-at
   [subs : SpecTypeSubst]
@@ -4431,10 +4425,10 @@
 
 (define (spec-type-subst-remove-let-binding-names
   [subs : (& subs SpecTypeSubst)]
-  [bindings : ast.AstLetBindingList]) : SpecTypeSubst
+  [bindings : (& bindings ast.AstLetBindingList)]) : SpecTypeSubst
   (spec-type-subst-remove-let-binding-names-at
     (spec-type-subst-shared-view subs)
-    (& bindings)
+    bindings
     0))
 
 (define (spec-type-subst-remove-let-binding-names-at
@@ -5334,7 +5328,7 @@
                                     [body-templates : SpecTemplateEnv
                                       (spec-template-env-shadow-params
                                         templates
-                                        (spec-place-shared-view runtime-params))]
+                                        runtime-params)]
                                     (match (spec-rewrite-expr
                                       (spec-state-expr-get state valued-body)
                                       body-templates
@@ -5470,9 +5464,7 @@
           (let
             [body : ast.AstExpr (spec-state-expr-get state body-box)]
             [body-templates : SpecTemplateEnv
-              (spec-template-env-shadow-let-binding-names
-                templates
-                (spec-place-shared-view bindings))]
+              (spec-template-env-shadow-let-binding-names templates bindings)]
             (match (spec-rewrite-let-bindings
               bindings
               templates
@@ -5494,9 +5486,7 @@
           (let
             [body : ast.AstExpr (spec-state-expr-get state body-box)]
             [body-templates : SpecTemplateEnv
-              (spec-template-env-shadow-params
-                templates
-                (spec-place-shared-view params))]
+              (spec-template-env-shadow-params templates params)]
             (match (spec-rewrite-expr
               body
               body-templates
@@ -6023,9 +6013,7 @@
           (let
             [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
             [body-subs : SpecValueSubst
-              (spec-value-subst-remove-params
-                subs
-                (spec-place-shared-view params))]
+              (spec-value-subst-remove-params subs params)]
             (match (spec-substitute-values-expr-with-owner owner body body-subs)
               [(ResultSpecSubExpr.Ok rewritten-body)
                 (ResultSpecSubExpr.Ok
@@ -6613,9 +6601,7 @@
           (let
             [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
             [body-subs : SpecTypeSubst
-              (spec-type-subst-remove-params
-                subs
-                (spec-place-shared-view params))]
+              (spec-type-subst-remove-params subs params)]
             (match (spec-substitute-types-expr-with-owner owner body body-subs)
               [(ResultSpecSubExpr.Ok rewritten-body)
                 (ResultSpecSubExpr.Ok
@@ -6848,9 +6834,7 @@
           (let
             [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
             [body-subs : SpecTypeSubst
-              (spec-type-subst-remove-let-binding-names
-                subs
-                (spec-place-shared-view bindings))]
+              (spec-type-subst-remove-let-binding-names subs bindings)]
             (match (spec-substitute-types-let-bindings-with-owner
               owner
               bindings
@@ -7181,9 +7165,7 @@
       (let
         [body : ast.AstExpr (spec-state-expr-get state body-box)]
         [body-templates : SpecTemplateEnv
-          (spec-template-env-shadow-params
-            templates
-            (spec-place-shared-view params))]
+          (spec-template-env-shadow-params templates params)]
         (if (spec-param-list-has-comptime? params)
           (ResultSpecDecl.Ok (SpecMaybeDecl.None) state)
           (match (spec-rewrite-expr body body-templates state)
@@ -7495,9 +7477,7 @@
                           (spec-materialize-owner-generated-symbols! owner)
                           (ResultSpecProgramWithPaths.Ok
                             (ast.ast-program
-                              (spec-decl-list-append
-                                rewritten
-                                (ast.ast-place-shared-view generated)))
+                              (spec-decl-list-append rewritten generated))
                             (spec-decl-path-list-append
                               rewritten-paths
                               (spec-generated-paths generated fallback-path))))])]

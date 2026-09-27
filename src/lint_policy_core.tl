@@ -986,7 +986,7 @@
     reason))
 
 (define (lint-policy-apply-to-rule
-  [decisions : LintPolicyDecisions]
+  [decisions : (& decisions LintPolicyDecisions)]
   [rule-index : i64]
   [assignment : LintPolicyAssignment]
   [assignment-index : i64]
@@ -1099,7 +1099,7 @@
   [index-map : (& index-map lint_policy_string_i64_map.Map)]
   [valid-groups : (& valid-groups (__tl_dyn-array bool))]
   [membership : (& membership (__tl_dyn-array bool))]
-  [decisions : LintPolicyDecisions]
+  [decisions : (& decisions LintPolicyDecisions)]
   [assignment : LintPolicyAssignment]
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
@@ -1140,7 +1140,7 @@
                     (set!
                       out
                       (lint-policy-apply-to-rule
-                        (owned_view.compiler-owned-shared-view decisions)
+                        decisions
                         rule-index
                         (owned_view.compiler-owned-shared-view assignment)
                         assignment-index
@@ -1164,7 +1164,7 @@
 
 (define (lint-policy-apply-rule-assignment
   [rules : (& rules lint_core.LintRuleList)]
-  [decisions : LintPolicyDecisions]
+  [decisions : (& decisions LintPolicyDecisions)]
   [assignment : LintPolicyAssignment]
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
@@ -1200,7 +1200,7 @@
   [valid-groups : (& valid-groups (__tl_dyn-array bool))]
   [membership : (& membership (__tl_dyn-array bool))]
   [assignments : (& assignments LintPolicyAssignments)]
-  [decisions : LintPolicyDecisions]
+  [decisions : (& decisions LintPolicyDecisions)]
   [layer-rank : i64]
   [rules-only : bool]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
@@ -1224,7 +1224,7 @@
                 (if rules-only
                   (lint-policy-apply-rule-assignment
                     rules
-                    (owned_view.compiler-owned-shared-view decisions)
+                    decisions
                     assignment
                     index
                     out)
@@ -1234,7 +1234,7 @@
                     index-map
                     valid-groups
                     membership
-                    (owned_view.compiler-owned-shared-view decisions)
+                    decisions
                     assignment
                     index
                     out)))
@@ -1317,7 +1317,7 @@
               valid-groups
               membership
               assignments
-              (owned_view.compiler-owned-shared-view decisions)
+              decisions
               layer
               false
               state))
@@ -1330,7 +1330,7 @@
               valid-groups
               membership
               assignments
-              (owned_view.compiler-owned-shared-view decisions)
+              decisions
               layer
               true
               state))

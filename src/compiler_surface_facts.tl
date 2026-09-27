@@ -25,10 +25,6 @@
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
-(defmacro (surface-facts-array-shared-view [items : Expr] [index : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
-
 (defstruct SurfaceTypecheckFacts
   (macro-prefix-decl-count i64)
   (prefix-decl-count i64)

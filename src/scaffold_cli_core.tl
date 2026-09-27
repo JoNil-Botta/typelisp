@@ -14,7 +14,7 @@
 
 ;; A package name must be non-empty and contain only name-safe characters
 ;; (alphanumerics, `-`, `_`): no path separators or whitespace.
-(define (scaffold-name-bad-char? [name : String] [idx : i64]) : bool
+(define (scaffold-name-bad-char? [name : (& name str)] [idx : i64]) : bool
   (if (>= idx (string.string-length name))
     false
     (let
@@ -28,7 +28,7 @@
         (scaffold-name-bad-char? name (+ idx 1))
         true))))
 
-(define (scaffold-name-ok? [name : String]) : bool
+(define (scaffold-name-ok? [name : (& name str)]) : bool
   (and (> (string.string-length name) 0) (not (scaffold-name-bad-char? name 0))))
 
 ;; The `typelisp.pkg` manifest text, matching the `(package ...)` form parsed by
@@ -66,16 +66,16 @@
         (string.contains (& lib-source) (& test-item)))
       (io.panic "scaffold: first-run source smoke mismatch"))))
 
-(define (scaffold-try-mkdir [path : String]) : io.ResultIoUnit
-  (fs.try-mkdir (& path)))
+(define (scaffold-try-mkdir [path : (& path str)]) : io.ResultIoUnit
+  (fs.try-mkdir path))
 
-(define (scaffold-try-write-file [path : String] [contents : String]) : io.ResultIoUnit
-  (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents))))
+(define (scaffold-try-write-file [path : (& path str)] [contents : String]) : io.ResultIoUnit
+  (io.try-write-file path (byte_buf.str-as-bytes (& contents))))
 
 ;; Create a directory, treating an already-existing one as success. A genuine
 ;; create failure is an error.
 (define (scaffold-ensure-dir [path : String]) : io.ResultIoUnit
-  (match (scaffold-try-mkdir (owned_view.compiler-owned-shared-view path))
+  (match (scaffold-try-mkdir path)
     [(io.OkIoUnit) io.OkIoUnit]
     [(io.ErrIoUnit _)
       (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
@@ -92,9 +92,7 @@
           path
           "\n"))
       1)
-    (match (scaffold-try-write-file
-      (owned_view.compiler-owned-shared-view path)
-      contents)
+    (match (scaffold-try-write-file path contents)
       [(io.OkIoUnit) 0]
       [(io.ErrIoUnit _)
         (begin
@@ -170,7 +168,7 @@
             pkg-code))])))
 
 (define (scaffold-new [name : String] [is-lib : bool]) : i64
-  (if (not (scaffold-name-ok? (owned_view.compiler-owned-shared-view name)))
+  (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
         (str_cat.str-cat "scaffold: invalid package name: " name "\n"))
@@ -185,7 +183,7 @@
         (scaffold-emit (owned_view.compiler-owned-shared-view name) name is-lib)])))
 
 (define (scaffold-init [name : String] [is-lib : bool]) : i64
-  (if (not (scaffold-name-ok? (owned_view.compiler-owned-shared-view name)))
+  (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
         (str_cat.str-cat "scaffold: invalid package name: " name "\n"))

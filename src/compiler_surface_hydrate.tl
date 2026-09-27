@@ -52,7 +52,7 @@
   [identity-bytes : (__tl_dyn-array u8)]
   [ast-bytes : (__tl_dyn-array u8)]
   [fact-bytes : (__tl_dyn-array u8)]
-  [expected-key : surface_identity.SurfaceIdentityKey]
+  [expected-key : (& expected-key surface_identity.SurfaceIdentityKey)]
   [structural-session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
   (match (surface_identity.surface-identity-hydrate identity-bytes expected-key)

@@ -44,11 +44,11 @@
 
 (define (discovery-test-paths-equal?
   [expected : ast.AstDeclPathList]
-  [actual : ast.AstDeclPathList]) : bool
+  [actual : (& actual ast.AstDeclPathList)]) : bool
   (let
     [count : i64 (ast.ast-decl-path-list-len (& expected))]
     [index : i64 0]
-    [ok : bool (= count (ast.ast-decl-path-list-len (& actual)))]
+    [ok : bool (= count (ast.ast-decl-path-list-len actual))]
     (begin
       (while (and ok (< index count))
         (begin
@@ -57,9 +57,9 @@
             (and
               (string.eq
                 (ast.ast-decl-path-list-get (& expected) index "")
-                (ast.ast-decl-path-list-get (& actual) index ""))
-              (= (ast.ast-decl-path-list-owner-id (& actual) index 123) -1)
-              (= (ast.ast-decl-path-list-provenance-id (& actual) index 123) -1)))
+                (ast.ast-decl-path-list-get actual index ""))
+              (= (ast.ast-decl-path-list-owner-id actual index 123) -1)
+              (= (ast.ast-decl-path-list-provenance-id actual index 123) -1)))
           (set! index (+ index 1))))
       (and ok (> count 0)))))
 
@@ -136,9 +136,7 @@
                   (io.panic "discovery did not restore enclosing owners"))
                 (discovery-test-reuse-storage!)
                 (unless
-                  (discovery-test-paths-equal?
-                    expected
-                    (owned_view.compiler-owned-shared-view copied))
+                  (discovery-test-paths-equal? expected copied)
                   (io.panic
                     "retired discovery changed path order or retained ids"))
                 (let
@@ -220,15 +218,10 @@
           [(doc_test.DocTestExtraction.Extraction examples errors)
             (unless
               (and
-                (=
-                  (doc_test.doc-test-example-list-count
-                    (owned_view.compiler-owned-shared-view examples))
-                  2)
+                (= (doc_test.doc-test-example-list-count examples) 2)
                 (= (doc_test.doc-test-error-list-count errors) 0)
                 (doc_test.doc-test-runnable-example-ok?
-                  (doc_test.doc-test-example-list-ref
-                    (owned_view.compiler-owned-shared-view examples)
-                    0)
+                  (doc_test.doc-test-example-list-ref examples 0)
                   1
                   2
                   0
@@ -250,10 +243,7 @@
             (unless
               (and
                 (= (doc_test.doc-test-example-list-count examples) 0)
-                (=
-                  (doc_test.doc-test-error-list-count
-                    (owned_view.compiler-owned-shared-view errors))
-                  3)
+                (= (doc_test.doc-test-error-list-count errors) 3)
                 (doc_test.doc-test-malformed-errors-ok? errors))
               (io.panic "malformed fence ordering or messages escaped scratch"))])
         (match (doc_test.doc-test-extract-package-file-text

@@ -28,7 +28,7 @@
         (owned_view.compiler-owned-shared-view source)
         0
         1
-        (string.string-length (owned_view.compiler-owned-shared-view source))
+        (string.string-length source)
         (&mut entries))]
     [empty : cli_svec.Vec (cli_svec.new)]
     [empty-status : i64
@@ -73,10 +73,10 @@
     [entries : cli_svec.Vec (cli_svec.new)]
     [status : i64
       (compile_cli_core.compile-cli-windows-batch-parse-entries-into!
-        (owned_view.compiler-owned-shared-view source)
+        source
         0
         1
-        (string.string-length (owned_view.compiler-owned-shared-view source))
+        (string.string-length source)
         (&mut entries))]
     [results : cli_svec.Vec (cli_svec.new)]
     (begin

@@ -76,7 +76,6 @@
         arena-debug
         profile
         extra-features
-        extra-features
         startup-profile
         extra-features
         31)]

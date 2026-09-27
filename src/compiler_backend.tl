@@ -4978,7 +4978,7 @@
 
 ;; Per-function dense operand-home view for emission.
 ;; compiler-backend-emit-function installs the function's FINAL (post-coloring)
-;; assignment table after every re-plan stage (caller-save, loop-split, remat,
+;; assignment table after every re-plan stage (caller-save,
 ;; slot coloring) has been folded into it, so each operand-home
 ;; query is an O(1) array read. `active` gates the function-state view; callers
 ;; of emit helpers outside whole-function emission (unit tests, closure-entry
@@ -6391,7 +6391,8 @@
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackendSimdIndexedAddress.Err message)]))])))
 
-(define (compiler-backend-emit-avx2-vector-load
+(define (compiler-backend-emit-vector-load
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -6401,13 +6402,15 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (match (compiler-backend-vector-dst-reg
       assignments
       dst
       "load dst"
-      "ymm"
-      (compiler-backend-vector-spill-scratch "ymm" 0)
+      (compiler-backend-mode-width mode)
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-mode-width mode)
+        0)
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
@@ -6426,7 +6429,7 @@
                   addr-asm
                   (str_cat.str-cat
                     "    "
-                    (compiler-backend-avx2-vector-move elem-ty)
+                    (compiler-backend-mode-vector-move mode elem-ty)
                     " "
                     addr
                     ", ")
@@ -6436,7 +6439,7 @@
                     (compiler-backend-vector-store-dst
                       assignments
                       dst
-                      "ymm"
+                      (compiler-backend-mode-width mode)
                       elem-ty
                       dst-reg
                       backend-state)))))]
@@ -6452,7 +6455,8 @@
             (compiler_diagnostic.compiler-diagnostic-with-message
               instr-diag
               message)))])
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
@@ -6512,11 +6516,40 @@
           ", "))]
     [(CompilerBackendMaybeStackOperand.No) (CompilerBackendMaybeAsm.No)]))
 
-(define (compiler-backend-avx2-splat-load
+;; AVX-512 broadcasts a GPR directly; AVX2 moves it into XMM first.
+(define (compiler-backend-simd-splat-gpr-asm
+  [mode : CompilerBackendMode]
+  [asm : String]
+  [move : String]
+  [broadcast : String]
+  [gp : String]
+  [xmm : String]) : String
+  (match mode
+    [(CompilerBackendMode.Avx512)
+      (str_cat.str-cat asm "    " broadcast " " gp ", ")]
+    [_
+      (str_cat.str-cat
+        asm
+        "    "
+        move
+        " "
+        gp
+        ", "
+        xmm
+        "\n    "
+        broadcast
+        " "
+        xmm
+        ", ")]))
+
+(define (compiler-backend-simd-splat-load
+  [mode : CompilerBackendMode]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
+  [planned-gp : String]
+  [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-splat-memory-load
     assignments
@@ -6528,23 +6561,27 @@
       (let
         [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
         [gp-reg : String
-          (compiler-backend-scavenge-reg
-            dst
-            (compiler-backend-global-shared-view no-exclude)
-            0
-            "%r8"
-            backend-state)]
+          (if (> (string.string-length planned-gp) 0)
+            planned-gp
+            (compiler-backend-scavenge-reg
+              dst
+              (compiler-backend-global-shared-view no-exclude)
+              0
+              "%r8"
+              backend-state))]
         [gp32 : String
           (compiler-backend-reg-part
             (compiler-backend-global-shared-view gp-reg)
             4)]
         [xmm-reg : String
-          (compiler-backend-scavenge-xmm-reg
-            dst
-            no-exclude
-            0
-            "%xmm2"
-            backend-state)]
+          (if (> (string.string-length planned-xmm) 0)
+            planned-xmm
+            (compiler-backend-scavenge-xmm-reg
+              dst
+              no-exclude
+              0
+              "%xmm2"
+              backend-state))]
         (match (compiler-backend-global-shared-view elem-ty)
           [(compiler_ast_types.AstType.F64)
             (match (compiler-backend-emit-load-float-value-with-plan
@@ -6578,15 +6615,13 @@
               backend-state)
               [(ResultCompilerBackend.Ok asm)
                 (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
+                  (compiler-backend-simd-splat-gpr-asm
+                    mode
                     asm
-                    "    vmovd "
+                    "vmovd"
+                    "vpbroadcastd"
                     gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastd "
-                    xmm-reg
-                    ", "))]
+                    xmm-reg))]
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.U32)
@@ -6597,15 +6632,13 @@
               backend-state)
               [(ResultCompilerBackend.Ok asm)
                 (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
+                  (compiler-backend-simd-splat-gpr-asm
+                    mode
                     asm
-                    "    vmovd "
+                    "vmovd"
+                    "vpbroadcastd"
                     gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastd "
-                    xmm-reg
-                    ", "))]
+                    xmm-reg))]
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]
           [(compiler_ast_types.AstType.I16)
@@ -6692,19 +6725,18 @@
               backend-state)
               [(ResultCompilerBackend.Ok asm)
                 (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
+                  (compiler-backend-simd-splat-gpr-asm
+                    mode
                     asm
-                    "    vmovq "
+                    "vmovq"
+                    "vpbroadcastq"
                     gp-reg
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastq "
-                    xmm-reg
-                    ", "))]
+                    xmm-reg))]
               [(ResultCompilerBackend.Err diag)
                 (ResultCompilerBackend.Err diag)])]))]))
 
-(define (compiler-backend-emit-avx2-splat
+(define (compiler-backend-emit-vector-splat
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -6713,20 +6745,25 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (match (compiler-backend-vector-dst-reg
       assignments
       dst
       "splat dst"
-      "ymm"
-      (compiler-backend-vector-spill-scratch "ymm" 0)
+      (compiler-backend-mode-width mode)
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-mode-width mode)
+        0)
       backend-state)
       [(ResultBackendReg.Ok dst-reg)
-        (match (compiler-backend-avx2-splat-load
+        (match (compiler-backend-simd-splat-load
+          mode
           assignments
           dst
           value
           (compiler-backend-global-shared-view elem-ty)
+          ""
+          ""
           backend-state)
           [(ResultCompilerBackend.Ok load-asm)
             (ResultCompilerBackend.Ok
@@ -6737,7 +6774,7 @@
                 (compiler-backend-vector-store-dst
                   assignments
                   dst
-                  "ymm"
+                  (compiler-backend-mode-width mode)
                   elem-ty
                   dst-reg
                   backend-state)))]
@@ -6753,7 +6790,8 @@
             (compiler_diagnostic.compiler-diagnostic-with-message
               instr-diag
               message)))])
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
@@ -6939,7 +6977,8 @@
             instr-diag
             message)))]))
 
-(define (compiler-backend-emit-avx2-vector-binop
+(define (compiler-backend-emit-vector-binop
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -6950,12 +6989,14 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (let
       [mnemonic : String
-        (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
+        (compiler-backend-mode-vector-binop-mnemonic mode op elem-ty)]
       (cond
-        [(compiler-backend-word-vector-shift? op elem-ty)
+        [(and
+            (compiler-backend-mode-avx2? mode)
+            (compiler-backend-word-vector-shift? op elem-ty))
           (compiler-backend-emit-avx2-word-vector-shift
             assignments
             dst
@@ -6973,7 +7014,7 @@
             lhs
             rhs
             elem-ty
-            "ymm"
+            (compiler-backend-mode-width mode)
             instr-diag
             backend-state)]
         [(compiler-backend-byte-vector-mul? op elem-ty)
@@ -6983,10 +7024,12 @@
             lhs
             rhs
             elem-ty
-            "ymm"
+            (compiler-backend-mode-width mode)
             instr-diag
             backend-state)]
-        [(compiler-backend-avx2-i64-vector-mul? op elem-ty)
+        [(and
+            (compiler-backend-mode-avx2? mode)
+            (compiler-backend-avx2-i64-vector-mul? op elem-ty))
           (compiler-backend-emit-avx2-i64-vector-mul
             assignments
             dst
@@ -6994,7 +7037,9 @@
             rhs
             instr-diag
             backend-state)]
-        [(compiler-backend-avx2-i64-vector-shr? op elem-ty)
+        [(and
+            (compiler-backend-mode-avx2? mode)
+            (compiler-backend-avx2-i64-vector-shr? op elem-ty))
           (compiler-backend-emit-avx2-i64-vector-shr
             assignments
             dst
@@ -7007,15 +7052,17 @@
             (box
               (compiler_diagnostic.compiler-diagnostic-with-message
                 instr-diag
-                "backend: unsupported AVX2 vector binary op")))]
+                (compiler-backend-mode-unsupported mode "vector binary op"))))]
         [else
           (match (compiler-backend-vector-register-use
             assignments
             lhs
             "lhs"
-            "ymm"
+            (compiler-backend-mode-width mode)
             elem-ty
-            (compiler-backend-vector-spill-scratch "ymm" 0)
+            (compiler-backend-vector-spill-scratch
+              (compiler-backend-mode-width mode)
+              0)
             backend-state)
             [(ResultBackendVectorUse.Ok lhs-use)
               (match lhs-use
@@ -7024,7 +7071,7 @@
                     assignments
                     rhs
                     "rhs"
-                    "ymm"
+                    (compiler-backend-mode-width mode)
                     elem-ty
                     backend-state)
                     [(ResultBackendVectorUse.Ok rhs-use)
@@ -7034,8 +7081,10 @@
                             assignments
                             dst
                             "binop dst"
-                            "ymm"
-                            (compiler-backend-vector-spill-scratch "ymm" 0)
+                            (compiler-backend-mode-width mode)
+                            (compiler-backend-vector-spill-scratch
+                              (compiler-backend-mode-width mode)
+                              0)
                             backend-state)
                             [(ResultBackendReg.Ok dst-reg)
                               (ResultCompilerBackend.Ok
@@ -7055,7 +7104,7 @@
                                     (compiler-backend-vector-store-dst
                                       assignments
                                       dst
-                                      "ymm"
+                                      (compiler-backend-mode-width mode)
                                       elem-ty
                                       dst-reg
                                       backend-state))))]
@@ -7077,13 +7126,15 @@
                   (compiler_diagnostic.compiler-diagnostic-with-message
                     instr-diag
                     message)))])]))
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
       lanes)))
 
-(define (compiler-backend-emit-avx2-vector-binop-memory-source
+(define (compiler-backend-emit-vector-binop-memory-source
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -7095,23 +7146,25 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (let
       [mnemonic : String
-        (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
+        (compiler-backend-mode-vector-binop-mnemonic mode op elem-ty)]
       (if (= (string.string-length mnemonic) 0)
         (ResultCompilerBackend.Err
           (box
             (compiler_diagnostic.compiler-diagnostic-with-message
               instr-diag
-              "backend: unsupported AVX2 vector binary op")))
+              (compiler-backend-mode-unsupported mode "vector binary op"))))
         (match (compiler-backend-vector-register-use
           assignments
           reg-value
           "memory binop register operand"
-          "ymm"
+          (compiler-backend-mode-width mode)
           elem-ty
-          (compiler-backend-vector-spill-scratch "ymm" 0)
+          (compiler-backend-vector-spill-scratch
+            (compiler-backend-mode-width mode)
+            0)
           backend-state)
           [(ResultBackendVectorUse.Ok reg-use)
             (match reg-use
@@ -7120,8 +7173,10 @@
                   assignments
                   dst
                   "binop dst"
-                  "ymm"
-                  (compiler-backend-vector-spill-scratch "ymm" 0)
+                  (compiler-backend-mode-width mode)
+                  (compiler-backend-vector-spill-scratch
+                    (compiler-backend-mode-width mode)
+                    0)
                   backend-state)
                   [(ResultBackendReg.Ok dst-reg)
                     (match (compiler-backend-emit-simd-indexed-address
@@ -7152,7 +7207,7 @@
                                 (compiler-backend-vector-store-dst
                                   assignments
                                   dst
-                                  "ymm"
+                                  (compiler-backend-mode-width mode)
                                   elem-ty
                                   dst-reg
                                   backend-state)))))]
@@ -7174,13 +7229,15 @@
                 (compiler_diagnostic.compiler-diagnostic-with-message
                   instr-diag
                   message)))])))
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
       lanes)))
 
-(define (compiler-backend-emit-avx2-vector-store
+(define (compiler-backend-emit-vector-store
+  [mode : CompilerBackendMode]
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
@@ -7190,14 +7247,16 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+  (if (compiler-backend-mode-shape-ok? mode elem-ty lanes)
     (match (compiler-backend-vector-register-use
       assignments
       value
       "store value"
-      "ymm"
+      (compiler-backend-mode-width mode)
       elem-ty
-      (compiler-backend-vector-spill-scratch "ymm" 0)
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-mode-width mode)
+        0)
       backend-state)
       [(ResultBackendVectorUse.Ok value-use)
         (match value-use
@@ -7219,7 +7278,7 @@
                       addr-asm
                       (str_cat.str-cat
                         "    "
-                        (compiler-backend-avx2-vector-move elem-ty)
+                        (compiler-backend-mode-vector-move mode elem-ty)
                         " "
                         value-reg
                         ", ")
@@ -7236,7 +7295,8 @@
             (compiler_diagnostic.compiler-diagnostic-with-message
               instr-diag
               message)))])
-    (compiler-backend-avx2-shape-diagnostic
+    (compiler-backend-mode-shape-diagnostic
+      mode
       type-segment-bases
       instr-diag
       elem-ty
@@ -7299,6 +7359,78 @@
     [(compiler_ast_types.AstType.I8) "vmovdqu8"]
     [(compiler_ast_types.AstType.U8) "vmovdqu8"]
     [_ ""]))
+
+;; The shared SIMD emitters take the vector ISA as a CompilerBackendMode: Avx2
+;; works in ymm registers, Avx512 in zmm. A shape that fills a zmm is emitted
+;; with AVX-512; every other shape goes to AVX2, which diagnoses the ones that
+;; fit neither.
+(define (compiler-backend-vector-mode
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [lanes : i64]) : CompilerBackendMode
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (CompilerBackendMode.Avx512)
+    (CompilerBackendMode.Avx2)))
+
+(define (compiler-backend-mode-width [mode : CompilerBackendMode]) : String
+  (match mode
+    [(CompilerBackendMode.Avx512) "zmm"]
+    [_ "ymm"]))
+
+(define (compiler-backend-mode-shape-ok?
+  [mode : CompilerBackendMode]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [lanes : i64]) : bool
+  (match mode
+    [(CompilerBackendMode.Avx512)
+      (compiler-backend-avx512-shape-ok? elem-ty lanes)]
+    [_ (compiler-backend-avx2-shape-ok? elem-ty lanes)]))
+
+(define (compiler-backend-mode-shape-diagnostic
+  [mode : CompilerBackendMode]
+  [type-segment-bases : i64]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [elem-ty : compiler_ast_types.AstType]
+  [lanes : i64]) : ResultCompilerBackend
+  (match mode
+    [(CompilerBackendMode.Avx512)
+      (compiler-backend-avx512-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes)]
+    [_
+      (compiler-backend-avx2-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes)]))
+
+(define (compiler-backend-mode-unsupported
+  [mode : CompilerBackendMode]
+  [what : String]) : String
+  (str_cat.str-cat
+    "backend: unsupported "
+    (match mode
+      [(CompilerBackendMode.Avx512) "AVX-512"]
+      [_ "AVX2"])
+    " "
+    what))
+
+(define (compiler-backend-mode-vector-move
+  [mode : CompilerBackendMode]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
+  (match mode
+    [(CompilerBackendMode.Avx512) (compiler-backend-avx512-vector-move elem-ty)]
+    [_ (compiler-backend-avx2-vector-move elem-ty)]))
+
+(define (compiler-backend-mode-vector-binop-mnemonic
+  [mode : CompilerBackendMode]
+  [op : (& op compiler_ir_types.CompilerIrBinOp)]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
+  (match mode
+    [(CompilerBackendMode.Avx512)
+      (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
+    [_ (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]))
 
 (define (compiler-backend-vector-move-for-width
   [width : (& width str)]
@@ -7825,180 +7957,6 @@
     [(compiler_ir_types.CompilerIrBinOp.Gt) " $6, "]
     [_ ""]))
 
-(define (compiler-backend-avx512-splat-load
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [value : compiler_ir_types.CompilerIrValue]
-  [elem-ty : compiler_ast_types.AstType]
-  [planned-gp : String]
-  [planned-xmm : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-splat-memory-load
-    assignments
-    (compiler-backend-global-shared-view value)
-    elem-ty
-    backend-state)
-    [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
-    [(CompilerBackendMaybeAsm.No)
-      (let
-        [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
-        [gp-reg : String
-          (if (> (string.string-length planned-gp) 0)
-            planned-gp
-            (compiler-backend-scavenge-reg
-              dst
-              (compiler-backend-global-shared-view no-exclude)
-              0
-              "%r8"
-              backend-state))]
-        [gp32 : String
-          (compiler-backend-reg-part
-            (compiler-backend-global-shared-view gp-reg)
-            4)]
-        [xmm-reg : String
-          (if (> (string.string-length planned-xmm) 0)
-            planned-xmm
-            (compiler-backend-scavenge-xmm-reg
-              dst
-              no-exclude
-              0
-              "%xmm2"
-              backend-state))]
-        (match (compiler-backend-global-shared-view elem-ty)
-          [(compiler_ast_types.AstType.F64)
-            (match (compiler-backend-emit-load-float-value-with-plan
-              assignments
-              value
-              elem-ty
-              (compiler-backend-global-shared-view xmm-reg)
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vbroadcastsd " xmm-reg ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.F32)
-            (match (compiler-backend-emit-load-float-value-with-plan
-              assignments
-              value
-              elem-ty
-              (compiler-backend-global-shared-view xmm-reg)
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vbroadcastss " xmm-reg ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.I32)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vpbroadcastd " gp32 ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.U32)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vpbroadcastd " gp32 ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.I16)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    asm
-                    "    vmovd "
-                    gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastw "
-                    xmm-reg
-                    ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.U16)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    asm
-                    "    vmovd "
-                    gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastw "
-                    xmm-reg
-                    ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.I8)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    asm
-                    "    vmovd "
-                    gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastb "
-                    xmm-reg
-                    ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [(compiler_ast_types.AstType.U8)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              gp-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    asm
-                    "    vmovd "
-                    gp32
-                    ", "
-                    xmm-reg
-                    "\n    vpbroadcastb "
-                    xmm-reg
-                    ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]
-          [_
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              (compiler-backend-global-shared-view gp-reg)
-              backend-state)
-              [(ResultCompilerBackend.Ok asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat asm "    vpbroadcastq " gp-reg ", "))]
-              [(ResultCompilerBackend.Err diag)
-                (ResultCompilerBackend.Err diag)])]))]))
-
 (define (compiler-backend-avx512-vector-reduce-op-mnemonic
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
@@ -8248,372 +8206,6 @@
         instr-diag
         elem-ty
         lanes))))
-
-(define (compiler-backend-emit-avx512-vector-load
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-dst-reg
-      assignments
-      dst
-      "load dst"
-      "zmm"
-      (compiler-backend-vector-spill-scratch "zmm" 0)
-      backend-state)
-      [(ResultBackendReg.Ok dst-reg)
-        (match (compiler-backend-emit-simd-indexed-address
-          type-segment-bases
-          assignments
-          base
-          index
-          (compiler-backend-global-shared-view elem-ty)
-          backend-state)
-          [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-            (let
-              [addr-asm : String addr-plan.asm]
-              [addr : String addr-plan.addr]
-              (ResultCompilerBackend.Ok
-                (str_cat.str-cat
-                  addr-asm
-                  (str_cat.str-cat
-                    "    "
-                    (compiler-backend-avx512-vector-move elem-ty)
-                    " "
-                    addr
-                    ", ")
-                  (str_cat.str-cat
-                    dst-reg
-                    "\n"
-                    (compiler-backend-vector-store-dst
-                      assignments
-                      dst
-                      "zmm"
-                      elem-ty
-                      dst-reg
-                      backend-state)))))]
-          [(ResultCompilerBackendSimdIndexedAddress.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
-      [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-avx512-splat
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [value : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-dst-reg
-      assignments
-      dst
-      "splat dst"
-      "zmm"
-      (compiler-backend-vector-spill-scratch "zmm" 0)
-      backend-state)
-      [(ResultBackendReg.Ok dst-reg)
-        (match (compiler-backend-avx512-splat-load
-          assignments
-          dst
-          value
-          (compiler-backend-global-shared-view elem-ty)
-          ""
-          ""
-          backend-state)
-          [(ResultCompilerBackend.Ok load-asm)
-            (ResultCompilerBackend.Ok
-              (str_cat.str-cat
-                load-asm
-                dst-reg
-                "\n"
-                (compiler-backend-vector-store-dst
-                  assignments
-                  dst
-                  "zmm"
-                  elem-ty
-                  dst-reg
-                  backend-state)))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-backend-apply-instr-diagnostic
-                  (deref message)
-                  instr-diag)))])]
-      [(ResultBackendReg.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-vector-splat
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [value : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-splat
-      type-segment-bases
-      assignments
-      dst
-      value
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-splat
-      type-segment-bases
-      assignments
-      dst
-      value
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
-
-(define (compiler-backend-emit-avx512-vector-binop
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [lhs : compiler_ir_types.CompilerIrValue]
-  [rhs : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (let
-      [mnemonic : String
-        (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
-      (cond
-        [(compiler-backend-byte-vector-shift? op elem-ty)
-          (compiler-backend-emit-byte-vector-shift
-            assignments
-            dst
-            op
-            lhs
-            rhs
-            elem-ty
-            "zmm"
-            instr-diag
-            backend-state)]
-        [(compiler-backend-byte-vector-mul? op elem-ty)
-          (compiler-backend-emit-byte-vector-mul
-            assignments
-            dst
-            lhs
-            rhs
-            elem-ty
-            "zmm"
-            instr-diag
-            backend-state)]
-        [(= (string.string-length mnemonic) 0)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                "backend: unsupported AVX-512 vector binary op")))]
-        [else
-          (match (compiler-backend-vector-register-use
-            assignments
-            lhs
-            "lhs"
-            "zmm"
-            elem-ty
-            (compiler-backend-vector-spill-scratch "zmm" 0)
-            backend-state)
-            [(ResultBackendVectorUse.Ok lhs-use)
-              (match lhs-use
-                [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
-                  (match (compiler-backend-vector-memory-or-register-use
-                    assignments
-                    rhs
-                    "rhs"
-                    "zmm"
-                    elem-ty
-                    backend-state)
-                    [(ResultBackendVectorUse.Ok rhs-use)
-                      (match rhs-use
-                        [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
-                          (match (compiler-backend-vector-dst-reg
-                            assignments
-                            dst
-                            "binop dst"
-                            "zmm"
-                            (compiler-backend-vector-spill-scratch "zmm" 0)
-                            backend-state)
-                            [(ResultBackendReg.Ok dst-reg)
-                              (ResultCompilerBackend.Ok
-                                (str_cat.str-cat
-                                  lhs-asm
-                                  rhs-asm
-                                  "    "
-                                  mnemonic
-                                  " "
-                                  rhs-op
-                                  ", "
-                                  lhs-reg
-                                  ", "
-                                  dst-reg
-                                  "\n"
-                                  (compiler-backend-vector-store-dst
-                                    assignments
-                                    dst
-                                    "zmm"
-                                    elem-ty
-                                    dst-reg
-                                    backend-state)))]
-                            [(ResultBackendReg.Err message)
-                              (ResultCompilerBackend.Err
-                                (box
-                                  (compiler_diagnostic.compiler-diagnostic-with-message
-                                    instr-diag
-                                    message)))])])]
-                    [(ResultBackendVectorUse.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler_diagnostic.compiler-diagnostic-with-message
-                            instr-diag
-                            message)))])])]
-            [(ResultBackendVectorUse.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))])]))
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-avx512-vector-binop-memory-source
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [reg-value : compiler_ir_types.CompilerIrValue]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (let
-      [mnemonic : String
-        (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
-      (if (= (string.string-length mnemonic) 0)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              "backend: unsupported AVX-512 vector binary op")))
-        (match (compiler-backend-vector-register-use
-          assignments
-          reg-value
-          "memory binop register operand"
-          "zmm"
-          elem-ty
-          (compiler-backend-vector-spill-scratch "zmm" 0)
-          backend-state)
-          [(ResultBackendVectorUse.Ok reg-use)
-            (match reg-use
-              [(CompilerBackendVectorUse.Use reg-asm reg)
-                (match (compiler-backend-vector-dst-reg
-                  assignments
-                  dst
-                  "binop dst"
-                  "zmm"
-                  (compiler-backend-vector-spill-scratch "zmm" 0)
-                  backend-state)
-                  [(ResultBackendReg.Ok dst-reg)
-                    (match (compiler-backend-emit-simd-indexed-address
-                      type-segment-bases
-                      assignments
-                      base
-                      index
-                      (compiler-backend-global-shared-view elem-ty)
-                      backend-state)
-                      [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-                        (let
-                          [addr-asm : String addr-plan.asm]
-                          [addr : String addr-plan.addr]
-                          (ResultCompilerBackend.Ok
-                            (str_cat.str-cat
-                              reg-asm
-                              addr-asm
-                              "    "
-                              mnemonic
-                              " "
-                              addr
-                              ", "
-                              reg
-                              ", "
-                              dst-reg
-                              "\n"
-                              (compiler-backend-vector-store-dst
-                                assignments
-                                dst
-                                "zmm"
-                                elem-ty
-                                dst-reg
-                                backend-state))))]
-                      [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler-backend-apply-instr-diagnostic
-                              (deref message)
-                              instr-diag)))])]
-                  [(ResultBackendReg.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          message)))])])]
-          [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
 
 (define (compiler-backend-emit-avx512-vector-compare
   [type-segment-bases : i64]
@@ -9125,100 +8717,6 @@
       instr-diag
       backend-state)))
 
-(define (compiler-backend-emit-avx512-vector-store
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [value : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (match (compiler-backend-vector-register-use
-      assignments
-      value
-      "store value"
-      "zmm"
-      elem-ty
-      (compiler-backend-vector-spill-scratch "zmm" 0)
-      backend-state)
-      [(ResultBackendVectorUse.Ok value-use)
-        (match value-use
-          [(CompilerBackendVectorUse.Use value-asm value-reg)
-            (match (compiler-backend-emit-simd-indexed-address
-              type-segment-bases
-              assignments
-              base
-              index
-              (compiler-backend-global-shared-view elem-ty)
-              backend-state)
-              [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
-                (let
-                  [addr-asm : String addr-plan.asm]
-                  [addr : String addr-plan.addr]
-                  (ResultCompilerBackend.Ok
-                    (str_cat.str-cat
-                      value-asm
-                      addr-asm
-                      (str_cat.str-cat
-                        "    "
-                        (compiler-backend-avx512-vector-move elem-ty)
-                        " "
-                        value-reg
-                        ", ")
-                      (str_cat.str-cat addr "\n"))))]
-              [(ResultCompilerBackendSimdIndexedAddress.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler-backend-apply-instr-diagnostic
-                      (deref message)
-                      instr-diag)))])])]
-      [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              message)))])
-    (compiler-backend-avx512-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-vector-load
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-vector-load
-      type-segment-bases
-      assignments
-      dst
-      base
-      index
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-vector-load
-      type-segment-bases
-      assignments
-      dst
-      base
-      index
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
-
 (define (compiler-backend-avx2-gather-mnemonic
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
@@ -9254,7 +8752,8 @@
     (compiler_ir_types.CompilerIrValue.I64 0)
     index))
 
-(define (compiler-backend-emit-avx2-gather-adjustments
+(define (compiler-backend-emit-simd-gather-adjustments
+  [mode : CompilerBackendMode]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [logical-base : compiler_ir_types.CompilerIrValue]
@@ -9263,86 +8762,70 @@
   [backend-state : CompilerBackendState]) : ResultBackendGatherAdjust
   (if (not lane-offset)
     (ResultBackendGatherAdjust.Ok (CompilerBackendGatherAdjust "" ""))
-    (match (compiler-backend-avx2-splat-load
+    (match (compiler-backend-simd-splat-load
+      mode
       assignments
       dst
       (compiler-backend-global-shared-view logical-base)
       (compiler_ast_types.AstType.I64)
+      ""
+      ""
       backend-state)
       [(ResultCompilerBackend.Ok first-load)
-        (match (compiler-backend-avx2-splat-load
+        (match (compiler-backend-simd-splat-load
+          mode
           assignments
           dst
           logical-base
           (compiler_ast_types.AstType.I64)
+          ""
+          ""
           backend-state)
           [(ResultCompilerBackend.Ok second-load)
-            (let
-              [label : String (compiler-backend-avx2-i64-lane-id-label)]
-              (ResultBackendGatherAdjust.Ok
-                (CompilerBackendGatherAdjust
-                  (str_cat.str-cat
-                    first-load
-                    "%ymm14\n    vpaddq "
-                    label
-                    "(%rip), %ymm14, %ymm14\n    vpaddq %ymm14, %ymm15, %ymm15\n")
-                  (if dword
-                    (str_cat.str-cat
-                      second-load
-                      "%ymm14\n    vpaddq "
-                      label
-                      "+32(%rip), %ymm14, %ymm14\n    vpaddq %ymm14, %ymm15, %ymm15\n")
-                    ""))))]
+            (ResultBackendGatherAdjust.Ok
+              (CompilerBackendGatherAdjust
+                (compiler-backend-gather-lane-add mode first-load "")
+                (if dword
+                  (compiler-backend-gather-lane-add
+                    mode
+                    second-load
+                    (match mode
+                      [(CompilerBackendMode.Avx512) "+64"]
+                      [_ "+32"]))
+                  "")))]
           [(ResultCompilerBackend.Err diag)
             (ResultBackendGatherAdjust.Err diag)])]
       [(ResultCompilerBackend.Err diag) (ResultBackendGatherAdjust.Err diag)])))
 
-(define (compiler-backend-emit-avx512-gather-adjustments
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [logical-base : compiler_ir_types.CompilerIrValue]
-  [lane-offset : bool]
-  [dword : bool]
-  [backend-state : CompilerBackendState]) : ResultBackendGatherAdjust
-  (if (not lane-offset)
-    (ResultBackendGatherAdjust.Ok (CompilerBackendGatherAdjust "" ""))
-    (match (compiler-backend-avx512-splat-load
-      assignments
-      dst
-      (compiler-backend-global-shared-view logical-base)
-      (compiler_ast_types.AstType.I64)
-      ""
-      ""
-      backend-state)
-      [(ResultCompilerBackend.Ok first-load)
-        (match (compiler-backend-avx512-splat-load
-          assignments
-          dst
-          logical-base
-          (compiler_ast_types.AstType.I64)
-          ""
-          ""
-          backend-state)
-          [(ResultCompilerBackend.Ok second-load)
-            (let
-              [label : String (compiler-backend-avx512-i64-lane-id-label)]
-              (ResultBackendGatherAdjust.Ok
-                (CompilerBackendGatherAdjust
-                  (str_cat.str-cat
-                    first-load
-                    "%zmm14\n    vpaddq "
-                    label
-                    "(%rip), %zmm14, %zmm14\n    vpaddq %zmm14, %zmm15, %zmm15\n")
-                  (if dword
-                    (str_cat.str-cat
-                      second-load
-                      "%zmm14\n    vpaddq "
-                      label
-                      "+64(%rip), %zmm14, %zmm14\n    vpaddq %zmm14, %zmm15, %zmm15\n")
-                    ""))))]
-          [(ResultCompilerBackend.Err diag)
-            (ResultBackendGatherAdjust.Err diag)])]
-      [(ResultCompilerBackend.Err diag) (ResultBackendGatherAdjust.Err diag)])))
+;; LOAD ends by broadcasting the logical base into v14; add the i64 lane ids at
+;; OFFSET into the lane-id row and fold them into the v15 index vector.
+(define (compiler-backend-gather-lane-add
+  [mode : CompilerBackendMode]
+  [load : String]
+  [offset : String]) : String
+  (let
+    [w : String (compiler-backend-mode-width mode)]
+    (str_cat.str-cat
+      load
+      "%"
+      w
+      "14\n    vpaddq "
+      (match mode
+        [(CompilerBackendMode.Avx512)
+          (compiler-backend-avx512-i64-lane-id-label)]
+        [_ (compiler-backend-avx2-i64-lane-id-label)])
+      offset
+      "(%rip), %"
+      w
+      "14, %"
+      w
+      "14\n    vpaddq %"
+      w
+      "14, %"
+      w
+      "15, %"
+      w
+      "15\n")))
 
 (define (compiler-backend-emit-avx2-gather-load
   [type-segment-bases : i64]
@@ -9422,7 +8905,8 @@
                   (compiler-backend-global-shared-view base-reg)
                   backend-state)
                   [(ResultCompilerBackend.Ok base-asm)
-                    (match (compiler-backend-emit-avx2-gather-adjustments
+                    (match (compiler-backend-emit-simd-gather-adjustments
+                      (CompilerBackendMode.Avx2)
                       assignments
                       dst
                       index
@@ -9617,7 +9101,8 @@
                   (compiler-backend-global-shared-view base-reg)
                   backend-state)
                   [(ResultCompilerBackend.Ok base-asm)
-                    (match (compiler-backend-emit-avx512-gather-adjustments
+                    (match (compiler-backend-emit-simd-gather-adjustments
+                      (CompilerBackendMode.Avx512)
                       assignments
                       dst
                       index
@@ -10301,41 +9786,6 @@
                   instr-diag
                   message)))])))))
 
-(define (compiler-backend-emit-vector-binop
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [lhs : compiler_ir_types.CompilerIrValue]
-  [rhs : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-vector-binop
-      type-segment-bases
-      assignments
-      dst
-      op
-      lhs
-      rhs
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-vector-binop
-      type-segment-bases
-      assignments
-      dst
-      op
-      lhs
-      rhs
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
-
 (define (compiler-backend-vector-binop-memory-source-supported?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [lanes : i64]
@@ -10351,44 +9801,6 @@
           (compiler-backend-avx2-vector-binop-mnemonic op elem-ty))
         0)
       false)))
-
-(define (compiler-backend-emit-vector-binop-memory-source
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [reg-value : compiler_ir_types.CompilerIrValue]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-vector-binop-memory-source
-      type-segment-bases
-      assignments
-      dst
-      op
-      reg-value
-      base
-      index
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-vector-binop-memory-source
-      type-segment-bases
-      assignments
-      dst
-      op
-      reg-value
-      base
-      index
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
 
 (define (compiler-backend-vector-load-binop-fold-value
   [load-dst : i64]
@@ -11559,7 +10971,8 @@
                         ", "
                         dst-reg
                         "\n"))]
-                  (match (compiler-backend-avx512-splat-load
+                  (match (compiler-backend-simd-splat-load
+                    (CompilerBackendMode.Avx512)
                     assignments
                     dst
                     carry
@@ -11821,38 +11234,6 @@
       dst
       op
       src
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)))
-
-(define (compiler-backend-emit-vector-store
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [base : compiler_ir_types.CompilerIrValue]
-  [index : compiler_ir_types.CompilerIrValue]
-  [value : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
-    (compiler-backend-emit-avx512-vector-store
-      type-segment-bases
-      assignments
-      base
-      index
-      value
-      lanes
-      elem-ty
-      instr-diag
-      backend-state)
-    (compiler-backend-emit-avx2-vector-store
-      type-segment-bases
-      assignments
-      base
-      index
-      value
       lanes
       elem-ty
       instr-diag
@@ -13836,8 +13217,9 @@
     (not (string.eq reg guard-b))))
 
 ;; The fused select's register choice in its two forms. `peek?` is the PURE
-;; twin used by the admission test (compiler-backend-scavenge-reg-peek is
-;; documented as side-effect-free and returns what the committing call will);
+;; twin used by the admission test (a non-committing
+;; compiler-backend-scavenge-reg-pick is side-effect-free and returns what the
+;; committing call will);
 ;; the committing form books the emergency save/restore and the planned
 ;; preservation exactly as compiler-backend-planned-or-scavenge-reg does.
 (define (compiler-backend-flags-select-reg
@@ -13847,14 +13229,13 @@
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
-  (if peek?
-    (compiler-backend-scavenge-reg-peek
-      dst
-      exclude
-      exclude-n
-      fallback
-      backend-state)
-    (compiler-backend-scavenge-reg dst exclude exclude-n fallback backend-state)))
+  (compiler-backend-scavenge-reg-pick
+    dst
+    exclude
+    exclude-n
+    fallback
+    (not peek?)
+    backend-state))
 
 ;; SS-P5(b) / VG-P-B: a scalar Select whose mask is the comparison IMMEDIATELY
 ;; in front of it and is wanted nowhere else. The mask never becomes a value:
@@ -15054,7 +14435,7 @@
 
 ;; "Does this function's plan home a value in register R" is a per-function,
 ;; per-REGISTER constant: the emitted assignment table is fixed before body
-;; emission (every re-plan stage -- caller-save, loop-split, remat, slot
+;; emission (every re-plan stage -- caller-save and slot
 ;; coloring -- is already folded into it, exactly as for the dense operand
 ;; view above). The prologue/epilogue, frame layout, callee-save and FPO paths
 ;; ask it tens of times per function, and each ask used to re-walk the whole
@@ -15375,29 +14756,6 @@
                     (set! i (+ i 1)))))])
           (set! b (+ b 1))))
       out)))
-
-;; The GP callee-saved registers, as a mask. These are the only bits fix B
-;; trims: a caller-saved home costs no prologue traffic, and the XMM callee
-;; save path reads the assignment table directly rather than this mask.
-(define (compiler-backend-callee-saved-reg-mask) : i64
-  (bit-or
-    (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r12)
-    (bit-or
-      (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r13)
-      (bit-or
-        (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r14)
-        (bit-or
-          (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r15)
-          (bit-or
-            (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-rbx)
-            (bit-or
-              (compiler-backend-plan-reg-id-bit
-                compiler_abi.compiler-reg-id-rbp)
-              (bit-or
-                (compiler-backend-plan-reg-id-bit
-                  compiler_abi.compiler-reg-id-rsi)
-                (compiler-backend-plan-reg-id-bit
-                  compiler_abi.compiler-reg-id-rdi)))))))))
 
 (define (compiler-backend-plan-uses-reg?
   [backend-state : CompilerBackendState]
@@ -21554,7 +20912,6 @@
       [scratch : String
         (if sse?
           (compiler-backend-scavenge-pick-from-mask
-            backend-state
             (compiler-backend-state-function-state backend-state)
             0
             exclude
@@ -21562,8 +20919,8 @@
             "%xmm2"
             compiler-backend-scavenge-xmm-candidate-pool)
           (compiler-backend-scavenge-pick-with-mask
-            backend-state
             (compiler-backend-state-function-state backend-state)
+            true
             0
             0
             exclude
@@ -23421,17 +22778,6 @@
   (if (compiler-backend-imm32? n)
     (compiler-backend-emit-load-i64-immediate n reg)
     (str_cat.str-cat "    movabsq $" (string.int->string n) ", " reg "\n")))
-
-(define (compiler-backend-signed-min-value
-  [type-segment-bases : i64]
-  [ty : compiler_ast_types.AstType]) : i64
-  (let
-    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
-    (cond
-      [(= size 1) (- 0 128)]
-      [(= size 2) (- 0 32768)]
-      [(= size 4) (- 0 2147483648)]
-      [else (- (- 0 9223372036854775807) 1)])))
 
 (define (compiler-backend-div-zero-guard-asm
   [type-segment-bases : i64]
@@ -36322,6 +35668,30 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]))
 
+;; Evaluate BODY with the pair-emission flag set (the sibling-reordering load
+;; families), restoring the flag's previous value afterwards.
+(defmacro (compiler-backend-with-pair-emission
+  [function-state : Expr]
+  [body : Expr]) : Expr
+  `(let
+    [pair-emission-state : CompilerBackendFunctionState ,function-state]
+    [pair-emission-prev : bool
+      (compiler-backend-function-scratch-bool?
+        pair-emission-state
+        compiler-backend-scratch-bool-pair-emission)]
+    [_pair-emission-on : unit
+      (compiler-backend-function-scratch-set-bool!
+        pair-emission-state
+        compiler-backend-scratch-bool-pair-emission
+        true)]
+    [pair-emission-result : ResultCompilerBackend ,body]
+    [_pair-emission-off : unit
+      (compiler-backend-function-scratch-set-bool!
+        pair-emission-state
+        compiler-backend-scratch-bool-pair-emission
+        pair-emission-prev)]
+    pair-emission-result))
+
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
 (define (compiler-backend-emit-load-from-gep-pair-first
@@ -36335,103 +35705,63 @@
   [base-reg : String]
   [sibling-home : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-from-gep-pair-first-unflagged
-        type-segment-bases
-        assignments
-        dst
-        base
-        offset
-        elem-ty
-        load-ty
-        base-reg
-        sibling-home
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-from-gep-pair-first-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [base : compiler_ir_types.CompilerIrValue]
-  [offset : compiler_ir_types.CompilerIrValue]
-  [elem-ty : compiler_ast_types.AstType]
-  [load-ty : compiler_ast_types.AstType]
-  [base-reg : String]
-  [sibling-home : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-value-as-i64 offset)
-    [(option_i64.Some n)
-      (let
-        [disp : i64
-          (* n (compiler-backend-type-size type-segment-bases elem-ty))]
-        [addr : String
-          (compiler-backend-base-address
-            disp
-            (compiler-backend-global-shared-view base-reg))]
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          base
-          (compiler-backend-global-shared-view base-reg)
-          backend-state)
-          [(ResultCompilerBackend.Ok base-asm)
-            (ResultCompilerBackend.Ok
-              (if (compiler-backend-float-type? load-ty)
-                (str_cat.str-cat
-                  base-asm
-                  (compiler-backend-emit-load-float-address-to-var
-                    assignments
-                    dst
-                    addr
-                    load-ty
-                    ""
-                    backend-state))
-                (str_cat.str-cat
-                  base-asm
-                  ;; The pair head's emergency restore runs after both loads; if
-                  ;; this spilled first load borrows the sibling result home, the
-                  ;; restore clobbers the second load before its consumer.
-                  (compiler-backend-emit-load-scalar-address-to-var
-                    type-segment-bases
-                    assignments
-                    dst
-                    addr
-                    load-ty
-                    (if (string.eq sibling-home "")
-                      (compiler-backend-one-exclude base-reg)
-                      (compiler-backend-two-exclude
-                        base-reg
-                        (compiler-backend-global-shared-view sibling-home)))
-                    (if (string.eq sibling-home "")
-                      1
-                      2)
-                    ""
-                    backend-state))))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)]))]
-    [(option_i64.None)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-at-start
-            ""
-            "backend: non-immediate gep pair first load")))]))
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some n)
+        (let
+          [disp : i64
+            (* n (compiler-backend-type-size type-segment-bases elem-ty))]
+          [addr : String
+            (compiler-backend-base-address
+              disp
+              (compiler-backend-global-shared-view base-reg))]
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            base
+            (compiler-backend-global-shared-view base-reg)
+            backend-state)
+            [(ResultCompilerBackend.Ok base-asm)
+              (ResultCompilerBackend.Ok
+                (if (compiler-backend-float-type? load-ty)
+                  (str_cat.str-cat
+                    base-asm
+                    (compiler-backend-emit-load-float-address-to-var
+                      assignments
+                      dst
+                      addr
+                      load-ty
+                      ""
+                      backend-state))
+                  (str_cat.str-cat
+                    base-asm
+                    ;; The pair head's emergency restore runs after both loads; if
+                    ;; this spilled first load borrows the sibling result home, the
+                    ;; restore clobbers the second load before its consumer.
+                    (compiler-backend-emit-load-scalar-address-to-var
+                      type-segment-bases
+                      assignments
+                      dst
+                      addr
+                      load-ty
+                      (if (string.eq sibling-home "")
+                        (compiler-backend-one-exclude base-reg)
+                        (compiler-backend-two-exclude
+                          base-reg
+                          (compiler-backend-global-shared-view sibling-home)))
+                      (if (string.eq sibling-home "")
+                        1
+                        2)
+                      ""
+                      backend-state))))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))]
+      [(option_i64.None)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start
+              ""
+              "backend: non-immediate gep pair first load")))])))
 
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
@@ -36445,95 +35775,57 @@
   [base-reg : String]
   [sibling-home : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-from-gep-r10-live-unflagged
-        type-segment-bases
-        assignments
-        dst
-        offset
-        elem-ty
-        load-ty
-        base-reg
-        sibling-home
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-from-gep-r10-live-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [offset : compiler_ir_types.CompilerIrValue]
-  [elem-ty : compiler_ast_types.AstType]
-  [load-ty : compiler_ast_types.AstType]
-  [base-reg : String]
-  [sibling-home : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-value-as-i64 offset)
-    [(option_i64.Some n)
-      (let
-        [disp : i64
-          (* n (compiler-backend-type-size type-segment-bases elem-ty))]
-        ;; The base was loaded into base-reg by the 1st load of the pair; reuse it.
-        [addr : String
-          (compiler-backend-base-address
-            disp
-            (compiler-backend-global-shared-view base-reg))]
-        (ResultCompilerBackend.Ok
-          (if (compiler-backend-float-type? load-ty)
-            (compiler-backend-emit-load-float-address-to-var
-              assignments
-              dst
-              addr
-              load-ty
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some n)
+        (let
+          [disp : i64
+            (* n (compiler-backend-type-size type-segment-bases elem-ty))]
+          ;; The base was loaded into base-reg by the 1st load of the pair; reuse it.
+          [addr : String
+            (compiler-backend-base-address
+              disp
+              (compiler-backend-global-shared-view base-reg))]
+          (ResultCompilerBackend.Ok
+            (if (compiler-backend-float-type? load-ty)
+              (compiler-backend-emit-load-float-address-to-var
+                assignments
+                dst
+                addr
+                load-ty
+                ""
+                backend-state)
+              ;; M-D clobber fix (companion to emit-load-from-gep-pair's base guard):
+              ;; a SPILLED 2nd-load dst stages through a scavenged scratch, and this
+              ;; whole gep-pair is ONE emergency-wrap head. `sibling-home` is the 1st
+              ;; load's register home -- already DEFINED at this point but saved by the
+              ;; head's emergency-wrap PROLOGUE (before the def), so an emergency pick
+              ;; landing there would be OVERWRITTEN by the wrap's restore, dropping the
+              ;; 1st word (Win64 next.length -> false OOB abort). Exclude it too; "" (a
+              ;; register-homed sibling absent, or itself spilled) keeps the old set.
+              (compiler-backend-emit-load-scalar-address-to-var
+                type-segment-bases
+                assignments
+                dst
+                addr
+                load-ty
+                (if (string.eq sibling-home "")
+                  (compiler-backend-one-exclude base-reg)
+                  (compiler-backend-two-exclude
+                    base-reg
+                    (compiler-backend-global-shared-view sibling-home)))
+                (if (string.eq sibling-home "")
+                  1
+                  2)
+                ""
+                backend-state))))]
+      [(option_i64.None)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start
               ""
-              backend-state)
-            ;; M-D clobber fix (companion to emit-load-from-gep-pair's base guard):
-            ;; a SPILLED 2nd-load dst stages through a scavenged scratch, and this
-            ;; whole gep-pair is ONE emergency-wrap head. `sibling-home` is the 1st
-            ;; load's register home -- already DEFINED at this point but saved by the
-            ;; head's emergency-wrap PROLOGUE (before the def), so an emergency pick
-            ;; landing there would be OVERWRITTEN by the wrap's restore, dropping the
-            ;; 1st word (Win64 next.length -> false OOB abort). Exclude it too; "" (a
-            ;; register-homed sibling absent, or itself spilled) keeps the old set.
-            (compiler-backend-emit-load-scalar-address-to-var
-              type-segment-bases
-              assignments
-              dst
-              addr
-              load-ty
-              (if (string.eq sibling-home "")
-                (compiler-backend-one-exclude base-reg)
-                (compiler-backend-two-exclude
-                  base-reg
-                  (compiler-backend-global-shared-view sibling-home)))
-              (if (string.eq sibling-home "")
-                1
-                2)
-              ""
-              backend-state))))]
-    [(option_i64.None)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-at-start
-            ""
-            "backend: non-immediate r10-live gep load")))]))
+              "backend: non-immediate r10-live gep load")))])))
 
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
@@ -36550,127 +35842,84 @@
   [load-dst1 : i64]
   [load-ty1 : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-from-gep-pair-unflagged
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (let
+      ;; Scavenge ONE base register and share it across both loads: the 1st load
+      ;; materializes the base into it, the 2nd reuses it (no reload, byte-identical
+      ;; to the old %r10 path while %r10 is reserved).
+      ;;
+      ;; M-D clobber fix: EXPLICITLY exclude the SIBLING load's register home.
+      ;; scavenge-reg's dst-var only excludes load-dst0's home, and the sibling is
+      ;; protected on the free path solely by the staging-window occupancy query --
+      ;; which the EMERGENCY path deliberately ignores (everything is occupied when
+      ;; it fires). Under full occupancy the emergency scratch could land on
+      ;; load-dst1's home; the emergency-wrap restore then overwrites the second
+      ;; load's just-defined result (lex-parse-based-int: string len loaded into
+      ;; %r9, restored over before the bounds cmp -> false OOB abort). The free
+      ;; path never picked the sibling home (occupied in the window), so this
+      ;; exclusion only changes emergency picks, i.e. only the buggy case.
+      [dst1-home : String
+        (compiler-backend-var-register-home backend-state assignments load-dst1)]
+      ;; M-C2: when the shared base is register-homed, address both loads off the
+      ;; home directly -- no staging copy (the 1st load's materialization becomes
+      ;; an elided self-move) and no scavenge side effects. Guard: the FIRST
+      ;; load's dst home must differ from the base home, or load0 would clobber
+      ;; the base register load1 still needs. dst1's home MAY equal the base home
+      ;; (the 2nd load reads its address operand before writing, and afterwards
+      ;; the base register is no longer needed).
+      [base-home : String
+        (compiler-backend-address-base-filter-direct
+          (compiler-backend-value-scalar-register
+            backend-state
+            assignments
+            (compiler-backend-global-shared-view base)))]
+      [dst0-home : String
+        (compiler-backend-var-register-home backend-state assignments load-dst0)]
+      [base-reg : String
+        (if (and
+          (not (string.eq base-home ""))
+          (not (string.eq base-home dst0-home)))
+          base-home
+          (compiler-backend-scavenge-reg
+            load-dst0
+            (if (string.eq dst1-home "")
+              (compiler-backend-addr-scavenge-exclude)
+              (compiler-backend-one-exclude
+                (compiler-backend-global-shared-view dst1-home)))
+            (if (string.eq dst1-home "")
+              0
+              1)
+            "%r10"
+            backend-state))]
+      (match (compiler-backend-emit-load-from-gep-pair-first
         type-segment-bases
         assignments
+        load-dst0
         base
         offset0
         elem-ty0
-        load-dst0
         load-ty0
-        offset1
-        elem-ty1
-        load-dst1
-        load-ty1
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-from-gep-pair-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [base : compiler_ir_types.CompilerIrValue]
-  [offset0 : compiler_ir_types.CompilerIrValue]
-  [elem-ty0 : compiler_ast_types.AstType]
-  [load-dst0 : i64]
-  [load-ty0 : compiler_ast_types.AstType]
-  [offset1 : compiler_ir_types.CompilerIrValue]
-  [elem-ty1 : compiler_ast_types.AstType]
-  [load-dst1 : i64]
-  [load-ty1 : compiler_ast_types.AstType]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    ;; Scavenge ONE base register and share it across both loads: the 1st load
-    ;; materializes the base into it, the 2nd reuses it (no reload, byte-identical
-    ;; to the old %r10 path while %r10 is reserved).
-    ;;
-    ;; M-D clobber fix: EXPLICITLY exclude the SIBLING load's register home.
-    ;; scavenge-reg's dst-var only excludes load-dst0's home, and the sibling is
-    ;; protected on the free path solely by the staging-window occupancy query --
-    ;; which the EMERGENCY path deliberately ignores (everything is occupied when
-    ;; it fires). Under full occupancy the emergency scratch could land on
-    ;; load-dst1's home; the emergency-wrap restore then overwrites the second
-    ;; load's just-defined result (lex-parse-based-int: string len loaded into
-    ;; %r9, restored over before the bounds cmp -> false OOB abort). The free
-    ;; path never picked the sibling home (occupied in the window), so this
-    ;; exclusion only changes emergency picks, i.e. only the buggy case.
-    [dst1-home : String
-      (compiler-backend-var-register-home backend-state assignments load-dst1)]
-    ;; M-C2: when the shared base is register-homed, address both loads off the
-    ;; home directly -- no staging copy (the 1st load's materialization becomes
-    ;; an elided self-move) and no scavenge side effects. Guard: the FIRST
-    ;; load's dst home must differ from the base home, or load0 would clobber
-    ;; the base register load1 still needs. dst1's home MAY equal the base home
-    ;; (the 2nd load reads its address operand before writing, and afterwards
-    ;; the base register is no longer needed).
-    [base-home : String
-      (compiler-backend-address-base-filter-direct
-        (compiler-backend-value-scalar-register
-          backend-state
-          assignments
-          (compiler-backend-global-shared-view base)))]
-    [dst0-home : String
-      (compiler-backend-var-register-home backend-state assignments load-dst0)]
-    [base-reg : String
-      (if (and
-        (not (string.eq base-home ""))
-        (not (string.eq base-home dst0-home)))
-        base-home
-        (compiler-backend-scavenge-reg
-          load-dst0
-          (if (string.eq dst1-home "")
-            (compiler-backend-addr-scavenge-exclude)
-            (compiler-backend-one-exclude
-              (compiler-backend-global-shared-view dst1-home)))
-          (if (string.eq dst1-home "")
-            0
-            1)
-          "%r10"
-          backend-state))]
-    (match (compiler-backend-emit-load-from-gep-pair-first
-      type-segment-bases
-      assignments
-      load-dst0
-      base
-      offset0
-      elem-ty0
-      load-ty0
-      (compiler-backend-global-shared-view base-reg)
-      dst1-home
-      backend-state)
-      [(ResultCompilerBackend.Ok first-asm)
-        (match (compiler-backend-emit-load-from-gep-r10-live
-          type-segment-bases
-          assignments
-          load-dst1
-          offset1
-          elem-ty1
-          load-ty1
-          base-reg
-          dst0-home
-          backend-state)
-          [(ResultCompilerBackend.Ok second-asm)
-            (ResultCompilerBackend.Ok (str_cat.str-cat first-asm second-asm))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+        (compiler-backend-global-shared-view base-reg)
+        dst1-home
+        backend-state)
+        [(ResultCompilerBackend.Ok first-asm)
+          (match (compiler-backend-emit-load-from-gep-r10-live
+            type-segment-bases
+            assignments
+            load-dst1
+            offset1
+            elem-ty1
+            load-ty1
+            base-reg
+            dst0-home
+            backend-state)
+            [(ResultCompilerBackend.Ok second-asm)
+              (ResultCompilerBackend.Ok (str_cat.str-cat first-asm second-asm))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
@@ -36693,20 +35942,10 @@
   [index1 : String]
   [value1 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-from-gep-pair-planned-unflagged
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (if (and (string.eq address0 "") (string.eq address1 ""))
+      (compiler-backend-emit-load-from-gep-pair
         type-segment-bases
         assignments
         base
@@ -36718,87 +35957,42 @@
         elem-ty1
         load-dst1
         load-ty1
+        backend-state)
+      (match (compiler-backend-emit-load-from-gep
+        type-segment-bases
+        assignments
+        load-dst0
+        (compiler-backend-global-shared-view base)
+        offset0
+        elem-ty0
+        load-ty0
+        ""
+        0
         address0
         index0
         value0
-        address1
-        index1
-        value1
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-from-gep-pair-planned-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [base : compiler_ir_types.CompilerIrValue]
-  [offset0 : compiler_ir_types.CompilerIrValue]
-  [elem-ty0 : compiler_ast_types.AstType]
-  [load-dst0 : i64]
-  [load-ty0 : compiler_ast_types.AstType]
-  [offset1 : compiler_ir_types.CompilerIrValue]
-  [elem-ty1 : compiler_ast_types.AstType]
-  [load-dst1 : i64]
-  [load-ty1 : compiler_ast_types.AstType]
-  [address0 : String]
-  [index0 : String]
-  [value0 : String]
-  [address1 : String]
-  [index1 : String]
-  [value1 : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (and (string.eq address0 "") (string.eq address1 ""))
-    (compiler-backend-emit-load-from-gep-pair
-      type-segment-bases
-      assignments
-      base
-      offset0
-      elem-ty0
-      load-dst0
-      load-ty0
-      offset1
-      elem-ty1
-      load-dst1
-      load-ty1
-      backend-state)
-    (match (compiler-backend-emit-load-from-gep
-      type-segment-bases
-      assignments
-      load-dst0
-      (compiler-backend-global-shared-view base)
-      offset0
-      elem-ty0
-      load-ty0
-      ""
-      0
-      address0
-      index0
-      value0
-      backend-state)
-      [(ResultCompilerBackend.Ok first-asm)
-        (match (compiler-backend-emit-load-from-gep
-          type-segment-bases
-          assignments
-          load-dst1
-          base
-          offset1
-          elem-ty1
-          load-ty1
-          ""
-          0
-          address1
-          index1
-          value1
-          backend-state)
-          [(ResultCompilerBackend.Ok second-asm)
-            (ResultCompilerBackend.Ok (str_cat.str-cat first-asm second-asm))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+        backend-state)
+        [(ResultCompilerBackend.Ok first-asm)
+          (match (compiler-backend-emit-load-from-gep
+            type-segment-bases
+            assignments
+            load-dst1
+            base
+            offset1
+            elem-ty1
+            load-ty1
+            ""
+            0
+            address1
+            index1
+            value1
+            backend-state)
+            [(ResultCompilerBackend.Ok second-asm)
+              (ResultCompilerBackend.Ok (str_cat.str-cat first-asm second-asm))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 ;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
 ;; restoring the caller's value so a nested pair keeps the outer one flagged.
@@ -36815,123 +36009,79 @@
   [second-address : String]
   [second-value : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-load-load-unflagged
-        type-segment-bases
-        assignments
-        first-dst
-        ptr
-        first-ty
-        second-dst
-        second-ty
-        first-address
-        first-value
-        second-address
-        second-value
-        backend-state)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-load-load-unflagged
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [first-dst : i64]
-  [ptr : compiler_ir_types.CompilerIrValue]
-  [first-ty : compiler_ast_types.AstType]
-  [second-dst : i64]
-  [second-ty : compiler_ast_types.AstType]
-  [first-address : String]
-  [first-value : String]
-  [second-address : String]
-  [second-value : String]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [_first-dst : i64 first-dst]
-    (if (=
-      (compiler-backend-type-size
-        type-segment-bases
-        (compiler-backend-global-shared-view first-ty))
-      8)
-      (let
-        ;; M-D clobber fix (see emit-load-from-gep-pair): the pointer-chase base
-        ;; scratch must not land on second-dst's register home under EMERGENCY
-        ;; scavenge -- the wrap restore would overwrite the chased load's result.
-        [second-home : String
-          (compiler-backend-var-register-home
-            backend-state
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (let
+      [_first-dst : i64 first-dst]
+      (if (=
+        (compiler-backend-type-size
+          type-segment-bases
+          (compiler-backend-global-shared-view first-ty))
+        8)
+        (let
+          ;; M-D clobber fix (see emit-load-from-gep-pair): the pointer-chase base
+          ;; scratch must not land on second-dst's register home under EMERGENCY
+          ;; scavenge -- the wrap restore would overwrite the chased load's result.
+          [second-home : String
+            (compiler-backend-var-register-home
+              backend-state
+              assignments
+              second-dst)]
+          [base : String
+            (if (string.eq second-address "")
+              (compiler-backend-scavenge-reg-here
+                (if (string.eq second-home "")
+                  (compiler-backend-addr-scavenge-exclude)
+                  (compiler-backend-one-exclude
+                    (compiler-backend-global-shared-view second-home)))
+                (if (string.eq second-home "")
+                  0
+                  1)
+                "%r10"
+                backend-state)
+              second-address)]
+          [base-mem : String
+            (compiler-backend-base-deref
+              (compiler-backend-global-shared-view base))]
+          (match (compiler-backend-emit-load-value-with-plan
             assignments
-            second-dst)]
-        [base : String
-          (if (string.eq second-address "")
-            (compiler-backend-scavenge-reg-here
-              (if (string.eq second-home "")
-                (compiler-backend-addr-scavenge-exclude)
-                (compiler-backend-one-exclude
-                  (compiler-backend-global-shared-view second-home)))
-              (if (string.eq second-home "")
-                0
-                1)
-              "%r10"
-              backend-state)
-            second-address)]
-        [base-mem : String
-          (compiler-backend-base-deref
-            (compiler-backend-global-shared-view base))]
-        (match (compiler-backend-emit-load-value-with-plan
+            ptr
+            (compiler-backend-global-shared-view base)
+            backend-state)
+            [(ResultCompilerBackend.Ok ptr-asm)
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat
+                  ptr-asm
+                  (str_cat.str-cat "    movq " base-mem ", " base "\n")
+                  (if (compiler-backend-float-type? second-ty)
+                    (compiler-backend-emit-load-float-address-to-var
+                      assignments
+                      second-dst
+                      base-mem
+                      second-ty
+                      second-value
+                      backend-state)
+                    (compiler-backend-emit-load-scalar-address-to-var
+                      type-segment-bases
+                      assignments
+                      second-dst
+                      base-mem
+                      second-ty
+                      (compiler-backend-one-exclude base)
+                      1
+                      second-value
+                      backend-state))))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))
+        (compiler-backend-emit-load-instr
+          type-segment-bases
           assignments
+          first-dst
           ptr
-          (compiler-backend-global-shared-view base)
-          backend-state)
-          [(ResultCompilerBackend.Ok ptr-asm)
-            (ResultCompilerBackend.Ok
-              (str_cat.str-cat
-                ptr-asm
-                (str_cat.str-cat "    movq " base-mem ", " base "\n")
-                (if (compiler-backend-float-type? second-ty)
-                  (compiler-backend-emit-load-float-address-to-var
-                    assignments
-                    second-dst
-                    base-mem
-                    second-ty
-                    second-value
-                    backend-state)
-                  (compiler-backend-emit-load-scalar-address-to-var
-                    type-segment-bases
-                    assignments
-                    second-dst
-                    base-mem
-                    second-ty
-                    (compiler-backend-one-exclude base)
-                    1
-                    second-value
-                    backend-state))))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)]))
-      (compiler-backend-emit-load-instr
-        type-segment-bases
-        assignments
-        first-dst
-        ptr
-        first-ty
-        first-address
-        first-value
-        backend-state))))
+          first-ty
+          first-address
+          first-value
+          backend-state)))))
 
 (define (compiler-backend-emit-store-value-to-address
   [type-segment-bases : i64]
@@ -46953,6 +46103,88 @@
         false-jcc
         backend-state))))
 
+;; The phi copies a two-way branch owes each successor, and the labels it
+;; jumps to so they run: a side with copies goes through an edge block of its
+;; own, emitted after the branch by compiler-backend-emit-branch-edges.
+(defstruct CompilerBackendBranchEdges
+  (true-copies String)
+  (false-copies String)
+  (true-target i64)
+  (false-target i64)
+  (fallthrough CompilerBackendMaybeLabel))
+
+(defenum ResultCompilerBackendBranchEdges
+  (Ok CompilerBackendBranchEdges)
+  (Err (Box compiler_diagnostic.CompilerDiagnostic)))
+
+(define (compiler-backend-branch-phi-edges
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [current-label : i64]
+  [true-label : i64]
+  [false-label : i64]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackendBranchEdges
+  (match (compiler-backend-emit-phi-edge-copies
+    type-segment-bases
+    assignments
+    (compiler-backend-global-shared-view blocks)
+    true-label
+    current-label
+    program-index
+    vars
+    ""
+    ""
+    (compiler-backend-current-phi-planned-xmm-cycle program-index.backend-state))
+    [(ResultCompilerBackend.Ok true-copies)
+      (match (compiler-backend-emit-phi-edge-copies
+        type-segment-bases
+        assignments
+        blocks
+        false-label
+        current-label
+        program-index
+        vars
+        ""
+        ""
+        (compiler-backend-current-phi-planned-xmm-cycle
+          program-index.backend-state))
+        [(ResultCompilerBackend.Ok false-copies)
+          (let
+            [true-edge : i64
+              (compiler-backend-branch-edge-label current-label "true")]
+            [false-edge : i64
+              (compiler-backend-branch-edge-label current-label "false")]
+            [true-target : i64
+              (compiler-backend-branch-edge-target
+                true-edge
+                true-label
+                true-copies)]
+            [false-target : i64
+              (compiler-backend-branch-edge-target
+                false-edge
+                false-label
+                false-copies)]
+            [edge-fallthrough : CompilerBackendMaybeLabel
+              (compiler-backend-branch-edge-fallthrough
+                current-label
+                true-copies
+                false-copies
+                fallthrough)]
+            (ResultCompilerBackendBranchEdges.Ok
+              (CompilerBackendBranchEdges
+                true-copies
+                false-copies
+                true-target
+                false-target
+                edge-fallthrough)))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackendBranchEdges.Err message)])]
+    [(ResultCompilerBackend.Err message)
+      (ResultCompilerBackendBranchEdges.Err message)]))
+
 (define (compiler-backend-emit-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -46982,80 +46214,43 @@
       true-jcc
       false-jcc
       program-index.backend-state)
-    (match (compiler-backend-emit-phi-edge-copies
+    (match (compiler-backend-branch-phi-edges
       type-segment-bases
       assignments
-      (compiler-backend-global-shared-view blocks)
-      true-label
+      blocks
       current-label
+      true-label
+      false-label
+      fallthrough
       program-index
-      vars
-      ""
-      ""
-      (compiler-backend-current-phi-planned-xmm-cycle
-        program-index.backend-state))
-      [(ResultCompilerBackend.Ok true-copies)
-        (match (compiler-backend-emit-phi-edge-copies
-          type-segment-bases
+      vars)
+      [(ResultCompilerBackendBranchEdges.Ok edges)
+        (match (compiler-backend-emit-branch-test-or-jcc
           assignments
-          blocks
-          false-label
-          current-label
-          program-index
-          vars
-          ""
-          ""
-          (compiler-backend-current-phi-planned-xmm-cycle
-            program-index.backend-state))
-          [(ResultCompilerBackend.Ok false-copies)
-            (let
-              [true-edge : i64
-                (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : i64
-                (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : i64
-                (compiler-backend-branch-edge-target
-                  true-edge
-                  true-label
-                  true-copies)]
-              [false-target : i64
-                (compiler-backend-branch-edge-target
-                  false-edge
-                  false-label
-                  false-copies)]
-              [edge-fallthrough : CompilerBackendMaybeLabel
-                (compiler-backend-branch-edge-fallthrough
-                  current-label
-                  true-copies
-                  false-copies
-                  fallthrough)]
-              (match (compiler-backend-emit-branch-test-or-jcc
-                assignments
-                (compiler-backend-global-shared-view function)
-                cond
-                true-target
-                false-target
-                edge-fallthrough
-                true-jcc
-                false-jcc
-                program-index.backend-state)
-                [(ResultCompilerBackend.Ok branch-asm)
-                  (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-branch-edges
-                      program-index.backend-state
-                      function
-                      current-label
-                      true-label
-                      false-label
-                      true-copies
-                      false-copies
-                      fallthrough
-                      branch-asm))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))]
+          (compiler-backend-global-shared-view function)
+          cond
+          edges.true-target
+          edges.false-target
+          edges.fallthrough
+          true-jcc
+          false-jcc
+          program-index.backend-state)
+          [(ResultCompilerBackend.Ok branch-asm)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-branch-edges
+                program-index.backend-state
+                function
+                current-label
+                true-label
+                false-label
+                edges.true-copies
+                edges.false-copies
+                fallthrough
+                branch-asm))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+      [(ResultCompilerBackendBranchEdges.Err message)
+        (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-compare-branch-with-phi-copies
   [type-segment-bases : i64]
@@ -47089,82 +46284,45 @@
       false-label
       fallthrough
       program-index.backend-state)
-    (match (compiler-backend-emit-phi-edge-copies
+    (match (compiler-backend-branch-phi-edges
       type-segment-bases
       assignments
-      (compiler-backend-global-shared-view blocks)
-      true-label
+      blocks
       current-label
+      true-label
+      false-label
+      fallthrough
       program-index
-      vars
-      ""
-      ""
-      (compiler-backend-current-phi-planned-xmm-cycle
-        program-index.backend-state))
-      [(ResultCompilerBackend.Ok true-copies)
-        (match (compiler-backend-emit-phi-edge-copies
+      vars)
+      [(ResultCompilerBackendBranchEdges.Ok edges)
+        (match (compiler-backend-emit-compare-branch
           type-segment-bases
           assignments
-          blocks
-          false-label
-          current-label
-          program-index
-          vars
-          ""
-          ""
-          (compiler-backend-current-phi-planned-xmm-cycle
-            program-index.backend-state))
-          [(ResultCompilerBackend.Ok false-copies)
-            (let
-              [true-edge : i64
-                (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : i64
-                (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : i64
-                (compiler-backend-branch-edge-target
-                  true-edge
-                  true-label
-                  true-copies)]
-              [false-target : i64
-                (compiler-backend-branch-edge-target
-                  false-edge
-                  false-label
-                  false-copies)]
-              [edge-fallthrough : CompilerBackendMaybeLabel
-                (compiler-backend-branch-edge-fallthrough
-                  current-label
-                  true-copies
-                  false-copies
-                  fallthrough)]
-              (match (compiler-backend-emit-compare-branch
-                type-segment-bases
-                assignments
-                (compiler-backend-global-shared-view function)
-                op
-                lhs
-                rhs
-                ty
-                true-target
-                false-target
-                edge-fallthrough
-                program-index.backend-state)
-                [(ResultCompilerBackend.Ok branch-asm)
-                  (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-branch-edges
-                      program-index.backend-state
-                      function
-                      current-label
-                      true-label
-                      false-label
-                      true-copies
-                      false-copies
-                      fallthrough
-                      branch-asm))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))]
+          (compiler-backend-global-shared-view function)
+          op
+          lhs
+          rhs
+          ty
+          edges.true-target
+          edges.false-target
+          edges.fallthrough
+          program-index.backend-state)
+          [(ResultCompilerBackend.Ok branch-asm)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-branch-edges
+                program-index.backend-state
+                function
+                current-label
+                true-label
+                false-label
+                edges.true-copies
+                edges.false-copies
+                fallthrough
+                branch-asm))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+      [(ResultCompilerBackendBranchEdges.Err message)
+        (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
@@ -47197,81 +46355,44 @@
       false-label
       fallthrough
       program-index.backend-state)
-    (match (compiler-backend-emit-phi-edge-copies
+    (match (compiler-backend-branch-phi-edges
       type-segment-bases
       assignments
-      (compiler-backend-global-shared-view blocks)
-      true-label
+      blocks
       current-label
+      true-label
+      false-label
+      fallthrough
       program-index
-      vars
-      ""
-      ""
-      (compiler-backend-current-phi-planned-xmm-cycle
-        program-index.backend-state))
-      [(ResultCompilerBackend.Ok true-copies)
-        (match (compiler-backend-emit-phi-edge-copies
-          type-segment-bases
+      vars)
+      [(ResultCompilerBackendBranchEdges.Ok edges)
+        (match (compiler-backend-emit-load-compare-branch-with-plan
           assignments
-          blocks
-          false-label
-          current-label
-          program-index
-          vars
-          ""
-          ""
-          (compiler-backend-current-phi-planned-xmm-cycle
-            program-index.backend-state))
-          [(ResultCompilerBackend.Ok false-copies)
-            (let
-              [true-edge : i64
-                (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : i64
-                (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : i64
-                (compiler-backend-branch-edge-target
-                  true-edge
-                  true-label
-                  true-copies)]
-              [false-target : i64
-                (compiler-backend-branch-edge-target
-                  false-edge
-                  false-label
-                  false-copies)]
-              [edge-fallthrough : CompilerBackendMaybeLabel
-                (compiler-backend-branch-edge-fallthrough
-                  current-label
-                  true-copies
-                  false-copies
-                  fallthrough)]
-              (match (compiler-backend-emit-load-compare-branch-with-plan
-                assignments
-                (compiler-backend-global-shared-view function)
-                ptr
-                op
-                rhs
-                ty
-                true-target
-                false-target
-                edge-fallthrough
-                program-index.backend-state)
-                [(ResultCompilerBackend.Ok branch-asm)
-                  (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-branch-edges
-                      program-index.backend-state
-                      function
-                      current-label
-                      true-label
-                      false-label
-                      true-copies
-                      false-copies
-                      fallthrough
-                      branch-asm))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))]
+          (compiler-backend-global-shared-view function)
+          ptr
+          op
+          rhs
+          ty
+          edges.true-target
+          edges.false-target
+          edges.fallthrough
+          program-index.backend-state)
+          [(ResultCompilerBackend.Ok branch-asm)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-branch-edges
+                program-index.backend-state
+                function
+                current-label
+                true-label
+                false-label
+                edges.true-copies
+                edges.false-copies
+                fallthrough
+                branch-asm))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+      [(ResultCompilerBackendBranchEdges.Err message)
+        (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
@@ -47309,84 +46430,47 @@
       false-label
       fallthrough
       program-index.backend-state)
-    (match (compiler-backend-emit-phi-edge-copies
+    (match (compiler-backend-branch-phi-edges
       type-segment-bases
       assignments
-      (compiler-backend-global-shared-view blocks)
-      true-label
+      blocks
       current-label
+      true-label
+      false-label
+      fallthrough
       program-index
-      vars
-      ""
-      ""
-      (compiler-backend-current-phi-planned-xmm-cycle
-        program-index.backend-state))
-      [(ResultCompilerBackend.Ok true-copies)
-        (match (compiler-backend-emit-phi-edge-copies
+      vars)
+      [(ResultCompilerBackendBranchEdges.Ok edges)
+        (match (compiler-backend-emit-gep-load-compare-branch-with-plan
           type-segment-bases
           assignments
-          blocks
-          false-label
-          current-label
-          program-index
-          vars
-          ""
-          ""
-          (compiler-backend-current-phi-planned-xmm-cycle
-            program-index.backend-state))
-          [(ResultCompilerBackend.Ok false-copies)
-            (let
-              [true-edge : i64
-                (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : i64
-                (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : i64
-                (compiler-backend-branch-edge-target
-                  true-edge
-                  true-label
-                  true-copies)]
-              [false-target : i64
-                (compiler-backend-branch-edge-target
-                  false-edge
-                  false-label
-                  false-copies)]
-              [edge-fallthrough : CompilerBackendMaybeLabel
-                (compiler-backend-branch-edge-fallthrough
-                  current-label
-                  true-copies
-                  false-copies
-                  fallthrough)]
-              (match (compiler-backend-emit-gep-load-compare-branch-with-plan
-                type-segment-bases
-                assignments
-                (compiler-backend-global-shared-view function)
-                base
-                offset
-                elem-ty
-                op
-                rhs
-                ty
-                true-target
-                false-target
-                edge-fallthrough
-                program-index.backend-state)
-                [(ResultCompilerBackend.Ok branch-asm)
-                  (ResultCompilerBackend.Ok
-                    (compiler-backend-emit-branch-edges
-                      program-index.backend-state
-                      function
-                      current-label
-                      true-label
-                      false-label
-                      true-copies
-                      false-copies
-                      fallthrough
-                      branch-asm))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))]
+          (compiler-backend-global-shared-view function)
+          base
+          offset
+          elem-ty
+          op
+          rhs
+          ty
+          edges.true-target
+          edges.false-target
+          edges.fallthrough
+          program-index.backend-state)
+          [(ResultCompilerBackend.Ok branch-asm)
+            (ResultCompilerBackend.Ok
+              (compiler-backend-emit-branch-edges
+                program-index.backend-state
+                function
+                current-label
+                true-label
+                false-label
+                edges.true-copies
+                edges.false-copies
+                fallthrough
+                branch-asm))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+      [(ResultCompilerBackendBranchEdges.Err message)
+        (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-tail-call-return-normalize
   [type-segment-bases : i64]
@@ -52436,6 +51520,7 @@
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.Splat dst value lanes elem-ty)
         (compiler-backend-emit-vector-splat
+          (compiler-backend-vector-mode elem-ty lanes)
           ctx.type-segment-bases
           ctx.assignments
           dst
@@ -52453,6 +51538,7 @@
           [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-binop
+            (compiler-backend-vector-mode elem-ty lanes)
             ctx.type-segment-bases
             ctx.assignments
             dst
@@ -52568,6 +51654,7 @@
           lanes
           elem-ty)
         (compiler-backend-emit-vector-load
+          (compiler-backend-vector-mode elem-ty lanes)
           ctx.type-segment-bases
           ctx.assignments
           dst
@@ -52585,6 +51672,7 @@
           [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-store
+            (compiler-backend-vector-mode elem-ty lanes)
             ctx.type-segment-bases
             ctx.assignments
             base
@@ -54890,56 +53978,24 @@
   [dst : i64]
   [addr0 : String]
   [addr1 : String]) : ResultCompilerBackend
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [prev : bool
-      (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-pair-emission)]
-    [_on : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        true)]
-    [result : ResultCompilerBackend
-      (compiler-backend-emit-gep-load-pair-alu-unflagged
-        backend-state
-        assignments
-        mnem
-        dst
-        addr0
-        addr1)]
-    [_off : unit
-      (compiler-backend-function-scratch-set-bool!
-        function-state
-        compiler-backend-scratch-bool-pair-emission
-        prev)]
-    result))
-
-(define (compiler-backend-emit-gep-load-pair-alu-unflagged
-  [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [mnem : String]
-  [dst : i64]
-  [addr0 : String]
-  [addr1 : String]) : ResultCompilerBackend
-  (let
-    [dst-home : String
-      (compiler-backend-var-register-home backend-state assignments dst)]
-    (ResultCompilerBackend.Ok
-      (str_cat.str-cat
-        "    movq "
-        addr0
-        ", "
-        dst-home
-        "\n    "
-        mnem
-        "q "
-        addr1
-        ", "
-        dst-home
-        "\n"))))
+  (compiler-backend-with-pair-emission
+    (compiler-backend-state-function-state backend-state)
+    (let
+      [dst-home : String
+        (compiler-backend-var-register-home backend-state assignments dst)]
+      (ResultCompilerBackend.Ok
+        (str_cat.str-cat
+          "    movq "
+          addr0
+          ", "
+          dst-home
+          "\n    "
+          mnem
+          "q "
+          addr1
+          ", "
+          dst-home
+          "\n")))))
 
 (defenum CompilerBackendMaybeGepLoadPairAluDivmodEmission
   (No)
@@ -56103,8 +55159,8 @@
 ;; TWO-SIDED PINNING. The probe must stay pure (the M-D lesson: a probe that can
 ;; still decline must never scavenge, or a rejected fold leaks an
 ;; emergency-pending register), so admission PEEKS through
-;; compiler-backend-scavenge-reg-peek -- the documented side-effect-free twin
-;; that predicts the ordinary picker's answer including its emergency tier --
+;; a non-committing compiler-backend-scavenge-reg-pick -- side-effect-free,
+;; it predicts the ordinary picker's answer including its emergency tier --
 ;; and the committed emitter re-runs the identical pick for real through
 ;; compiler-backend-scavenge-reg. The two agree because this one helper is the
 ;; only caller of either on this path and it supplies the same arguments to
@@ -56219,19 +55275,13 @@
           compiler-backend-gep-load-cmp-staging-lookahead
           saved-reserved))]
     [reg : String
-      (if commit?
-        (compiler-backend-scavenge-reg
-          -1
-          (compiler-backend-one-exclude "")
-          1
-          "%r10"
-          ctx.backend-state)
-        (compiler-backend-scavenge-reg-peek
-          -1
-          (compiler-backend-one-exclude "")
-          1
-          "%r10"
-          ctx.backend-state))]
+      (compiler-backend-scavenge-reg-pick
+        -1
+        (compiler-backend-one-exclude "")
+        1
+        "%r10"
+        commit?
+        ctx.backend-state)]
     [_restore : unit
       (compiler-backend-set-current-instr-reserved-mask!
         ctx.function-state
@@ -60356,7 +59406,7 @@
       ty
       (compiler-backend-binop-wants-remainder? op)
       hoist)
-      (compiler-backend-scavenge-reg-peek
+      (compiler-backend-scavenge-reg-pick
         dst
         (if (string.eq hoist-reg "")
           (compiler-backend-binop-scavenge-exclude-for-op op)
@@ -60368,6 +59418,7 @@
           5
           6)
         "%r8"
+        false
         _ctx.backend-state)
       "")))
 
@@ -61570,6 +60621,7 @@
                     (compiler-backend-global-shared-view ctx)
                     fallthrough
                     (compiler-backend-emit-vector-binop-memory-source
+                      (compiler-backend-vector-mode bin-elem-ty bin-lanes)
                       ctx.type-segment-bases
                       ctx.assignments
                       bin-dst
@@ -65615,8 +64667,8 @@
             assignments)]
         [scratch : String
           (compiler-backend-scavenge-pick-with-mask
-            backend-state
             (compiler-backend-state-function-state backend-state)
+            true
             0
             0
             exclude
@@ -65946,9 +64998,9 @@
                               (compiler-backend-global-shared-view exclude)
                               exclude-n
                               (compiler-backend-scavenge-pick-with-mask
-                                backend-state
                                 (compiler-backend-state-function-state
                                   backend-state)
+                                true
                                 0
                                 0
                                 exclude
@@ -67390,8 +66442,9 @@
       n)))
 
 (define (compiler-backend-scavenge-pick-iter
-  [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
+  ;; false for a peek: the same pick, without booking an emergency save.
+  [commit : bool]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [exclude-mask : i64]
@@ -67429,19 +66482,23 @@
         (compiler_abi.compiler-abi-register-spelling (array-ref cands nidx))
         (if (< emidx 0)
           (begin
-            (if (compiler-backend-scavenge-emergency-reg-supported? fallback)
-              (compiler-backend-emergency-add!
-                function-state
-                (string.copy fallback))
-              (io.panic
-                (str_cat.str-cat
-                  "backend: unsupported scavenge emergency fallback register "
-                  fallback)))
+            (when
+              commit
+              (if (compiler-backend-scavenge-emergency-reg-supported? fallback)
+                (compiler-backend-emergency-add!
+                  function-state
+                  (string.copy fallback))
+                (io.panic
+                  (str_cat.str-cat
+                    "backend: unsupported scavenge emergency fallback register "
+                    fallback))))
             fallback)
           (begin
-            (compiler-backend-emergency-add-id!
-              function-state
-              (array-ref cands emidx))
+            (when
+              commit
+              (compiler-backend-emergency-add-id!
+                function-state
+                (array-ref cands emidx)))
             (compiler_abi.compiler-abi-register-spelling
               (array-ref cands emidx))))))
     (if (compiler-backend-scavenge-candidate-ok?
@@ -67456,8 +66513,8 @@
       ;; post-body save vs inline partial-set restores).
       (compiler_abi.compiler-abi-register-spelling (array-ref cands i))
       (compiler-backend-scavenge-pick-iter
-        backend-state
         function-state
+        commit
         exclude
         exclude-n
         exclude-mask
@@ -67474,8 +66531,8 @@
 ;; candidate, else `fallback` (degraded -- the freeness self-check flags this as
 ;; a no-free-register case).
 (define (compiler-backend-scavenge-pick-with-mask
-  [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
+  [commit : bool]
   [occupied-mask : i64]
   [narrow-mask : i64]
   [exclude : (__tl_dyn-array String)]
@@ -67494,8 +66551,8 @@
       (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
       fallback
       (compiler-backend-scavenge-pick-iter
-        backend-state
         function-state
+        commit
         exclude
         exclude-n
         exclude-mask
@@ -67510,7 +66567,6 @@
         (array-length cands)))))
 
 (define (compiler-backend-scavenge-pick-from-mask
-  [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
   [occupied-mask : i64]
   [exclude : (__tl_dyn-array String)]
@@ -67527,8 +66583,8 @@
       (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
       fallback
       (compiler-backend-scavenge-pick-iter
-        backend-state
         function-state
+        true
         exclude
         exclude-n
         exclude-mask
@@ -67583,7 +66639,6 @@
         (& compiler-backend-scavenge-xmm-candidate-pool))]
     [reg : String
       (compiler-backend-scavenge-pick-from-mask
-        backend-state
         function-state
         (compiler-backend-scavenge-occupied-mask-over-range
           function-state
@@ -67598,102 +66653,6 @@
 ;; Side-effect-free twin of the GP picker for fusion admission.  It predicts the
 ;; exact register the ordinary scavenger will return, including its emergency
 ;; tier, without adding a pending save that would leak when the fusion rejects.
-(define (compiler-backend-scavenge-pick-iter-peek
-  [function-state : CompilerBackendFunctionState]
-  [occupied-mask : i64]
-  [narrow-mask : i64]
-  [exclude : (__tl_dyn-array String)]
-  [exclude-n : i64]
-  [exclude-mask : i64]
-  [plan-mask : i64]
-  [fallback : String]
-  [cands : (& cands (__tl_dyn-array i64))]
-  [i : i64]
-  [n : i64]) : String
-  (if (>= i n)
-    (let
-      ;; R4-B: mirror the committing walk's narrow last-resort tier, so the peek
-      ;; keeps returning exactly what the committing call will.
-      [nidx : i64
-        (compiler-backend-scavenge-narrow-index
-          function-state
-          occupied-mask
-          narrow-mask
-          exclude-mask
-          plan-mask
-          cands
-          n)]
-      [emidx : i64
-        (if (>= nidx 0)
-          -2
-          (compiler-backend-scavenge-emergency-cand-index
-            function-state
-            exclude
-            exclude-n
-            exclude-mask
-            occupied-mask
-            (compiler-backend-global-shared-view fallback)
-            cands
-            n))]
-      (if (>= nidx 0)
-        (compiler_abi.compiler-abi-register-spelling (array-ref cands nidx))
-        (if (< emidx 0)
-          fallback
-          (compiler_abi.compiler-abi-register-spelling (array-ref cands emidx)))))
-    (if (compiler-backend-scavenge-candidate-ok?
-      function-state
-      occupied-mask
-      exclude-mask
-      plan-mask
-      (array-ref cands i))
-      (compiler_abi.compiler-abi-register-spelling (array-ref cands i))
-      (compiler-backend-scavenge-pick-iter-peek
-        function-state
-        occupied-mask
-        narrow-mask
-        exclude
-        exclude-n
-        exclude-mask
-        plan-mask
-        fallback
-        cands
-        (+ i 1)
-        n))))
-
-(define (compiler-backend-scavenge-pick-with-mask-peek
-  [function-state : CompilerBackendFunctionState]
-  [occupied-mask : i64]
-  [narrow-mask : i64]
-  [exclude : (__tl_dyn-array String)]
-  [exclude-n : i64]
-  [fallback : String]) : String
-  (let
-    [exclude-mask : i64
-      (compiler-backend-scavenge-exclude-mask
-        (compiler-backend-global-shared-view exclude)
-        exclude-n)]
-    [cands : (__tl_dyn-array i64)
-      (compiler-backend-i64-array-shared-view
-        (& compiler-backend-scavenge-candidate-pool))]
-    (if (and
-      (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-      (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
-      fallback
-      (compiler-backend-scavenge-pick-iter-peek
-        function-state
-        occupied-mask
-        narrow-mask
-        exclude
-        exclude-n
-        exclude-mask
-        (compiler-backend-function-scratch-i64
-          function-state
-          compiler-backend-scratch-i64-scavenge-plan-reg-mask)
-        fallback
-        cands
-        0
-        (array-length cands)))))
-
 ;; R4-C: may this staging pick retry against the [point, point+2] window
 ;; before the emergency tier? Yes for the scalar compute family (R4-B's
 ;; admission, set per instruction by compiler-backend-instr-reserved-home-mask)
@@ -67712,66 +66671,16 @@
         function-state
         compiler-backend-scratch-bool-pair-emission))))
 
-(define (compiler-backend-scavenge-reg-peek
-  [dst-var : i64]
-  [exclude : (__tl_dyn-array String)]
-  [exclude-n : i64]
-  [fallback : String]
-  [backend-state : CompilerBackendState]) : String
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [point : i64
-      (compiler-backend-function-state-emission-point function-state)]
-    [hi-point : i64 (+ point compiler-backend-scavenge-staging-window)]
-    [vars : i64
-      (compiler-backend-function-scratch-i64
-        function-state
-        compiler-backend-scratch-i64-scavenge-vars)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler-backend-function-scratch-assignment-index function-state)]
-    [dst-home : String
-      (if (and (>= dst-var 0) (< dst-var vars))
-        (compiler-backend-var-register-home-index assignment-index dst-var)
-        "")]
-    [ex : (__tl_dyn-array String)
-      (if (string.eq dst-home "")
-        exclude
-        (compiler-backend-scavenge-exclude-append
-          exclude
-          exclude-n
-          (compiler-backend-global-shared-view dst-home)))]
-    [ex-n : i64
-      (if (string.eq dst-home "")
-        exclude-n
-        (+ exclude-n 1))]
-    (compiler-backend-scavenge-pick-with-mask-peek
-      function-state
-      (compiler-backend-scavenge-occupied-mask-over-range
-        function-state
-        point
-        hi-point)
-      (if (compiler-backend-scavenge-narrow-window? function-state)
-        (compiler-backend-scavenge-occupied-mask-over-range
-          function-state
-          point
-          (+ point 2))
-        (compiler-backend-scavenge-occupied-mask-over-range
-          function-state
-          point
-          hi-point))
-      ex
-      ex-n
-      fallback)))
-
 ;; Return a register free at dst-var's def point (via the proven query),
 ;; excluding `exclude`, preferring `fallback`. If the preferred register is
 ;; occupied, pick another free pooled candidate or use the emergency wrapper.
-(define (compiler-backend-scavenge-reg
+(define (compiler-backend-scavenge-reg-pick
   [dst-var : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
+  ;; false for a peek: the same pick, without booking an emergency save.
+  [commit : bool]
   [backend-state : CompilerBackendState]) : String
   (let
     [function-state : CompilerBackendFunctionState
@@ -67839,8 +66748,8 @@
           hi-point))]
     [reg : String
       (compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        commit
         (compiler-backend-scavenge-occupied-mask-over-range
           function-state
           point
@@ -67850,6 +66759,20 @@
         ex-n
         fallback)]
     reg))
+
+(define (compiler-backend-scavenge-reg
+  [dst-var : i64]
+  [exclude : (__tl_dyn-array String)]
+  [exclude-n : i64]
+  [fallback : String]
+  [backend-state : CompilerBackendState]) : String
+  (compiler-backend-scavenge-reg-pick
+    dst-var
+    exclude
+    exclude-n
+    fallback
+    true
+    backend-state))
 
 ;; No-dst scavenge: same as scavenge-reg but the point comes from the drift-proof
 ;; per-instruction position (post-base - length(current-instrs)) instead of a dst
@@ -67867,8 +66790,8 @@
       (compiler-backend-function-state-emission-point function-state)]
     [reg : String
       (compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        true
         (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         exclude
@@ -67890,7 +66813,6 @@
         (& compiler-backend-scavenge-rcx-candidate-pool))]
     [reg : String
       (compiler-backend-scavenge-pick-from-mask
-        backend-state
         function-state
         (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         exclude
@@ -69398,23 +68320,6 @@
     0
     0
     backend-state))
-
-;; True when any block holds a call or syscall: such a function keeps the FPO
-;; alignment adjustment.
-(define (compiler-backend-blocks-have-call?
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (if (compiler_regalloc.compiler-reg-loop-split-seq-has-call-or-syscall?
-            instrs)
-            true
-            (compiler-backend-blocks-have-call? (deref rest)))])]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-blocks-have-call?
-        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
 ;; The same census restricted to calls that RETURN here: a function whose only
 ;; call-shaped instructions are tail transfers needs no slot region for them.
@@ -71592,7 +70497,7 @@
   (Some i64 i64))
 
 ;; Ordinal-indexed (walk-order) per-gep tables: the register pipeline's later
-;; IR rewrites (caller-save spills, loop-split region remaps, remat) RENAME
+;; IR rewrites (caller-save spills and region remaps) RENAME
 ;; vars inside loop regions but never create, delete, or reorder Gep
 ;; instructions, so the n-th Gep the emitter walks is the n-th Gep the
 ;; pre-pass saw. Each entry carries the byte displacement plus the gep's
@@ -71933,221 +70838,6 @@
                 (set! j (+ j 1)))))
           (set! b (+ b 1))))
       total)))
-
-;; R5 ORDINAL RESYNC. The GAP9 displacement table is indexed by the ORDINAL of
-;; a `Gep` in walk order, and it is built before register allocation. The remat
-;; rewrite runs after the plan and edits that sequence: it mints recipe geps at
-;; recomputed use sites and retires the address gep of a load whose every use
-;; was recomputed. Re-thread the table onto the final block list rather than let
-;; the emitter consume shifted entries -- a recipe gep is minted with a var id
-;; at or above `pre-vars` and folds nothing, so it takes a fresh zero entry;
-;; every surviving gep keeps the entry it was given, matched by its destination
-;; in the (order-preserving) old sequence. Anything that fails to line up
-;; poisons the function, which is the same loud error the audit already raises.
-(define (compiler-backend-gep-fold-collect-dsts
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [dsts : (__tl_dyn-array i64)]) : i64
-  (let
-    [seq : compiler_ir_types.CompilerIrBlockSeq
-      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
-    [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-    [b : i64 0]
-    [total : i64 0]
-    (begin
-      (while (< b block-count)
-        (begin
-          (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
-            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-              (let
-                [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
-                [j : i64 0]
-                (while (< j n)
-                  (begin
-                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
-                      instrs
-                      j)
-                      [(compiler_ir_types.CompilerIrInstr.Gep dst _ _ _)
-                        (begin
-                          (if (< total (array-length dsts))
-                            (set! (array-ref dsts total) dst)
-                            unit)
-                          (set! total (+ total 1)))]
-                      [_ unit])
-                    (set! j (+ j 1)))))])
-          (set! b (+ b 1))))
-      total)))
-
-(define (compiler-backend-gep-fold-count-blocks-geps
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
-  (compiler-backend-gep-fold-collect-dsts blocks (__tl_make-array i64 0)))
-
-(define (compiler-backend-gep-fold-resync!
-  [function-state : CompilerBackendFunctionState]
-  [type-segment-bases : i64]
-  [old-blocks : compiler_ir_types.CompilerIrBlockList]
-  [new-blocks : compiler_ir_types.CompilerIrBlockList]
-  [pre-vars : i64]) : unit
-  (if (not
-    (compiler-backend-function-state-bool?
-      function-state
-      compiler-backend-function-bool-gep-fold-ready))
-    unit
-    (let
-      [old-count : i64
-        (compiler-backend-gep-fold-count-blocks-geps
-          (compiler-backend-global-shared-view old-blocks))]
-      [new-count : i64
-        (compiler-backend-gep-fold-count-blocks-geps
-          (compiler-backend-global-shared-view new-blocks))]
-      ;; Equal counts do NOT mean the sequence is untouched (one retired gep and
-      ;; one minted recipe gep balance), so the re-thread runs whenever the
-      ;; table is live and the function has any gep at all.
-      (if (= old-count 0)
-        unit
-        (compiler-backend-gep-fold-resync-tables!
-          function-state
-          type-segment-bases
-          old-blocks
-          new-blocks
-          pre-vars
-          old-count
-          new-count)))))
-
-(define (compiler-backend-gep-fold-resync-tables!
-  [function-state : CompilerBackendFunctionState]
-  [type-segment-bases : i64]
-  [old-blocks : compiler_ir_types.CompilerIrBlockList]
-  [new-blocks : compiler_ir_types.CompilerIrBlockList]
-  [pre-vars : i64]
-  [old-count : i64]
-  [new-count : i64]) : unit
-  (let
-    [old-disp : (__tl_dyn-array i64)
-      (compiler-backend-function-state-i64-array
-        function-state
-        compiler-backend-function-i64-array-gep-fold-disp-table)]
-    [old-kind : (__tl_dyn-array i64)
-      (compiler-backend-function-state-i64-array
-        function-state
-        compiler-backend-function-i64-array-gep-fold-kind-table)]
-    [old-scale : (__tl_dyn-array i64)
-      (compiler-backend-function-state-i64-array
-        function-state
-        compiler-backend-function-i64-array-gep-fold-scale-table)]
-    [old-dsts : (__tl_dyn-array i64)
-      (__tl_make-array
-        i64
-        (if (< old-count 1)
-          1
-          old-count))]
-    [_collect : i64
-      (compiler-backend-gep-fold-collect-dsts
-        old-blocks
-        (compiler-backend-global-shared-view old-dsts))]
-    [disp : (__tl_dyn-array i64)
-      (__tl_make-array
-        i64
-        (if (< new-count 1)
-          1
-          new-count))]
-    [kind : (__tl_dyn-array i64)
-      (__tl_make-array
-        i64
-        (if (< new-count 1)
-          1
-          new-count))]
-    [scale : (__tl_dyn-array i64)
-      (__tl_make-array
-        i64
-        (if (< new-count 1)
-          1
-          new-count))]
-    [seq : compiler_ir_types.CompilerIrBlockSeq
-      (compiler_liveness.compiler-live-ir-block-list-to-seq new-blocks)]
-    [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-    [b : i64 0]
-    [out : i64 0]
-    [cursor : i64 0]
-    [failed : bool false]
-    (begin
-      (if (not (= (array-length old-disp) old-count))
-        (set! failed true)
-        unit)
-      (while (< b block-count)
-        (begin
-          (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
-            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-              (let
-                [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
-                [j : i64 0]
-                (while (< j n)
-                  (begin
-                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
-                      instrs
-                      j)
-                      [(compiler_ir_types.CompilerIrInstr.Gep
-                          dst
-                          _
-                          offset
-                          elem-ty)
-                        (if (>= out new-count)
-                          (set! failed true)
-                          (if (>= dst pre-vars)
-                            (begin
-                              (set! (array-ref disp out) 0)
-                              (set!
-                                (array-ref kind out)
-                                (compiler-backend-gep-fold-offset-kind offset))
-                              (set!
-                                (array-ref scale out)
-                                (compiler-backend-type-size
-                                  type-segment-bases
-                                  elem-ty))
-                              (set! out (+ out 1)))
-                            (begin
-                              (while (and
-                                (< cursor old-count)
-                                (not (= (array-ref old-dsts cursor) dst)))
-                                (set! cursor (+ cursor 1)))
-                              (if (>= cursor old-count)
-                                (set! failed true)
-                                (begin
-                                  (set!
-                                    (array-ref disp out)
-                                    (array-ref old-disp cursor))
-                                  (set!
-                                    (array-ref kind out)
-                                    (array-ref old-kind cursor))
-                                  (set!
-                                    (array-ref scale out)
-                                    (array-ref old-scale cursor))
-                                  (set! cursor (+ cursor 1))
-                                  (set! out (+ out 1)))))))]
-                      [_ unit])
-                    (set! j (+ j 1)))))])
-          (set! b (+ b 1))))
-      (if (or failed (not (= out new-count)))
-        (compiler-backend-function-state-set-bool!
-          function-state
-          compiler-backend-function-bool-gep-fold-drift
-          true)
-        (begin
-          (compiler-backend-function-state-set-i64-array!
-            function-state
-            compiler-backend-function-i64-array-gep-fold-disp-table
-            disp)
-          (compiler-backend-function-state-set-i64-array!
-            function-state
-            compiler-backend-function-i64-array-gep-fold-kind-table
-            kind)
-          (compiler-backend-function-state-set-i64-array!
-            function-state
-            compiler-backend-function-i64-array-gep-fold-scale-table
-            scale)
-          (compiler-backend-function-state-set-i64!
-            function-state
-            compiler-backend-function-i64-gep-fold-cursor
-            0))))))
 
 (define (compiler-backend-gep-fold-count-defs
   [defs : (&mut defs (__tl_dyn-array i64))]
@@ -76223,10 +74913,6 @@
               (or target-policy.linux target-policy.windows)
               (compiler-backend-mode-scalar? mode)
               scalar-registers-enabled))]
-        ;; SCR-1: the scratch-reserve flag is per function; the round below
-        ;; sets it only when its replan won.
-        [_scratch-reserve-flag : unit
-          (compiler_regalloc.compiler-reg-set-scratch-reserve-enabled! false)]
         [fn-abi : compiler_abi.CompilerRegTargetAbi target-policy.abi]
         [_fn-abi : unit
           (compiler-backend-set-current-fn-abi!
@@ -76362,61 +75048,31 @@
               hole-reg-plan
               hole-types
               hole-temp-start))]
-        ;; SCR-1: a plan whose backend scratch would BORROW a live register is
-        ;; replanned with %r11 reserved for scratch, and the reserved plan is
-        ;; kept only when the estimated cost (memory references, prologue, and
-        ;; the save/restore each borrowed scratch costs per execution) is
-        ;; strictly lower. Declines to its input like the two rounds above.
-        [scratch-reserve-split : compiler_regalloc.CompilerRegCallHoleSplit
-          (if scalar-plan?
-            (compiler_regalloc.compiler-reg-scratch-reserve-rewrite-function
-              type-segment-bases
-              fn-abi
-              (compiler_regalloc.compiler-reg-call-hole-split-function
-                (compiler-backend-global-shared-view loop-park-split))
-              (compiler_regalloc.compiler-reg-call-hole-split-types
-                (compiler-backend-global-shared-view loop-park-split))
-              (compiler_regalloc.compiler-reg-call-hole-split-plan
-                (compiler-backend-global-shared-view loop-park-split))
-              (compiler_regalloc.compiler-reg-call-hole-split-temp-start
-                loop-park-split)
-              cold-call-split?)
-            loop-park-split)]
         ;; Everything downstream of the initial plan consumes the SPLIT view:
-        ;; the leaf-CSR round, its replan, the carrier self-check, the
-        ;; caller-save/loop-split/remat rewrites, storage coloring and emission.
-        ;; When every round declines, these are the pre-split values unchanged.
-        [split-func : compiler_ir_types.CompilerIrFunction
-          (compiler_regalloc.compiler-reg-call-hole-split-function
-            (compiler-backend-global-shared-view scratch-reserve-split))]
+        ;; the caller-save rewrite, the carrier self-check, storage coloring and
+        ;; emission. When every round declines, these are the pre-split values
+        ;; unchanged.
         [split-blocks : compiler_ir_types.CompilerIrBlockList
           (compiler_regalloc.compiler-reg-call-hole-split-blocks
-            (compiler-backend-global-shared-view scratch-reserve-split))]
+            (compiler-backend-global-shared-view loop-park-split))]
         [split-vars : i64
           (compiler_regalloc.compiler-reg-call-hole-split-vars
-            (compiler-backend-global-shared-view scratch-reserve-split))]
+            (compiler-backend-global-shared-view loop-park-split))]
         [split-types : compiler_regalloc.CompilerRegVarTypes
           (compiler_regalloc.compiler-reg-call-hole-split-types
-            (compiler-backend-global-shared-view scratch-reserve-split))]
+            (compiler-backend-global-shared-view loop-park-split))]
         [split-reg-plan : compiler_regalloc.CompilerRegPlan
           (compiler_regalloc.compiler-reg-call-hole-split-plan
-            (compiler-backend-global-shared-view scratch-reserve-split))]
-        [split-temp-start : i64
-          (compiler_regalloc.compiler-reg-call-hole-split-temp-start
-            scratch-reserve-split)]
-        ;; A call-free natural loop can leave one volatile register dead before
-        ;; the loop and another dead inside it while the whole-range greedy pays
-        ;; for a callee-saved home. Detect that shape against the initial plan,
-        ;; split the read-only range in IR, then REPLAN the rewritten function.
-        ;; Replanning is essential: both physical pieces receive ordinary exact
-        ;; intervals, so scratch occupancy and frame coloring never see the
-        ;; conservative interval-less homes used by post-allocation rescues.
-        [leaf-csr-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (if scalar-plan?
-            (compiler_regalloc.compiler-reg-leaf-csr-split-rewrite-one
-              type-segment-bases
-              fn-abi
-              split-func
+            (compiler-backend-global-shared-view loop-park-split))]
+        ;; The caller-save rewrite runs whenever scalar register allocation is
+        ;; enabled.
+        [call-save-enabled : bool
+          (if (compiler-backend-mode-scalar? mode)
+            scalar-registers-enabled
+            false)]
+        [call-save-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
+          (if call-save-enabled
+            (compiler_regalloc.compiler-reg-caller-save-rewrite-blocks
               split-blocks
               split-vars
               split-types
@@ -76427,97 +75083,14 @@
               split-vars
               (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
-        [alloc-blocks : compiler_ir_types.CompilerIrBlockList
-          (match (compiler-backend-global-shared-view leaf-csr-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                out-blocks
-                _
-                _
-                _
-                _)
-              out-blocks])]
-        [alloc-vars : i64
-          (match (compiler-backend-global-shared-view leaf-csr-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                out-vars
-                _
-                _)
-              out-vars])]
-        [alloc-func : compiler_ir_types.CompilerIrFunction
-          (compiler_ir_types.CompilerIrFunction.Function
-            name
-            (compiler-backend-global-shared-view params)
-            (compiler-backend-global-shared-view ret-ty)
-            alloc-vars
-            (compiler-backend-global-shared-view alloc-blocks)
-            (compiler-backend-global-shared-view function-abi))]
-        [alloc-types : compiler_regalloc.CompilerRegVarTypes
-          (if (= alloc-vars split-vars)
-            split-types
-            (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-              (compiler-backend-global-shared-view alloc-func)
-              (compiler-backend-state-metrics program-index.backend-state)))]
-        [alloc-preassignments : compiler_regalloc.CompilerRegAssignmentTable
-          (match leaf-csr-rewrite
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                _
-                assignments
-                _)
-              assignments])]
-        [raw-alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars split-vars)
-            split-reg-plan
-            ;; The leaf-CSR round only admits functions with NO kind-0 clobber
-            ;; and the call-hole round only fires on functions that have one, so
-            ;; this replan never sees call-hole carriers -- but it still forces
-            ;; whatever carrier range exists to memory, and it passes the
-            ;; cold-call CLAIM separately from that threshold.
-            (compiler_regalloc.compiler-reg-plan-function-scalar-forced-spill-with-types
-              type-segment-bases
-              fn-abi
-              alloc-func
-              split-temp-start
-              cold-call-split?
-              alloc-types
-              alloc-preassignments))]
-        [alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars split-vars)
-            raw-alloc-reg-plan
-            (compiler_regalloc.compiler-reg-plan-hide-leaf-csr-phantoms
-              raw-alloc-reg-plan
-              alloc-preassignments
-              split-vars))]
-        [call-save-enabled : bool
-          (if (compiler-backend-mode-scalar? mode)
-            scalar-registers-enabled
-            false)]
-        ;; The caller-save / loop-split / remat IR-mutating rewrites run whenever
-        ;; scalar register allocation is enabled.
-        [non-split-passes-enabled : bool call-save-enabled]
-        [call-save-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (if non-split-passes-enabled
-            (compiler_regalloc.compiler-reg-caller-save-rewrite-blocks
-              alloc-blocks
-              alloc-vars
-              alloc-types
-              (compiler-backend-global-shared-view alloc-reg-plan))
-            (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-              alloc-blocks
-              alloc-vars
-              alloc-vars
-              (compiler_regalloc.compiler-reg-assignment-table-empty)
-              (compiler_regalloc.compiler-reg-var-types-empty)))]
-        [call-save-reg-plan : compiler_regalloc.CompilerRegPlan
+        ;; The final pipeline plan, blocks and vars.
+        [rewritten-reg-plan : compiler_regalloc.CompilerRegPlan
           (if call-save-enabled
             (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
-              (compiler-backend-global-shared-view alloc-reg-plan)
+              (compiler-backend-global-shared-view split-reg-plan)
               (compiler-backend-global-shared-view call-save-rewrite))
-            alloc-reg-plan)]
-        [call-save-blocks : compiler_ir_types.CompilerIrBlockList
+            split-reg-plan)]
+        [rewritten-blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view call-save-rewrite)
             [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
                 out-blocks
@@ -76526,158 +75099,8 @@
                 _
                 _)
               out-blocks])]
-        [call-save-vars : i64
-          (match call-save-rewrite
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                out-vars
-                _
-                _)
-              out-vars])]
-        [loop-split-func : compiler_ir_types.CompilerIrFunction
-          (compiler_ir_types.CompilerIrFunction.Function
-            name
-            (compiler-backend-global-shared-view params)
-            (compiler-backend-global-shared-view ret-ty)
-            call-save-vars
-            (compiler-backend-global-shared-view call-save-blocks)
-            (compiler-backend-global-shared-view function-abi))]
-        [loop-split-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (if non-split-passes-enabled
-            (compiler_regalloc.compiler-reg-loop-split-rewrite-blocks
-              type-segment-bases
-              (compiler-backend-global-shared-view loop-split-func)
-              call-save-blocks
-              call-save-vars
-              (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-                loop-split-func
-                (compiler-backend-state-metrics program-index.backend-state))
-              (compiler-backend-global-shared-view call-save-reg-plan))
-            (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-              call-save-blocks
-              call-save-vars
-              call-save-vars
-              (compiler_regalloc.compiler-reg-assignment-table-empty)
-              (compiler_regalloc.compiler-reg-var-types-empty)))]
-        [rewrite-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if call-save-enabled
-            (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
-              call-save-reg-plan
-              (compiler-backend-global-shared-view loop-split-rewrite))
-            alloc-reg-plan)]
-        [rewritten-blocks : compiler_ir_types.CompilerIrBlockList
-          (match (compiler-backend-global-shared-view loop-split-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                out-blocks
-                _
-                _
-                _
-                _)
-              out-blocks])]
         [rewritten-vars : i64
-          (match loop-split-rewrite
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                out-vars
-                _
-                _)
-              out-vars])]
-        ;; Pipeline order: caller-save -> loop-split -> REMAT. The remat output is
-        ;; the intermediate (`remat0-*`); the identity `splitkit-rewrite` stage
-        ;; below re-exports it under the downstream-facing `remat-*` names (final
-        ;; pipeline blocks/vars/plan), so nothing downstream changes.
-        [remat0-func : compiler_ir_types.CompilerIrFunction
-          (compiler_ir_types.CompilerIrFunction.Function
-            name
-            (compiler-backend-global-shared-view params)
-            (compiler-backend-global-shared-view ret-ty)
-            rewritten-vars
-            (compiler-backend-global-shared-view rewritten-blocks)
-            (compiler-backend-global-shared-view function-abi))]
-        [remat0-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (if call-save-enabled
-            (compiler_regalloc.compiler-reg-remat-rewrite-blocks
-              type-segment-bases
-              (compiler-backend-global-shared-view remat0-func)
-              (compiler-backend-global-shared-view rewritten-blocks)
-              rewritten-vars
-              (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-                remat0-func
-                (compiler-backend-state-metrics program-index.backend-state))
-              (compiler-backend-global-shared-view rewrite-reg-plan))
-            (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-              (compiler-backend-global-shared-view rewritten-blocks)
-              rewritten-vars
-              rewritten-vars
-              (compiler_regalloc.compiler-reg-assignment-table-empty)
-              (compiler_regalloc.compiler-reg-var-types-empty)))]
-        [remat0-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if call-save-enabled
-            (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
-              rewrite-reg-plan
-              (compiler-backend-global-shared-view remat0-rewrite))
-            rewrite-reg-plan)]
-        [remat0-blocks : compiler_ir_types.CompilerIrBlockList
-          (match (compiler-backend-global-shared-view remat0-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                out-blocks
-                _
-                _
-                _
-                _)
-              out-blocks])]
-        [remat0-vars : i64
-          (match remat0-rewrite
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                out-vars
-                _
-                _)
-              out-vars])]
-        ;; R5: the remat rewrite is the only stage that edits the `Gep`
-        ;; sequence after the GAP9 displacement table was built, so re-thread
-        ;; the table onto its output before emission consumes the ordinals.
-        [_gep-fold-resync : unit
-          (if call-save-enabled
-            (compiler-backend-gep-fold-resync!
-              function-state
-              type-segment-bases
-              rewritten-blocks
-              (compiler-backend-global-shared-view remat0-blocks)
-              rewritten-vars)
-            unit)]
-        ;; SplitKit removed: it was inert on the shipped path (the realization
-        ;; declined every recorded piece), replaced by M-G2b's per-call-region
-        ;; split + FPO. The final pipeline stage is the identity of the remat
-        ;; output.
-        [splitkit-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-            remat0-blocks
-            remat0-vars
-            remat0-vars
-            (compiler_regalloc.compiler-reg-assignment-table-empty)
-            (compiler_regalloc.compiler-reg-var-types-empty))]
-        ;; Downstream-facing FINAL pipeline names (= identity of the remat output).
-        [remat-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if call-save-enabled
-            (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
-              remat0-reg-plan
-              (compiler-backend-global-shared-view splitkit-rewrite))
-            remat0-reg-plan)]
-        [remat-blocks : compiler_ir_types.CompilerIrBlockList
-          (match (compiler-backend-global-shared-view splitkit-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                out-blocks
-                _
-                _
-                _
-                _)
-              out-blocks])]
-        [remat-vars : i64
-          (match splitkit-rewrite
+          (match call-save-rewrite
             [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
                 _
                 _
@@ -76694,11 +75117,11 @@
         ;; no modeled slot (#5808).
         [scratch-vars : i64
           (compiler_regalloc.compiler-reg-plan-var-count
-            (compiler-backend-global-shared-view remat-reg-plan)
-            remat-vars)]
+            (compiler-backend-global-shared-view rewritten-reg-plan)
+            rewritten-vars)]
         [plan-types : compiler_regalloc.CompilerRegVarTypes
           (compiler_regalloc.compiler-reg-plan-types
-            (compiler-backend-global-shared-view remat-reg-plan))]
+            (compiler-backend-global-shared-view rewritten-reg-plan))]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
         ;; costly to repeat).
@@ -76710,7 +75133,7 @@
               (compiler-backend-global-shared-view params)
               (compiler-backend-global-shared-view ret-ty)
               scratch-vars
-              (compiler-backend-global-shared-view remat-blocks)
+              (compiler-backend-global-shared-view rewritten-blocks)
               (compiler-backend-global-shared-view function-abi))
             plan-types)]
         [has-group-vars : bool
@@ -76721,9 +75144,9 @@
         [fusion-pinned-vars : compiler_liveness.CompilerLiveI64Set
           (compiler-backend-gep-fusion-pinned-vars
             scratch-vars
-            (compiler-backend-global-shared-view remat-blocks)
+            (compiler-backend-global-shared-view rewritten-blocks)
             (compiler_regalloc.compiler-reg-plan-assignments
-              (compiler-backend-global-shared-view remat-reg-plan))
+              (compiler-backend-global-shared-view rewritten-reg-plan))
             (and
               (compiler-backend-mode-scalar? mode)
               (not scalar-registers-enabled)))]
@@ -76762,12 +75185,12 @@
             compiler_regalloc.CompilerRegColoring.None
             (compiler_regalloc.compiler-reg-color-stack-slots-with-stack-only
               type-segment-bases
-              (compiler-backend-global-shared-view remat-reg-plan)
+              (compiler-backend-global-shared-view rewritten-reg-plan)
               (compiler-backend-global-shared-view fn-group-vars)
               (compiler-backend-global-shared-view params)
-              (compiler-backend-global-shared-view remat-blocks)
+              (compiler-backend-global-shared-view rewritten-blocks)
               scratch-vars
-              remat-vars
+              rewritten-vars
               coloring-pinned-vars
               (and
                 (compiler-backend-mode-scalar? mode)
@@ -76789,15 +75212,15 @@
           (match (compiler-backend-global-shared-view coloring)
             [(compiler_regalloc.CompilerRegColoring.None)
               (compiler_regalloc.compiler-reg-plan-assignments
-                (compiler-backend-global-shared-view remat-reg-plan))]
+                (compiler-backend-global-shared-view rewritten-reg-plan))]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
                 remap
                 scratch-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
-                  (compiler-backend-global-shared-view remat-reg-plan)))])]
+                  (compiler-backend-global-shared-view rewritten-reg-plan)))])]
         ;; Install the final authoritative table for direct operand-home lookup
-        ;; in large functions. Caller-save / loop-split / remat /
+        ;; in large functions. Caller-save and
         ;; slot-coloring re-plans are all folded into this table, so no emission
         ;; view can go stale. Small functions read the same table directly from
         ;; their emission context and avoid the state-wrapper setup.
@@ -76841,17 +75264,21 @@
           ;; entire function and force unrelated sites into emergency saves.
           (match (compiler-backend-global-shared-view coloring)
             [(compiler_regalloc.CompilerRegColoring.None)
-              (compiler_regalloc.compiler-reg-plan-assignments remat-reg-plan)]
+              (compiler_regalloc.compiler-reg-plan-assignments
+                rewritten-reg-plan)]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
                 remap
                 scratch-vars
-                (compiler_regalloc.compiler-reg-plan-assignments remat-reg-plan))])]
+                (compiler_regalloc.compiler-reg-plan-assignments
+                  rewritten-reg-plan))])]
         [colored-blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view coloring)
-            [(compiler_regalloc.CompilerRegColoring.None) remat-blocks]
+            [(compiler_regalloc.CompilerRegColoring.None) rewritten-blocks]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
-              (compiler_regalloc.compiler-reg-remap-blocks remap remat-blocks)])]
+              (compiler_regalloc.compiler-reg-remap-blocks
+                remap
+                rewritten-blocks)])]
         ;; #block-placement: the last word on layout. Every view below --
         ;; scavenge intervals, const-hoist, #jump-forward, phi targets, the
         ;; emission walk itself -- is derived from THIS list, so choosing the
@@ -76882,7 +75309,7 @@
             ;; by the emitted IR. When stack coloring is unavailable, retain
             ;; the real rewritten var count so scratch planning cannot grow
             ;; the frame merely by numbering temporary register intervals.
-            [(compiler_regalloc.CompilerRegColoring.None) remat-vars]
+            [(compiler_regalloc.CompilerRegColoring.None) rewritten-vars]
             [(compiler_regalloc.CompilerRegColoring.Remap _ slots) slots])]
         [scavenge-selection
           : compiler_regalloc.CompilerRegIntervalSelection
@@ -82228,38 +80655,16 @@
           region-mark
           region-reset
           tail-plan)
-        (let
-          [write-exit : bool
-            (or
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-alloc)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-oob-abort)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-abort-label)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-div-abort)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-shift-abort)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-region-reset))]
-          (runtime_common.CompilerBackendRuntimeFeatures
-            alloc
-            region-mark
-            region-reset
-            (compiler-backend-runtime-tail-arena-debug? tail-plan)
-            (compiler-backend-runtime-tail-profile? tail-plan)
-            (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
-            write-exit
-            (compiler-backend-runtime-tail-startup-profile? tail-plan)
-            (compiler_ir_types.compiler-debug-info-enabled?)
-            31))])))
+        (runtime_common.CompilerBackendRuntimeFeatures
+          alloc
+          region-mark
+          region-reset
+          (compiler-backend-runtime-tail-arena-debug? tail-plan)
+          (compiler-backend-runtime-tail-profile? tail-plan)
+          (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
+          (compiler-backend-runtime-tail-startup-profile? tail-plan)
+          (compiler_ir_types.compiler-debug-info-enabled?)
+          31)])))
 
 ;; These leaves have no incoming edges from the always-emitted runtime. Keep
 ;; them for direct calls, address-taken symbols, and any referenced extern alias.

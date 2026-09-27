@@ -2,29 +2,7 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_x64_executable_template as x64_template)
 (import compiler_x64_executable_template_catalog as x64_catalog)
-(import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-
-(define (compiler-backend-runtime-arena-data [_arena-debug : bool]) : String
-  (str_cat.str-cat
-    "    .section .bss
-    .balign 8
-.L_tl_arena_poison_enabled:
-    .zero 8
-
-"
-    (cfg
-      (any compiler-arena-debug test)
-      (if _arena-debug
-        "    .balign 8
-.L_tl_arena_debug_roots:
-    .zero 32768
-
-"
-        "")
-      "")
-    ""
-    ""))
 
 (define (compiler-backend-current-arena-load [dst : String]) : String
   (str_cat.str-cat "    movq %gs:0x28, " dst "\n"))
@@ -52,8 +30,9 @@
   (str_cat.str-cat
     (runtime_common.compiler-backend-runtime-common-data
       features
-      (compiler-backend-runtime-arena-data
-        (runtime_common.compiler-backend-runtime-features-arena-debug? features)))
+      (runtime_common.compiler-backend-runtime-arena-poison-data
+        (runtime_common.compiler-backend-runtime-arena-debug-text?
+          features.arena-debug)))
     "    .section .rodata
 .L_tl_main_stack_reservation_msg:
     .ascii \"typelisp runtime: 1 GiB main-stack reservation failed\\n\"
@@ -69,8 +48,10 @@
 
 "))
 
-(define (compiler-backend-runtime-windows-libc-shim-functions-base) : String
-  "    .globl __chkstk
+(define (compiler-backend-runtime-windows-libc-shim-functions
+  [startup-profile : bool]) : String
+  (str_cat.str-cat
+    "    .globl __chkstk
 __chkstk:
     pushq %rcx
     pushq %rax
@@ -197,7 +178,13 @@ _tl_start:
     subq $40, %rsp
     .seh_stackalloc 40
     .seh_endprologue
-    call tl_setup_argv
+"
+    (if startup-profile
+      "    leaq .L_tl_startup_profile_process_entry_tick(%rip), %rcx
+    call QueryPerformanceCounter
+"
+      "")
+    "    call tl_setup_argv
     movq $0, %gs:0x28
     leaq .L_tl_stack_overflow_filter(%rip), %rcx
     call SetUnhandledExceptionFilter
@@ -339,9 +326,11 @@ tl_boot_pool:
 .L_tl_manifest_end:
     .text
 
-")
+"))
 
-(define (compiler-backend-runtime-windows-arena-functions-base [profile : bool]) : String
+(define (compiler-backend-runtime-windows-arena-functions-base
+  [profile : bool]
+  [arena-debug : bool]) : String
   (str_cat.str-cat
     "    .globl tl_arena_current
 tl_arena_current:
@@ -417,8 +406,14 @@ tl_arena_make_small:
     movq %rbx, %rcx
     addq 40(%rsp), %rcx
     movq %rcx, 24(%rbx)
-    movq %rbx, %rax
-    add $48, %rsp
+"
+    (if arena-debug
+      "    movq %rbx, %rcx
+    call .L_tl_arena_debug_register_root
+"
+      "    movq %rbx, %rax
+")
+    "    add $48, %rsp
     popq %rsi
     popq %rbx
     popq %rbp
@@ -486,8 +481,14 @@ tl_arena_make_atomic:
     movq %rbx, %rcx
     addq $0x4000000, %rcx
     movq %rcx, 24(%rbx)
-    movq %rbx, %rax
-    add $48, %rsp
+"
+    (if arena-debug
+      "    movq %rbx, %rcx
+    call .L_tl_arena_debug_register_root
+"
+      "    movq %rbx, %rax
+")
+    "    add $48, %rsp
     popq %rsi
     popq %rbx
     popq %rbp
@@ -534,7 +535,17 @@ tl_arena_destroy:
     movq 40(%rsi), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_win_loop
-    movq 56(%r12), %rsi
+"
+    (if arena-debug
+      "    testq $8, 48(%r12)
+    jz .L_tl_arena_destroy_win_debug_guard_done
+    call tl_arena_debug_destroy_abort
+.L_tl_arena_destroy_win_debug_guard_done:
+    movq %r12, %rcx
+    call .L_tl_arena_debug_unregister_root
+"
+      "")
+    "    movq 56(%r12), %rsi
     testq %rsi, %rsi
     jnz .L_tl_arena_destroy_win_head_ready
     movq %r12, %rsi
@@ -578,154 +589,22 @@ tl_arena_destroy:
 
 "))
 
-(define (compiler-backend-runtime-windows-arena-debug-functions) : String
-  ".L_tl_arena_debug_register_root:
-    leaq .L_tl_arena_debug_roots(%rip), %r8
-    xorq %rdx, %rdx
-.L_tl_arena_debug_register_root_win_loop:
-    cmpq $4096, %rdx
-    jae .L_tl_arena_debug_protect_win_invalid
-    xorq %rax, %rax
-    lock cmpxchgq %rcx, (%r8,%rdx,8)
-    je .L_tl_arena_debug_register_root_win_done
-    cmpq %rcx, %rax
-    je .L_tl_arena_debug_register_root_win_done
-    incq %rdx
-    jmp .L_tl_arena_debug_register_root_win_loop
-.L_tl_arena_debug_register_root_win_done:
-    movq %rcx, %rax
-    ret
-
-.L_tl_arena_debug_unregister_root:
-    leaq .L_tl_arena_debug_roots(%rip), %r8
-    xorq %rdx, %rdx
-.L_tl_arena_debug_unregister_root_win_loop:
-    cmpq $4096, %rdx
-    jae .L_tl_arena_debug_unregister_root_win_done
-    movq (%r8,%rdx,8), %rax
-    cmpq %rcx, %rax
-    jne .L_tl_arena_debug_unregister_root_win_next
-    xorq %r9, %r9
-    lock cmpxchgq %r9, (%r8,%rdx,8)
-    jne .L_tl_arena_debug_unregister_root_win_loop
-    ret
-.L_tl_arena_debug_unregister_root_win_next:
-    incq %rdx
-    jmp .L_tl_arena_debug_unregister_root_win_loop
-.L_tl_arena_debug_unregister_root_win_done:
-    ret
-
-    .globl tl_arena_debug_protect_never_reset
-tl_arena_debug_protect_never_reset:
-    testq %rcx, %rcx
-    jz .L_tl_arena_debug_protect_win_invalid
-    leaq .L_tl_arena_debug_roots(%rip), %r8
-    xorq %rdx, %rdx
-.L_tl_arena_debug_protect_win_find:
-    cmpq $4096, %rdx
-    jae .L_tl_arena_debug_protect_win_invalid
-    cmpq %rcx, (%r8,%rdx,8)
-    je .L_tl_arena_debug_protect_win_found
-    incq %rdx
-    jmp .L_tl_arena_debug_protect_win_find
-.L_tl_arena_debug_protect_win_found:
-    cmpq %rcx, 40(%rcx)
-    jne .L_tl_arena_debug_protect_win_invalid
-    testq $1, 48(%rcx)
-    jnz .L_tl_arena_debug_protect_win_invalid
-    orq $8, 48(%rcx)
-    ret
-.L_tl_arena_debug_protect_win_invalid:
-    subq $40, %rsp
-    call tl_arena_debug_protect_abort
-
-    .globl tl_arena_debug_retire_protected
-tl_arena_debug_retire_protected:
-    testq %rcx, %rcx
-    jz .L_tl_arena_debug_protect_win_invalid
-    leaq .L_tl_arena_debug_roots(%rip), %r8
-    xorq %rdx, %rdx
-.L_tl_arena_debug_retire_win_find:
-    cmpq $4096, %rdx
-    jae .L_tl_arena_debug_protect_win_invalid
-    cmpq %rcx, (%r8,%rdx,8)
-    je .L_tl_arena_debug_retire_win_found
-    incq %rdx
-    jmp .L_tl_arena_debug_retire_win_find
-.L_tl_arena_debug_retire_win_found:
-    cmpq %rcx, 40(%rcx)
-    jne .L_tl_arena_debug_protect_win_invalid
-    testq $8, 48(%rcx)
-    jz .L_tl_arena_debug_protect_win_invalid
-    andq $-9, 48(%rcx)
-    jmp tl_arena_destroy
-
-    .globl tl_arena_debug_assert_pool_install
-tl_arena_debug_assert_pool_install:
-    testq %rcx, %rcx
-    jz .L_tl_arena_debug_pool_install_win_done
-    movq 40(%rcx), %rax
-    testq %rax, %rax
-    jz .L_tl_arena_debug_pool_install_win_done
-    testq $8, 48(%rax)
-    jnz .L_tl_arena_debug_pool_install_win_abort
-.L_tl_arena_debug_pool_install_win_done:
-    ret
-.L_tl_arena_debug_pool_install_win_abort:
-    subq $40, %rsp
-    call tl_arena_debug_pool_install_abort
-
-")
-
 (define (compiler-backend-runtime-windows-arena-functions
   [profile : bool]
-  [_arena-debug : bool]) : String
-  (let
-    [base : String
-      (compiler-backend-runtime-windows-arena-functions-base profile)]
-    (cfg
-      (any compiler-arena-debug test)
-      (if _arena-debug
-        (str_cat.str-cat
-          (compiler-backend-runtime-windows-arena-debug-functions)
-          (string.replace
-            (string.replace
-              (string.replace
-                base
-                "    movq %rbx, %rax
-    add $48, %rsp
-"
-                "    movq %rbx, %rcx
-    call .L_tl_arena_debug_register_root
-    add $48, %rsp
-")
-              "    movq %rbx, %rax
-    add $48, %rsp
-"
-              "    movq %rbx, %rcx
-    call .L_tl_arena_debug_register_root
-    add $48, %rsp
-")
-            "    movq 40(%rsi), %r12
-    testq %r12, %r12
-    jz .L_tl_arena_destroy_win_loop
-    movq 56(%r12), %rsi
-"
-            "    movq 40(%rsi), %r12
-    testq %r12, %r12
-    jz .L_tl_arena_destroy_win_loop
-    testq $8, 48(%r12)
-    jz .L_tl_arena_destroy_win_debug_guard_done
-    call tl_arena_debug_destroy_abort
-.L_tl_arena_destroy_win_debug_guard_done:
-    movq %r12, %rcx
-    call .L_tl_arena_debug_unregister_root
-    movq 56(%r12), %rsi
-"))
-        base)
-      base)))
+  [arena-debug : bool]) : String
+  (str_cat.str-cat
+    (if arena-debug
+      (runtime_common.compiler-backend-runtime-arena-debug-functions
+        "%rcx"
+        "%rdx"
+        "_win"
+        false)
+      "")
+    (compiler-backend-runtime-windows-arena-functions-base profile arena-debug)))
 
-(define (compiler-backend-runtime-windows-alloc-functions-base [profile : bool]) : String
+(define (compiler-backend-runtime-windows-alloc-functions-base
+  [profile : bool]
+  [arena-debug : bool]) : String
   (let
     [fast-profile : String
       (runtime_common.compiler-backend-runtime-profile-alloc-account
@@ -1093,7 +972,9 @@ tl_alloc:
     movq 56(%r8), %r10
     jmp .L_tl_alloc_win_root_ready
 .L_tl_alloc_win_root_self:
-    xorq %r10, %r10
+"
+      (compiler-backend-runtime-windows-register-root-hook arena-debug)
+      "    xorq %r10, %r10
     movq %rax, %r8
 .L_tl_alloc_win_root_ready:
     movq %r10, 0(%rax)
@@ -1151,7 +1032,8 @@ tl_alloc:
 ")))
 
 (define (compiler-backend-runtime-windows-aligned-alloc-functions-base
-  [profile : bool]) : String
+  [profile : bool]
+  [arena-debug : bool]) : String
   (let
     [ordinary-profile : String
       (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
@@ -1503,7 +1385,9 @@ tl_alloc_aligned:
     movq 56(%r8), %r9
     jmp .L_tl_alloc_aligned_win_root_ready
 .L_tl_alloc_aligned_win_root_self:
-    xorq %r9, %r9
+"
+          (compiler-backend-runtime-windows-register-root-hook arena-debug)
+          "    xorq %r9, %r9
     movq %rax, %r8
 .L_tl_alloc_aligned_win_root_ready:
     movq %r9, 0(%rax)
@@ -1568,61 +1452,23 @@ tl_alloc_aligned:
 .L_tl_alloc_aligned_win_abort:
     call tl_oom_abort
 
-"
-          "")
-        "")
-      "")))
+")))))
 
-(define (compiler-backend-runtime-windows-alloc-functions
-  [profile : bool]
-  [_arena-debug : bool]) : String
-  (let
-    [base : String
-      (compiler-backend-runtime-windows-alloc-functions-base profile)]
-    [aligned : String
-      (compiler-backend-runtime-windows-aligned-alloc-functions-base profile)]
-    (cfg
-      (any compiler-arena-debug test)
-      (if _arena-debug
-        (str_cat.str-cat
-          (string.replace
-            base
-            ".L_tl_alloc_win_root_self:
-    xorq %r10, %r10
-    movq %rax, %r8
-.L_tl_alloc_win_root_ready:
-"
-            ".L_tl_alloc_win_root_self:
-    movq %rax, %rcx
+;; The arena-debug root registration after a fresh arena is reserved (%rax).
+(define (compiler-backend-runtime-windows-register-root-hook
+  [arena-debug : bool]) : String
+  (if arena-debug
+    "    movq %rax, %rcx
     call .L_tl_arena_debug_register_root
-    xorq %r10, %r10
-    movq %rax, %r8
-.L_tl_alloc_win_root_ready:
-")
-          (string.replace
-            aligned
-            ".L_tl_alloc_aligned_win_root_self:
-    xorq %r9, %r9
-    movq %rax, %r8
-.L_tl_alloc_aligned_win_root_ready:
 "
-            ".L_tl_alloc_aligned_win_root_self:
-    movq %rax, %rcx
-    call .L_tl_arena_debug_register_root
-    xorq %r9, %r9
-    movq %rax, %r8
-.L_tl_alloc_aligned_win_root_ready:
-")
-          ""
-          "")
-        (str_cat.str-cat base aligned "" ""))
-      (str_cat.str-cat base aligned "" ""))))
+    ""))
 
 ;; Rewinding a non-atomic arena marks it as reused with flags bit 2 (bit 0 is
 ;; the atomic flag, which runs a 1/3 lock protocol and is left untouched);
 ;; tl_array_zero consults that bit to skip its fill only for virgin arenas.
-(define (compiler-backend-runtime-windows-region-reset-functions-base
-  [profile : bool]) : String
+(define (compiler-backend-runtime-windows-region-reset-functions
+  [profile : bool]
+  [arena-debug : bool]) : String
   (str_cat.str-cat
     "    .globl tl_region_reset
 tl_region_reset:
@@ -1638,7 +1484,16 @@ tl_region_reset:
     movq %gs:0x28, %r13
     testq %r13, %r13
     jz .L_tl_region_reset_win_invalid
-    movq %r13, %r11
+"
+    (if arena-debug
+      "    testq $8, 48(%r13)
+    jz .L_tl_region_reset_win_mark_debug_guard_done
+    subq $32, %rsp
+    call tl_arena_debug_reset_abort
+.L_tl_region_reset_win_mark_debug_guard_done:
+"
+      "")
+    "    movq %r13, %r11
     movq 56(%r11), %r13
 .L_tl_region_reset_win_find:
     movq 8(%r13), %rax
@@ -1728,7 +1583,26 @@ tl_region_reset:
     jmp .L_tl_region_reset_win_done
 .L_tl_region_reset_win_all:
     movq %gs:0x28, %r14
-    movq $0, %gs:0x28
+"
+    (if arena-debug
+      "    testq %r14, %r14
+    jz .L_tl_region_reset_win_all_debug_guard_done
+    movq 40(%r14), %r11
+    testq $8, 48(%r11)
+    jz .L_tl_region_reset_win_all_debug_guard_done
+    subq $32, %rsp
+    call tl_arena_debug_reset_abort
+.L_tl_region_reset_win_all_debug_guard_done:
+    testq %r14, %r14
+    jz .L_tl_region_reset_win_all_debug_unregister_done
+    movq %r11, %rcx
+    subq $32, %rsp
+    call .L_tl_arena_debug_unregister_root
+    addq $32, %rsp
+.L_tl_region_reset_win_all_debug_unregister_done:
+"
+      "")
+    "    movq $0, %gs:0x28
     xorq %r12, %r12
     testq %r14, %r14
     jz .L_tl_region_reset_win_done
@@ -1782,59 +1656,6 @@ tl_region_reset:
     ret
 
 "))
-
-(define (compiler-backend-runtime-windows-region-reset-functions
-  [profile : bool]
-  [_arena-debug : bool]) : String
-  (let
-    [base : String
-      (compiler-backend-runtime-windows-region-reset-functions-base profile)]
-    (cfg
-      (any compiler-arena-debug test)
-      (if _arena-debug
-        (string.replace
-          (string.replace
-            base
-            "    movq %gs:0x28, %r13
-    testq %r13, %r13
-    jz .L_tl_region_reset_win_invalid
-    movq %r13, %r11
-    movq 56(%r11), %r13
-"
-            "    movq %gs:0x28, %r13
-    testq %r13, %r13
-    jz .L_tl_region_reset_win_invalid
-    testq $8, 48(%r13)
-    jz .L_tl_region_reset_win_mark_debug_guard_done
-    subq $32, %rsp
-    call tl_arena_debug_reset_abort
-.L_tl_region_reset_win_mark_debug_guard_done:
-    movq %r13, %r11
-    movq 56(%r11), %r13
-")
-          "    movq %gs:0x28, %r14
-    movq $0, %gs:0x28
-"
-          "    movq %gs:0x28, %r14
-    testq %r14, %r14
-    jz .L_tl_region_reset_win_all_debug_guard_done
-    movq 40(%r14), %r11
-    testq $8, 48(%r11)
-    jz .L_tl_region_reset_win_all_debug_guard_done
-    subq $32, %rsp
-    call tl_arena_debug_reset_abort
-.L_tl_region_reset_win_all_debug_guard_done:
-    testq %r14, %r14
-    jz .L_tl_region_reset_win_all_debug_unregister_done
-    movq %r11, %rcx
-    subq $32, %rsp
-    call .L_tl_arena_debug_unregister_root
-    addq $32, %rsp
-.L_tl_region_reset_win_all_debug_unregister_done:
-    movq $0, %gs:0x28
-")
-        base)
-      base)))
 
 (define (compiler-backend-runtime-windows-thread-functions) : String
   "    .data
@@ -2187,71 +2008,51 @@ tl_tlci_call_macro_entry:
 
 ")
 
-(define (compiler-backend-runtime-windows-libc-shim-functions
-  [startup-profile : bool]) : String
-  (if startup-profile
-    (string.replace
-      (compiler-backend-runtime-windows-libc-shim-functions-base)
-      "    subq $40, %rsp
-    .seh_stackalloc 40
-    .seh_endprologue
-    call tl_setup_argv
-"
-      "    subq $40, %rsp
-    .seh_stackalloc 40
-    .seh_endprologue
-    leaq .L_tl_startup_profile_process_entry_tick(%rip), %rcx
-    call QueryPerformanceCounter
-    call tl_setup_argv
-")
-    (compiler-backend-runtime-windows-libc-shim-functions-base)))
+(define (compiler-backend-runtime-windows-render
+  [enabled : bool]
+  [id : x64_template.CompilerX64ExecutableTemplateId]
+  [text : String]) : String
+  (if enabled
+    (x64_catalog.compiler-x64-template-render-assembly
+      id
+      (x64_template.CompilerX64TemplateTarget.WindowsX64)
+      text)
+    ""))
 
 (define (compiler-backend-runtime-functions
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
   (let
-    [profile : bool
-      (runtime_common.compiler-backend-runtime-features-profile? features)]
-    [arena-debug : bool
-      (runtime_common.compiler-backend-runtime-features-arena-debug? features)]
-    [alloc-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-alloc? features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_catalog.compiler-x64-template-select-four
-            (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAlloc)
-            (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocDebug)
-            (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocProfile)
-            (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocProfileDebug)
-            profile
-            arena-debug)
-          (x64_template.CompilerX64TemplateTarget.WindowsX64)
-          (compiler-backend-runtime-windows-alloc-functions profile arena-debug))
-        "")]
-    [region-mark-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-region-mark?
-        features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionMark)
-          (x64_template.CompilerX64TemplateTarget.WindowsX64)
-          (compiler-backend-runtime-region-mark-functions))
-        "")]
-    [region-reset-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-region-reset?
-        features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_catalog.compiler-x64-template-select-four
-            (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionReset)
-            (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetDebug)
-            (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfile)
-            (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfileDebug)
-            profile
-            arena-debug)
-          (x64_template.CompilerX64TemplateTarget.WindowsX64)
-          (compiler-backend-runtime-windows-region-reset-functions
-            profile
-            arena-debug))
-        "")]
-    [arena-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
+    [profile : bool features.profile]
+    [arena-debug : bool features.arena-debug]
+    [debug-text : bool
+      (runtime_common.compiler-backend-runtime-arena-debug-text? arena-debug)]
+    (str_cat.str-cat
+      (compiler-backend-runtime-windows-render
+        true
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeMemcpy)
+        (compiler-backend-runtime-memcpy-functions))
+      (compiler-backend-runtime-windows-render
+        true
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeMemchr)
+        (compiler-backend-runtime-memchr-functions))
+      (compiler-backend-runtime-windows-render
+        true
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArrayZero)
+        (compiler-backend-runtime-array-zero-functions))
+      (compiler-backend-runtime-windows-render
+        true
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeMemFill8)
+        (compiler-backend-runtime-mem-fill8-functions))
+      (compiler-backend-runtime-windows-render
+        true
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeTlciImage)
+        (compiler-backend-runtime-tlci-entry-functions))
+      (compiler-backend-runtime-windows-render
+        features.tlci-macro-entry
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeTlciMacro)
+        (compiler-backend-runtime-tlci-macro-entry-functions))
+      (compiler-backend-runtime-windows-render
+        true
         (x64_catalog.compiler-x64-template-select-four
           (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArena)
           (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaDebug)
@@ -2259,99 +2060,62 @@ tl_tlci_call_macro_entry:
           (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaProfileDebug)
           profile
           arena-debug)
-        (x64_template.CompilerX64TemplateTarget.WindowsX64)
-        (compiler-backend-runtime-windows-arena-functions profile arena-debug))]
-    [profile-asm : String
-      (if profile
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.CommonProfile)
-          (x64_template.CompilerX64TemplateTarget.WindowsX64)
-          (runtime_common.compiler-backend-runtime-profile-functions))
-        "")]
-    [startup-profile : bool
-      (runtime_common.compiler-backend-runtime-features-startup-profile?
-        features)]
-    [startup-profile-asm : String
-      (if startup-profile
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.CommonStartupProfile)
-          (x64_template.CompilerX64TemplateTarget.WindowsX64)
-          (runtime_common.compiler-backend-runtime-startup-profile-functions
-            true))
-        "")]
-    [memcpy-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeMemcpy)
-        (x64_template.CompilerX64TemplateTarget.WindowsX64)
-        (compiler-backend-runtime-memcpy-functions))]
-    [memchr-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeMemchr)
-        (x64_template.CompilerX64TemplateTarget.WindowsX64)
-        (compiler-backend-runtime-memchr-functions))]
-    [array-zero-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArrayZero)
-        (x64_template.CompilerX64TemplateTarget.WindowsX64)
-        (compiler-backend-runtime-array-zero-functions))]
-    [mem-fill8-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeMemFill8)
-        (x64_template.CompilerX64TemplateTarget.WindowsX64)
-        (compiler-backend-runtime-mem-fill8-functions))]
-    [tlci-entry-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeTlciImage)
-        (x64_template.CompilerX64TemplateTarget.WindowsX64)
-        (compiler-backend-runtime-tlci-entry-functions))]
-    [tlci-macro-entry-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-tlci-macro-entry?
-        features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeTlciMacro)
-          (x64_template.CompilerX64TemplateTarget.WindowsX64)
-          (compiler-backend-runtime-tlci-macro-entry-functions))
-        "")]
-    [runtime-front-asm : String
-      (str_cat.str-cat
-        memcpy-asm
-        memchr-asm
-        array-zero-asm
-        mem-fill8-asm
-        tlci-entry-asm
-        tlci-macro-entry-asm
-        arena-asm
-        profile-asm
+        (compiler-backend-runtime-windows-arena-functions profile debug-text))
+      (compiler-backend-runtime-windows-render
+        profile
+        (x64_template.CompilerX64ExecutableTemplateId.CommonProfile)
+        (runtime_common.compiler-backend-runtime-profile-functions))
+      (compiler-backend-runtime-windows-render
+        features.startup-profile
+        (x64_template.CompilerX64ExecutableTemplateId.CommonStartupProfile)
+        (runtime_common.compiler-backend-runtime-startup-profile-functions true))
+      (compiler-backend-runtime-windows-render
+        features.alloc
+        (x64_catalog.compiler-x64-template-select-four
+          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAlloc)
+          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocDebug)
+          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocProfile)
+          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocProfileDebug)
+          profile
+          arena-debug)
         (str_cat.str-cat
-          startup-profile-asm
-          alloc-asm
-          region-mark-asm
-          region-reset-asm))]
-    [libc-shims-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (if startup-profile
+          (compiler-backend-runtime-windows-alloc-functions-base
+            profile
+            debug-text)
+          (compiler-backend-runtime-windows-aligned-alloc-functions-base
+            profile
+            debug-text)))
+      (compiler-backend-runtime-windows-render
+        features.region-mark
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionMark)
+        (compiler-backend-runtime-region-mark-functions))
+      (compiler-backend-runtime-windows-render
+        features.region-reset
+        (x64_catalog.compiler-x64-template-select-four
+          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionReset)
+          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetDebug)
+          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfile)
+          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfileDebug)
+          profile
+          arena-debug)
+        (compiler-backend-runtime-windows-region-reset-functions
+          profile
+          debug-text))
+      (compiler-backend-runtime-windows-render
+        true
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeThread)
+        (compiler-backend-runtime-windows-thread-functions))
+      (compiler-backend-runtime-windows-render
+        features.backtrace
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeBacktrace)
+        (compiler-backend-runtime-windows-backtrace-functions))
+      (compiler-backend-runtime-windows-render
+        true
+        (if features.startup-profile
           (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeLibcShimStartupProfile)
           (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeLibcShim))
-        (x64_template.CompilerX64TemplateTarget.WindowsX64)
-        (compiler-backend-runtime-windows-libc-shim-functions startup-profile))]
-    [thread-asm : String
-      (x64_catalog.compiler-x64-template-render-assembly
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeThread)
-        (x64_template.CompilerX64TemplateTarget.WindowsX64)
-        (compiler-backend-runtime-windows-thread-functions))]
-    [backtrace-asm : String
-      (if (runtime_common.compiler-backend-runtime-features-backtrace? features)
-        (x64_catalog.compiler-x64-template-render-assembly
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeBacktrace)
-          (x64_template.CompilerX64TemplateTarget.WindowsX64)
-          (compiler-backend-runtime-windows-backtrace-functions))
-        "")]
-    (str_cat.str-cat
-      runtime-front-asm
-      thread-asm
-      backtrace-asm
-      libc-shims-asm
-      "")))
+        (compiler-backend-runtime-windows-libc-shim-functions
+          features.startup-profile)))))
 
 (define (compiler-backend-runtime-externs
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
@@ -2368,8 +2132,7 @@ tl_tlci_call_macro_entry:
     .extern GetStdHandle
     .extern WriteFile
 "
-    (if (runtime_common.compiler-backend-runtime-features-startup-profile?
-      features)
+    (if features.startup-profile
       "    .extern QueryPerformanceCounter
 "
       "")

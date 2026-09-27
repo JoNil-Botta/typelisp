@@ -3722,8 +3722,6 @@
         [source (compiler-opt-box-field-shared-view payload-box source)]
         [selector-low
           (compiler-opt-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-opt-box-field-shared-view payload-box selector-high)]
         [active-lanes
           (compiler-opt-box-field-shared-view payload-box active-lanes)]
         (begin
@@ -3733,7 +3731,7 @@
           (opt-collect-value-uses-array
             (compiler-opt-global-shared-view items)
             selector-low)
-          (match selector-high
+          (match (deref payload-box).selector-high
             [(ir.CompilerIrMaybeValue.Some value)
               (opt-collect-value-uses-array
                 (compiler-opt-global-shared-view items)
@@ -7952,7 +7950,6 @@
         [_ false])]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
         [aop (compiler-opt-box-field-shared-view payload-box op)]
         [al (compiler-opt-box-field-shared-view payload-box lhs)]
         [ar (compiler-opt-box-field-shared-view payload-box rhs)]
@@ -7961,7 +7958,6 @@
         (match b
           [(ir.CompilerIrInstr.VectorBinOp other-payload-box)
             (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
               [bop (compiler-opt-box-field-shared-view other-payload-box op)]
               [bl (compiler-opt-box-field-shared-view other-payload-box lhs)]
               [br (compiler-opt-box-field-shared-view other-payload-box rhs)]
@@ -7969,7 +7965,7 @@
                 (compiler-opt-box-field-shared-view other-payload-box lanes)]
               [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
               (and
-                (= ad bd)
+                (= (deref payload-box).dst (deref other-payload-box).dst)
                 (opt-binop-eq aop bop)
                 (opt-value-eq al bl)
                 (opt-value-eq ar br)
@@ -7978,7 +7974,6 @@
           [_ false]))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
         [aop (compiler-opt-box-field-shared-view payload-box op)]
         [as (compiler-opt-box-field-shared-view payload-box src)]
         [ac (compiler-opt-box-field-shared-view payload-box carry)]
@@ -7987,7 +7982,6 @@
         (match b
           [(ir.CompilerIrInstr.VectorPrefix other-payload-box)
             (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
               [bop (compiler-opt-box-field-shared-view other-payload-box op)]
               [bs (compiler-opt-box-field-shared-view other-payload-box src)]
               [bc (compiler-opt-box-field-shared-view other-payload-box carry)]
@@ -7995,7 +7989,7 @@
                 (compiler-opt-box-field-shared-view other-payload-box lanes)]
               [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
               (and
-                (= ad bd)
+                (= (deref payload-box).dst (deref other-payload-box).dst)
                 (opt-vector-prefix-op-eq? aop bop)
                 (opt-value-eq as bs)
                 (opt-value-eq ac bc)
@@ -8004,7 +7998,6 @@
           [_ false]))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
         [abase (compiler-opt-box-field-shared-view payload-box base)]
         [aindex-base
           (compiler-opt-box-field-shared-view payload-box index-base)]
@@ -8016,7 +8009,6 @@
         (match b
           [(ir.CompilerIrInstr.GatherLoad other-payload-box)
             (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
               [bbase
                 (compiler-opt-box-field-shared-view other-payload-box base)]
               [bindex-base
@@ -8033,7 +8025,7 @@
                 (compiler-opt-box-field-shared-view other-payload-box lanes)]
               [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
               (and
-                (= ad bd)
+                (= (deref payload-box).dst (deref other-payload-box).dst)
                 (opt-value-eq abase bbase)
                 (opt-value-eq aindex-base bindex-base)
                 (opt-value-eq aindex bindex)
@@ -8055,7 +8047,6 @@
         [_ false])]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
         [aop (compiler-opt-box-field-shared-view payload-box op)]
         [al (compiler-opt-box-field-shared-view payload-box lhs)]
         [ar (compiler-opt-box-field-shared-view payload-box rhs)]
@@ -8064,7 +8055,6 @@
         (match b
           [(ir.CompilerIrInstr.VectorCompare other-payload-box)
             (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
               [bop (compiler-opt-box-field-shared-view other-payload-box op)]
               [bl (compiler-opt-box-field-shared-view other-payload-box lhs)]
               [br (compiler-opt-box-field-shared-view other-payload-box rhs)]
@@ -8072,7 +8062,7 @@
                 (compiler-opt-box-field-shared-view other-payload-box lanes)]
               [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
               (and
-                (= ad bd)
+                (= (deref payload-box).dst (deref other-payload-box).dst)
                 (opt-binop-eq aop bop)
                 (opt-value-eq al bl)
                 (opt-value-eq ar br)
@@ -8105,7 +8095,6 @@
         [_ false])]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
         [amask (compiler-opt-box-field-shared-view payload-box mask)]
         [at (compiler-opt-box-field-shared-view payload-box on-true)]
         [af (compiler-opt-box-field-shared-view payload-box on-false)]
@@ -8114,7 +8103,6 @@
         (match b
           [(ir.CompilerIrInstr.Select other-payload-box)
             (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
               [bmask
                 (compiler-opt-box-field-shared-view other-payload-box mask)]
               [bt
@@ -8125,7 +8113,7 @@
                 (compiler-opt-box-field-shared-view other-payload-box lanes)]
               [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
               (and
-                (= ad bd)
+                (= (deref payload-box).dst (deref other-payload-box).dst)
                 (opt-value-eq amask bmask)
                 (opt-value-eq at bt)
                 (opt-value-eq af bf)
@@ -8147,7 +8135,6 @@
         [abase (compiler-opt-box-field-shared-view payload-box base)]
         [aindex (compiler-opt-box-field-shared-view payload-box index)]
         [av (compiler-opt-box-field-shared-view payload-box value)]
-        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [aty (compiler-opt-box-field-shared-view payload-box ty)]
         (match b
           [(ir.CompilerIrInstr.VectorStore other-payload-box)
@@ -8157,14 +8144,12 @@
               [bindex
                 (compiler-opt-box-field-shared-view other-payload-box index)]
               [bv (compiler-opt-box-field-shared-view other-payload-box value)]
-              [blanes
-                (compiler-opt-box-field-shared-view other-payload-box lanes)]
               [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
               (and
                 (opt-value-eq abase bbase)
                 (opt-value-eq aindex bindex)
                 (opt-value-eq av bv)
-                (= alanes blanes)
+                (= (deref payload-box).lanes (deref other-payload-box).lanes)
                 (opt-type-eq type-segment-bases aty bty)))]
           [_ false]))]
     [(ir.CompilerIrInstr.PredicatedStore payload-box)
@@ -8173,7 +8158,6 @@
         [aindex (compiler-opt-box-field-shared-view payload-box index)]
         [av (compiler-opt-box-field-shared-view payload-box value)]
         [amask (compiler-opt-box-field-shared-view payload-box mask)]
-        [alanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [aty (compiler-opt-box-field-shared-view payload-box ty)]
         (match b
           [(ir.CompilerIrInstr.PredicatedStore other-payload-box)
@@ -8185,20 +8169,17 @@
               [bv (compiler-opt-box-field-shared-view other-payload-box value)]
               [bmask
                 (compiler-opt-box-field-shared-view other-payload-box mask)]
-              [blanes
-                (compiler-opt-box-field-shared-view other-payload-box lanes)]
               [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
               (and
                 (opt-value-eq abase bbase)
                 (opt-value-eq aindex bindex)
                 (opt-value-eq av bv)
                 (opt-value-eq amask bmask)
-                (= alanes blanes)
+                (= (deref payload-box).lanes (deref other-payload-box).lanes)
                 (opt-type-eq type-segment-bases aty bty)))]
           [_ false]))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
         [abase (compiler-opt-box-field-shared-view payload-box base)]
         [aindex (compiler-opt-box-field-shared-view payload-box index)]
         [amask (compiler-opt-box-field-shared-view payload-box mask)]
@@ -8207,7 +8188,6 @@
         (match b
           [(ir.CompilerIrInstr.PredicatedLoad other-payload-box)
             (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
               [bbase
                 (compiler-opt-box-field-shared-view other-payload-box base)]
               [bindex
@@ -8218,7 +8198,7 @@
                 (compiler-opt-box-field-shared-view other-payload-box lanes)]
               [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
               (and
-                (= ad bd)
+                (= (deref payload-box).dst (deref other-payload-box).dst)
                 (opt-value-eq abase bbase)
                 (opt-value-eq aindex bindex)
                 (opt-value-eq amask bmask)
@@ -8227,7 +8207,6 @@
           [_ false]))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [ad (compiler-opt-box-field-shared-view payload-box dst)]
         [asource (compiler-opt-box-field-shared-view payload-box source)]
         [aselector-low
           (compiler-opt-box-field-shared-view payload-box selector-low)]
@@ -8240,7 +8219,6 @@
         (match b
           [(ir.CompilerIrInstr.VectorShuffle other-payload-box)
             (let
-              [bd (compiler-opt-box-field-shared-view other-payload-box dst)]
               [bsource
                 (compiler-opt-box-field-shared-view other-payload-box source)]
               [bselector-low
@@ -8259,7 +8237,7 @@
                 (compiler-opt-box-field-shared-view other-payload-box lanes)]
               [bty (compiler-opt-box-field-shared-view other-payload-box ty)]
               (and
-                (= ad bd)
+                (= (deref payload-box).dst (deref other-payload-box).dst)
                 (opt-value-eq asource bsource)
                 (opt-value-eq aselector-low bselector-low)
                 (opt-maybe-value-eq aselector-high bselector-high)
@@ -8337,7 +8315,6 @@
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
         [abase (compiler-opt-box-field-shared-view payload-box base)]
-        [aname (compiler-opt-box-field-shared-view payload-box name)]
         [aargs (compiler-opt-box-field-shared-view payload-box args)]
         [aslots (compiler-opt-box-field-shared-view payload-box slots)]
         (match b
@@ -8345,15 +8322,15 @@
             (let
               [bbase
                 (compiler-opt-box-field-shared-view other-payload-box base)]
-              [bname
-                (compiler-opt-box-field-shared-view other-payload-box name)]
               [bargs
                 (compiler-opt-box-field-shared-view other-payload-box args)]
               [bslots
                 (compiler-opt-box-field-shared-view other-payload-box slots)]
               (and
                 (opt-value-eq abase bbase)
-                (ir.compiler-ir-symbol-eq? aname bname)
+                (ir.compiler-ir-symbol-eq?
+                  (deref payload-box).name
+                  (deref other-payload-box).name)
                 (opt-call-args-eq aargs bargs)
                 (opt-c-abi-return-slot-seq-eq type-segment-bases aslots bslots)))]
           [_ false]))]
@@ -9135,14 +9112,13 @@
     ;; environment are not valid SIMD constants.
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
         [op (compiler-opt-box-field-shared-view payload-box op)]
         [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
         [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
         [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [ty (compiler-opt-box-field-shared-view payload-box ty)]
         (ir.ir-instr-vector-bin-op
-          dst
+          (deref payload-box).dst
           op
           (opt-copy-resolve-mask env lhs)
           (opt-copy-resolve-mask env rhs)
@@ -9150,14 +9126,13 @@
           ty))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
         [op (compiler-opt-box-field-shared-view payload-box op)]
         [src (compiler-opt-box-field-shared-view payload-box src)]
         [carry (compiler-opt-box-field-shared-view payload-box carry)]
         [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [ty (compiler-opt-box-field-shared-view payload-box ty)]
         (ir.ir-instr-vector-prefix
-          dst
+          (deref payload-box).dst
           op
           (opt-copy-resolve-mask env src)
           carry
@@ -9172,14 +9147,13 @@
         ty)]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
         [op (compiler-opt-box-field-shared-view payload-box op)]
         [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
         [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
         [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [ty (compiler-opt-box-field-shared-view payload-box ty)]
         (ir.ir-instr-vector-compare
-          dst
+          (deref payload-box).dst
           op
           (opt-copy-resolve-mask env lhs)
           (opt-copy-resolve-mask env rhs)
@@ -9202,14 +9176,13 @@
         lanes)]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
         [mask (compiler-opt-box-field-shared-view payload-box mask)]
         [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
         [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
         [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [ty (compiler-opt-box-field-shared-view payload-box ty)]
         (ir.ir-instr-select
-          dst
+          (deref payload-box).dst
           (opt-copy-resolve-mask env mask)
           (opt-copy-resolve-mask env on-true)
           (opt-copy-resolve-mask env on-false)
@@ -9221,13 +9194,12 @@
         [base (compiler-opt-box-field-shared-view payload-box base)]
         [index (compiler-opt-box-field-shared-view payload-box index)]
         [value (compiler-opt-box-field-shared-view payload-box value)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [ty (compiler-opt-box-field-shared-view payload-box ty)]
         (ir.ir-instr-vector-store
           base
           index
           (opt-copy-resolve-mask env value)
-          lanes
+          (deref payload-box).lanes
           ty))]
     [(ir.CompilerIrInstr.PredicatedStore payload-box)
       (let
@@ -9235,25 +9207,23 @@
         [index (compiler-opt-box-field-shared-view payload-box index)]
         [value (compiler-opt-box-field-shared-view payload-box value)]
         [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [ty (compiler-opt-box-field-shared-view payload-box ty)]
         (ir.ir-instr-predicated-store
           base
           index
           (opt-copy-resolve-mask env value)
           (opt-copy-resolve-mask env mask)
-          lanes
+          (deref payload-box).lanes
           ty))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
         [base (compiler-opt-box-field-shared-view payload-box base)]
         [index (compiler-opt-box-field-shared-view payload-box index)]
         [mask (compiler-opt-box-field-shared-view payload-box mask)]
         [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
         [ty (compiler-opt-box-field-shared-view payload-box ty)]
         (ir.ir-instr-predicated-load
-          dst
+          (deref payload-box).dst
           base
           index
           (opt-copy-resolve-mask env mask)
@@ -9292,12 +9262,11 @@
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
         [base (compiler-opt-box-field-shared-view payload-box base)]
-        [name (compiler-opt-box-field-shared-view payload-box name)]
         [args (compiler-opt-box-field-shared-view payload-box args)]
         [slots (compiler-opt-box-field-shared-view payload-box slots)]
         (ir.ir-instr-call-cabi-store-result
           (opt-copy-resolve (compiler-opt-global-shared-view env) base)
-          name
+          (deref payload-box).name
           (opt-copy-subst-call-args env args)
           slots))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
@@ -9678,24 +9647,24 @@
       (match env
         [(OptBoundsCastEnv.Empty) value]
         [(OptBoundsCastEnv.Dense state)
-          (let
-            [indices : opt_dense_i64_vec.Vec
-              (compiler-opt-box-field-shared-view state indices)]
-            (if (or (< var 0) (>= var (opt_dense_i64_vec.len (& indices))))
-              value
-              (let
-                [slot : i64
-                  (array-ref (opt_dense_i64_vec.slots (& indices)) var)]
-                (if (< slot 0)
-                  value
-                  (let
-                    [bindings : opt_bounds_cast_binding_vec.Vec
-                      (compiler-opt-box-field-shared-view state bindings)]
-                    [binding : OptBoundsCastBinding
-                      (compiler-opt-borrowed-array-element-shared-view
-                        (opt_bounds_cast_binding_vec.slots (& bindings))
-                        slot)]
-                    binding.src)))))])]
+          (if (or
+            (< var 0)
+            (>= var (opt_dense_i64_vec.len (& (deref state).indices))))
+            value
+            (let
+              [slot : i64
+                (array-ref
+                  (opt_dense_i64_vec.slots (& (deref state).indices))
+                  var)]
+              (if (< slot 0)
+                value
+                (let
+                  [binding : OptBoundsCastBinding
+                    (compiler-opt-borrowed-array-element-shared-view
+                      (opt_bounds_cast_binding_vec.slots
+                        (& (deref state).bindings))
+                      slot)]
+                  binding.src))))])]
     [_ value]))
 
 ;; Record an `I64->U64` reinterpret cast (the index/length unsigned-compare form)
@@ -12129,11 +12098,9 @@
     [(ir.CompilerIrInstr.LaneId dst _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Splat dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [result (compiler-opt-box-field-shared-view payload-box result)]
-        (match result
-          [(ir.CompilerIrSpmdCallResult.Unit) (option_i64.None)]
-          [(ir.CompilerIrSpmdCallResult.Value dst _ _) (option_i64.Some dst)]))]
+      (match (deref payload-box).result
+        [(ir.CompilerIrSpmdCallResult.Unit) (option_i64.None)]
+        [(ir.CompilerIrSpmdCallResult.Value dst _ _) (option_i64.Some dst)])]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
         [dst (deref payload-box).dst]
@@ -13656,23 +13623,21 @@
   [instr : ir.CompilerIrInstr]) : OptSsaFacts
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [result (compiler-opt-box-field-shared-view payload-box result)]
-        (match result
-          [(ir.CompilerIrSpmdCallResult.Unit) facts]
-          [(ir.CompilerIrSpmdCallResult.Value dst class ty)
-            (match class
-              [(ir.CompilerIrSpmdValueClass.Uniform)
-                (opt-ssa-facts-add-def-ty
-                  type-segment-bases
-                  representations
-                  facts
-                  dst
-                  ty)]
-              [(ir.CompilerIrSpmdValueClass.Varying)
-                (opt-ssa-facts-add-def-bad facts dst)]
-              [(ir.CompilerIrSpmdValueClass.Mask)
-                (opt-ssa-facts-add-def-bad facts dst)])]))]
+      (match (deref payload-box).result
+        [(ir.CompilerIrSpmdCallResult.Unit) facts]
+        [(ir.CompilerIrSpmdCallResult.Value dst class ty)
+          (match class
+            [(ir.CompilerIrSpmdValueClass.Uniform)
+              (opt-ssa-facts-add-def-ty
+                type-segment-bases
+                representations
+                facts
+                dst
+                ty)]
+            [(ir.CompilerIrSpmdValueClass.Varying)
+              (opt-ssa-facts-add-def-bad facts dst)]
+            [(ir.CompilerIrSpmdValueClass.Mask)
+              (opt-ssa-facts-add-def-bad facts dst)])])]
     [(ir.CompilerIrInstr.EntryArgc dst)
       (opt-ssa-facts-add-def-ty
         type-segment-bases
@@ -21731,15 +21696,13 @@
     [(ir.CompilerIrInstr.CallIndirectC dst _ _ ty)
       (opt-licm-type-env-bind types dst ty)]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [result (compiler-opt-box-field-shared-view payload-box result)]
-        (match result
-          [(ir.CompilerIrSpmdCallResult.Unit) types]
-          [(ir.CompilerIrSpmdCallResult.Value dst class ty)
-            (match class
-              [(ir.CompilerIrSpmdValueClass.Uniform)
-                (opt-licm-type-env-bind types dst ty)]
-              [_ types])]))]
+      (match (deref payload-box).result
+        [(ir.CompilerIrSpmdCallResult.Unit) types]
+        [(ir.CompilerIrSpmdCallResult.Value dst class ty)
+          (match class
+            [(ir.CompilerIrSpmdValueClass.Uniform)
+              (opt-licm-type-env-bind types dst ty)]
+            [_ types])])]
     [(ir.CompilerIrInstr.Phi dst _ ty) (opt-licm-type-env-bind types dst ty)]
     [_ types]))
 
@@ -24779,23 +24742,21 @@
         (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
         [op (compiler-opt-box-field-shared-view payload-box op)]
         [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
         [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
         (and
-          (opt-used-array-contains hot-uses dst)
+          (opt-used-array-contains hot-uses (deref payload-box).dst)
           ;; A checked vector div/mod/shift may still trap when executed.  Do
           ;; not speculate it into a preheader for a zero-trip loop.
           (not (opt-binop-traps? op))
           (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs)))]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (compiler-opt-box-field-shared-view payload-box dst)]
         [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
         [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
         (and
-          (opt-used-array-contains hot-uses dst)
+          (opt-used-array-contains hot-uses (deref payload-box).dst)
           (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs)))]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
@@ -48208,16 +48169,15 @@
   (match (owned_view.compiler-owned-reference-shared-view env)
     [(OptSwitchCopyEnv.Empty) var]
     [(OptSwitchCopyEnv.Dense state)
-      (let
-        [sources : opt_dense_i64_vec.Vec
-          (compiler-opt-box-field-shared-view state sources)]
-        (if (or (< var 0) (>= var (opt_dense_i64_vec.len (& sources))))
-          var
-          (let
-            [src : i64 (opt-switch-copy-vec-at (& sources) var)]
-            (if (>= src 0)
-              src
-              var))))]))
+      (if (or
+        (< var 0)
+        (>= var (opt_dense_i64_vec.len (& (deref state).sources))))
+        var
+        (let
+          [src : i64 (opt-switch-copy-vec-at (& (deref state).sources) var)]
+          (if (>= src 0)
+            src
+            var)))]))
 
 (define (opt-switch-copy-env-invalidate [env : OptSwitchCopyEnv] [var : i64]) : OptSwitchCopyEnv
   (match env
@@ -59743,15 +59703,14 @@
   [dst : i64]) : bool
   (match (owned_view.compiler-owned-reference-shared-view env)
     [(OptAffineEnv.Dense state)
-      (let
-        [addr-taken : (__tl_dyn-array bool)
-          (compiler-opt-box-field-shared-view state addr-taken)]
-        (or
-          (opt-addr-taken-var? addr-taken dst)
-          (match rec
-            [(OptAffineRec.No) false]
-            [(OptAffineRec.AddC base _) (opt-addr-taken-var? addr-taken base)]
-            [(OptAffineRec.MulC base _ _) (opt-addr-taken-var? addr-taken base)])))]))
+      (or
+        (opt-addr-taken-var? (deref state).addr-taken dst)
+        (match rec
+          [(OptAffineRec.No) false]
+          [(OptAffineRec.AddC base _)
+            (opt-addr-taken-var? (deref state).addr-taken base)]
+          [(OptAffineRec.MulC base _ _)
+            (opt-addr-taken-var? (deref state).addr-taken base)]))]))
 
 (define (opt-affine-env-clear [env : (& env OptAffineEnv)]) : OptAffineEnv
   (match (owned_view.compiler-owned-reference-shared-view env)
@@ -59822,11 +59781,9 @@
             (if (< slot 0)
               (OptAffineRec.No)
               (let
-                [bindings : opt_affine_binding_vec.Vec
-                  (compiler-opt-box-field-shared-view state bindings)]
                 [binding : OptAffineBinding
                   (compiler-opt-borrowed-array-element-shared-view
-                    (opt_affine_binding_vec.slots (& bindings))
+                    (opt_affine_binding_vec.slots (& (deref state).bindings))
                     slot)]
                 binding.rec)))))]))
 
@@ -61045,8 +61002,6 @@
         [source (compiler-opt-box-field-shared-view payload-box source)]
         [selector-low
           (compiler-opt-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-opt-box-field-shared-view payload-box selector-high)]
         [active-lanes
           (compiler-opt-box-field-shared-view payload-box active-lanes)]
         (begin
@@ -61058,7 +61013,7 @@
             (compiler-opt-global-shared-view items)
             generation
             selector-low)
-          (match selector-high
+          (match (deref payload-box).selector-high
             [(ir.CompilerIrMaybeValue.Some value)
               (opt-scan-note-value-uses
                 (compiler-opt-global-shared-view items)
@@ -69974,12 +69929,10 @@
           (let
             [base : ir.CompilerIrValue
               (compiler-opt-box-field-shared-view payload-box base)]
-            [store-index : ir.CompilerIrValue
-              (compiler-opt-box-field-shared-view payload-box index)]
             [lanes : i64 (compiler-opt-box-field-shared-view payload-box lanes)]
             [ty : ast.AstType
               (compiler-opt-box-field-shared-view payload-box ty)]
-            (match store-index
+            (match (deref payload-box).index
               [(ir.CompilerIrValue.Var store-index-var)
                 (if (and
                   (= store-index-var index-var)
@@ -70316,7 +70269,6 @@
               (compiler-opt-box-field-shared-view payload-box base)]
             [value : ir.CompilerIrValue
               (compiler-opt-box-field-shared-view payload-box value)]
-            [lanes : i64 (compiler-opt-box-field-shared-view payload-box lanes)]
             [ty : ast.AstType
               (compiler-opt-box-field-shared-view payload-box ty)]
             (ir.ir-instr-vector-store
@@ -70331,7 +70283,7 @@
                     0)))
               (ir.CompilerIrValue.I64 (* copy step))
               (opt-unroll-subst-value remap value)
-              lanes
+              (deref payload-box).lanes
               ty))]
         [_ (opt-unroll-clone-instr remap cell copy instr)])]))
 
@@ -108493,25 +108445,20 @@
         (clone ty))]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [call-base (compiler-opt-box-field-shared-view payload-box base)]
-        [name (compiler-opt-box-field-shared-view payload-box name)]
         [a (compiler-opt-box-field-shared-view payload-box args)]
         [slots (compiler-opt-box-field-shared-view payload-box slots)]
         (ir.ir-instr-call-cabi-store-result
-          (opt-inline-remap-value call-base sa np base)
-          (ir.compiler-ir-symbol-clone name)
+          (opt-inline-remap-value (deref payload-box).base sa np base)
+          (ir.compiler-ir-symbol-clone (deref payload-box).name)
           (opt-inline-remap-args a sa np base)
           slots))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [call-base (compiler-opt-box-field-shared-view payload-box base)]
-        [callee (compiler-opt-box-field-shared-view payload-box callee)]
-        [a (compiler-opt-box-field-shared-view payload-box args)]
         [slots (compiler-opt-box-field-shared-view payload-box slots)]
         (ir.ir-instr-call-indirect-cabi-store-result
-          (opt-inline-remap-value call-base sa np base)
-          (opt-inline-remap-value callee sa np base)
-          (opt-inline-remap-args a sa np base)
+          (opt-inline-remap-value (deref payload-box).base sa np base)
+          (opt-inline-remap-value (deref payload-box).callee sa np base)
+          (opt-inline-remap-args (deref payload-box).args sa np base)
           slots))]
     [_ (owned_view.compiler-owned-reference-shared-view instr)]))
 
@@ -125379,14 +125326,10 @@
       [(ir.CompilerIrInstr.Phi _ inputs _)
         (opt-len-eq-phi-refuse! ctx taint bad inputs)]
       [(ir.CompilerIrInstr.Select payload-box)
-        (let
-          [mask (compiler-opt-box-field-shared-view payload-box mask)]
-          [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
-          [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
-          (begin
-            (opt-len-eq-refuse-value! ctx taint bad mask)
-            (opt-len-eq-refuse-value! ctx taint bad on-true)
-            (opt-len-eq-refuse-value! ctx taint bad on-false)))]
+        (begin
+          (opt-len-eq-refuse-value! ctx taint bad (deref payload-box).mask)
+          (opt-len-eq-refuse-value! ctx taint bad (deref payload-box).on-true)
+          (opt-len-eq-refuse-value! ctx taint bad (deref payload-box).on-false))]
       [(ir.CompilerIrInstr.Switch value _ _ _)
         (opt-len-eq-refuse-value! ctx taint bad value)]
       [(ir.CompilerIrInstr.TotalEnumSwitch value _ _ _ _)
@@ -130015,37 +129958,30 @@
               (OptScratchBlockerReason.Blocked "raw_pointer")
               (OptScratchBlockerReason.NoBlocker)))]
         [(ir.CompilerIrInstr.VectorStore payload-box)
-          (let
-            [base (compiler-opt-box-field-shared-view payload-box base)]
-            [index (compiler-opt-box-field-shared-view payload-box index)]
-            [value (compiler-opt-box-field-shared-view payload-box value)]
-            (if (and
-              (opt-scratch-value-derived? roots facts value)
-              (not (opt-scratch-value-derived? roots facts base)))
-              (OptScratchBlockerReason.Blocked "store_outer")
-              (if (or
-                (opt-scratch-value-derived? roots facts base)
-                (opt-scratch-value-derived? roots facts index)
-                (opt-scratch-value-derived? roots facts value))
-                (OptScratchBlockerReason.Blocked "raw_pointer")
-                (OptScratchBlockerReason.NoBlocker))))]
+          (if (and
+            (opt-scratch-value-derived? roots facts (deref payload-box).value)
+            (not
+              (opt-scratch-value-derived? roots facts (deref payload-box).base)))
+            (OptScratchBlockerReason.Blocked "store_outer")
+            (if (or
+              (opt-scratch-value-derived? roots facts (deref payload-box).base)
+              (opt-scratch-value-derived? roots facts (deref payload-box).index)
+              (opt-scratch-value-derived? roots facts (deref payload-box).value))
+              (OptScratchBlockerReason.Blocked "raw_pointer")
+              (OptScratchBlockerReason.NoBlocker)))]
         [(ir.CompilerIrInstr.PredicatedStore payload-box)
-          (let
-            [base (compiler-opt-box-field-shared-view payload-box base)]
-            [index (compiler-opt-box-field-shared-view payload-box index)]
-            [value (compiler-opt-box-field-shared-view payload-box value)]
-            [mask (compiler-opt-box-field-shared-view payload-box mask)]
-            (if (and
-              (opt-scratch-value-derived? roots facts value)
-              (not (opt-scratch-value-derived? roots facts base)))
-              (OptScratchBlockerReason.Blocked "store_outer")
-              (if (or
-                (opt-scratch-value-derived? roots facts base)
-                (opt-scratch-value-derived? roots facts index)
-                (opt-scratch-value-derived? roots facts value)
-                (opt-scratch-value-derived? roots facts mask))
-                (OptScratchBlockerReason.Blocked "raw_pointer")
-                (OptScratchBlockerReason.NoBlocker))))]
+          (if (and
+            (opt-scratch-value-derived? roots facts (deref payload-box).value)
+            (not
+              (opt-scratch-value-derived? roots facts (deref payload-box).base)))
+            (OptScratchBlockerReason.Blocked "store_outer")
+            (if (or
+              (opt-scratch-value-derived? roots facts (deref payload-box).base)
+              (opt-scratch-value-derived? roots facts (deref payload-box).index)
+              (opt-scratch-value-derived? roots facts (deref payload-box).value)
+              (opt-scratch-value-derived? roots facts (deref payload-box).mask))
+              (OptScratchBlockerReason.Blocked "raw_pointer")
+              (OptScratchBlockerReason.NoBlocker)))]
         [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
           (if (or
             (opt-scratch-value-derived? roots facts base)
@@ -130053,42 +129989,40 @@
             (OptScratchBlockerReason.Blocked "raw_pointer")
             (OptScratchBlockerReason.NoBlocker))]
         [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-          (let
-            [base (compiler-opt-box-field-shared-view payload-box base)]
-            [index (compiler-opt-box-field-shared-view payload-box index)]
-            [mask (compiler-opt-box-field-shared-view payload-box mask)]
-            (if (or
-              (opt-scratch-value-derived? roots facts base)
-              (opt-scratch-value-derived? roots facts index)
-              (opt-scratch-value-derived? roots facts mask))
-              (OptScratchBlockerReason.Blocked "raw_pointer")
-              (OptScratchBlockerReason.NoBlocker)))]
+          (if (or
+            (opt-scratch-value-derived? roots facts (deref payload-box).base)
+            (opt-scratch-value-derived? roots facts (deref payload-box).index)
+            (opt-scratch-value-derived? roots facts (deref payload-box).mask))
+            (OptScratchBlockerReason.Blocked "raw_pointer")
+            (OptScratchBlockerReason.NoBlocker))]
         [(ir.CompilerIrInstr.GatherLoad payload-box)
-          (let
-            [base (compiler-opt-box-field-shared-view payload-box base)]
-            [index-base
-              (compiler-opt-box-field-shared-view payload-box index-base)]
-            [index (compiler-opt-box-field-shared-view payload-box index)]
-            (if (or
-              (opt-scratch-value-derived? roots facts base)
-              (opt-scratch-value-derived? roots facts index-base)
-              (opt-scratch-value-derived? roots facts index))
-              (OptScratchBlockerReason.Blocked "raw_pointer")
-              (OptScratchBlockerReason.NoBlocker)))]
+          (if (or
+            (opt-scratch-value-derived? roots facts (deref payload-box).base)
+            (opt-scratch-value-derived?
+              roots
+              facts
+              (deref payload-box).index-base)
+            (opt-scratch-value-derived? roots facts (deref payload-box).index))
+            (OptScratchBlockerReason.Blocked "raw_pointer")
+            (OptScratchBlockerReason.NoBlocker))]
         [(ir.CompilerIrInstr.VectorShuffle payload-box)
           (let
-            [source (compiler-opt-box-field-shared-view payload-box source)]
-            [selector-low
-              (compiler-opt-box-field-shared-view payload-box selector-low)]
             [selector-high
               (compiler-opt-box-field-shared-view payload-box selector-high)]
-            [active-lanes
-              (compiler-opt-box-field-shared-view payload-box active-lanes)]
             (if (or
-              (opt-scratch-value-derived? roots facts source)
-              (opt-scratch-value-derived? roots facts selector-low)
+              (opt-scratch-value-derived?
+                roots
+                facts
+                (deref payload-box).source)
+              (opt-scratch-value-derived?
+                roots
+                facts
+                (deref payload-box).selector-low)
               (opt-scratch-maybe-value-derived? roots facts selector-high)
-              (opt-scratch-value-derived? roots facts active-lanes))
+              (opt-scratch-value-derived?
+                roots
+                facts
+                (deref payload-box).active-lanes))
               (OptScratchBlockerReason.Blocked "raw_pointer")
               (OptScratchBlockerReason.NoBlocker)))]
         [(ir.CompilerIrInstr.Return maybe)

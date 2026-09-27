@@ -3869,6 +3869,26 @@
     [(ir.CompilerIrBinOp.BitTestNe) (ir.CompilerIrBinOp.BitTestEq)]
     [_ op]))
 
+;; The six orderings and equalities of two scalars.
+(define (opt-compare-op? [op : (& op ir.CompilerIrBinOp)]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Eq) true]
+    [(ir.CompilerIrBinOp.Ne) true]
+    [(ir.CompilerIrBinOp.Lt) true]
+    [(ir.CompilerIrBinOp.Le) true]
+    [(ir.CompilerIrBinOp.Gt) true]
+    [(ir.CompilerIrBinOp.Ge) true]
+    [_ false]))
+
+;; `a <op> b` read as `b <swapped op> a`.
+(define (opt-swap-compare-op [op : ir.CompilerIrBinOp]) : ir.CompilerIrBinOp
+  (match (& op)
+    [(ir.CompilerIrBinOp.Lt) (ir.CompilerIrBinOp.Gt)]
+    [(ir.CompilerIrBinOp.Le) (ir.CompilerIrBinOp.Ge)]
+    [(ir.CompilerIrBinOp.Gt) (ir.CompilerIrBinOp.Lt)]
+    [(ir.CompilerIrBinOp.Ge) (ir.CompilerIrBinOp.Le)]
+    [_ op]))
+
 ;; Passed as `mirror` by callers that have no second use-count array to keep in
 ;; step. Zero length is the "no mirror" signal, so the rewrite paths below skip
 ;; the mirrored bookkeeping with one length test and no allocation.
@@ -51041,16 +51061,6 @@
   (No)
   (Some bool))
 
-(define (opt-dom-cmp-foldable-op? [op : (& op ir.CompilerIrBinOp)]) : bool
-  (match op
-    [(ir.CompilerIrBinOp.Eq) true]
-    [(ir.CompilerIrBinOp.Ne) true]
-    [(ir.CompilerIrBinOp.Lt) true]
-    [(ir.CompilerIrBinOp.Le) true]
-    [(ir.CompilerIrBinOp.Gt) true]
-    [(ir.CompilerIrBinOp.Ge) true]
-    [_ false]))
-
 ;; `gt`/`ge` are `lt`/`le` with the operands read the other way round.
 (define (opt-dom-cmp-swapped? [op : (& op ir.CompilerIrBinOp)]) : bool
   (match op
@@ -51612,7 +51622,7 @@
                     env.copies
                     (opt-dom-cmp-canon-rhs op lhs rhs))]
                 (if (and
-                  (opt-dom-cmp-foldable-op? op)
+                  (opt-compare-op? op)
                   (opt-integer-type? ty)
                   (opt-gvn-value-stable?
                     env.sources
@@ -56440,7 +56450,7 @@
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptDomCmpLookup
-  (if (not (and (opt-dom-cmp-foldable-op? op) (opt-integer-type? ty)))
+  (if (not (and (opt-compare-op? op) (opt-integer-type? ty)))
     (OptDomCmpLookup.No)
     (let
       [canon-op : ir.CompilerIrBinOp
@@ -58528,40 +58538,12 @@
         (opt-divrem-add-le-facts type-segment-bases facts var ty value)]
       [_ (owned_view.compiler-owned-reference-shared-view facts)])))
 
-(define (opt-divrem-invert-compare [op : ir.CompilerIrBinOp]) : ir.CompilerIrBinOp
-  (match (& op)
-    [(ir.CompilerIrBinOp.Eq) (ir.CompilerIrBinOp.Ne)]
-    [(ir.CompilerIrBinOp.Ne) (ir.CompilerIrBinOp.Eq)]
-    [(ir.CompilerIrBinOp.Lt) (ir.CompilerIrBinOp.Ge)]
-    [(ir.CompilerIrBinOp.Le) (ir.CompilerIrBinOp.Gt)]
-    [(ir.CompilerIrBinOp.Gt) (ir.CompilerIrBinOp.Le)]
-    [(ir.CompilerIrBinOp.Ge) (ir.CompilerIrBinOp.Lt)]
-    [_ op]))
-
-(define (opt-divrem-flip-compare [op : ir.CompilerIrBinOp]) : ir.CompilerIrBinOp
-  (match (& op)
-    [(ir.CompilerIrBinOp.Lt) (ir.CompilerIrBinOp.Gt)]
-    [(ir.CompilerIrBinOp.Le) (ir.CompilerIrBinOp.Ge)]
-    [(ir.CompilerIrBinOp.Gt) (ir.CompilerIrBinOp.Lt)]
-    [(ir.CompilerIrBinOp.Ge) (ir.CompilerIrBinOp.Le)]
-    [_ op]))
-
 (define (opt-divrem-edge-compare-op
   [op : ir.CompilerIrBinOp]
   [truthy-edge? : bool]) : ir.CompilerIrBinOp
   (if truthy-edge?
     op
-    (opt-divrem-invert-compare op)))
-
-(define (opt-divrem-compare-op? [op : (& op ir.CompilerIrBinOp)]) : bool
-  (match op
-    [(ir.CompilerIrBinOp.Eq) true]
-    [(ir.CompilerIrBinOp.Ne) true]
-    [(ir.CompilerIrBinOp.Lt) true]
-    [(ir.CompilerIrBinOp.Le) true]
-    [(ir.CompilerIrBinOp.Gt) true]
-    [(ir.CompilerIrBinOp.Ge) true]
-    [_ false]))
+    (opt-invert-compare-op op)))
 
 (define (opt-divrem-value-type
   [types : (& types OptSsaVarTypes)]
@@ -58616,7 +58598,7 @@
                     facts
                     var
                     operand-ty
-                    (opt-divrem-flip-compare op)
+                    (opt-swap-compare-op op)
                     value)]
                 [(option_i64.None)
                   (owned_view.compiler-owned-reference-shared-view facts)]))]
@@ -58655,7 +58637,7 @@
     (OptDivRemCmp.NoCmp)
     (match (ir.compiler-ir-instr-seq-ref instrs index)
       [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-        (if (and (= dst cond-var) (opt-divrem-compare-op? op))
+        (if (and (= dst cond-var) (opt-compare-op? op))
           (OptDivRemCmp.Cmp op lhs rhs ty index)
           (opt-divrem-find-cmp-def-from instrs (- index 1) cond-var))]
       [_ (opt-divrem-find-cmp-def-from instrs (- index 1) cond-var)])))
@@ -62346,7 +62328,7 @@
             [(ir.CompilerIrInstr.BinOp _ fact-op fact-lhs fact-rhs fact-ty)
               (if (not
                 (and
-                  (opt-dom-cmp-foldable-op? fact-op)
+                  (opt-compare-op? fact-op)
                   (match fact-ty
                     [(ast.AstType.I64) true]
                     [_ false])))
@@ -67219,14 +67201,6 @@
             [_ (OptUnrollConstMaybeStep.No)])))]
     [_ (OptUnrollConstMaybeStep.No)]))
 
-(define (opt-unroll-const-swap-compare [op : ir.CompilerIrBinOp]) : ir.CompilerIrBinOp
-  (match (& op)
-    [(ir.CompilerIrBinOp.Lt) (ir.CompilerIrBinOp.Gt)]
-    [(ir.CompilerIrBinOp.Gt) (ir.CompilerIrBinOp.Lt)]
-    [(ir.CompilerIrBinOp.Le) (ir.CompilerIrBinOp.Ge)]
-    [(ir.CompilerIrBinOp.Ge) (ir.CompilerIrBinOp.Le)]
-    [_ op]))
-
 ;; The loop-closing compare must be `counter <op> literal` (either operand
 ;; order, counter read before or after the step) with an ordered predicate.
 (define (opt-unroll-const-cond-finish
@@ -67260,7 +67234,7 @@
           (let
             [resolved : i64
               (opt-unroll-resolve-copy instrs phi-count last rv 16)]
-            [swapped : ir.CompilerIrBinOp (opt-unroll-const-swap-compare op)]
+            [swapped : ir.CompilerIrBinOp (opt-swap-compare-op op)]
             (cond
               [(= resolved inext)
                 (OptUnrollConstMaybeCond.Some bound swapped true cty cond-index)]
@@ -72265,88 +72239,20 @@
           (OptBceCounterAffine.No)
           (OptBceCounterAffine.Some (* scale factor) (* offset factor))))]))
 
-;; Same-block affine recovery for the canonical self-loop. Copy/reinterpret
-;; chains are resolved first; Add/Sub/Mul may then contribute one literal
-;; coefficient at a time.
+;; Same-block affine recovery for the canonical self-loop: the multi-block
+;; recovery run over the loop's one block. Copy/reinterpret chains are resolved
+;; first; Add/Sub/Mul may then contribute one literal coefficient at a time.
 (define (opt-bce-version-counter-affine
   [instrs : ir.CompilerIrInstrSeq]
-  [phi-count : i64]
-  [last : i64]
   [iphi : i64]
   [value : ir.CompilerIrValue]
   [fuel : i64]) : OptBceCounterAffine
-  (match value
-    [(ir.CompilerIrValue.Var raw)
-      (let
-        [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
-        (if (= id iphi)
-          (OptBceCounterAffine.Some 1 0)
-          (if (<= fuel 0)
-            (OptBceCounterAffine.No)
-            (let
-              [slots : (__tl_dyn-array ir.CompilerIrInstr)
-                (compiler-opt-global-shared-view
-                  (__tl-project-field instrs slots))]
-              [def-index : i64
-                (opt-unroll-def-index
-                  (compiler-opt-global-shared-view slots)
-                  phi-count
-                  last
-                  id)]
-              (if (< def-index 0)
-                (OptBceCounterAffine.No)
-                (match (array-ref slots def-index)
-                  [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
-                    (if (opt-affine-64bit-type? ty)
-                      (match op
-                        [(ir.CompilerIrBinOp.Add)
-                          (match (opt-affine-var-const lhs rhs)
-                            [(OptAffineOperands.Some src k)
-                              (opt-bce-counter-affine-add
-                                (opt-bce-version-counter-affine
-                                  instrs
-                                  phi-count
-                                  last
-                                  iphi
-                                  (ir.CompilerIrValue.Var src)
-                                  (- fuel 1))
-                                k)]
-                            [(OptAffineOperands.No) (OptBceCounterAffine.No)])]
-                        [(ir.CompilerIrBinOp.Sub)
-                          (match lhs
-                            [(ir.CompilerIrValue.Var src)
-                              (match rhs
-                                [(ir.CompilerIrValue.I64 k)
-                                  (if (= k (- (- 0 9223372036854775807) 1))
-                                    (OptBceCounterAffine.No)
-                                    (opt-bce-counter-affine-add
-                                      (opt-bce-version-counter-affine
-                                        instrs
-                                        phi-count
-                                        last
-                                        iphi
-                                        (ir.CompilerIrValue.Var src)
-                                        (- fuel 1))
-                                      (- 0 k)))]
-                                [_ (OptBceCounterAffine.No)])]
-                            [_ (OptBceCounterAffine.No)])]
-                        [(ir.CompilerIrBinOp.Mul)
-                          (match (opt-affine-var-const lhs rhs)
-                            [(OptAffineOperands.Some src k)
-                              (opt-bce-counter-affine-mul
-                                (opt-bce-version-counter-affine
-                                  instrs
-                                  phi-count
-                                  last
-                                  iphi
-                                  (ir.CompilerIrValue.Var src)
-                                  (- fuel 1))
-                                k)]
-                            [(OptAffineOperands.No) (OptBceCounterAffine.No)])]
-                        [_ (OptBceCounterAffine.No)])
-                      (OptBceCounterAffine.No))]
-                  [_ (OptBceCounterAffine.No)]))))))]
-    [_ (OptBceCounterAffine.No)]))
+  (let
+    [body-blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block 0 instrs)
+        (ir.CompilerIrBlockList.Nil))]
+    (opt-bce-mb-counter-affine body-blocks iphi value fuel)))
 
 ;; The invariant value an operand resolves to (a literal, or a var defined
 ;; outside the loop -- possibly behind in-loop copies/reinterprets), if any.
@@ -73000,8 +72906,6 @@
   [fuel : i64]) : OptBceVarBaseStrided
   (match (opt-bce-version-counter-affine
     (compiler-opt-global-shared-view instrs)
-    phi-count
-    last
     iphi
     (compiler-opt-global-shared-view value)
     fuel)
@@ -75306,8 +75210,6 @@
                       [_
                         (match (opt-bce-version-counter-affine
                           (compiler-opt-global-shared-view instrs)
-                          phi-count
-                          last
                           iphi
                           (ir.CompilerIrValue.Var id)
                           16)
@@ -77458,7 +77360,8 @@
               var)]
           [_ var])])))
 
-;; Multi-block counterpart of `opt-bce-version-counter-affine`.
+;; A loop-local index as `scale * counter + offset` (OptBceCounterAffine), over
+;; the loop's blocks. opt-bce-version-counter-affine runs it over one block.
 (define (opt-bce-mb-counter-affine
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [iphi : i64]
@@ -84248,8 +84151,8 @@
             [(ir.CompilerIrInstr.BinOp _ fact-op fact-lhs fact-rhs fact-ty)
               (if (not
                 (and
-                  (opt-dom-cmp-foldable-op? fact-op)
-                  (opt-dom-cmp-foldable-op? op)
+                  (opt-compare-op? fact-op)
+                  (opt-compare-op? op)
                   (match fact-ty
                     [(ast.AstType.I64) true]
                     [_ false])))
@@ -84938,16 +84841,6 @@
 
 ;; The comparisons the fold reasons about. BitTest* forms are deliberately out:
 ;; the guard never emits one, and R1 is about ordered i64 compares.
-(define (opt-bce-fold-cond-op? [op : (& op ir.CompilerIrBinOp)]) : bool
-  (match op
-    [(ir.CompilerIrBinOp.Eq) true]
-    [(ir.CompilerIrBinOp.Ne) true]
-    [(ir.CompilerIrBinOp.Lt) true]
-    [(ir.CompilerIrBinOp.Le) true]
-    [(ir.CompilerIrBinOp.Gt) true]
-    [(ir.CompilerIrBinOp.Ge) true]
-    [_ false]))
-
 (define (opt-bce-fold-i64-type? [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.I64) true]
@@ -85001,7 +84894,7 @@
                     ;; operator and operands alone, and an unsigned conjunct
                     ;; decides no signed comparison of the same two values.
                     (if (and
-                      (opt-bce-fold-cond-op? op)
+                      (opt-compare-op? op)
                       (opt-bce-fold-i64-type? cond-ty))
                       (opt-bce-fold-cond-list-prepend acc op lhs rhs)
                       acc)])]
@@ -85053,15 +84946,6 @@
         (OptBceFoldVerdict.False)
         (OptBceFoldVerdict.Unknown))]
     [_ (OptBceFoldVerdict.Unknown)]))
-
-;; `k <op> counter` reads as `counter <mirror(op)> k`.
-(define (opt-bce-fold-mirror-op [op : ir.CompilerIrBinOp]) : ir.CompilerIrBinOp
-  (match (& op)
-    [(ir.CompilerIrBinOp.Lt) (ir.CompilerIrBinOp.Gt)]
-    [(ir.CompilerIrBinOp.Le) (ir.CompilerIrBinOp.Ge)]
-    [(ir.CompilerIrBinOp.Gt) (ir.CompilerIrBinOp.Lt)]
-    [(ir.CompilerIrBinOp.Ge) (ir.CompilerIrBinOp.Le)]
-    [_ op]))
 
 (define (opt-bce-fold-counter-operand?
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
@@ -85123,7 +85007,7 @@
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptBceFoldVerdict
-  (if (not (and (opt-bce-fold-cond-op? op) (opt-bce-fold-i64-type? ty)))
+  (if (not (and (opt-compare-op? op) (opt-bce-fold-i64-type? ty)))
     (OptBceFoldVerdict.Unknown)
     (let
       [body-blocks : ir.CompilerIrBlockList
@@ -85138,7 +85022,7 @@
         [(and monotone? (opt-bce-fold-counter-operand? body-blocks iphi rhs))
           (match lhs
             [(ir.CompilerIrValue.I64 k)
-              (opt-bce-fold-counter-verdict (opt-bce-fold-mirror-op op) k)]
+              (opt-bce-fold-counter-verdict (opt-swap-compare-op op) k)]
             [_ (OptBceFoldVerdict.Unknown)])]
         [(opt-bce-fold-nonnegative-operand? body-blocks facts.conds lhs)
           (match rhs
@@ -85147,7 +85031,7 @@
         [(opt-bce-fold-nonnegative-operand? body-blocks facts.conds rhs)
           (match lhs
             [(ir.CompilerIrValue.I64 k)
-              (opt-bce-fold-counter-verdict (opt-bce-fold-mirror-op op) k)]
+              (opt-bce-fold-counter-verdict (opt-swap-compare-op op) k)]
             [_ (OptBceFoldVerdict.Unknown)])]
         [else (opt-bce-fold-invariant-verdict facts body-blocks op lhs rhs)]))))
 

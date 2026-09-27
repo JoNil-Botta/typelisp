@@ -30,7 +30,7 @@
     (and
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses (clone instr))
-        (live.compiler-live-set3 20 21 22))
+        (live_tests.compiler-live-set3 20 21 22))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs instr)
         (live.compiler-live-set1 6)))))
@@ -52,7 +52,7 @@
     (and
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses (clone pack))
-        (live.compiler-live-set2 1 2))
+        (live_tests.compiler-live-set2 1 2))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs pack)
         (live.compiler-live-set1 3))

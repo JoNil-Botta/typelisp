@@ -15089,32 +15089,18 @@
       (set! (array-ref data.block-used current) true)
       unit)))
 
-(define (tc-unsafe-begin-list-with-expected
+(define (tc-unsafe-begin-list
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]
-  [expected : ast.AstType]
+  [expected : ast.AstMaybeType]
   [span : TcMaybeAstSourceSpan]) : ResultTcType
   (let
     [unused-unsafe : TcUnusedUnsafeState
       (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
     [prev : i64 (tc-unused-unsafe-enter-block unused-unsafe span)]
     [result : ResultTcType
-      (tc-begin-list-with-expected ctx (tc-enter-unsafe env) exprs expected)]
-    (begin
-      (tc-unused-unsafe-restore-block! unused-unsafe prev)
-      result)))
-
-(define (tc-unsafe-begin-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
-  [span : TcMaybeAstSourceSpan]) : ResultTcType
-  (let
-    [unused-unsafe : TcUnusedUnsafeState
-      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
-    [prev : i64 (tc-unused-unsafe-enter-block unused-unsafe span)]
-    [result : ResultTcType (tc-begin-list ctx (tc-enter-unsafe env) exprs)]
+      (tc-begin-list-maybe-expected ctx (tc-enter-unsafe env) exprs expected)]
     (begin
       (tc-unused-unsafe-restore-block! unused-unsafe prev)
       result)))
@@ -18432,12 +18418,10 @@
         (tc-env-name-key-id (tc-type-env-structural-session env) name-id)]
       [found : ResultTcType
         (tc-lookup-visible-source-id ctx env name-id env-name-id)]
-      (match found
-        [(ResultTcType.Ok ty)
-          (match (tc-unqualified-import-ambiguity-message ctx env name-id)
-            [(TcMaybeString.No) (ResultTcType.Ok ty)]
-            [(TcMaybeString.Some message) (ResultTcType.Err message)])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+      [ty : ast.AstType (try found)]
+      (match (tc-unqualified-import-ambiguity-message ctx env name-id)
+        [(TcMaybeString.No) (ResultTcType.Ok ty)]
+        [(TcMaybeString.Some message) (ResultTcType.Err message)]))
     (tc-lookup-id env name-id)))
 
 (define (tc-lookup-hygiene-global-key-scan
@@ -18589,52 +18573,47 @@
         (if (csym.compiler-symbol-root-module-id? module-id)
           cbi.compiler-builtin-id-fix-empty
           module-id))]
-    (match (tc-hygiene-definition-env-id ctx env module module-id)
-      [(ResultTcEnv.Ok def-env)
-        (if (>=
-          (tc-name-first-dot-id (tc-context-structural-session ctx) name-id)
-          0)
-          (tc-lookup-dotted-source-visible-mode
-            def-ctx
-            def-env
-            name
-            name-id
-            direct-call-target)
-          (let
-            [env-name-id : i64
-              (tc-env-name-key-id (tc-type-env-structural-session env) name-id)]
-            [found : ResultTcTypeUnsafe
-              (if (and
-                (not (csym.compiler-symbol-root-module-id? module-id))
-                (not
-                  (tc-name-qualified-id?
-                    (tc-context-structural-session ctx)
-                    name-id)))
-                (let
-                  [module-name-id : i64
-                    (tc-module-name-id-by-id module-id name-id)]
-                  (match (tc-lookup-unsafe-persistent-key-id
+    [def-env : TcTypeEnv
+      (try (tc-hygiene-definition-env-id ctx env module module-id))]
+    (if (>=
+      (tc-name-first-dot-id (tc-context-structural-session ctx) name-id)
+      0)
+      (tc-lookup-dotted-source-visible-mode
+        def-ctx
+        def-env
+        name
+        name-id
+        direct-call-target)
+      (let
+        [env-name-id : i64
+          (tc-env-name-key-id (tc-type-env-structural-session env) name-id)]
+        [found : ResultTcTypeUnsafe
+          (if (and
+            (not (csym.compiler-symbol-root-module-id? module-id))
+            (not
+              (tc-name-qualified-id?
+                (tc-context-structural-session ctx)
+                name-id)))
+            (let
+              [module-name-id : i64 (tc-module-name-id-by-id module-id name-id)]
+              (match (tc-lookup-unsafe-persistent-key-id
+                def-env
+                module-name-id
+                module-name-id)
+                [(ResultTcTypeUnsafe.Ok ty unsafe)
+                  (ResultTcTypeUnsafe.Ok ty unsafe)]
+                [(ResultTcTypeUnsafe.Err _)
+                  (tc-lookup-unsafe-persistent-key-id
                     def-env
-                    module-name-id
-                    module-name-id)
-                    [(ResultTcTypeUnsafe.Ok ty unsafe)
-                      (ResultTcTypeUnsafe.Ok ty unsafe)]
-                    [(ResultTcTypeUnsafe.Err _)
-                      (tc-lookup-unsafe-persistent-key-id
-                        def-env
-                        env-name-id
-                        env-name-id)]))
-                (tc-lookup-unsafe-persistent-key-id
-                  def-env
-                  env-name-id
-                  env-name-id))]
-            (match found
-              [(ResultTcTypeUnsafe.Ok ty unsafe)
-                (if unsafe
-                  (tc-unsafe-callable-use ctx env name ty direct-call-target)
-                  (ResultTcType.Ok ty))]
-              [(ResultTcTypeUnsafe.Err message) (ResultTcType.Err message)])))]
-      [(ResultTcEnv.Err message) (ResultTcType.Err message)])))
+                    env-name-id
+                    env-name-id)]))
+            (tc-lookup-unsafe-persistent-key-id def-env env-name-id env-name-id))]
+        (match found
+          [(ResultTcTypeUnsafe.Ok ty unsafe)
+            (if unsafe
+              (tc-unsafe-callable-use ctx env name ty direct-call-target)
+              (ResultTcType.Ok ty))]
+          [(ResultTcTypeUnsafe.Err message) (ResultTcType.Err message)])))))
 
 (define (tc-lookup-hygiene-context-global-visible-id-mode
   [ctx : TcContext]
@@ -20885,24 +20864,24 @@
   [out : ast.AstTypeList]) : ResultTcElidedTypes
   (if (>= offset (ast.ast-type-list-len types))
     (ResultTcElidedTypes.Ok (TcElidedTypes out index))
-    (match (tc-elide-input-type
-      type-bases
-      (ast.ast-type-segment-bases-get
-        type-bases
-        (ast.ast-type-list-get types offset (ast.ast-type-id-fallback)))
-      index)
-      [(ResultTcElidedType.Ok item)
-        (let
-          [next-out : ast.AstTypeList out]
-          (begin
-            (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
-            (tc-elide-input-type-list-at
+    (let
+      [item : TcElidedType
+        (try
+          (tc-elide-input-type
+            type-bases
+            (ast.ast-type-segment-bases-get
               type-bases
-              types
-              (+ offset 1)
-              item.next-index
-              next-out)))]
-      [(ResultTcElidedType.Err message) (ResultTcElidedTypes.Err message)])))
+              (ast.ast-type-list-get types offset (ast.ast-type-id-fallback)))
+            index))]
+      [next-out : ast.AstTypeList out]
+      (begin
+        (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
+        (tc-elide-input-type-list-at
+          type-bases
+          types
+          (+ offset 1)
+          item.next-index
+          next-out)))))
 
 (define (tc-elide-output-type-list
   [type-bases : i64]
@@ -20923,45 +20902,39 @@
   [out : ast.AstTypeList]) : ResultTcElidedTypes
   (if (>= index (ast.ast-type-list-len types))
     (ResultTcElidedTypes.Ok (TcElidedTypes out 0))
-    (match (tc-elide-output-type
-      type-bases
-      (ast.ast-type-segment-bases-get
-        type-bases
-        (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-      lifetime)
-      [(ResultTcElidedType.Ok item)
-        (let
-          [next-out : ast.AstTypeList out]
-          (begin
-            (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
-            (tc-elide-output-type-list-at
+    (let
+      [item : TcElidedType
+        (try
+          (tc-elide-output-type
+            type-bases
+            (ast.ast-type-segment-bases-get
               type-bases
-              types
-              (+ index 1)
-              lifetime
-              next-out)))]
-      [(ResultTcElidedType.Err message) (ResultTcElidedTypes.Err message)])))
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+            lifetime))]
+      [next-out : ast.AstTypeList out]
+      (begin
+        (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
+        (tc-elide-output-type-list-at
+          type-bases
+          types
+          (+ index 1)
+          lifetime
+          next-out)))))
 
 (define (tc-elide-function-type
   [type-bases : i64]
   [args : ast.AstTypeList]
   [ret : ast.AstType]) : ResultTcElidedType
-  (match (tc-elide-input-type-list type-bases args 0)
-    [(ResultTcElidedTypes.Ok inputs)
-      (let
-        [input-types : ast.AstTypeList inputs.types]
-        [lifetime : TcMaybeNameId
-          (tc-signature-single-input-lifetime
-            type-bases
-            (tc-global-shared-view input-types))]
-        (match (tc-elide-output-type type-bases ret lifetime)
-          [(ResultTcElidedType.Ok output)
-            (ResultTcElidedType.Ok
-              (TcElidedType
-                (ast.ast-ty-func input-types output.ty)
-                inputs.next-index))]
-          [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
-    [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)]))
+  (let
+    [inputs : TcElidedTypes (try (tc-elide-input-type-list type-bases args 0))]
+    [input-types : ast.AstTypeList inputs.types]
+    [lifetime : TcMaybeNameId
+      (tc-signature-single-input-lifetime
+        type-bases
+        (tc-global-shared-view input-types))]
+    [output : TcElidedType (try (tc-elide-output-type type-bases ret lifetime))]
+    (ResultTcElidedType.Ok
+      (TcElidedType (ast.ast-ty-func input-types output.ty) inputs.next-index))))
 
 (define (tc-elide-input-type
   [type-bases : i64]
@@ -20974,77 +20947,85 @@
         (ast.ast-type-list-box-shared-view args)
         (ast.ast-type-segment-bases-get type-bases ret))]
     [(ast.AstType.Tuple elems)
-      (match (tc-elide-input-type-list
-        type-bases
-        (ast.ast-type-list-box-shared-view elems)
-        index)
-        [(ResultTcElidedTypes.Ok items)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-tuple items.types) items.next-index))]
-        [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [items : TcElidedTypes
+          (try
+            (tc-elide-input-type-list
+              type-bases
+              (ast.ast-type-list-box-shared-view elems)
+              index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-tuple items.types) items.next-index)))]
     [(ast.AstType.Array elem count)
-      (match (tc-elide-input-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        index)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-array inner.ty count) inner.next-index))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-array inner.ty count) inner.next-index)))]
     [(ast.AstType.DynArray elem)
-      (match (tc-elide-input-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        index)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-dyn-array inner.ty) inner.next-index))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-dyn-array inner.ty) inner.next-index)))]
     [(ast.AstType.Slice elem)
-      (match (tc-elide-input-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        index)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-slice inner.ty) inner.next-index))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-slice inner.ty) inner.next-index)))]
     [(ast.AstType.Box elem)
-      (match (tc-elide-input-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        index)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-box inner.ty) inner.next-index))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-box inner.ty) inner.next-index)))]
     [(ast.AstType.Ptr elem)
-      (match (tc-elide-input-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        index)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-ptr inner.ty) inner.next-index))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-ptr inner.ty) inner.next-index)))]
     [(ast.AstType.MutPtr elem)
-      (match (tc-elide-input-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        index)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-mut-ptr inner.ty) inner.next-index))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-mut-ptr inner.ty) inner.next-index)))]
     [(ast.AstType.Region region elem)
-      (match (tc-elide-input-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        index)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-region region inner.ty) inner.next-index))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-region region inner.ty) inner.next-index)))]
     [(ast.AstType.Ref lifetime elem)
       (let
         [next-lifetime : i64
@@ -21055,16 +21036,16 @@
           (if (tc-elided-lifetime? lifetime)
             (+ index 1)
             index)]
-        (match (tc-elide-input-type
-          type-bases
-          (ast.ast-type-segment-bases-get type-bases elem)
-          next-index)
-          [(ResultTcElidedType.Ok inner)
-            (ResultTcElidedType.Ok
-              (TcElidedType
-                (ast.ast-ty-ref next-lifetime inner.ty)
-                inner.next-index))]
-          [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              next-index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType
+            (ast.ast-ty-ref next-lifetime inner.ty)
+            inner.next-index)))]
     [(ast.AstType.MutRef lifetime elem)
       (let
         [next-lifetime : i64
@@ -21075,16 +21056,16 @@
           (if (tc-elided-lifetime? lifetime)
             (+ index 1)
             index)]
-        (match (tc-elide-input-type
-          type-bases
-          (ast.ast-type-segment-bases-get type-bases elem)
-          next-index)
-          [(ResultTcElidedType.Ok inner)
-            (ResultTcElidedType.Ok
-              (TcElidedType
-                (ast.ast-ty-mut-ref next-lifetime inner.ty)
-                inner.next-index))]
-          [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              next-index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType
+            (ast.ast-ty-mut-ref next-lifetime inner.ty)
+            inner.next-index)))]
     [_ (ResultTcElidedType.Ok (TcElidedType ty index))]))
 
 (define (tc-elide-output-type
@@ -21098,133 +21079,141 @@
         (ast.ast-type-list-box-shared-view args)
         (ast.ast-type-segment-bases-get type-bases ret))]
     [(ast.AstType.Tuple elems)
-      (match (tc-elide-output-type-list
-        type-bases
-        (ast.ast-type-list-box-shared-view elems)
-        lifetime)
-        [(ResultTcElidedTypes.Ok items)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-tuple items.types) 0))]
-        [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [items : TcElidedTypes
+          (try
+            (tc-elide-output-type-list
+              type-bases
+              (ast.ast-type-list-box-shared-view elems)
+              lifetime))]
+        (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-tuple items.types) 0)))]
     [(ast.AstType.Array elem count)
-      (match (tc-elide-output-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        lifetime)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-array inner.ty count) 0))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-output-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              lifetime))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-array inner.ty count) 0)))]
     [(ast.AstType.DynArray elem)
-      (match (tc-elide-output-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        lifetime)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-dyn-array inner.ty) 0))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-output-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              lifetime))]
+        (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-dyn-array inner.ty) 0)))]
     [(ast.AstType.Slice elem)
-      (match (tc-elide-output-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        lifetime)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-slice inner.ty) 0))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-output-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              lifetime))]
+        (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-slice inner.ty) 0)))]
     [(ast.AstType.Box elem)
-      (match (tc-elide-output-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        lifetime)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-box inner.ty) 0))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-output-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              lifetime))]
+        (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-box inner.ty) 0)))]
     [(ast.AstType.Ptr elem)
-      (match (tc-elide-output-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        lifetime)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-ptr inner.ty) 0))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-output-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              lifetime))]
+        (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-ptr inner.ty) 0)))]
     [(ast.AstType.MutPtr elem)
-      (match (tc-elide-output-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        lifetime)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-mut-ptr inner.ty) 0))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-output-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              lifetime))]
+        (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-mut-ptr inner.ty) 0)))]
     [(ast.AstType.Region region elem)
-      (match (tc-elide-output-type
-        type-bases
-        (ast.ast-type-segment-bases-get type-bases elem)
-        lifetime)
-        [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-region region inner.ty) 0))]
-        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-output-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              lifetime))]
+        (ResultTcElidedType.Ok
+          (TcElidedType (ast.ast-ty-region region inner.ty) 0)))]
     [(ast.AstType.Ref name elem)
       (match lifetime
         [(TcMaybeNameId.No)
           (if (tc-elided-lifetime? name)
             (ResultTcElidedType.Err
               "typecheck: elided reference return is ambiguous; write an explicit lifetime")
-            (match (tc-elide-output-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              lifetime)
-              [(ResultTcElidedType.Ok inner)
-                (ResultTcElidedType.Ok
-                  (TcElidedType (ast.ast-ty-ref name inner.ty) 0))]
-              [(ResultTcElidedType.Err message)
-                (ResultTcElidedType.Err message)]))]
-        [(TcMaybeNameId.Some source)
-          (match (tc-elide-output-type
-            type-bases
-            (ast.ast-type-segment-bases-get type-bases elem)
-            lifetime)
-            [(ResultTcElidedType.Ok inner)
+            (let
+              [inner : TcElidedType
+                (try
+                  (tc-elide-output-type
+                    type-bases
+                    (ast.ast-type-segment-bases-get type-bases elem)
+                    lifetime))]
               (ResultTcElidedType.Ok
-                (TcElidedType
-                  (ast.ast-ty-ref
-                    (if (tc-elided-lifetime? name)
-                      source
-                      name)
-                    inner.ty)
-                  0))]
-            [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])])]
+                (TcElidedType (ast.ast-ty-ref name inner.ty) 0))))]
+        [(TcMaybeNameId.Some source)
+          (let
+            [inner : TcElidedType
+              (try
+                (tc-elide-output-type
+                  type-bases
+                  (ast.ast-type-segment-bases-get type-bases elem)
+                  lifetime))]
+            (ResultTcElidedType.Ok
+              (TcElidedType
+                (ast.ast-ty-ref
+                  (if (tc-elided-lifetime? name)
+                    source
+                    name)
+                  inner.ty)
+                0)))])]
     [(ast.AstType.MutRef name elem)
       (match lifetime
         [(TcMaybeNameId.No)
           (if (tc-elided-lifetime? name)
             (ResultTcElidedType.Err
               "typecheck: elided reference return is ambiguous; write an explicit lifetime")
-            (match (tc-elide-output-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              lifetime)
-              [(ResultTcElidedType.Ok inner)
-                (ResultTcElidedType.Ok
-                  (TcElidedType (ast.ast-ty-mut-ref name inner.ty) 0))]
-              [(ResultTcElidedType.Err message)
-                (ResultTcElidedType.Err message)]))]
-        [(TcMaybeNameId.Some source)
-          (match (tc-elide-output-type
-            type-bases
-            (ast.ast-type-segment-bases-get type-bases elem)
-            lifetime)
-            [(ResultTcElidedType.Ok inner)
+            (let
+              [inner : TcElidedType
+                (try
+                  (tc-elide-output-type
+                    type-bases
+                    (ast.ast-type-segment-bases-get type-bases elem)
+                    lifetime))]
               (ResultTcElidedType.Ok
-                (TcElidedType
-                  (ast.ast-ty-mut-ref
-                    (if (tc-elided-lifetime? name)
-                      source
-                      name)
-                    inner.ty)
-                  0))]
-            [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])])]
+                (TcElidedType (ast.ast-ty-mut-ref name inner.ty) 0))))]
+        [(TcMaybeNameId.Some source)
+          (let
+            [inner : TcElidedType
+              (try
+                (tc-elide-output-type
+                  type-bases
+                  (ast.ast-type-segment-bases-get type-bases elem)
+                  lifetime))]
+            (ResultTcElidedType.Ok
+              (TcElidedType
+                (ast.ast-ty-mut-ref
+                  (if (tc-elided-lifetime? name)
+                    source
+                    name)
+                  inner.ty)
+                0)))])]
     [_ (ResultTcElidedType.Ok (TcElidedType ty 0))]))
 
 (define (tc-elide-input-params-at
@@ -21237,21 +21226,19 @@
     (ResultTcElidedParams.Ok (TcElidedParams out index))
     (match (ast.ast-param-list-get params offset (ast.ast-param-fallback))
       [(ast.AstParam.Param name ty is-comptime)
-        (match (tc-elide-input-type type-bases ty index)
-          [(ResultTcElidedType.Ok item)
-            (let
-              [next-out : ast.AstParamList out]
-              (begin
-                (ast.ast-param-list-push
-                  (&mut next-out)
-                  (ast.ast-param-id name item.ty is-comptime))
-                (tc-elide-input-params-at
-                  type-bases
-                  params
-                  (+ offset 1)
-                  item.next-index
-                  next-out)))]
-          [(ResultTcElidedType.Err message) (ResultTcElidedParams.Err message)])])))
+        (let
+          [item : TcElidedType (try (tc-elide-input-type type-bases ty index))]
+          [next-out : ast.AstParamList out]
+          (begin
+            (ast.ast-param-list-push
+              (&mut next-out)
+              (ast.ast-param-id name item.ty is-comptime))
+            (tc-elide-input-params-at
+              type-bases
+              params
+              (+ offset 1)
+              item.next-index
+              next-out)))])))
 
 (define (tc-elided-param-type-list [params : (& params ast.AstParamList)]) : ast.AstTypeList
   (tc-elided-param-type-list-at (& params) 0))
@@ -21269,25 +21256,21 @@
   [type-bases : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]) : ResultTcElidedSignature
-  (match (tc-elide-input-params-at
-    type-bases
-    (& params)
-    0
-    0
-    (ast.ast-param-list-new))
-    [(ResultTcElidedParams.Ok inputs)
-      (let
-        [input-params : ast.AstParamList inputs.params]
-        [input-types : ast.AstTypeList (tc-elided-param-type-list input-params)]
-        [lifetime : TcMaybeNameId
-          (tc-signature-single-input-lifetime type-bases input-types)]
-        (match (tc-elide-output-type type-bases ret lifetime)
-          [(ResultTcElidedType.Ok output)
-            (ResultTcElidedSignature.Ok
-              (TcElidedSignature input-params output.ty))]
-          [(ResultTcElidedType.Err message)
-            (ResultTcElidedSignature.Err message)]))]
-    [(ResultTcElidedParams.Err message) (ResultTcElidedSignature.Err message)]))
+  (let
+    [inputs : TcElidedParams
+      (try
+        (tc-elide-input-params-at
+          type-bases
+          (& params)
+          0
+          0
+          (ast.ast-param-list-new)))]
+    [input-params : ast.AstParamList inputs.params]
+    [input-types : ast.AstTypeList (tc-elided-param-type-list input-params)]
+    [lifetime : TcMaybeNameId
+      (tc-signature-single-input-lifetime type-bases input-types)]
+    [output : TcElidedType (try (tc-elide-output-type type-bases ret lifetime))]
+    (ResultTcElidedSignature.Ok (TcElidedSignature input-params output.ty))))
 
 (define (tc-type-list-collect-reference-lifetimes
   [types : ast.AstTypeList]
@@ -22560,16 +22543,15 @@
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]
   [value : i64]) : ResultTcExprId
-  (match (tc-dotted-local-field-expr-id-after-check session name-id)
-    [(ResultTcExprId.Ok get-id)
-      (match (ast.ast-expr-unspan (ast.ast-node-get get-id))
-        [(ast.AstExpr.StructGet receiver-box field)
-          (ResultTcExprId.Ok
-            (ast.ast-expr-struct-set-id receiver-box field value))]
-        [_
-          (ResultTcExprId.Err
-            "typecheck: internal dotted field target mismatch")])]
-    [(ResultTcExprId.Err message) (ResultTcExprId.Err message)]))
+  (let
+    [get-id : i64
+      (try (tc-dotted-local-field-expr-id-after-check session name-id))]
+    (match (ast.ast-expr-unspan (ast.ast-node-get get-id))
+      [(ast.AstExpr.StructGet receiver-box field)
+        (ResultTcExprId.Ok
+          (ast.ast-expr-struct-set-id receiver-box field value))]
+      [_
+        (ResultTcExprId.Err "typecheck: internal dotted field target mismatch")])))
 
 (define (tc-dotted-local-field-set-expr-id
   [env : TcTypeEnv]
@@ -25922,15 +25904,13 @@
     [(ast.AstProgram.Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        (match (tc-nominal-owner-name-list decls index 0 "")
-          [(ResultTcString.Ok name)
-            (begin
-              (tc-nominal-owner-cache-store-if-safe!
-                state
-                handle
-                (string.copy (& name)))
-              (ResultTcString.Ok name))]
-          [(ResultTcString.Err message) (ResultTcString.Err message)]))]))
+        [name : String (try (tc-nominal-owner-name-list decls index 0 ""))]
+        (begin
+          (tc-nominal-owner-cache-store-if-safe!
+            state
+            handle
+            (string.copy (& name)))
+          (ResultTcString.Ok name)))]))
 
 (define (tc-nominal-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
   (let
@@ -26849,11 +26829,13 @@
         name-id
         tc-type-handle-lookup-caller-nominal-lifetime)]
     (if (csym.compiler-symbols-handle-found? handle)
-      (match (csym.compiler-symbols-decl-at-index
-        symbols
-        (csym.compiler-symbol-handle-index handle))
-        [(parser.ResultAstDecl.Ok decl) (tc-nominal-lifetimes-from-decl decl)]
-        [(parser.ResultAstDecl.Err message) (ResultTcLifetimeList.Err message)])
+      (let
+        [decl : ast.AstDecl
+          (try
+            (csym.compiler-symbols-decl-at-index
+              symbols
+              (csym.compiler-symbol-handle-index handle)))]
+        (tc-nominal-lifetimes-from-decl decl))
       (match (tc-program-nominal-lifetimes
         (tc-context-structural-session ctx)
         (tc-context-program ctx)
@@ -31000,12 +30982,9 @@
   [ptr : ast.AstExpr]
   [rest : ast.AstExprList]) : ResultTcType
   (if (ast.ast-expr-list-empty? (& rest))
-    (match (tc-expr ctx env ptr)
-      [(ResultTcType.Ok ptr-ty)
-        (match (tc-atomic-pointer-elem ctx name ptr-ty)
-          [(ResultTcType.Ok elem) (ResultTcType.Ok elem)]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])]
-      [(ResultTcType.Err message) (ResultTcType.Err message)])
+    (let
+      [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
+      (tc-atomic-pointer-elem ctx name ptr-ty))
     (ResultTcType.Err (tc-atomic-load-arity-message name))))
 
 (define (tc-atomic-two-arg-call
@@ -31016,25 +30995,24 @@
   [value : ast.AstExpr]
   [rest : ast.AstExprList]) : ResultTcType
   (if (ast.ast-expr-list-empty? (& rest))
-    (match (tc-expr ctx env ptr)
-      [(ResultTcType.Ok ptr-ty)
-        (match (tc-atomic-pointer-elem ctx (tc-global-shared-view name) ptr-ty)
-          [(ResultTcType.Ok elem)
-            (match (tc-atomic-check-value
-              ctx
-              env
-              value
-              (tc-global-shared-view elem)
-              (tc-atomic-value-mismatch-message (tc-global-shared-view name)))
-              [(ResultTcUnit.Ok)
-                (if (tc-atomic-store-name? name)
+    (let
+      [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
+      (match (tc-atomic-pointer-elem ctx (tc-global-shared-view name) ptr-ty)
+        [(ResultTcType.Ok elem)
+          (match (tc-atomic-check-value
+            ctx
+            env
+            value
+            (tc-global-shared-view elem)
+            (tc-atomic-value-mismatch-message (tc-global-shared-view name)))
+            [(ResultTcUnit.Ok)
+              (if (tc-atomic-store-name? name)
+                (ResultTcType.Ok (ast.AstType.Unit))
+                (if (string.eq name "atomic-add!")
                   (ResultTcType.Ok (ast.AstType.Unit))
-                  (if (string.eq name "atomic-add!")
-                    (ResultTcType.Ok (ast.AstType.Unit))
-                    (ResultTcType.Ok elem)))]
-              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])]
-      [(ResultTcType.Err message) (ResultTcType.Err message)])
+                  (ResultTcType.Ok elem)))]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (ResultTcType.Err (tc-atomic-update-arity-message name))))
 
 (define (tc-atomic-cas-call
@@ -31045,28 +31023,26 @@
   [new-value : ast.AstExpr]
   [rest : ast.AstExprList]) : ResultTcType
   (if (ast.ast-expr-list-empty? (& rest))
-    (match (tc-expr ctx env ptr)
-      [(ResultTcType.Ok ptr-ty)
-        (match (tc-atomic-pointer-elem ctx "atomic-cas!" ptr-ty)
-          [(ResultTcType.Ok elem)
-            (match (tc-atomic-check-value
-              ctx
-              env
-              expected
-              (tc-global-shared-view elem)
-              "typecheck: atomic expected value type mismatch")
-              [(ResultTcUnit.Ok)
-                (match (tc-atomic-check-value
-                  ctx
-                  env
-                  new-value
-                  (tc-global-shared-view elem)
-                  "typecheck: atomic new value type mismatch")
-                  [(ResultTcUnit.Ok) (ResultTcType.Ok elem)]
-                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])]
-      [(ResultTcType.Err message) (ResultTcType.Err message)])
+    (let
+      [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
+      [elem : ast.AstType
+        (try (tc-atomic-pointer-elem ctx "atomic-cas!" ptr-ty))]
+      (match (tc-atomic-check-value
+        ctx
+        env
+        expected
+        (tc-global-shared-view elem)
+        "typecheck: atomic expected value type mismatch")
+        [(ResultTcUnit.Ok)
+          (match (tc-atomic-check-value
+            ctx
+            env
+            new-value
+            (tc-global-shared-view elem)
+            "typecheck: atomic new value type mismatch")
+            [(ResultTcUnit.Ok) (ResultTcType.Ok elem)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
     (ResultTcType.Err "typecheck: atomic-cas! expects exactly three arguments")))
 
 (define (tc-atomic-nonload-call
@@ -31150,24 +31126,23 @@
       (match (tc-ptr-addr-of-local-lookup env name)
         [(ResultTcType.Ok ty) (tc-ptr-addr-of-root-type ctx ty)]
         [(ResultTcType.Err _)
-          (match (tc-expr ctx env place)
-            [(ResultTcType.Ok ty) (tc-ptr-addr-of-root-type ctx ty)]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])])]
+          (let
+            [ty : ast.AstType (try (tc-expr ctx env place))]
+            (tc-ptr-addr-of-root-type ctx ty))])]
     [(ast.AstExpr.StructGet receiver-box field)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
-        (match (tc-ptr-addr-of-place ctx env receiver)
-          [(ResultTcType.Ok receiver-ty)
-            (match (tc-type-strip-region
-              (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
-              [(ast.AstType.Struct _)
-                (tc-struct-get-result-type-id ctx receiver-ty field)]
-              [(ast.AstType.StructArgs _ _)
-                (tc-struct-get-result-type-id ctx receiver-ty field)]
-              [_
-                (ResultTcType.Err
-                  "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)]))]
+        [receiver-ty : ast.AstType
+          (try (tc-ptr-addr-of-place ctx env receiver))]
+        (match (tc-type-strip-region
+          (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+          [(ast.AstType.Struct _)
+            (tc-struct-get-result-type-id ctx receiver-ty field)]
+          [(ast.AstType.StructArgs _ _)
+            (tc-struct-get-result-type-id ctx receiver-ty field)]
+          [_
+            (ResultTcType.Err
+              "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")]))]
     [(ast.AstExpr.TupleRef tuple-box _)
       (let
         [tuple : ast.AstExpr (ast.ast-node-get tuple-box)]
@@ -31175,29 +31150,28 @@
           [(ResultTcType.Ok _) (tc-expr ctx env place)]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ast.AstExpr.ArrayRef array-box index-box)
-      (match (tc-expr-with-expected-or-actual-id
-        ctx
-        env
-        index-box
-        (ast.AstType.I64))
-        [(ResultTcType.Ok index-ty)
-          (if (tc-integer-type? index-ty)
-            (let
-              [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
-              (match (tc-ptr-addr-of-place ctx env array)
-                [(ResultTcType.Ok array-ty)
-                  (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
-                    [(ast.AstType.Array elem-ty _)
-                      (ResultTcType.Ok (ast.ty-node-get elem-ty))]
-                    [(ast.AstType.DynArray _)
-                      (ResultTcType.Err
-                        "typecheck: ptr-addr-of dynamic array elements are not addressable; use __tl_array-data plus ptr-offset")]
-                    [_
-                      (ResultTcType.Err
-                        "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")])]
-                [(ResultTcType.Err message) (ResultTcType.Err message)]))
-            (ResultTcType.Err "typecheck: array index must be integer"))]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [index-ty : ast.AstType
+          (try
+            (tc-expr-with-expected-or-actual-id
+              ctx
+              env
+              index-box
+              (ast.AstType.I64)))]
+        (if (tc-integer-type? index-ty)
+          (let
+            [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
+            [array-ty : ast.AstType (try (tc-ptr-addr-of-place ctx env array))]
+            (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+              [(ast.AstType.Array elem-ty _)
+                (ResultTcType.Ok (ast.ty-node-get elem-ty))]
+              [(ast.AstType.DynArray _)
+                (ResultTcType.Err
+                  "typecheck: ptr-addr-of dynamic array elements are not addressable; use __tl_array-data plus ptr-offset")]
+              [_
+                (ResultTcType.Err
+                  "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")]))
+          (ResultTcType.Err "typecheck: array index must be integer")))]
     [_
       (ResultTcType.Err
         "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")]))
@@ -31426,21 +31400,20 @@
   [expr-ty : ast.AstType]
   [leaf : ast.AstExpr]
   [subleaf : ast.AstExpr]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-expr ctx expr-bases env spmd-env leaf)
-    [(ResultTcSpmdExprInfo.Ok leaf-info)
-      (match leaf-info
-        [(TcSpmdExprInfo _ leaf-class leaf-env)
-          (match (tc-spmd-expr ctx expr-bases env leaf-env subleaf)
-            [(ResultTcSpmdExprInfo.Ok subleaf-info)
-              (match subleaf-info
-                [(TcSpmdExprInfo _ subleaf-class subleaf-env)
-                  (tc-spmd-finish
-                    expr-ty
-                    (tc-spmd-merge-class leaf-class subleaf-class)
-                    subleaf-env)])]
-            [(ResultTcSpmdExprInfo.Err message)
-              (ResultTcSpmdExprInfo.Err message)])])]
-    [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
+  (let
+    [leaf-info : TcSpmdExprInfo
+      (try (tc-spmd-expr ctx expr-bases env spmd-env leaf))]
+    (match leaf-info
+      [(TcSpmdExprInfo _ leaf-class leaf-env)
+        (let
+          [subleaf-info : TcSpmdExprInfo
+            (try (tc-spmd-expr ctx expr-bases env leaf-env subleaf))]
+          (match subleaf-info
+            [(TcSpmdExprInfo _ subleaf-class subleaf-env)
+              (tc-spmd-finish
+                expr-ty
+                (tc-spmd-merge-class leaf-class subleaf-class)
+                subleaf-env)]))])))
 
 (define (tc-spmd-binding
   [name-id : i64]
@@ -32418,21 +32391,18 @@
               (if (or
                 (= kind (csym.compiler-symbol-kind-function-define))
                 (= kind (csym.compiler-symbol-kind-extern)))
-                (match (csym.compiler-program-decl-at-index
-                  (tc-context-program ctx)
-                  (csym.compiler-symbol-handle-index handle))
-                  [(parser.ResultAstDecl.Ok decl)
-                    (match (tc-top-decl-type ctx decl)
-                      [(ResultTcType.Ok ty)
-                        (match (tc-global-shared-view ty)
-                          [(ast.AstType.Func _ _) (ResultTcType.Ok ty)]
-                          [_
-                            (ResultTcType.Err
-                              (tc-dispatch-variant-non-function-message
-                                variant-name))])]
-                      [(ResultTcType.Err message) (ResultTcType.Err message)])]
-                  [(parser.ResultAstDecl.Err message)
-                    (ResultTcType.Err message)])
+                (let
+                  [decl : ast.AstDecl
+                    (try
+                      (csym.compiler-program-decl-at-index
+                        (tc-context-program ctx)
+                        (csym.compiler-symbol-handle-index handle)))]
+                  [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
+                  (match (tc-global-shared-view ty)
+                    [(ast.AstType.Func _ _) (ResultTcType.Ok ty)]
+                    [_
+                      (ResultTcType.Err
+                        (tc-dispatch-variant-non-function-message variant-name))]))
                 (ResultTcType.Err
                   (tc-dispatch-variant-non-function-message variant-name)))))
           (ResultTcType.Err
@@ -32456,27 +32426,27 @@
       index
       (ast.ast-dispatch-variant-fallback))
       [(ast.AstDispatchVariant.Variant _ variant-name)
-        (match (tc-dispatch-variant-type ctx dispatch-name variant-name)
-          [(ResultTcType.Ok ty)
-            (match (tc-global-shared-view expected)
-              [(ast.AstMaybeType.No)
+        (let
+          [ty : ast.AstType
+            (try (tc-dispatch-variant-type ctx dispatch-name variant-name))]
+          (match (tc-global-shared-view expected)
+            [(ast.AstMaybeType.No)
+              (tc-dispatch-variant-signatures-from
+                ctx
+                dispatch-name
+                variants
+                (+ index 1)
+                (ast.AstMaybeType.Some ty))]
+            [(ast.AstMaybeType.Some want)
+              (if (tc-type-eq ty want)
                 (tc-dispatch-variant-signatures-from
                   ctx
                   dispatch-name
                   variants
                   (+ index 1)
-                  (ast.AstMaybeType.Some ty))]
-              [(ast.AstMaybeType.Some want)
-                (if (tc-type-eq ty want)
-                  (tc-dispatch-variant-signatures-from
-                    ctx
-                    dispatch-name
-                    variants
-                    (+ index 1)
-                    expected)
-                  (ResultTcType.Err
-                    "typecheck: defdispatch variant signatures must match"))])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])])))
+                  expected)
+                (ResultTcType.Err
+                  "typecheck: defdispatch variant signatures must match"))]))])))
 
 (define (tc-dispatch-variant-signatures
   [ctx : TcContext]
@@ -32776,140 +32746,140 @@
         [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
         (match (tc-global-shared-view inner)
           [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-            (match (tc-top-decl-type
-              (tc-context-with-module-id ctx module module-id)
-              inner)
-              [(ResultTcType.Ok ty)
-                (begin
-                  (ctfe_support.ctfe-module-value-add-id-for-state!
-                    (tc-context-ctfe-macro-state ctx)
-                    module-id
-                    name
-                    (tc-global-shared-view ty))
-                  (ResultTcEnv.Ok
-                    (tc-bind-unsafe-id
-                      env
-                      (tc-module-name-id-by-id module-id name)
-                      ty)))]
-              [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+            (let
+              [ty : ast.AstType
+                (try
+                  (tc-top-decl-type
+                    (tc-context-with-module-id ctx module module-id)
+                    inner))]
+              (begin
+                (ctfe_support.ctfe-module-value-add-id-for-state!
+                  (tc-context-ctfe-macro-state ctx)
+                  module-id
+                  name
+                  (tc-global-shared-view ty))
+                (ResultTcEnv.Ok
+                  (tc-bind-unsafe-id
+                    env
+                    (tc-module-name-id-by-id module-id name)
+                    ty))))]
           [(ast.AstDecl.Extern decl-meta name kind _ _)
             (let
               [extern-ctx : TcContext
                 (tc-context-with-module-id ctx module module-id)]
-              (match (tc-top-decl-type extern-ctx inner)
-                [(ResultTcType.Ok ty)
-                  (begin
-                    (ctfe_support.ctfe-module-value-add-id-for-state!
-                      (tc-context-ctfe-macro-state ctx)
-                      module-id
-                      name
-                      (tc-global-shared-view ty))
-                    (ResultTcEnv.Ok
-                      (tc-bind-unsafe-id
-                        env
-                        (tc-module-name-id-by-id module-id name)
-                        ty)))]
-                [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
+              [ty : ast.AstType (try (tc-top-decl-type extern-ctx inner))]
+              (begin
+                (ctfe_support.ctfe-module-value-add-id-for-state!
+                  (tc-context-ctfe-macro-state ctx)
+                  module-id
+                  name
+                  (tc-global-shared-view ty))
+                (ResultTcEnv.Ok
+                  (tc-bind-unsafe-id
+                    env
+                    (tc-module-name-id-by-id module-id name)
+                    ty))))]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
-      (match (tc-top-decl-type-with-env
-        (tc-context-with-module-id ctx module module-id)
-        env
-        decl)
-        [(ResultTcType.Ok ty)
-          (begin
-            (ctfe_support.ctfe-module-value-add-id-for-state!
-              (tc-context-ctfe-macro-state ctx)
-              module-id
-              name
-              (tc-global-shared-view ty))
-            (ResultTcEnv.Ok
-              (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
-        [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+      (let
+        [ty : ast.AstType
+          (try
+            (tc-top-decl-type-with-env
+              (tc-context-with-module-id ctx module module-id)
+              env
+              decl))]
+        (begin
+          (ctfe_support.ctfe-module-value-add-id-for-state!
+            (tc-context-ctfe-macro-state ctx)
+            module-id
+            name
+            (tc-global-shared-view ty))
+          (ResultTcEnv.Ok
+            (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))))]
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-      (match (tc-top-decl-type
-        (tc-context-with-module-id ctx module module-id)
-        decl)
-        [(ResultTcType.Ok ty)
-          (begin
-            (ctfe_support.ctfe-module-value-add-id-for-state!
-              (tc-context-ctfe-macro-state ctx)
-              module-id
-              name
-              (tc-global-shared-view ty))
-            (ResultTcEnv.Ok
-              (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
-        [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+      (let
+        [ty : ast.AstType
+          (try
+            (tc-top-decl-type
+              (tc-context-with-module-id ctx module module-id)
+              decl))]
+        (begin
+          (ctfe_support.ctfe-module-value-add-id-for-state!
+            (tc-context-ctfe-macro-state ctx)
+            module-id
+            name
+            (tc-global-shared-view ty))
+          (ResultTcEnv.Ok
+            (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
-      (match (tc-top-decl-type
-        (tc-context-with-module-id ctx module module-id)
-        decl)
-        [(ResultTcType.Ok ty)
-          (begin
-            (ctfe_support.ctfe-module-value-add-id-for-state!
-              (tc-context-ctfe-macro-state ctx)
-              module-id
-              name
-              (tc-global-shared-view ty))
-            (ResultTcEnv.Ok
-              (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
-        [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+      (let
+        [ty : ast.AstType
+          (try
+            (tc-top-decl-type
+              (tc-context-with-module-id ctx module module-id)
+              decl))]
+        (begin
+          (ctfe_support.ctfe-module-value-add-id-for-state!
+            (tc-context-ctfe-macro-state ctx)
+            module-id
+            name
+            (tc-global-shared-view ty))
+          (ResultTcEnv.Ok
+            (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))))]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) (ResultTcEnv.Ok env)]
     [(ast.AstDecl.Extern decl-meta name kind _ _)
       (let
         [extern-ctx : TcContext
           (tc-context-with-module-id ctx module module-id)]
-        (match (tc-top-decl-type extern-ctx decl)
-          [(ResultTcType.Ok ty)
-            (begin
-              (ctfe_support.ctfe-module-value-add-id-for-state!
-                (tc-context-ctfe-macro-state ctx)
-                module-id
-                name
-                (tc-global-shared-view ty))
-              (ResultTcEnv.Ok
-                (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
-          [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
+        [ty : ast.AstType (try (tc-top-decl-type extern-ctx decl))]
+        (begin
+          (ctfe_support.ctfe-module-value-add-id-for-state!
+            (tc-context-ctfe-macro-state ctx)
+            module-id
+            name
+            (tc-global-shared-view ty))
+          (ResultTcEnv.Ok
+            (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [enum-ty : ast.AstType
           (ast.AstType.Enum (tc-module-name-id-by-id module-id name))]
-        (match (tc-bind-enum-variants-in-module-id
-          (tc-context-with-module-id ctx module module-id)
-          env
-          module-id
-          name
-          (ast.ast-lifetime-list-new)
-          variants)
-          [(ResultTcEnv.Ok with-variants)
-            (ResultTcEnv.Ok
-              (tc-bind-enum-cleanup-module-id
-                with-variants
-                module-id
-                cleanup
-                enum-ty))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
+        [with-variants : TcTypeEnv
+          (try
+            (tc-bind-enum-variants-in-module-id
+              (tc-context-with-module-id ctx module module-id)
+              env
+              module-id
+              name
+              (ast.ast-lifetime-list-new)
+              variants))]
+        (ResultTcEnv.Ok
+          (tc-bind-enum-cleanup-module-id
+            with-variants
+            module-id
+            cleanup
+            enum-ty)))]
     [(ast.AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (let
         [enum-ty : ast.AstType
           (ast.ast-ty-enum-args
             (tc-module-name-id-by-id module-id name)
             (tc-global-shared-view lifetimes))]
-        (match (tc-bind-enum-variants-in-module-id
-          (tc-context-with-module-id ctx module module-id)
-          env
-          module-id
-          name
-          lifetimes
-          variants)
-          [(ResultTcEnv.Ok with-variants)
-            (ResultTcEnv.Ok
-              (tc-bind-enum-cleanup-module-id
-                with-variants
-                module-id
-                cleanup
-                enum-ty))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
+        [with-variants : TcTypeEnv
+          (try
+            (tc-bind-enum-variants-in-module-id
+              (tc-context-with-module-id ctx module module-id)
+              env
+              module-id
+              name
+              lifetimes
+              variants))]
+        (ResultTcEnv.Ok
+          (tc-bind-enum-cleanup-module-id
+            with-variants
+            module-id
+            cleanup
+            enum-ty)))]
     [(ast.AstDecl.DefStruct decl-meta name _ cleanup fields)
       (let
         [struct-ty : ast.AstType
@@ -33206,90 +33176,90 @@
         [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
         (match inner
           [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-            (match (tc-import-alias-source-value-type env module name)
-              [(ResultTcType.Ok ty)
-                (ResultTcEnv.Ok
-                  (tc-bind-import-alias-value-unsafe-id
-                    ctx
-                    env
-                    alias
-                    importer-module
-                    module
-                    import-unqualified
-                    name
-                    ty))]
-              [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+            (let
+              [ty : ast.AstType
+                (try (tc-import-alias-source-value-type env module name))]
+              (ResultTcEnv.Ok
+                (tc-bind-import-alias-value-unsafe-id
+                  ctx
+                  env
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
+                  ty)))]
           [(ast.AstDecl.Extern decl-meta name kind _ _)
-            (match (tc-import-alias-source-value-type env module name)
-              [(ResultTcType.Ok ty)
-                (ResultTcEnv.Ok
-                  (tc-bind-import-alias-value-unsafe-id
-                    ctx
-                    env
-                    alias
-                    importer-module
-                    module
-                    import-unqualified
-                    name
-                    ty))]
-              [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+            (let
+              [ty : ast.AstType
+                (try (tc-import-alias-source-value-type env module name))]
+              (ResultTcEnv.Ok
+                (tc-bind-import-alias-value-unsafe-id
+                  ctx
+                  env
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
+                  ty)))]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
-      (match (tc-import-alias-source-value-type env module name)
-        [(ResultTcType.Ok ty)
-          (ResultTcEnv.Ok
-            (tc-bind-import-alias-value-id
-              ctx
-              env
-              alias
-              importer-module
-              module
-              import-unqualified
-              name
-              ty))]
-        [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+      (let
+        [ty : ast.AstType
+          (try (tc-import-alias-source-value-type env module name))]
+        (ResultTcEnv.Ok
+          (tc-bind-import-alias-value-id
+            ctx
+            env
+            alias
+            importer-module
+            module
+            import-unqualified
+            name
+            ty)))]
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-      (match (tc-import-alias-source-value-type env module name)
-        [(ResultTcType.Ok ty)
-          (ResultTcEnv.Ok
-            (tc-bind-import-alias-value-id
-              ctx
-              env
-              alias
-              importer-module
-              module
-              import-unqualified
-              name
-              ty))]
-        [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+      (let
+        [ty : ast.AstType
+          (try (tc-import-alias-source-value-type env module name))]
+        (ResultTcEnv.Ok
+          (tc-bind-import-alias-value-id
+            ctx
+            env
+            alias
+            importer-module
+            module
+            import-unqualified
+            name
+            ty)))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
-      (match (tc-import-alias-source-value-type env module name)
-        [(ResultTcType.Ok ty)
-          (ResultTcEnv.Ok
-            (tc-bind-import-alias-value-id
-              ctx
-              env
-              alias
-              importer-module
-              module
-              import-unqualified
-              name
-              ty))]
-        [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+      (let
+        [ty : ast.AstType
+          (try (tc-import-alias-source-value-type env module name))]
+        (ResultTcEnv.Ok
+          (tc-bind-import-alias-value-id
+            ctx
+            env
+            alias
+            importer-module
+            module
+            import-unqualified
+            name
+            ty)))]
     [(ast.AstDecl.Extern decl-meta name kind _ _)
-      (match (tc-import-alias-source-value-type env module name)
-        [(ResultTcType.Ok ty)
-          (ResultTcEnv.Ok
-            (tc-bind-import-alias-value-id
-              ctx
-              env
-              alias
-              importer-module
-              module
-              import-unqualified
-              name
-              ty))]
-        [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+      (let
+        [ty : ast.AstType
+          (try (tc-import-alias-source-value-type env module name))]
+        (ResultTcEnv.Ok
+          (tc-bind-import-alias-value-id
+            ctx
+            env
+            alias
+            importer-module
+            module
+            import-unqualified
+            name
+            ty)))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [scoped-name-id : i64 (tc-module-name-id-by-id module name)]
@@ -33349,54 +33319,52 @@
       (let
         [struct-ty : ast.AstType
           (ast.AstType.Struct (tc-module-name-id-by-id module name))]
-        (match (tc-import-alias-source-value-type env module name)
-          [(ResultTcType.Ok constructor-ty)
-            (ResultTcEnv.Ok
-              (tc-bind-struct-cleanup-import-alias
-                ctx
-                (tc-bind-import-alias-value-id
-                  ctx
-                  env
-                  alias
-                  importer-module
-                  module
-                  import-unqualified
-                  name
-                  constructor-ty)
-                alias
-                importer-module
-                module
-                import-unqualified
-                cleanup
-                struct-ty))]
-          [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
+        [constructor-ty : ast.AstType
+          (try (tc-import-alias-source-value-type env module name))]
+        (ResultTcEnv.Ok
+          (tc-bind-struct-cleanup-import-alias
+            ctx
+            (tc-bind-import-alias-value-id
+              ctx
+              env
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
+              constructor-ty)
+            alias
+            importer-module
+            module
+            import-unqualified
+            cleanup
+            struct-ty)))]
     [(ast.AstDecl.DefStructLifetimes decl-meta name lifetimes _ cleanup fields)
       (let
         [struct-ty : ast.AstType
           (ast.ast-ty-struct-args
             (tc-module-name-id-by-id module name)
             lifetimes)]
-        (match (tc-import-alias-source-value-type env module name)
-          [(ResultTcType.Ok constructor-ty)
-            (ResultTcEnv.Ok
-              (tc-bind-struct-cleanup-import-alias
-                ctx
-                (tc-bind-import-alias-value-id
-                  ctx
-                  env
-                  alias
-                  importer-module
-                  module
-                  import-unqualified
-                  name
-                  constructor-ty)
-                alias
-                importer-module
-                module
-                import-unqualified
-                cleanup
-                struct-ty))]
-          [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
+        [constructor-ty : ast.AstType
+          (try (tc-import-alias-source-value-type env module name))]
+        (ResultTcEnv.Ok
+          (tc-bind-struct-cleanup-import-alias
+            ctx
+            (tc-bind-import-alias-value-id
+              ctx
+              env
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
+              constructor-ty)
+            alias
+            importer-module
+            module
+            import-unqualified
+            cleanup
+            struct-ty)))]
     [_ (ResultTcEnv.Ok env)]))
 
 (define (tc-bind-import-alias-module-list
@@ -33811,14 +33779,12 @@
   (match (ast.ast-decl-list-step (tc-global-shared-view summary))
     [(ast.AstDeclListStep.Nil) (ResultTcEnv.Ok top-env)]
     [(ast.AstDeclListStep.Cons _ _)
-      (match (tc-build-top-env-list-explicit-in-module
+      (tc-build-top-env-list-explicit-in-module
         ctx
         summary
         top-env
         ""
-        cbi.compiler-builtin-id-fix-empty)
-        [(ResultTcEnv.Ok next-env) (ResultTcEnv.Ok next-env)]
-        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
+        cbi.compiler-builtin-id-fix-empty)]))
 
 ;; Most module-owned values are uniquely named and can resolve through their
 ;; canonical module-qualified top-env key. Keep bindings whose source spelling
@@ -34044,39 +34010,37 @@
         ;; top-env key, so unsafe value declarations must always be overlaid.
         (match (tc-global-shared-view inner)
           [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-            (match (tc-top-decl-type ctx inner)
-              [(ResultTcType.Ok ty)
-                (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty))]
-              [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+            (let
+              [ty : ast.AstType (try (tc-top-decl-type ctx inner))]
+              (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty)))]
           [(ast.AstDecl.Extern decl-meta name kind _ _)
-            (match (tc-top-decl-type ctx inner)
-              [(ResultTcType.Ok ty)
-                (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty))]
-              [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+            (let
+              [ty : ast.AstType (try (tc-top-decl-type ctx inner))]
+              (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty)))]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
       (if (tc-module-local-name-should-bind! ctx env seen name)
-        (match (tc-top-decl-type-with-env ctx env decl)
-          [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
-          [(ResultTcType.Err message) (ResultTcEnv.Err message)])
+        (let
+          [ty : ast.AstType (try (tc-top-decl-type-with-env ctx env decl))]
+          (ResultTcEnv.Ok (tc-bind-id env name ty)))
         (ResultTcEnv.Ok env))]
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
       (if (tc-module-local-name-should-bind! ctx env seen name)
-        (match (tc-top-decl-type ctx decl)
-          [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
-          [(ResultTcType.Err message) (ResultTcEnv.Err message)])
+        (let
+          [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
+          (ResultTcEnv.Ok (tc-bind-id env name ty)))
         (ResultTcEnv.Ok env))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
       (if (tc-module-local-name-should-bind! ctx env seen name)
-        (match (tc-top-decl-type ctx decl)
-          [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
-          [(ResultTcType.Err message) (ResultTcEnv.Err message)])
+        (let
+          [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
+          (ResultTcEnv.Ok (tc-bind-id env name ty)))
         (ResultTcEnv.Ok env))]
     [(ast.AstDecl.Extern decl-meta name kind _ _)
       (if (tc-module-local-name-should-bind! ctx env seen name)
-        (match (tc-top-decl-type ctx decl)
-          [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
-          [(ResultTcType.Err message) (ResultTcEnv.Err message)])
+        (let
+          [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
+          (ResultTcEnv.Ok (tc-bind-id env name ty)))
         (ResultTcEnv.Ok env))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
@@ -34735,18 +34699,18 @@
           left
           (tc-global-shared-view operand-ty))
           [(ResultTcType.Ok left-ty)
-            (match (tc-expr-with-expected-or-actual ctx env right operand-ty)
-              [(ResultTcType.Ok right-ty)
-                (match (tc-binop-type op left-ty right-ty)
-                  [(ResultTcType.Ok result-ty)
-                    (if (tc-type-compatible?
-                      (tc-global-shared-view expected)
-                      (tc-global-shared-view result-ty))
-                      (ResultTcType.Ok
-                        (tc-contextual-result-type expected result-ty))
-                      (ResultTcType.Ok result-ty))]
-                  [(ResultTcType.Err _) (tc-expr ctx env expr)])]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])]
+            (let
+              [right-ty : ast.AstType
+                (try (tc-expr-with-expected-or-actual ctx env right operand-ty))]
+              (match (tc-binop-type op left-ty right-ty)
+                [(ResultTcType.Ok result-ty)
+                  (if (tc-type-compatible?
+                    (tc-global-shared-view expected)
+                    (tc-global-shared-view result-ty))
+                    (ResultTcType.Ok
+                      (tc-contextual-result-type expected result-ty))
+                    (ResultTcType.Ok result-ty))]
+                [(ResultTcType.Err _) (tc-expr ctx env expr)]))]
           [(ResultTcType.Err message) (ResultTcType.Err message)])])))
 
 (define (tc-unop-contextual-operand-type
@@ -34782,18 +34746,17 @@
     (match (tc-unop-contextual-operand-type op operand-expected)
       [(ast.AstMaybeType.No) (tc-expr ctx env expr)]
       [(ast.AstMaybeType.Some operand-ty)
-        (match (tc-expr-with-expected-or-actual ctx env inner operand-ty)
-          [(ResultTcType.Ok inner-ty)
-            (match (tc-unop-type op inner-ty)
-              [(ResultTcType.Ok result-ty)
-                (if (tc-type-compatible?
-                  (tc-global-shared-view expected)
-                  (tc-global-shared-view result-ty))
-                  (ResultTcType.Ok
-                    (tc-contextual-result-type expected result-ty))
-                  (ResultTcType.Ok result-ty))]
-              [(ResultTcType.Err _) (tc-expr ctx env expr)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])])))
+        (let
+          [inner-ty : ast.AstType
+            (try (tc-expr-with-expected-or-actual ctx env inner operand-ty))]
+          (match (tc-unop-type op inner-ty)
+            [(ResultTcType.Ok result-ty)
+              (if (tc-type-compatible?
+                (tc-global-shared-view expected)
+                (tc-global-shared-view result-ty))
+                (ResultTcType.Ok (tc-contextual-result-type expected result-ty))
+                (ResultTcType.Ok result-ty))]
+            [(ResultTcType.Err _) (tc-expr ctx env expr)]))])))
 
 (define (tc-expr-list-with-expected-elements
   [ctx : TcContext]
@@ -34948,42 +34911,41 @@
   [then-branch-id : i64]
   [else-branch-id : i64]
   [expected : ast.AstType]) : ResultTcType
-  (match (tc-expr-id ctx env cond-id)
-    [(ResultTcType.Ok cond-ty)
-      (match (tc-expect
-        cond-ty
-        (ast.AstType.Bool)
-        "typecheck: if condition must be bool")
-        [(ResultTcUnit.Ok)
-          (match (tc-expr-with-expected-or-actual-id
-            ctx
-            env
-            then-branch-id
-            (tc-global-shared-view expected))
-            [(ResultTcType.Ok then-ty)
-              (match (tc-expr-with-expected-or-actual-id
-                ctx
-                env
-                else-branch-id
-                (tc-global-shared-view expected))
-                [(ResultTcType.Ok else-ty)
-                  (if (and
-                    (tc-type-coercible?
-                      ctx
-                      env
-                      (tc-global-shared-view expected)
-                      (tc-global-shared-view then-ty))
-                    (tc-type-coercible?
-                      ctx
-                      env
-                      (tc-global-shared-view expected)
-                      (tc-global-shared-view else-ty)))
-                    (ResultTcType.Ok expected)
-                    (tc-merge-branch-type ctx env then-ty else-ty))]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
-        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [cond-ty : ast.AstType (try (tc-expr-id ctx env cond-id))]
+    (match (tc-expect
+      cond-ty
+      (ast.AstType.Bool)
+      "typecheck: if condition must be bool")
+      [(ResultTcUnit.Ok)
+        (match (tc-expr-with-expected-or-actual-id
+          ctx
+          env
+          then-branch-id
+          (tc-global-shared-view expected))
+          [(ResultTcType.Ok then-ty)
+            (match (tc-expr-with-expected-or-actual-id
+              ctx
+              env
+              else-branch-id
+              (tc-global-shared-view expected))
+              [(ResultTcType.Ok else-ty)
+                (if (and
+                  (tc-type-coercible?
+                    ctx
+                    env
+                    (tc-global-shared-view expected)
+                    (tc-global-shared-view then-ty))
+                  (tc-type-coercible?
+                    ctx
+                    env
+                    (tc-global-shared-view expected)
+                    (tc-global-shared-view else-ty)))
+                  (ResultTcType.Ok expected)
+                  (tc-merge-branch-type ctx env then-ty else-ty))]
+              [(ResultTcType.Err message) (ResultTcType.Err message)])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      [(ResultTcUnit.Err message) (ResultTcType.Err message)])))
 
 (define (tc-type-list-len [types : (& types ast.AstTypeList)]) : i64
   (ast.ast-type-list-len (& types)))
@@ -35065,14 +35027,15 @@
       env
       (tc-global-shared-view exprs))
       [(ResultTcUnit.Ok)
-        (match (tc-check-tuple-elements-with-expected
-          ctx
-          env
-          exprs
-          expected-elems)
-          [(ResultTcTypeList.Ok result-elems)
-            (ResultTcType.Ok (ast.ast-ty-tuple result-elems))]
-          [(ResultTcTypeList.Err message) (ResultTcType.Err message)])]
+        (let
+          [result-elems : ast.AstTypeList
+            (try
+              (tc-check-tuple-elements-with-expected
+                ctx
+                env
+                exprs
+                expected-elems))]
+          (ResultTcType.Ok (ast.ast-ty-tuple result-elems)))]
       [(ResultTcUnit.Err message) (ResultTcType.Err message)])
     (tc-expr ctx env (ast.AstExpr.Tuple exprs))))
 
@@ -35209,32 +35172,31 @@
   [expected : ast.AstType]
   [allow-mut-by-value-borrow : bool]
   [result : ResultTcType]) : ResultTcType
-  (match result
-    [(ResultTcType.Ok actual)
-      (cond
-        [(tc-type-coercible?
+  (let
+    [actual : ast.AstType (try result)]
+    (cond
+      [(tc-type-coercible?
+          ctx
+          env
+          (tc-global-shared-view expected)
+          (tc-global-shared-view actual))
+        (ResultTcType.Ok (tc-contextual-result-type expected actual))]
+      [(and
+          allow-mut-by-value-borrow
+          (tc-call-string-temporary-ref-compatible?
             ctx
-            env
             (tc-global-shared-view expected)
-            (tc-global-shared-view actual))
-          (ResultTcType.Ok (tc-contextual-result-type expected actual))]
-        [(and
-            allow-mut-by-value-borrow
-            (tc-call-string-temporary-ref-compatible?
-              ctx
-              (tc-global-shared-view expected)
-              (tc-global-shared-view actual)))
-          (ResultTcType.Ok expected)]
-        [else
-          (match (tc-match-inferred-type-for-expected
-            ctx
-            env
-            (tc-global-shared-view actual)
-            (tc-global-shared-view expected))
-            [(TcInferredTypeMatch.Compatible matched)
-              (ResultTcType.Ok (tc-contextual-result-type expected matched))]
-            [(TcInferredTypeMatch.Mismatch _) (ResultTcType.Ok actual)])])]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+            (tc-global-shared-view actual)))
+        (ResultTcType.Ok expected)]
+      [else
+        (match (tc-match-inferred-type-for-expected
+          ctx
+          env
+          (tc-global-shared-view actual)
+          (tc-global-shared-view expected))
+          [(TcInferredTypeMatch.Compatible matched)
+            (ResultTcType.Ok (tc-contextual-result-type expected matched))]
+          [(TcInferredTypeMatch.Mismatch _) (ResultTcType.Ok actual)])])))
 
 (define (tc-macro-expansion-result-with-frame
   [ctx : TcContext]
@@ -35293,11 +35255,11 @@
               [result : ResultTcType
                 (match (tc-global-shared-view inner)
                   [(ast.AstExpr.Unsafe exprs)
-                    (tc-unsafe-begin-list-with-expected-scoped
+                    (tc-unsafe-begin-list-scoped
                       ctx
                       env
                       exprs
-                      expected
+                      (ast.AstMaybeType.Some expected)
                       (TcMaybeAstSourceSpan.Some span))]
                   [_
                     (tc-expr-with-expected-or-actual-core-id
@@ -35351,7 +35313,12 @@
         [(ast.AstMatch.Match scrutinee-box arms)
           (match (tc-expr-id ctx env scrutinee-box)
             [(ResultTcType.Ok scrut-ty)
-              (tc-match-expr-with-expected ctx env scrut-ty arms expected)]
+              (tc-match-expr
+                ctx
+                env
+                scrut-ty
+                arms
+                (ast.AstMaybeType.Some expected))]
             [(ResultTcType.Err message) (ResultTcType.Err message)])])]
     [(ast.AstExpr.Array exprs)
       (match (tc-type-strip-region expected)
@@ -35377,11 +35344,11 @@
     [(ast.AstExpr.Begin exprs)
       (tc-begin-list-with-expected ctx env exprs expected)]
     [(ast.AstExpr.Unsafe exprs)
-      (tc-unsafe-begin-list-with-expected-scoped
+      (tc-unsafe-begin-list-scoped
         ctx
         env
         exprs
-        expected
+        (ast.AstMaybeType.Some expected)
         TcMaybeAstSourceSpan.No)]
     [(ast.AstExpr.Let let-box)
       (match (ast.ast-let-box-shared-view let-box)
@@ -35406,21 +35373,41 @@
                   [(ResultTcType.Err message) (ResultTcType.Err message)])]
               [(ResultTcEnv.Err message) (ResultTcType.Err message)]))])]
     [(ast.AstExpr.WithRegion region body)
-      (tc-with-region-expr-with-expected-scoped ctx env region body expected)]
+      (tc-with-region-expr-scoped
+        ctx
+        env
+        region
+        body
+        (ast.AstMaybeType.Some expected))]
     [(ast.AstExpr.WithEscape scratch-box body)
       (let
         [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
-        (tc-with-escape-expr-with-expected ctx env scratch body expected))]
+        (tc-with-escape-expr
+          ctx
+          env
+          scratch
+          body
+          (ast.AstMaybeType.Some expected)))]
     [(ast.AstExpr.WithScratch body)
-      (tc-with-scratch-expr-with-expected ctx env body expected)]
+      (tc-with-scratch-expr ctx env body (ast.AstMaybeType.Some expected))]
     [(ast.AstExpr.InArena arena-box body)
       (let
         [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
-        (tc-in-arena-expr-with-expected-scoped ctx env arena body expected))]
+        (tc-in-arena-expr-scoped
+          ctx
+          env
+          arena
+          body
+          (ast.AstMaybeType.Some expected)))]
     [(ast.AstExpr.WithResource wr-box)
       (match (ast.ast-with-resource-box-shared-view wr-box)
         [(ast.AstWithResource.WithResource bindings body)
-          (tc-with-resource-expr-with-expected ctx env bindings body expected)])]
+          (tc-with-resource-expr
+            ctx
+            env
+            bindings
+            body
+            (ast.AstMaybeType.Some expected))])]
     [(ast.AstExpr.Borrow mutable lifetime-id place-box)
       (match (tc-normalize-dotted-local-field-node! ctx env place-box)
         [(ResultTcUnit.Ok)
@@ -37389,19 +37376,19 @@
           (if (tc-nominal-name-id-eq?
             (tc-variant-owner-id-or ctx handle -1)
             enum-name-id)
-            (match (csym.compiler-registries-variant-fields-indexed
-              (tc-context-symbols symbols-ctx)
-              handle)
-              [(parser.ResultAstTypeList.Ok fields)
-                (if (ast.ast-type-list-empty? (& fields))
-                  (ResultTcType.Ok (tc-tag-active-region env ret))
-                  (ResultTcType.Err
-                    (tc-call-arity-count-message
-                      func
-                      (ast.ast-type-list-len (& fields))
-                      0)))]
-              [(parser.ResultAstTypeList.Err message)
-                (ResultTcType.Err message)])
+            (let
+              [fields : ast.AstTypeList
+                (try
+                  (csym.compiler-registries-variant-fields-indexed
+                    (tc-context-symbols symbols-ctx)
+                    handle))]
+              (if (ast.ast-type-list-empty? (& fields))
+                (ResultTcType.Ok (tc-tag-active-region env ret))
+                (ResultTcType.Err
+                  (tc-call-arity-count-message
+                    func
+                    (ast.ast-type-list-len (& fields))
+                    0))))
             (ResultTcType.Err "typecheck: call target is not a function"))
           (if (tc-name-qualified-id?
             (tc-context-structural-session ctx)
@@ -38243,12 +38230,11 @@
   ;; the call gets a tracked shared reborrow with the referent's lifetime.
   (if (tc-call-actual-immutable-reference? ctx (tc-global-shared-view got))
     (ResultTcType.Ok got)
-    (match (tc-borrow-place-var name got)
-      [(ResultTcBorrowPlace.Ok place)
-        (match place
-          [(TcBorrowPlace lifetime referent-ty)
-            (ResultTcType.Ok (ast.ast-ty-ref lifetime referent-ty))])]
-      [(ResultTcBorrowPlace.Err message) (ResultTcType.Err message)])))
+    (let
+      [place : TcBorrowPlace (try (tc-borrow-place-var name got))]
+      (match place
+        [(TcBorrowPlace lifetime referent-ty)
+          (ResultTcType.Ok (ast.ast-ty-ref lifetime referent-ty))]))))
 
 ;; Body-local memo for a call argument's non-contextual inferred type, keyed by
 ;; the argument's Spanned payload node id. Call arguments are re-inferred by the
@@ -39318,23 +39304,23 @@
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
   [abi : ast.AstExternAbi]) : ResultTcTypeList
-  (match (tc-call-varargs-tail-args func args params)
-    [(ResultTcExprList.Ok tail-args)
-      (if (ast.ast-extern-abi-c-varargs-open? (tc-global-shared-view abi))
-        (match (tc-call-open-varargs-tail-types ctx env tail-args)
-          [(ResultTcTypeList.Ok tail-types)
-            (ResultTcTypeList.Ok (tc-type-list-append params tail-types))]
-          [(ResultTcTypeList.Err message) (ResultTcTypeList.Err message)])
-        (if (ast.ast-extern-abi-c-varargs-typed? (tc-global-shared-view abi))
-          (let
-            [tail-ty : ast.AstType
-              (tc-resolve-type ctx (ast.ast-extern-abi-varargs-tail-type abi))]
-            (ResultTcTypeList.Ok
-              (tc-type-list-append
-                params
-                (tc-type-list-repeat tail-ty (tc-expr-list-len tail-args)))))
-          (ResultTcTypeList.Ok params)))]
-    [(ResultTcExprList.Err message) (ResultTcTypeList.Err message)]))
+  (let
+    [tail-args : ast.AstExprList
+      (try (tc-call-varargs-tail-args func args params))]
+    (if (ast.ast-extern-abi-c-varargs-open? (tc-global-shared-view abi))
+      (let
+        [tail-types : ast.AstTypeList
+          (try (tc-call-open-varargs-tail-types ctx env tail-args))]
+        (ResultTcTypeList.Ok (tc-type-list-append params tail-types)))
+      (if (ast.ast-extern-abi-c-varargs-typed? (tc-global-shared-view abi))
+        (let
+          [tail-ty : ast.AstType
+            (tc-resolve-type ctx (ast.ast-extern-abi-varargs-tail-type abi))]
+          (ResultTcTypeList.Ok
+            (tc-type-list-append
+              params
+              (tc-type-list-repeat tail-ty (tc-expr-list-len tail-args)))))
+        (ResultTcTypeList.Ok params)))))
 
 (define (tc-call-function-type
   [ctx : TcContext]
@@ -42059,14 +42045,12 @@
     (let
       [arg : ast.AstExpr
         (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      (match (tc-expr ctx env arg)
-        [(ResultTcType.Ok arg-ty)
-          (match (tc-array-length-receiver ctx (tc-global-shared-view arg-ty))
-            [(ResultTcArrayReceiver.Ok _)
-              (tc-array-length-array-call ctx env name-id func args arg-ty)]
-            [(ResultTcArrayReceiver.Err _)
-              (tc-array-length-non-array-call ctx env name-id func args arg-ty)])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+      [arg-ty : ast.AstType (try (tc-expr ctx env arg))]
+      (match (tc-array-length-receiver ctx (tc-global-shared-view arg-ty))
+        [(ResultTcArrayReceiver.Ok _)
+          (tc-array-length-array-call ctx env name-id func args arg-ty)]
+        [(ResultTcArrayReceiver.Err _)
+          (tc-array-length-non-array-call ctx env name-id func args arg-ty)]))
     (if (cbi.compiler-builtin-typecheck-array-length-id? name-id)
       (ResultTcType.Err (tc-call-fixed-arity-message func args 1))
       (tc-call-expr-ordinary ctx env func args))))
@@ -43330,18 +43314,19 @@
                           (tc-context-expr-bases ctx)
                           source
                           message)))]))
-              (match (tc-slice-view-result-type ctx env kind source source-ty)
-                [(ResultTcType.Ok half-ty)
-                  (ResultTcType.Ok
-                    (ast.ast-ty-tuple
+              (let
+                [half-ty : ast.AstType
+                  (try
+                    (tc-slice-view-result-type ctx env kind source source-ty))]
+                (ResultTcType.Ok
+                  (ast.ast-ty-tuple
+                    (ast.ast-type-cons-with-pools
+                      (tc-context-pools ctx)
+                      (tc-global-shared-view half-ty)
                       (ast.ast-type-cons-with-pools
                         (tc-context-pools ctx)
-                        (tc-global-shared-view half-ty)
-                        (ast.ast-type-cons-with-pools
-                          (tc-context-pools ctx)
-                          half-ty
-                          (ast.ast-type-list-new)))))]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])))]
+                        half-ty
+                        (ast.ast-type-list-new))))))))]
         [_
           (ResultTcType.Err
             (tc-locate-error-at-expr
@@ -43369,24 +43354,24 @@
         (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
       (match (tc-expr ctx env (tc-global-shared-view source))
         [(ResultTcType.Ok source-ty)
-          (match (tc-slice-split-result-type ctx env kind source source-ty)
-            [(ResultTcType.Ok result-ty)
-              (match (tc-expr ctx env (tc-global-shared-view mid))
-                [(ResultTcType.Ok mid-ty)
-                  (if (tc-integer-type? (tc-global-shared-view mid-ty))
-                    (ResultTcType.Ok result-ty)
-                    (ResultTcType.Err
-                      (tc-locate-error-at-expr
-                        (tc-context-expr-bases ctx)
-                        mid
-                        (tc-call-argument-expected-text-message
-                          ctx
-                          func
-                          1
-                          mid-ty
-                          "integer"))))]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+          (let
+            [result-ty : ast.AstType
+              (try (tc-slice-split-result-type ctx env kind source source-ty))]
+            (match (tc-expr ctx env (tc-global-shared-view mid))
+              [(ResultTcType.Ok mid-ty)
+                (if (tc-integer-type? (tc-global-shared-view mid-ty))
+                  (ResultTcType.Ok result-ty)
+                  (ResultTcType.Err
+                    (tc-locate-error-at-expr
+                      (tc-context-expr-bases ctx)
+                      mid
+                      (tc-call-argument-expected-text-message
+                        ctx
+                        func
+                        1
+                        mid-ty
+                        "integer"))))]
+              [(ResultTcType.Err message) (ResultTcType.Err message)]))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (ResultTcType.Err (tc-call-fixed-arity-message func args 2))))
 
@@ -43406,38 +43391,38 @@
         (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 2 0))]
       (match (tc-expr ctx env (tc-global-shared-view source))
         [(ResultTcType.Ok source-ty)
-          (match (tc-slice-view-result-type ctx env kind source source-ty)
-            [(ResultTcType.Ok result-ty)
-              (match (tc-expr ctx env (tc-global-shared-view start))
-                [(ResultTcType.Ok start-ty)
-                  (if (tc-integer-type? (tc-global-shared-view start-ty))
-                    (match (tc-expr ctx env (tc-global-shared-view len))
-                      [(ResultTcType.Ok len-ty)
-                        (if (tc-integer-type? (tc-global-shared-view len-ty))
-                          (ResultTcType.Ok result-ty)
-                          (ResultTcType.Err
-                            (tc-locate-error-at-expr
-                              (tc-context-expr-bases ctx)
-                              len
-                              (tc-call-argument-expected-text-message
-                                ctx
-                                func
-                                2
-                                len-ty
-                                "integer"))))]
-                      [(ResultTcType.Err message) (ResultTcType.Err message)])
-                    (ResultTcType.Err
-                      (tc-locate-error-at-expr
-                        (tc-context-expr-bases ctx)
-                        start
-                        (tc-call-argument-expected-text-message
-                          ctx
-                          func
-                          1
-                          start-ty
-                          "integer"))))]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+          (let
+            [result-ty : ast.AstType
+              (try (tc-slice-view-result-type ctx env kind source source-ty))]
+            (match (tc-expr ctx env (tc-global-shared-view start))
+              [(ResultTcType.Ok start-ty)
+                (if (tc-integer-type? (tc-global-shared-view start-ty))
+                  (match (tc-expr ctx env (tc-global-shared-view len))
+                    [(ResultTcType.Ok len-ty)
+                      (if (tc-integer-type? (tc-global-shared-view len-ty))
+                        (ResultTcType.Ok result-ty)
+                        (ResultTcType.Err
+                          (tc-locate-error-at-expr
+                            (tc-context-expr-bases ctx)
+                            len
+                            (tc-call-argument-expected-text-message
+                              ctx
+                              func
+                              2
+                              len-ty
+                              "integer"))))]
+                    [(ResultTcType.Err message) (ResultTcType.Err message)])
+                  (ResultTcType.Err
+                    (tc-locate-error-at-expr
+                      (tc-context-expr-bases ctx)
+                      start
+                      (tc-call-argument-expected-text-message
+                        ctx
+                        func
+                        1
+                        start-ty
+                        "integer"))))]
+              [(ResultTcType.Err message) (ResultTcType.Err message)]))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (ResultTcType.Err (tc-call-fixed-arity-message func args 3))))
 
@@ -44950,32 +44935,29 @@
   [cleanup : ast.AstExpr]) : ResultTcType
   (match (tc-resource-cleanup-direct-name-ok (tc-global-shared-view cleanup))
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env cleanup)
-        [(ResultTcType.Ok cleanup-ty)
-          (match (tc-type-strip-region (tc-resolve-type ctx cleanup-ty))
-            [(ast.AstType.Func args ret)
-              (let
-                [ret-ty : ast.AstType (ast.ty-node-get ret)]
-                [args : ast.AstTypeList
-                  (ast.ast-type-list-box-shared-view args)]
-                (if (= (ast.ast-type-list-len (& args)) 1)
-                  (let
-                    [arg-ty : ast.AstType
-                      (ast.ty-node-get
-                        (ast.ast-type-list-get
-                          (& args)
-                          0
-                          (ast.ast-type-id-fallback)))]
-                    (if (tc-type-eq ret-ty (ast.AstType.Unit))
-                      (ResultTcType.Ok arg-ty)
-                      (ResultTcType.Err
-                        "typecheck: with cleanup function type mismatch")))
-                  (ResultTcType.Err
-                    "typecheck: with cleanup function type mismatch")))]
-            [_
-              (ResultTcType.Err
-                "typecheck: with cleanup function type mismatch")])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [cleanup-ty : ast.AstType (try (tc-expr ctx env cleanup))]
+        (match (tc-type-strip-region (tc-resolve-type ctx cleanup-ty))
+          [(ast.AstType.Func args ret)
+            (let
+              [ret-ty : ast.AstType (ast.ty-node-get ret)]
+              [args : ast.AstTypeList (ast.ast-type-list-box-shared-view args)]
+              (if (= (ast.ast-type-list-len (& args)) 1)
+                (let
+                  [arg-ty : ast.AstType
+                    (ast.ty-node-get
+                      (ast.ast-type-list-get
+                        (& args)
+                        0
+                        (ast.ast-type-id-fallback)))]
+                  (if (tc-type-eq ret-ty (ast.AstType.Unit))
+                    (ResultTcType.Ok arg-ty)
+                    (ResultTcType.Err
+                      "typecheck: with cleanup function type mismatch")))
+                (ResultTcType.Err
+                  "typecheck: with cleanup function type mismatch")))]
+          [_
+            (ResultTcType.Err "typecheck: with cleanup function type mismatch")]))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-resource-cleanup-ok
@@ -45017,37 +44999,35 @@
             env
             (tc-global-shared-view cleanup))
             [(ResultTcType.Ok expected-init-ty)
-              (match (tc-expr-with-expected-or-actual-id
-                ctx
-                env
-                init-box
-                expected-init-ty)
-                [(ResultTcType.Ok init-ty)
-                  (match (tc-ensure-cleanup-resource-not-transferred
-                    ctx
-                    env
-                    init)
-                    [(ResultTcUnit.Ok)
-                      (match (tc-resource-cleanup-ok
-                        ctx
-                        env
-                        cleanup
-                        (tc-global-shared-view init-ty))
-                        [(ResultTcUnit.Ok)
-                          (tc-resource-bindings-at
-                            ctx
+              (let
+                [init-ty : ast.AstType
+                  (try
+                    (tc-expr-with-expected-or-actual-id
+                      ctx
+                      env
+                      init-box
+                      expected-init-ty))]
+                (match (tc-ensure-cleanup-resource-not-transferred ctx env init)
+                  [(ResultTcUnit.Ok)
+                    (match (tc-resource-cleanup-ok
+                      ctx
+                      env
+                      cleanup
+                      (tc-global-shared-view init-ty))
+                      [(ResultTcUnit.Ok)
+                        (tc-resource-bindings-at
+                          ctx
+                          (tc-bind-id
                             (tc-bind-id
-                              (tc-bind-id
-                                env
-                                (tc-cleanup-owner-marker-id)
-                                (ast.AstType.Var name))
-                              name
-                              (tc-type-without-regions init-ty))
-                            bindings
-                            (+ index 1))]
-                        [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
-                    [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
-                [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
+                              env
+                              (tc-cleanup-owner-marker-id)
+                              (ast.AstType.Var name))
+                            name
+                            (tc-type-without-regions init-ty))
+                          bindings
+                          (+ index 1))]
+                      [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
+                  [(ResultTcUnit.Err message) (ResultTcEnv.Err message)]))]
             [(ResultTcType.Err message) (ResultTcEnv.Err message)]))])))
 
 (define (tc-begin-list
@@ -45068,6 +45048,17 @@
       (match (tc-expr-id ctx env (ast.ast-expr-list-get exprs index 0))
         [(ResultTcType.Ok _) (tc-begin-list-at ctx env exprs (+ index 1))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))))
+
+;; A body checked against the context's expected type when it has one, and
+;; synthesized otherwise.
+(define (tc-begin-list-maybe-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : (& exprs ast.AstExprList)]
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (match expected
+    [(ast.AstMaybeType.Some ty) (tc-begin-list-with-expected ctx env exprs ty)]
+    [(ast.AstMaybeType.No) (tc-begin-list ctx env exprs)]))
 
 (define (tc-spmd-require-uniform [class : TcSpmdClass] [message : String]) : ResultTcUnit
   (if (tc-spmd-varying? class)
@@ -45221,17 +45212,16 @@
                     (tc-context-symbols (& ctx))
                     declaration-id
                     (tc-context-module-id ctx))]
-                (match (csym.compiler-symbols-decl-at-index
-                  (tc-context-symbols (& ctx))
-                  declaration-id)
-                  [(parser.ResultAstDecl.Ok decl)
-                    (tc-spmd-inline-helper-from-decl
-                      expr-bases
-                      lookup-id
-                      module-id
-                      decl)]
-                  [(parser.ResultAstDecl.Err message)
-                    (ResultTcSpmdInlineHelper.Err message)]))
+                [decl : ast.AstDecl
+                  (try
+                    (csym.compiler-symbols-decl-at-index
+                      (tc-context-symbols (& ctx))
+                      declaration-id))]
+                (tc-spmd-inline-helper-from-decl
+                  expr-bases
+                  lookup-id
+                  module-id
+                  decl))
               (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No)))
             (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No)))))]
     [(TcNameLookup.Err message)
@@ -45543,26 +45533,25 @@
   [callables : (& callables ast.AstImportedSpmdCallableList)]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-expr ctx expr-bases env spmd-env func)
-    [(ResultTcSpmdExprInfo.Ok func-info)
-      (match func-info
-        [(TcSpmdExprInfo _ _ func-env)
-          (match (tc-spmd-expr-list ctx expr-bases env func-env args)
-            [(ResultTcSpmdExprListInfo.Ok args-info)
-              (match args-info
-                [(TcSpmdExprListInfo args-class args-env)
-                  (tc-spmd-finish-ctx
-                    ctx
-                    (tc-global-shared-view expr-ty)
-                    (tc-spmd-imported-call-result-class
-                      expr-ty
-                      fn-ty
-                      callables
-                      args-class)
-                    args-env)])]
-            [(ResultTcSpmdExprListInfo.Err message)
-              (ResultTcSpmdExprInfo.Err message)])])]
-    [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
+  (let
+    [func-info : TcSpmdExprInfo
+      (try (tc-spmd-expr ctx expr-bases env spmd-env func))]
+    (match func-info
+      [(TcSpmdExprInfo _ _ func-env)
+        (let
+          [args-info : TcSpmdExprListInfo
+            (try (tc-spmd-expr-list ctx expr-bases env func-env args))]
+          (match args-info
+            [(TcSpmdExprListInfo args-class args-env)
+              (tc-spmd-finish-ctx
+                ctx
+                (tc-global-shared-view expr-ty)
+                (tc-spmd-imported-call-result-class
+                  expr-ty
+                  fn-ty
+                  callables
+                  args-class)
+                args-env)]))])))
 
 (define (tc-spmd-atomic-public-symbol? [symbol : (& symbol str)]) : bool
   (or
@@ -45730,23 +45719,22 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [symbol : String]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-expr ctx expr-bases env spmd-env func)
-    [(ResultTcSpmdExprInfo.Ok func-info)
-      (match func-info
-        [(TcSpmdExprInfo _ _ func-env)
-          (match (tc-spmd-expr-list ctx expr-bases env func-env args)
-            [(ResultTcSpmdExprListInfo.Ok args-info)
-              (match args-info
-                [(TcSpmdExprListInfo args-class args-env)
-                  (tc-spmd-finish
-                    expr-ty
-                    (if (tc-spmd-atomic-value-result? symbol)
-                      args-class
-                      TcSpmdClass.Uniform)
-                    args-env)])]
-            [(ResultTcSpmdExprListInfo.Err message)
-              (ResultTcSpmdExprInfo.Err message)])])]
-    [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
+  (let
+    [func-info : TcSpmdExprInfo
+      (try (tc-spmd-expr ctx expr-bases env spmd-env func))]
+    (match func-info
+      [(TcSpmdExprInfo _ _ func-env)
+        (let
+          [args-info : TcSpmdExprListInfo
+            (try (tc-spmd-expr-list ctx expr-bases env func-env args))]
+          (match args-info
+            [(TcSpmdExprListInfo args-class args-env)
+              (tc-spmd-finish
+                expr-ty
+                (if (tc-spmd-atomic-value-result? symbol)
+                  args-class
+                  TcSpmdClass.Uniform)
+                args-env)]))])))
 
 (define (tc-spmd-atomic-call
   [ctx : TcContext]
@@ -46411,34 +46399,33 @@
             (tc-global-shared-view spmd-env)
             (tc-global-shared-view init))
             [(ResultTcUnit.Ok)
-              (match (tc-spmd-expr ctx expr-bases env spmd-env init)
-                [(ResultTcSpmdExprInfo.Ok info)
-                  (match info
-                    [(TcSpmdExprInfo init-ty init-class next-spmd-env)
-                      (let
-                        [bound-ty : ast.AstType
-                          (match maybe-ty
-                            [(ast.AstMaybeType.Some want)
-                              (if (tc-type-contains-any-region
-                                (tc-global-shared-view init-ty))
-                                init-ty
-                                (tc-resolve-type ctx want))]
-                            [(ast.AstMaybeType.No) init-ty])]
-                        (tc-spmd-masked-if-let-bindings-at
-                          ctx
-                          expr-bases
-                          (tc-bind-id env name (tc-global-shared-view bound-ty))
-                          (tc-spmd-env-bind-id
-                            next-spmd-env
-                            name
-                            bound-ty
-                            init-class
-                            TcSpmdScope.Local)
-                          bindings
-                          mark
-                          (+ index 1)))])]
-                [(ResultTcSpmdExprInfo.Err message)
-                  (ResultTcSpmdLetState.Err message)])]
+              (let
+                [info : TcSpmdExprInfo
+                  (try (tc-spmd-expr ctx expr-bases env spmd-env init))]
+                (match info
+                  [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+                    (let
+                      [bound-ty : ast.AstType
+                        (match maybe-ty
+                          [(ast.AstMaybeType.Some want)
+                            (if (tc-type-contains-any-region
+                              (tc-global-shared-view init-ty))
+                              init-ty
+                              (tc-resolve-type ctx want))]
+                          [(ast.AstMaybeType.No) init-ty])]
+                      (tc-spmd-masked-if-let-bindings-at
+                        ctx
+                        expr-bases
+                        (tc-bind-id env name (tc-global-shared-view bound-ty))
+                        (tc-spmd-env-bind-id
+                          next-spmd-env
+                          name
+                          bound-ty
+                          init-class
+                          TcSpmdScope.Local)
+                        bindings
+                        mark
+                        (+ index 1)))]))]
             [(ResultTcUnit.Err message) (ResultTcSpmdLetState.Err message)]))])))
 
 (define (tc-spmd-masked-if-expr
@@ -46793,34 +46780,32 @@
         (let
           [init : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases init-box)]
-          (match (tc-spmd-expr ctx expr-bases env spmd-env init)
-            [(ResultTcSpmdExprInfo.Ok info)
-              (match info
-                [(TcSpmdExprInfo init-ty init-class next-spmd-env)
-                  (let
-                    [bound-ty : ast.AstType
-                      (match maybe-ty
-                        [(ast.AstMaybeType.Some want)
-                          (if (tc-type-contains-any-region
-                            (tc-global-shared-view init-ty))
-                            init-ty
-                            (tc-resolve-type ctx want))]
-                        [(ast.AstMaybeType.No) init-ty])]
-                    (tc-spmd-let-bindings-at
-                      ctx
-                      expr-bases
-                      (tc-bind-id env name (tc-global-shared-view bound-ty))
-                      (tc-spmd-env-bind-id
-                        next-spmd-env
-                        name
-                        bound-ty
-                        init-class
-                        TcSpmdScope.Local)
-                      bindings
-                      mark
-                      (+ index 1)))])]
-            [(ResultTcSpmdExprInfo.Err message)
-              (ResultTcSpmdLetState.Err message)]))])))
+          [info : TcSpmdExprInfo
+            (try (tc-spmd-expr ctx expr-bases env spmd-env init))]
+          (match info
+            [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+              (let
+                [bound-ty : ast.AstType
+                  (match maybe-ty
+                    [(ast.AstMaybeType.Some want)
+                      (if (tc-type-contains-any-region
+                        (tc-global-shared-view init-ty))
+                        init-ty
+                        (tc-resolve-type ctx want))]
+                    [(ast.AstMaybeType.No) init-ty])]
+                (tc-spmd-let-bindings-at
+                  ctx
+                  expr-bases
+                  (tc-bind-id env name (tc-global-shared-view bound-ty))
+                  (tc-spmd-env-bind-id
+                    next-spmd-env
+                    name
+                    bound-ty
+                    init-class
+                    TcSpmdScope.Local)
+                  bindings
+                  mark
+                  (+ index 1)))]))])))
 
 (define (tc-spmd-expr-list
   [ctx : TcContext]
@@ -46845,28 +46830,26 @@
         (ast.ast-expr-segment-bases-get
           expr-bases
           (ast.ast-expr-list-get exprs index 0))]
-      (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
-        [(ResultTcSpmdExprInfo.Ok info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (match (tc-spmd-expr-list-at
-                ctx
-                expr-bases
-                env
-                next-spmd-env
-                exprs
-                (+ index 1))
-                [(ResultTcSpmdExprListInfo.Ok rest-info)
-                  (match rest-info
-                    [(TcSpmdExprListInfo rest-class rest-env)
-                      (ResultTcSpmdExprListInfo.Ok
-                        (TcSpmdExprListInfo
-                          (tc-spmd-merge-class class rest-class)
-                          rest-env))])]
-                [(ResultTcSpmdExprListInfo.Err message)
-                  (ResultTcSpmdExprListInfo.Err message)])])]
-        [(ResultTcSpmdExprInfo.Err message)
-          (ResultTcSpmdExprListInfo.Err message)]))))
+      [info : TcSpmdExprInfo
+        (try (tc-spmd-expr ctx expr-bases env spmd-env expr))]
+      (match info
+        [(TcSpmdExprInfo _ class next-spmd-env)
+          (let
+            [rest-info : TcSpmdExprListInfo
+              (try
+                (tc-spmd-expr-list-at
+                  ctx
+                  expr-bases
+                  env
+                  next-spmd-env
+                  exprs
+                  (+ index 1)))]
+            (match rest-info
+              [(TcSpmdExprListInfo rest-class rest-env)
+                (ResultTcSpmdExprListInfo.Ok
+                  (TcSpmdExprListInfo
+                    (tc-spmd-merge-class class rest-class)
+                    rest-env))]))]))))
 
 (define (tc-spmd-begin-list
   [ctx : TcContext]
@@ -46893,19 +46876,18 @@
           (ast.ast-expr-list-get exprs index 0))]
       (if (= (+ index 1) exprs.len)
         (tc-spmd-expr ctx expr-bases env spmd-env expr)
-        (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ _ next-spmd-env)
-                (tc-spmd-begin-list-at
-                  ctx
-                  expr-bases
-                  env
-                  next-spmd-env
-                  exprs
-                  (+ index 1))])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)])))))
+        (let
+          [info : TcSpmdExprInfo
+            (try (tc-spmd-expr ctx expr-bases env spmd-env expr))]
+          (match info
+            [(TcSpmdExprInfo _ _ next-spmd-env)
+              (tc-spmd-begin-list-at
+                ctx
+                expr-bases
+                env
+                next-spmd-env
+                exprs
+                (+ index 1))]))))))
 
 (define (tc-spmd-match-pattern-binding-supported?
   [class : TcSpmdClass]
@@ -46949,18 +46931,16 @@
     (ResultTcSpmdEnv.Ok spmd-env)
     (let
       [name-id : i64 (tc-name-id-list-head names)]
-      (match (tc-lookup-id arm-env name-id)
-        [(ResultTcType.Ok ty)
-          (if (tc-spmd-match-pattern-binding-supported?
-            class
-            (tc-global-shared-view ty))
-            (tc-spmd-match-bind-pattern-names
-              arm-env
-              (tc-spmd-env-bind-id spmd-env name-id ty class TcSpmdScope.Local)
-              (tc-name-id-list-rest names)
-              class)
-            (ResultTcSpmdEnv.Err (tc-spmd-match-pattern-binding-diagnostic ty)))]
-        [(ResultTcType.Err message) (ResultTcSpmdEnv.Err message)]))))
+      [ty : ast.AstType (try (tc-lookup-id arm-env name-id))]
+      (if (tc-spmd-match-pattern-binding-supported?
+        class
+        (tc-global-shared-view ty))
+        (tc-spmd-match-bind-pattern-names
+          arm-env
+          (tc-spmd-env-bind-id spmd-env name-id ty class TcSpmdScope.Local)
+          (tc-name-id-list-rest names)
+          class)
+        (ResultTcSpmdEnv.Err (tc-spmd-match-pattern-binding-diagnostic ty))))))
 
 (define (tc-spmd-masked-if-match-arms
   [ctx : TcContext]
@@ -47114,33 +47094,33 @@
                   pattern)
                 scrut-class)
                 [(ResultTcSpmdEnv.Ok arm-spmd-env)
-                  (match (tc-spmd-expr ctx expr-bases arm-env arm-spmd-env body)
-                    [(ResultTcSpmdExprInfo.Ok body-info)
-                      (match body-info
-                        [(TcSpmdExprInfo _ body-class body-env)
-                          (match (tc-spmd-match-arms-at
-                            ctx
-                            expr-bases
-                            env
-                            spmd-env
-                            scrut-ty
-                            scrut-class
-                            arms
-                            (tc-spmd-merge-class class body-class)
-                            (+ index 1))
-                            [(ResultTcSpmdExprListInfo.Ok rest-info)
-                              (match rest-info
-                                [(TcSpmdExprListInfo rest-class rest-env)
-                                  (ResultTcSpmdExprListInfo.Ok
-                                    (TcSpmdExprListInfo
-                                      rest-class
-                                      (tc-spmd-env-merge-classes
-                                        (tc-spmd-env-restore body-env mark)
-                                        rest-env)))])]
-                            [(ResultTcSpmdExprListInfo.Err message)
-                              (ResultTcSpmdExprListInfo.Err message)])])]
-                    [(ResultTcSpmdExprInfo.Err message)
-                      (ResultTcSpmdExprListInfo.Err message)])]
+                  (let
+                    [body-info : TcSpmdExprInfo
+                      (try
+                        (tc-spmd-expr ctx expr-bases arm-env arm-spmd-env body))]
+                    (match body-info
+                      [(TcSpmdExprInfo _ body-class body-env)
+                        (let
+                          [rest-info : TcSpmdExprListInfo
+                            (try
+                              (tc-spmd-match-arms-at
+                                ctx
+                                expr-bases
+                                env
+                                spmd-env
+                                scrut-ty
+                                scrut-class
+                                arms
+                                (tc-spmd-merge-class class body-class)
+                                (+ index 1)))]
+                          (match rest-info
+                            [(TcSpmdExprListInfo rest-class rest-env)
+                              (ResultTcSpmdExprListInfo.Ok
+                                (TcSpmdExprListInfo
+                                  rest-class
+                                  (tc-spmd-env-merge-classes
+                                    (tc-spmd-env-restore body-env mark)
+                                    rest-env)))]))]))]
                 [(ResultTcSpmdEnv.Err message)
                   (ResultTcSpmdExprListInfo.Err message)])]
             [(ResultTcEnv.Err message) (ResultTcSpmdExprListInfo.Err message)]))])))
@@ -47379,9 +47359,9 @@
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]
   [class : TcSpmdClass]) : ResultTcSpmdExprInfo
-  (match (tc-expr ctx env expr)
-    [(ResultTcType.Ok ty) (tc-spmd-finish ty class spmd-env)]
-    [(ResultTcType.Err message) (ResultTcSpmdExprInfo.Err message)]))
+  (let
+    [ty : ast.AstType (try (tc-expr ctx env expr))]
+    (tc-spmd-finish ty class spmd-env)))
 
 (define (tc-spmd-reduce-class-with-expected-or-actual
   [ctx : TcContext]
@@ -47399,9 +47379,10 @@
     [(ResultTcSpmdExprInfo.Ok info)
       (match info
         [(TcSpmdExprInfo _ class next-spmd-env)
-          (match (tc-expr-with-expected-or-actual ctx env expr expected)
-            [(ResultTcType.Ok ty) (tc-spmd-finish ty class next-spmd-env)]
-            [(ResultTcType.Err message) (ResultTcSpmdExprInfo.Err message)])])]
+          (let
+            [ty : ast.AstType
+              (try (tc-expr-with-expected-or-actual ctx env expr expected))]
+            (tc-spmd-finish ty class next-spmd-env))])]
     [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
 
 (define (tc-spmd-reduce-let-bindings
@@ -47438,34 +47419,32 @@
         (let
           [init : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases init-box)]
-          (match (tc-spmd-reduce-class ctx expr-bases env spmd-env init)
-            [(ResultTcSpmdExprInfo.Ok info)
-              (match info
-                [(TcSpmdExprInfo init-ty init-class next-spmd-env)
-                  (let
-                    [bound-ty : ast.AstType
-                      (match maybe-ty
-                        [(ast.AstMaybeType.Some want)
-                          (if (tc-type-contains-any-region
-                            (tc-global-shared-view init-ty))
-                            init-ty
-                            (tc-resolve-type ctx want))]
-                        [(ast.AstMaybeType.No) init-ty])]
-                    (tc-spmd-reduce-let-bindings-at
-                      ctx
-                      expr-bases
-                      (tc-bind-id env name (tc-global-shared-view bound-ty))
-                      (tc-spmd-env-bind-id
-                        next-spmd-env
-                        name
-                        bound-ty
-                        init-class
-                        TcSpmdScope.Local)
-                      bindings
-                      mark
-                      (+ index 1)))])]
-            [(ResultTcSpmdExprInfo.Err message)
-              (ResultTcSpmdLetState.Err message)]))])))
+          [info : TcSpmdExprInfo
+            (try (tc-spmd-reduce-class ctx expr-bases env spmd-env init))]
+          (match info
+            [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+              (let
+                [bound-ty : ast.AstType
+                  (match maybe-ty
+                    [(ast.AstMaybeType.Some want)
+                      (if (tc-type-contains-any-region
+                        (tc-global-shared-view init-ty))
+                        init-ty
+                        (tc-resolve-type ctx want))]
+                    [(ast.AstMaybeType.No) init-ty])]
+                (tc-spmd-reduce-let-bindings-at
+                  ctx
+                  expr-bases
+                  (tc-bind-id env name (tc-global-shared-view bound-ty))
+                  (tc-spmd-env-bind-id
+                    next-spmd-env
+                    name
+                    bound-ty
+                    init-class
+                    TcSpmdScope.Local)
+                  bindings
+                  mark
+                  (+ index 1)))]))])))
 
 (define (tc-spmd-reduce-class
   [ctx : TcContext]
@@ -47522,57 +47501,48 @@
           (ast.ast-expr-segment-bases-get expr-bases left-box)]
         [right : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases right-box)]
-        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env left)
-          [(ResultTcSpmdExprInfo.Ok left-info)
-            (match left-info
-              [(TcSpmdExprInfo _ left-class left-env)
-                (match (tc-spmd-reduce-class ctx expr-bases env left-env right)
-                  [(ResultTcSpmdExprInfo.Ok right-info)
-                    (match right-info
-                      [(TcSpmdExprInfo _ right-class right-env)
-                        (tc-spmd-reduce-class-finish
-                          ctx
-                          env
-                          right-env
-                          expr
-                          (tc-spmd-merge-class left-class right-class))])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [left-info : TcSpmdExprInfo
+          (try (tc-spmd-reduce-class ctx expr-bases env spmd-env left))]
+        (match left-info
+          [(TcSpmdExprInfo _ left-class left-env)
+            (let
+              [right-info : TcSpmdExprInfo
+                (try (tc-spmd-reduce-class ctx expr-bases env left-env right))]
+              (match right-info
+                [(TcSpmdExprInfo _ right-class right-env)
+                  (tc-spmd-reduce-class-finish
+                    ctx
+                    env
+                    right-env
+                    expr
+                    (tc-spmd-merge-class left-class right-class))]))]))]
     [(ast.AstExpr.Unary _ inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-reduce-class-finish ctx env next-spmd-env expr class)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [info : TcSpmdExprInfo
+          (try (tc-spmd-reduce-class ctx expr-bases env spmd-env inner))]
+        (match info
+          [(TcSpmdExprInfo _ class next-spmd-env)
+            (tc-spmd-reduce-class-finish ctx env next-spmd-env expr class)]))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-reduce-class-finish ctx env next-spmd-env expr class)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [info : TcSpmdExprInfo
+          (try (tc-spmd-reduce-class ctx expr-bases env spmd-env inner))]
+        (match info
+          [(TcSpmdExprInfo _ class next-spmd-env)
+            (tc-spmd-reduce-class-finish ctx env next-spmd-env expr class)]))]
     [(ast.AstExpr.Cast inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-reduce-class-finish ctx env next-spmd-env expr class)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [info : TcSpmdExprInfo
+          (try (tc-spmd-reduce-class ctx expr-bases env spmd-env inner))]
+        (match info
+          [(TcSpmdExprInfo _ class next-spmd-env)
+            (tc-spmd-reduce-class-finish ctx env next-spmd-env expr class)]))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -47589,23 +47559,23 @@
               [(ResultTcSpmdLetState.Ok state)
                 (match state
                   [(TcSpmdLetState body-env body-spmd-env mark)
-                    (match (tc-spmd-reduce-class
-                      ctx
-                      expr-bases
-                      body-env
-                      body-spmd-env
-                      body)
-                      [(ResultTcSpmdExprInfo.Ok body-info)
-                        (match body-info
-                          [(TcSpmdExprInfo _ body-class final-spmd-env)
-                            (tc-spmd-reduce-class-finish
-                              ctx
-                              env
-                              (tc-spmd-env-restore final-spmd-env mark)
-                              expr
-                              body-class)])]
-                      [(ResultTcSpmdExprInfo.Err message)
-                        (ResultTcSpmdExprInfo.Err message)])])]
+                    (let
+                      [body-info : TcSpmdExprInfo
+                        (try
+                          (tc-spmd-reduce-class
+                            ctx
+                            expr-bases
+                            body-env
+                            body-spmd-env
+                            body))]
+                      (match body-info
+                        [(TcSpmdExprInfo _ body-class final-spmd-env)
+                          (tc-spmd-reduce-class-finish
+                            ctx
+                            env
+                            (tc-spmd-env-restore final-spmd-env mark)
+                            expr
+                            body-class)]))])]
               [(ResultTcSpmdLetState.Err message)
                 (ResultTcSpmdExprInfo.Err message)]))])]
     [(ast.AstExpr.ArrayRef array-box index-box)
@@ -47614,93 +47584,82 @@
           (ast.ast-expr-segment-bases-get expr-bases array-box)]
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env array)
-          [(ResultTcSpmdExprInfo.Ok array-info)
-            (match array-info
-              [(TcSpmdExprInfo _ array-class array-env)
-                (match (tc-spmd-reduce-class ctx expr-bases env array-env index)
-                  [(ResultTcSpmdExprInfo.Ok index-info)
-                    (match index-info
-                      [(TcSpmdExprInfo _ index-class index-env)
-                        (tc-spmd-reduce-class-finish
-                          ctx
-                          env
-                          index-env
-                          expr
-                          (tc-spmd-merge-class array-class index-class))])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [array-info : TcSpmdExprInfo
+          (try (tc-spmd-reduce-class ctx expr-bases env spmd-env array))]
+        (match array-info
+          [(TcSpmdExprInfo _ array-class array-env)
+            (let
+              [index-info : TcSpmdExprInfo
+                (try (tc-spmd-reduce-class ctx expr-bases env array-env index))]
+              (match index-info
+                [(TcSpmdExprInfo _ index-class index-env)
+                  (tc-spmd-reduce-class-finish
+                    ctx
+                    env
+                    index-env
+                    expr
+                    (tc-spmd-merge-class array-class index-class))]))]))]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         [lane : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env value)
-          [(ResultTcSpmdExprInfo.Ok value-info)
-            (match value-info
-              [(TcSpmdExprInfo _ value-class value-env)
-                (match (tc-spmd-reduce-class-with-expected-or-actual
-                  ctx
-                  expr-bases
-                  env
-                  value-env
-                  lane
-                  (ast.AstType.I64))
-                  [(ResultTcSpmdExprInfo.Ok lane-info)
-                    (match lane-info
-                      [(TcSpmdExprInfo lane-ty lane-class lane-env)
-                        (match (tc-expr ctx env expr)
-                          [(ResultTcType.Ok expr-ty)
-                            (tc-spmd-broadcast-finish
-                              ctx
-                              expr-ty
-                              value-class
-                              lane-ty
-                              lane-class
-                              lane-env)]
-                          [(ResultTcType.Err message)
-                            (ResultTcSpmdExprInfo.Err message)])])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [value-info : TcSpmdExprInfo
+          (try (tc-spmd-reduce-class ctx expr-bases env spmd-env value))]
+        (match value-info
+          [(TcSpmdExprInfo _ value-class value-env)
+            (let
+              [lane-info : TcSpmdExprInfo
+                (try
+                  (tc-spmd-reduce-class-with-expected-or-actual
+                    ctx
+                    expr-bases
+                    env
+                    value-env
+                    lane
+                    (ast.AstType.I64)))]
+              (match lane-info
+                [(TcSpmdExprInfo lane-ty lane-class lane-env)
+                  (let
+                    [expr-ty : ast.AstType (try (tc-expr ctx env expr))]
+                    (tc-spmd-broadcast-finish
+                      ctx
+                      expr-ty
+                      value-class
+                      lane-ty
+                      lane-class
+                      lane-env))]))]))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         [lane : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env value)
-          [(ResultTcSpmdExprInfo.Ok value-info)
-            (match value-info
-              [(TcSpmdExprInfo _ value-class value-env)
-                (match (tc-spmd-reduce-class-with-expected-or-actual
-                  ctx
-                  expr-bases
-                  env
-                  value-env
-                  lane
-                  (ast.AstType.I64))
-                  [(ResultTcSpmdExprInfo.Ok lane-info)
-                    (match lane-info
-                      [(TcSpmdExprInfo lane-ty _ lane-env)
-                        (match (tc-expr ctx env expr)
-                          [(ResultTcType.Ok expr-ty)
-                            (tc-spmd-shuffle-finish
-                              ctx
-                              expr-ty
-                              value-class
-                              lane-ty
-                              lane-env)]
-                          [(ResultTcType.Err message)
-                            (ResultTcSpmdExprInfo.Err message)])])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [value-info : TcSpmdExprInfo
+          (try (tc-spmd-reduce-class ctx expr-bases env spmd-env value))]
+        (match value-info
+          [(TcSpmdExprInfo _ value-class value-env)
+            (let
+              [lane-info : TcSpmdExprInfo
+                (try
+                  (tc-spmd-reduce-class-with-expected-or-actual
+                    ctx
+                    expr-bases
+                    env
+                    value-env
+                    lane
+                    (ast.AstType.I64)))]
+              (match lane-info
+                [(TcSpmdExprInfo lane-ty _ lane-env)
+                  (let
+                    [expr-ty : ast.AstType (try (tc-expr ctx env expr))]
+                    (tc-spmd-shuffle-finish
+                      ctx
+                      expr-ty
+                      value-class
+                      lane-ty
+                      lane-env))]))]))]
     [_ (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdClass.Uniform)]))
 
 (define (tc-spmd-check-reduce-value-broadcasts
@@ -47797,12 +47756,12 @@
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-expr-list ctx expr-bases env spmd-env args)
-    [(ResultTcSpmdExprListInfo.Ok info)
-      (match info
-        [(TcSpmdExprListInfo class next-env)
-          (tc-spmd-finish expr-ty class next-env)])]
-    [(ResultTcSpmdExprListInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
+  (let
+    [info : TcSpmdExprListInfo
+      (try (tc-spmd-expr-list ctx expr-bases env spmd-env args))]
+    (match info
+      [(TcSpmdExprListInfo class next-env)
+        (tc-spmd-finish expr-ty class next-env)])))
 
 (define (tc-spmd-for-owned-state
   [ctx : TcContext]
@@ -47820,49 +47779,38 @@
     [body-expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body)]
     [source-name-id : i64 (tc-for-owned-name-id expr-bases source-name)]
     [index-name-id : i64 (tc-for-owned-name-id expr-bases index-name)]
-    (match (tc-spmd-expr ctx expr-bases env spmd-env source-expr)
-      [(ResultTcSpmdExprInfo.Ok source-info)
-        (match source-info
-          [(TcSpmdExprInfo source-ty source-class source-env)
-            (let
-              [mark : TcSpmdEnvMark
-                (tc-spmd-env-mark (tc-global-shared-view source-env))]
-              [body-env : TcTypeEnv
-                (tc-bind-id
-                  (tc-bind-id
-                    env
-                    source-name-id
-                    (tc-global-shared-view source-ty))
-                  index-name-id
-                  (ast.AstType.I64))]
-              [body-spmd-env : TcSpmdEnv
-                (tc-spmd-env-bind-id
-                  (tc-spmd-env-bind-id
-                    source-env
-                    source-name-id
-                    source-ty
-                    source-class
-                    TcSpmdScope.Local)
-                  index-name-id
-                  (ast.AstType.I64)
-                  TcSpmdClass.Uniform
-                  TcSpmdScope.Local)]
-              (match (tc-spmd-expr
-                ctx
-                expr-bases
-                body-env
-                body-spmd-env
-                body-expr)
-                [(ResultTcSpmdExprInfo.Ok body-info)
-                  (match body-info
-                    [(TcSpmdExprInfo _ body-class final-env)
-                      (tc-spmd-finish
-                        expr-ty
-                        body-class
-                        (tc-spmd-env-restore final-env mark))])]
-                [(ResultTcSpmdExprInfo.Err message)
-                  (ResultTcSpmdExprInfo.Err message)]))])]
-      [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)])))
+    [source-info : TcSpmdExprInfo
+      (try (tc-spmd-expr ctx expr-bases env spmd-env source-expr))]
+    (match source-info
+      [(TcSpmdExprInfo source-ty source-class source-env)
+        (let
+          [mark : TcSpmdEnvMark
+            (tc-spmd-env-mark (tc-global-shared-view source-env))]
+          [body-env : TcTypeEnv
+            (tc-bind-id
+              (tc-bind-id env source-name-id (tc-global-shared-view source-ty))
+              index-name-id
+              (ast.AstType.I64))]
+          [body-spmd-env : TcSpmdEnv
+            (tc-spmd-env-bind-id
+              (tc-spmd-env-bind-id
+                source-env
+                source-name-id
+                source-ty
+                source-class
+                TcSpmdScope.Local)
+              index-name-id
+              (ast.AstType.I64)
+              TcSpmdClass.Uniform
+              TcSpmdScope.Local)]
+          [body-info : TcSpmdExprInfo
+            (try (tc-spmd-expr ctx expr-bases body-env body-spmd-env body-expr))]
+          (match body-info
+            [(TcSpmdExprInfo _ body-class final-env)
+              (tc-spmd-finish
+                expr-ty
+                body-class
+                (tc-spmd-env-restore final-env mark))]))])))
 
 (define (tc-spmd-for-owned-step-body
   [ctx : TcContext]
@@ -47887,15 +47835,11 @@
         item-class
         TcSpmdScope.Local)]
     [body-expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body)]
-    (match (tc-spmd-expr ctx expr-bases body-env body-spmd-env body-expr)
-      [(ResultTcSpmdExprInfo.Ok body-info)
-        (match body-info
-          [(TcSpmdExprInfo _ body-class final-env)
-            (tc-spmd-finish
-              expr-ty
-              body-class
-              (tc-spmd-env-restore final-env mark))])]
-      [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)])))
+    [body-info : TcSpmdExprInfo
+      (try (tc-spmd-expr ctx expr-bases body-env body-spmd-env body-expr))]
+    (match body-info
+      [(TcSpmdExprInfo _ body-class final-env)
+        (tc-spmd-finish expr-ty body-class (tc-spmd-env-restore final-env mark))])))
 
 (define (tc-spmd-for-owned-step
   [ctx : TcContext]
@@ -47915,41 +47859,38 @@
       (ast.ast-expr-segment-bases-get expr-bases index-name)]
     [done-expr : ast.AstExpr
       (ast.ast-expr-segment-bases-get expr-bases done-name)]
-    (match (tc-spmd-expr ctx expr-bases env spmd-env source-expr)
-      [(ResultTcSpmdExprInfo.Ok source-info)
-        (match source-info
-          [(TcSpmdExprInfo source-ty source-class source-env)
-            (match (tc-spmd-expr ctx expr-bases env source-env index-expr)
-              [(ResultTcSpmdExprInfo.Ok index-info)
-                (match index-info
-                  [(TcSpmdExprInfo _ index-class index-env)
-                    (match (tc-spmd-expr ctx expr-bases env index-env done-expr)
-                      [(ResultTcSpmdExprInfo.Ok done-info)
-                        (match done-info
-                          [(TcSpmdExprInfo _ done-class done-env)
-                            (match (tc-type-strip-region
-                              (tc-resolve-type ctx source-ty))
-                              [(ast.AstType.Array elem-id _)
-                                (tc-spmd-for-owned-step-body
-                                  ctx
-                                  expr-bases
-                                  env
-                                  done-env
-                                  binding-name
-                                  body
-                                  (tc-context-type-get ctx elem-id)
-                                  (tc-spmd-merge-class
-                                    source-class
-                                    (tc-spmd-merge-class index-class done-class))
-                                  expr-ty)]
-                              [_
-                                (ResultTcSpmdExprInfo.Err
-                                  "typecheck: scalar for owned step requires fixed-array state")])])]
-                      [(ResultTcSpmdExprInfo.Err message)
-                        (ResultTcSpmdExprInfo.Err message)])])]
-              [(ResultTcSpmdExprInfo.Err message)
-                (ResultTcSpmdExprInfo.Err message)])])]
-      [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)])))
+    [source-info : TcSpmdExprInfo
+      (try (tc-spmd-expr ctx expr-bases env spmd-env source-expr))]
+    (match source-info
+      [(TcSpmdExprInfo source-ty source-class source-env)
+        (let
+          [index-info : TcSpmdExprInfo
+            (try (tc-spmd-expr ctx expr-bases env source-env index-expr))]
+          (match index-info
+            [(TcSpmdExprInfo _ index-class index-env)
+              (let
+                [done-info : TcSpmdExprInfo
+                  (try (tc-spmd-expr ctx expr-bases env index-env done-expr))]
+                (match done-info
+                  [(TcSpmdExprInfo _ done-class done-env)
+                    (match (tc-type-strip-region
+                      (tc-resolve-type ctx source-ty))
+                      [(ast.AstType.Array elem-id _)
+                        (tc-spmd-for-owned-step-body
+                          ctx
+                          expr-bases
+                          env
+                          done-env
+                          binding-name
+                          body
+                          (tc-context-type-get ctx elem-id)
+                          (tc-spmd-merge-class
+                            source-class
+                            (tc-spmd-merge-class index-class done-class))
+                          expr-ty)]
+                      [_
+                        (ResultTcSpmdExprInfo.Err
+                          "typecheck: scalar for owned step requires fixed-array state")])]))]))])))
 
 (define (tc-spmd-expr-typed
   [ctx : TcContext]
@@ -48020,24 +47961,20 @@
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish-ctx ctx expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env inner))]
+        (match info
+          [(TcSpmdExprInfo _ class next-spmd-env)
+            (tc-spmd-finish-ctx ctx expr-ty class next-spmd-env)]))]
     [(ast.AstExpr.Cast inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
-          [(ResultTcSpmdExprInfo.Ok info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish-ctx ctx expr-ty class next-spmd-env)])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env inner))]
+        (match info
+          [(TcSpmdExprInfo _ class next-spmd-env)
+            (tc-spmd-finish-ctx ctx expr-ty class next-spmd-env)]))]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr
@@ -48055,49 +47992,45 @@
           (ast.ast-expr-segment-bases-get expr-bases then-branch-box)]
         [else-branch : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases else-branch-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env cond)
-          [(ResultTcSpmdExprInfo.Ok cond-info)
-            (match cond-info
-              [(TcSpmdExprInfo _ cond-class cond-env)
-                (if (tc-spmd-varying? cond-class)
-                  (tc-spmd-masked-if
-                    ctx
-                    expr-bases
-                    env
-                    cond-env
-                    expr-ty
-                    then-branch
-                    else-branch)
-                  (match (tc-spmd-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view cond-env)
-                    then-branch)
-                    [(ResultTcSpmdExprInfo.Ok then-info)
-                      (match then-info
-                        [(TcSpmdExprInfo _ then-class then-env)
-                          (match (tc-spmd-expr
-                            ctx
-                            expr-bases
-                            env
-                            cond-env
-                            else-branch)
-                            [(ResultTcSpmdExprInfo.Ok else-info)
-                              (match else-info
-                                [(TcSpmdExprInfo _ else-class else-env)
-                                  (tc-spmd-finish
-                                    expr-ty
-                                    (tc-spmd-merge-class then-class else-class)
-                                    (tc-spmd-env-merge-classes
-                                      then-env
-                                      else-env))])]
-                            [(ResultTcSpmdExprInfo.Err message)
-                              (ResultTcSpmdExprInfo.Err message)])])]
-                    [(ResultTcSpmdExprInfo.Err message)
-                      (ResultTcSpmdExprInfo.Err message)]))])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [cond-info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env cond))]
+        (match cond-info
+          [(TcSpmdExprInfo _ cond-class cond-env)
+            (if (tc-spmd-varying? cond-class)
+              (tc-spmd-masked-if
+                ctx
+                expr-bases
+                env
+                cond-env
+                expr-ty
+                then-branch
+                else-branch)
+              (match (tc-spmd-expr
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view cond-env)
+                then-branch)
+                [(ResultTcSpmdExprInfo.Ok then-info)
+                  (match then-info
+                    [(TcSpmdExprInfo _ then-class then-env)
+                      (let
+                        [else-info : TcSpmdExprInfo
+                          (try
+                            (tc-spmd-expr
+                              ctx
+                              expr-bases
+                              env
+                              cond-env
+                              else-branch))]
+                        (match else-info
+                          [(TcSpmdExprInfo _ else-class else-env)
+                            (tc-spmd-finish
+                              expr-ty
+                              (tc-spmd-merge-class then-class else-class)
+                              (tc-spmd-env-merge-classes then-env else-env))]))])]
+                [(ResultTcSpmdExprInfo.Err message)
+                  (ResultTcSpmdExprInfo.Err message)]))]))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -48114,21 +48047,21 @@
               [(ResultTcSpmdLetState.Ok state)
                 (match state
                   [(TcSpmdLetState body-env body-spmd-env mark)
-                    (match (tc-spmd-expr
-                      ctx
-                      expr-bases
-                      body-env
-                      body-spmd-env
-                      body)
-                      [(ResultTcSpmdExprInfo.Ok body-info)
-                        (match body-info
-                          [(TcSpmdExprInfo _ body-class final-spmd-env)
-                            (tc-spmd-finish
-                              expr-ty
-                              body-class
-                              (tc-spmd-env-restore final-spmd-env mark))])]
-                      [(ResultTcSpmdExprInfo.Err message)
-                        (ResultTcSpmdExprInfo.Err message)])])]
+                    (let
+                      [body-info : TcSpmdExprInfo
+                        (try
+                          (tc-spmd-expr
+                            ctx
+                            expr-bases
+                            body-env
+                            body-spmd-env
+                            body))]
+                      (match body-info
+                        [(TcSpmdExprInfo _ body-class final-spmd-env)
+                          (tc-spmd-finish
+                            expr-ty
+                            body-class
+                            (tc-spmd-env-restore final-spmd-env mark))]))])]
               [(ResultTcSpmdLetState.Err message)
                 (ResultTcSpmdExprInfo.Err message)]))])]
     [(ast.AstExpr.Lambda _)
@@ -48139,23 +48072,20 @@
           (ast.ast-expr-segment-bases-get expr-bases array-box)]
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env array)
-          [(ResultTcSpmdExprInfo.Ok array-info)
-            (match array-info
-              [(TcSpmdExprInfo _ array-class array-env)
-                (match (tc-spmd-expr ctx expr-bases env array-env index)
-                  [(ResultTcSpmdExprInfo.Ok index-info)
-                    (match index-info
-                      [(TcSpmdExprInfo _ index-class index-env)
-                        (tc-spmd-finish-lane
-                          ctx
-                          expr-ty
-                          (tc-spmd-merge-class array-class index-class)
-                          index-env)])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [array-info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env array))]
+        (match array-info
+          [(TcSpmdExprInfo _ array-class array-env)
+            (let
+              [index-info : TcSpmdExprInfo
+                (try (tc-spmd-expr ctx expr-bases env array-env index))]
+              (match index-info
+                [(TcSpmdExprInfo _ index-class index-env)
+                  (tc-spmd-finish-lane
+                    ctx
+                    expr-ty
+                    (tc-spmd-merge-class array-class index-class)
+                    index-env)]))]))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (let
         [array : ast.AstExpr
@@ -48164,91 +48094,84 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env array)
-          [(ResultTcSpmdExprInfo.Ok array-info)
-            (match array-info
-              [(TcSpmdExprInfo array-ty array-class array-env)
-                (match (tc-spmd-expr
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view array-env)
-                  (tc-global-shared-view index))
-                  [(ResultTcSpmdExprInfo.Ok index-info)
-                    (match index-info
-                      [(TcSpmdExprInfo _ index-class index-env)
-                        (match (if (tc-spmd-varying? index-class)
-                          (tc-spmd-foreach-index
-                            ctx
-                            expr-bases
-                            env
-                            array-env
-                            index)
-                          ResultTcUnit.Ok)
-                          [(ResultTcUnit.Ok)
-                            (match (tc-spmd-array-value-expr
-                              ctx
-                              expr-bases
-                              env
-                              index-env
-                              (tc-global-shared-view array-ty)
-                              value)
-                              [(ResultTcSpmdExprInfo.Ok value-info)
-                                (match value-info
-                                  [(TcSpmdExprInfo _ value-class value-env)
-                                    (let
-                                      [write-class : TcSpmdClass
-                                        (tc-spmd-merge-class
-                                          array-class
-                                          (tc-spmd-merge-class
-                                            index-class
-                                            value-class))]
-                                      (match (tc-type-strip-region array-ty)
-                                        [(ast.AstType.Array elem-ty _)
-                                          (if (and
-                                            (tc-spmd-varying? write-class)
-                                            (not
-                                              (tc-spmd-lane-type-supported?
-                                                (ast.ty-node-get elem-ty))))
-                                            (ResultTcSpmdExprInfo.Err
-                                              (str_cat.str-cat
-                                                "typecheck: foreach varying array lane type is not supported: "
-                                                (tc-type-render
-                                                  (tc-type-strip-region
-                                                    (ast.ty-node-get elem-ty)))))
-                                            (tc-spmd-finish
-                                              expr-ty
-                                              TcSpmdClass.Uniform
-                                              value-env))]
-                                        [(ast.AstType.DynArray elem-ty)
-                                          (if (and
-                                            (tc-spmd-varying? write-class)
-                                            (not
-                                              (tc-spmd-lane-type-supported?
-                                                (ast.ty-node-get elem-ty))))
-                                            (ResultTcSpmdExprInfo.Err
-                                              (str_cat.str-cat
-                                                "typecheck: foreach varying array lane type is not supported: "
-                                                (tc-type-render
-                                                  (tc-type-strip-region
-                                                    (ast.ty-node-get elem-ty)))))
-                                            (tc-spmd-finish
-                                              expr-ty
-                                              TcSpmdClass.Uniform
-                                              value-env))]
-                                        [_
-                                          (tc-spmd-finish
-                                            expr-ty
-                                            TcSpmdClass.Uniform
-                                            value-env)]))])]
-                              [(ResultTcSpmdExprInfo.Err message)
-                                (ResultTcSpmdExprInfo.Err message)])]
-                          [(ResultTcUnit.Err message)
-                            (ResultTcSpmdExprInfo.Err message)])])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [array-info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env array))]
+        (match array-info
+          [(TcSpmdExprInfo array-ty array-class array-env)
+            (match (tc-spmd-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view array-env)
+              (tc-global-shared-view index))
+              [(ResultTcSpmdExprInfo.Ok index-info)
+                (match index-info
+                  [(TcSpmdExprInfo _ index-class index-env)
+                    (match (if (tc-spmd-varying? index-class)
+                      (tc-spmd-foreach-index ctx expr-bases env array-env index)
+                      ResultTcUnit.Ok)
+                      [(ResultTcUnit.Ok)
+                        (match (tc-spmd-array-value-expr
+                          ctx
+                          expr-bases
+                          env
+                          index-env
+                          (tc-global-shared-view array-ty)
+                          value)
+                          [(ResultTcSpmdExprInfo.Ok value-info)
+                            (match value-info
+                              [(TcSpmdExprInfo _ value-class value-env)
+                                (let
+                                  [write-class : TcSpmdClass
+                                    (tc-spmd-merge-class
+                                      array-class
+                                      (tc-spmd-merge-class
+                                        index-class
+                                        value-class))]
+                                  (match (tc-type-strip-region array-ty)
+                                    [(ast.AstType.Array elem-ty _)
+                                      (if (and
+                                        (tc-spmd-varying? write-class)
+                                        (not
+                                          (tc-spmd-lane-type-supported?
+                                            (ast.ty-node-get elem-ty))))
+                                        (ResultTcSpmdExprInfo.Err
+                                          (str_cat.str-cat
+                                            "typecheck: foreach varying array lane type is not supported: "
+                                            (tc-type-render
+                                              (tc-type-strip-region
+                                                (ast.ty-node-get elem-ty)))))
+                                        (tc-spmd-finish
+                                          expr-ty
+                                          TcSpmdClass.Uniform
+                                          value-env))]
+                                    [(ast.AstType.DynArray elem-ty)
+                                      (if (and
+                                        (tc-spmd-varying? write-class)
+                                        (not
+                                          (tc-spmd-lane-type-supported?
+                                            (ast.ty-node-get elem-ty))))
+                                        (ResultTcSpmdExprInfo.Err
+                                          (str_cat.str-cat
+                                            "typecheck: foreach varying array lane type is not supported: "
+                                            (tc-type-render
+                                              (tc-type-strip-region
+                                                (ast.ty-node-get elem-ty)))))
+                                        (tc-spmd-finish
+                                          expr-ty
+                                          TcSpmdClass.Uniform
+                                          value-env))]
+                                    [_
+                                      (tc-spmd-finish
+                                        expr-ty
+                                        TcSpmdClass.Uniform
+                                        value-env)]))])]
+                          [(ResultTcSpmdExprInfo.Err message)
+                            (ResultTcSpmdExprInfo.Err message)])]
+                      [(ResultTcUnit.Err message)
+                        (ResultTcSpmdExprInfo.Err message)])])]
+              [(ResultTcSpmdExprInfo.Err message)
+                (ResultTcSpmdExprInfo.Err message)])]))]
     [(ast.AstExpr.ArrayTake _ _ _)
       (ResultTcSpmdExprInfo.Err
         "typecheck: array-take! is not supported in SPMD")]
@@ -48263,86 +48186,63 @@
           (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env receiver)
-          [(ResultTcSpmdExprInfo.Ok receiver-info)
-            (match receiver-info
-              [(TcSpmdExprInfo receiver-ty receiver-class receiver-env)
-                (match (tc-spmd-expr ctx expr-bases env receiver-env value)
-                  [(ResultTcSpmdExprInfo.Ok value-info)
-                    (match value-info
-                      [(TcSpmdExprInfo _ value-class value-env)
-                        (match (tc-struct-set-field-type-id
-                          ctx
-                          receiver-ty
-                          field)
-                          [(ResultTcType.Ok field-ty)
-                            (let
-                              [write-class : TcSpmdClass
-                                (tc-spmd-merge-class receiver-class value-class)]
-                              (if (and
-                                (tc-spmd-varying? write-class)
-                                (not
-                                  (tc-spmd-lane-type-supported?
-                                    (tc-type-strip-region
-                                      (tc-global-shared-view field-ty)))))
-                                (ResultTcSpmdExprInfo.Err
-                                  (str_cat.str-cat
-                                    "typecheck: foreach varying struct field type is not supported: "
-                                    (tc-type-render
-                                      (tc-type-strip-region field-ty))))
-                                (tc-spmd-finish
-                                  expr-ty
-                                  TcSpmdClass.Uniform
-                                  value-env)))]
-                          [(ResultTcType.Err message)
-                            (ResultTcSpmdExprInfo.Err message)])])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [receiver-info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env receiver))]
+        (match receiver-info
+          [(TcSpmdExprInfo receiver-ty receiver-class receiver-env)
+            (let
+              [value-info : TcSpmdExprInfo
+                (try (tc-spmd-expr ctx expr-bases env receiver-env value))]
+              (match value-info
+                [(TcSpmdExprInfo _ value-class value-env)
+                  (let
+                    [field-ty : ast.AstType
+                      (try (tc-struct-set-field-type-id ctx receiver-ty field))]
+                    [write-class : TcSpmdClass
+                      (tc-spmd-merge-class receiver-class value-class)]
+                    (if (and
+                      (tc-spmd-varying? write-class)
+                      (not
+                        (tc-spmd-lane-type-supported?
+                          (tc-type-strip-region
+                            (tc-global-shared-view field-ty)))))
+                      (ResultTcSpmdExprInfo.Err
+                        (str_cat.str-cat
+                          "typecheck: foreach varying struct field type is not supported: "
+                          (tc-type-render (tc-type-strip-region field-ty))))
+                      (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))]))]))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases array-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env array)
-          [(ResultTcSpmdExprInfo.Ok array-info)
-            (match array-info
-              [(TcSpmdExprInfo array-ty array-class array-env)
-                (match (tc-spmd-expr ctx expr-bases env array-env value)
-                  [(ResultTcSpmdExprInfo.Ok value-info)
-                    (match value-info
-                      [(TcSpmdExprInfo _ value-class value-env)
-                        (let
-                          [write-class : TcSpmdClass
-                            (tc-spmd-merge-class array-class value-class)]
-                          (match (tc-type-strip-region array-ty)
-                            [(ast.AstType.DynArray elem-ty)
-                              (if (and
-                                (tc-spmd-varying? write-class)
-                                (not
-                                  (tc-spmd-lane-type-supported?
-                                    (ast.ty-node-get elem-ty))))
-                                (ResultTcSpmdExprInfo.Err
-                                  (str_cat.str-cat
-                                    "typecheck: foreach varying array lane type is not supported: "
-                                    (tc-type-render
-                                      (tc-type-strip-region
-                                        (ast.ty-node-get elem-ty)))))
-                                (tc-spmd-finish
-                                  expr-ty
-                                  TcSpmdClass.Uniform
-                                  value-env))]
-                            [_
-                              (tc-spmd-finish
-                                expr-ty
-                                TcSpmdClass.Uniform
-                                value-env)]))])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [array-info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env array))]
+        (match array-info
+          [(TcSpmdExprInfo array-ty array-class array-env)
+            (let
+              [value-info : TcSpmdExprInfo
+                (try (tc-spmd-expr ctx expr-bases env array-env value))]
+              (match value-info
+                [(TcSpmdExprInfo _ value-class value-env)
+                  (let
+                    [write-class : TcSpmdClass
+                      (tc-spmd-merge-class array-class value-class)]
+                    (match (tc-type-strip-region array-ty)
+                      [(ast.AstType.DynArray elem-ty)
+                        (if (and
+                          (tc-spmd-varying? write-class)
+                          (not
+                            (tc-spmd-lane-type-supported?
+                              (ast.ty-node-get elem-ty))))
+                          (ResultTcSpmdExprInfo.Err
+                            (str_cat.str-cat
+                              "typecheck: foreach varying array lane type is not supported: "
+                              (tc-type-render
+                                (tc-type-strip-region (ast.ty-node-get elem-ty)))))
+                          (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env))]
+                      [_ (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)]))]))]))]
     [(ast.AstExpr.While cond-box body-box)
       (let
         [cond : ast.AstExpr
@@ -48439,45 +48339,46 @@
                     expr-ty)]
                 [(ResultTcExprId.Err message)
                   (ResultTcSpmdExprInfo.Err message)])
-              (match (tc-spmd-expr ctx expr-bases env spmd-env value)
-                [(ResultTcSpmdExprInfo.Ok value-info)
-                  (match value-info
-                    [(TcSpmdExprInfo _ value-class value-env)
-                      (if (tc-spmd-env-has-local-id?
+              (let
+                [value-info : TcSpmdExprInfo
+                  (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
+                (match value-info
+                  [(TcSpmdExprInfo _ value-class value-env)
+                    (if (tc-spmd-env-has-local-id?
+                      (tc-global-shared-view value-env)
+                      name)
+                      (tc-spmd-finish
+                        expr-ty
+                        TcSpmdClass.Uniform
+                        (tc-spmd-env-set-local-class-id
+                          value-env
+                          name
+                          value-class))
+                      (if (tc-spmd-env-has-outer-id?
                         (tc-global-shared-view value-env)
                         name)
-                        (tc-spmd-finish
-                          expr-ty
-                          TcSpmdClass.Uniform
-                          (tc-spmd-env-set-local-class-id
-                            value-env
-                            name
-                            value-class))
-                        (if (tc-spmd-env-has-outer-id?
-                          (tc-global-shared-view value-env)
-                          name)
-                          (ResultTcSpmdExprInfo.Err
-                            "typecheck: foreach cannot set binding declared outside foreach")
-                          (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))])]
-                [(ResultTcSpmdExprInfo.Err message)
-                  (ResultTcSpmdExprInfo.Err message)])))])]
+                        (ResultTcSpmdExprInfo.Err
+                          "typecheck: foreach cannot set binding declared outside foreach")
+                        (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))]))))])]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases scrutinee-box)]
-            (match (tc-spmd-expr ctx expr-bases env spmd-env scrutinee)
-              [(ResultTcSpmdExprInfo.Ok scrut-info)
-                (match scrut-info
-                  [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
-                    (let
-                      [initial-class : TcSpmdClass
-                        (match (tc-type-strip-region
-                          (tc-global-shared-view expr-ty))
-                          [(ast.AstType.Unit) TcSpmdClass.Uniform]
-                          [_ scrut-class])]
-                      (match (tc-spmd-match-arms
+            [scrut-info : TcSpmdExprInfo
+              (try (tc-spmd-expr ctx expr-bases env spmd-env scrutinee))]
+            (match scrut-info
+              [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
+                (let
+                  [initial-class : TcSpmdClass
+                    (match (tc-type-strip-region
+                      (tc-global-shared-view expr-ty))
+                      [(ast.AstType.Unit) TcSpmdClass.Uniform]
+                      [_ scrut-class])]
+                  [arms-info : TcSpmdExprListInfo
+                    (try
+                      (tc-spmd-match-arms
                         ctx
                         expr-bases
                         env
@@ -48485,15 +48386,10 @@
                         scrut-ty
                         scrut-class
                         arms
-                        initial-class)
-                        [(ResultTcSpmdExprListInfo.Ok arms-info)
-                          (match arms-info
-                            [(TcSpmdExprListInfo arms-class arms-env)
-                              (tc-spmd-finish expr-ty arms-class arms-env)])]
-                        [(ResultTcSpmdExprListInfo.Err message)
-                          (ResultTcSpmdExprInfo.Err message)]))])]
-              [(ResultTcSpmdExprInfo.Err message)
-                (ResultTcSpmdExprInfo.Err message)]))])]
+                        initial-class))]
+                  (match arms-info
+                    [(TcSpmdExprListInfo arms-class arms-env)
+                      (tc-spmd-finish expr-ty arms-class arms-env)]))]))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
@@ -48504,45 +48400,42 @@
               (ast.ast-expr-segment-bases-get expr-bases end-box)]
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            (match (tc-spmd-expr ctx expr-bases env spmd-env start)
-              [(ResultTcSpmdExprInfo.Ok start-info)
-                (match start-info
-                  [(TcSpmdExprInfo _ start-class start-env)
-                    (match (tc-spmd-require-uniform
-                      start-class
-                      "typecheck: foreach bounds must be uniform")
-                      [(ResultTcUnit.Ok)
-                        (match (tc-spmd-expr ctx expr-bases env start-env end)
-                          [(ResultTcSpmdExprInfo.Ok end-info)
-                            (match end-info
-                              [(TcSpmdExprInfo _ end-class end-env)
-                                (match (tc-spmd-require-uniform
-                                  end-class
-                                  "typecheck: foreach bounds must be uniform")
-                                  [(ResultTcUnit.Ok)
-                                    (match (tc-spmd-check-foreach-body-with-env
-                                      ctx
-                                      expr-bases
-                                      env
-                                      (tc-global-shared-view end-env)
-                                      index
-                                      (tc-resolve-type ctx index-ty)
-                                      body)
-                                      [(ResultTcUnit.Ok)
-                                        (tc-spmd-finish
-                                          expr-ty
-                                          TcSpmdClass.Uniform
-                                          end-env)]
-                                      [(ResultTcUnit.Err message)
-                                        (ResultTcSpmdExprInfo.Err message)])]
-                                  [(ResultTcUnit.Err message)
-                                    (ResultTcSpmdExprInfo.Err message)])])]
-                          [(ResultTcSpmdExprInfo.Err message)
-                            (ResultTcSpmdExprInfo.Err message)])]
-                      [(ResultTcUnit.Err message)
-                        (ResultTcSpmdExprInfo.Err message)])])]
-              [(ResultTcSpmdExprInfo.Err message)
-                (ResultTcSpmdExprInfo.Err message)]))])]
+            [start-info : TcSpmdExprInfo
+              (try (tc-spmd-expr ctx expr-bases env spmd-env start))]
+            (match start-info
+              [(TcSpmdExprInfo _ start-class start-env)
+                (match (tc-spmd-require-uniform
+                  start-class
+                  "typecheck: foreach bounds must be uniform")
+                  [(ResultTcUnit.Ok)
+                    (let
+                      [end-info : TcSpmdExprInfo
+                        (try (tc-spmd-expr ctx expr-bases env start-env end))]
+                      (match end-info
+                        [(TcSpmdExprInfo _ end-class end-env)
+                          (match (tc-spmd-require-uniform
+                            end-class
+                            "typecheck: foreach bounds must be uniform")
+                            [(ResultTcUnit.Ok)
+                              (match (tc-spmd-check-foreach-body-with-env
+                                ctx
+                                expr-bases
+                                env
+                                (tc-global-shared-view end-env)
+                                index
+                                (tc-resolve-type ctx index-ty)
+                                body)
+                                [(ResultTcUnit.Ok)
+                                  (tc-spmd-finish
+                                    expr-ty
+                                    TcSpmdClass.Uniform
+                                    end-env)]
+                                [(ResultTcUnit.Err message)
+                                  (ResultTcSpmdExprInfo.Err message)])]
+                            [(ResultTcUnit.Err message)
+                              (ResultTcSpmdExprInfo.Err message)])]))]
+                  [(ResultTcUnit.Err message)
+                    (ResultTcSpmdExprInfo.Err message)])]))])]
     [(ast.AstExpr.SpmdReduce _)
       (ResultTcSpmdExprInfo.Err
         "typecheck: spmd-reduce inside foreach is not supported")]
@@ -48558,61 +48451,57 @@
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         [lane : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env value)
-          [(ResultTcSpmdExprInfo.Ok value-info)
-            (match value-info
-              [(TcSpmdExprInfo _ value-class value-env)
-                (match (tc-spmd-expr-with-expected-or-actual
-                  ctx
-                  expr-bases
-                  env
-                  value-env
-                  lane
-                  (ast.AstType.I64))
-                  [(ResultTcSpmdExprInfo.Ok lane-info)
-                    (match lane-info
-                      [(TcSpmdExprInfo lane-ty lane-class lane-env)
-                        (tc-spmd-broadcast-finish
-                          ctx
-                          expr-ty
-                          value-class
-                          lane-ty
-                          lane-class
-                          lane-env)])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [value-info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
+        (match value-info
+          [(TcSpmdExprInfo _ value-class value-env)
+            (let
+              [lane-info : TcSpmdExprInfo
+                (try
+                  (tc-spmd-expr-with-expected-or-actual
+                    ctx
+                    expr-bases
+                    env
+                    value-env
+                    lane
+                    (ast.AstType.I64)))]
+              (match lane-info
+                [(TcSpmdExprInfo lane-ty lane-class lane-env)
+                  (tc-spmd-broadcast-finish
+                    ctx
+                    expr-ty
+                    value-class
+                    lane-ty
+                    lane-class
+                    lane-env)]))]))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         [lane : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        (match (tc-spmd-expr ctx expr-bases env spmd-env value)
-          [(ResultTcSpmdExprInfo.Ok value-info)
-            (match value-info
-              [(TcSpmdExprInfo _ value-class value-env)
-                (match (tc-spmd-expr-with-expected-or-actual
-                  ctx
-                  expr-bases
-                  env
-                  value-env
-                  lane
-                  (ast.AstType.I64))
-                  [(ResultTcSpmdExprInfo.Ok lane-info)
-                    (match lane-info
-                      [(TcSpmdExprInfo lane-ty _ lane-env)
-                        (tc-spmd-shuffle-finish
-                          ctx
-                          expr-ty
-                          value-class
-                          lane-ty
-                          lane-env)])]
-                  [(ResultTcSpmdExprInfo.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])])]
-          [(ResultTcSpmdExprInfo.Err message)
-            (ResultTcSpmdExprInfo.Err message)]))]
+        [value-info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
+        (match value-info
+          [(TcSpmdExprInfo _ value-class value-env)
+            (let
+              [lane-info : TcSpmdExprInfo
+                (try
+                  (tc-spmd-expr-with-expected-or-actual
+                    ctx
+                    expr-bases
+                    env
+                    value-env
+                    lane
+                    (ast.AstType.I64)))]
+              (match lane-info
+                [(TcSpmdExprInfo lane-ty _ lane-env)
+                  (tc-spmd-shuffle-finish
+                    ctx
+                    expr-ty
+                    value-class
+                    lane-ty
+                    lane-env)]))]))]
     [(ast.AstExpr.WithRegion region body)
       (tc-spmd-begin-list
         ctx
@@ -48683,31 +48572,30 @@
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (tc-spmd-cpuid-like ctx expr-bases env spmd-env expr-ty leaf subleaf))]
     [(ast.AstExpr.Syscall args)
-      (match (tc-spmd-expr-list ctx expr-bases env spmd-env args)
-        [(ResultTcSpmdExprListInfo.Ok args-info)
-          (match args-info
-            [(TcSpmdExprListInfo args-class args-env)
-              (match (tc-spmd-require-uniform
-                args-class
-                "typecheck: foreach calls with varying arguments are not supported")
-                [(ResultTcUnit.Ok)
-                  (tc-spmd-finish expr-ty TcSpmdClass.Uniform args-env)]
-                [(ResultTcUnit.Err message) (ResultTcSpmdExprInfo.Err message)])])]
-        [(ResultTcSpmdExprListInfo.Err message)
-          (ResultTcSpmdExprInfo.Err message)])]
+      (let
+        [args-info : TcSpmdExprListInfo
+          (try (tc-spmd-expr-list ctx expr-bases env spmd-env args))]
+        (match args-info
+          [(TcSpmdExprListInfo args-class args-env)
+            (match (tc-spmd-require-uniform
+              args-class
+              "typecheck: foreach calls with varying arguments are not supported")
+              [(ResultTcUnit.Ok)
+                (tc-spmd-finish expr-ty TcSpmdClass.Uniform args-env)]
+              [(ResultTcUnit.Err message) (ResultTcSpmdExprInfo.Err message)])]))]
     [_
-      (match (tc-spmd-expr-list
-        ctx
-        expr-bases
-        env
-        spmd-env
-        (ast.ast-expr-child-ids expr))
-        [(ResultTcSpmdExprListInfo.Ok info)
-          (match info
-            [(TcSpmdExprListInfo class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ResultTcSpmdExprListInfo.Err message)
-          (ResultTcSpmdExprInfo.Err message)])]))
+      (let
+        [info : TcSpmdExprListInfo
+          (try
+            (tc-spmd-expr-list
+              ctx
+              expr-bases
+              env
+              spmd-env
+              (ast.ast-expr-child-ids expr)))]
+        (match info
+          [(TcSpmdExprListInfo class next-spmd-env)
+            (tc-spmd-finish expr-ty class next-spmd-env)]))]))
 
 (define (tc-param-list-add-bound-names
   [params : ast.AstParamList]
@@ -48876,19 +48764,32 @@
           (tc-string-list-add bound (tc-env-key-name-text name))
           (+ index 1))])))
 
+;; The free-name walkers: whether an expression names one of `names` where
+;; `bound` does not shadow it, as a read or a `set!` target. With `sets-only?`
+;; only assignments count (a `set!` target or the root of a `replace` place);
+;; lambda capture checks use that to reject mutation of captured bindings while
+;; allowing local parameter/let assignment inside the lambda.
 (define (tc-expr-list-uses-free-names?
   [expr-bases : i64]
   [exprs : ast.AstExprList]
   [names : TcStringList]
-  [bound : TcStringList]) : bool
-  (tc-expr-list-uses-free-names-at? expr-bases (& exprs) 0 names bound))
+  [bound : TcStringList]
+  [sets-only? : bool]) : bool
+  (tc-expr-list-uses-free-names-at?
+    expr-bases
+    (& exprs)
+    0
+    names
+    bound
+    sets-only?))
 
 (define (tc-expr-list-uses-free-names-at?
   [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [names : TcStringList]
-  [bound : TcStringList]) : bool
+  [bound : TcStringList]
+  [sets-only? : bool]) : bool
   (if (>= index exprs.len)
     false
     (or
@@ -48898,32 +48799,37 @@
           expr-bases
           (ast.ast-expr-list-get exprs index 0))
         (tc-global-shared-view names)
-        (tc-global-shared-view bound))
+        (tc-global-shared-view bound)
+        sets-only?)
       (tc-expr-list-uses-free-names-at?
         expr-bases
         exprs
         (+ index 1)
         names
-        bound))))
+        bound
+        sets-only?))))
 
 (define (tc-let-binding-list-uses-free-names?
   [expr-bases : i64]
   [bindings : ast.AstLetBindingList]
   [names : TcStringList]
-  [bound : TcStringList]) : bool
+  [bound : TcStringList]
+  [sets-only? : bool]) : bool
   (tc-let-binding-list-uses-free-names-at?
     expr-bases
     (& bindings)
     names
     bound
-    0))
+    0
+    sets-only?))
 
 (define (tc-let-binding-list-uses-free-names-at?
   [expr-bases : i64]
   [bindings : (& bindings ast.AstLetBindingList)]
   [names : TcStringList]
   [bound : TcStringList]
-  [index : i64]) : bool
+  [index : i64]
+  [sets-only? : bool]) : bool
   (if (>= index (ast.ast-let-binding-list-len bindings))
     false
     (match (ast.ast-let-binding-list-get
@@ -48939,32 +48845,37 @@
               expr-bases
               init
               (tc-global-shared-view names)
-              (tc-global-shared-view bound))
+              (tc-global-shared-view bound)
+              sets-only?)
             (tc-let-binding-list-uses-free-names-at?
               expr-bases
               bindings
               names
               (tc-string-list-add bound (ci.intern-str bind-name))
-              (+ index 1))))])))
+              (+ index 1)
+              sets-only?)))])))
 
 (define (tc-resource-binding-list-uses-free-names?
   [expr-bases : i64]
   [bindings : ast.AstResourceBindingList]
   [names : TcStringList]
-  [bound : TcStringList]) : bool
+  [bound : TcStringList]
+  [sets-only? : bool]) : bool
   (tc-resource-binding-list-uses-free-names-at?
     expr-bases
     (& bindings)
     names
     bound
-    0))
+    0
+    sets-only?))
 
 (define (tc-resource-binding-list-uses-free-names-at?
   [expr-bases : i64]
   [bindings : (& bindings ast.AstResourceBindingList)]
   [names : TcStringList]
   [bound : TcStringList]
-  [index : i64]) : bool
+  [index : i64]
+  [sets-only? : bool]) : bool
   (if (>= index (ast.ast-resource-binding-list-len bindings))
     false
     (match (ast.ast-resource-binding-list-get
@@ -48982,32 +48893,43 @@
               expr-bases
               init
               (tc-global-shared-view names)
-              (tc-global-shared-view bound))
+              (tc-global-shared-view bound)
+              sets-only?)
             (tc-expr-uses-free-names?
               expr-bases
               cleanup
               (tc-global-shared-view names)
-              (tc-global-shared-view bound))
+              (tc-global-shared-view bound)
+              sets-only?)
             (tc-resource-binding-list-uses-free-names-at?
               expr-bases
               bindings
               names
               (tc-string-list-add bound (ci.intern-str bind-name))
-              (+ index 1))))])))
+              (+ index 1)
+              sets-only?)))])))
 
 (define (tc-match-arms-use-free-names?
   [expr-bases : i64]
   [arms : ast.AstMatchArmList]
   [names : TcStringList]
-  [bound : TcStringList]) : bool
-  (tc-match-arms-use-free-names-at? expr-bases (& arms) names bound 0))
+  [bound : TcStringList]
+  [sets-only? : bool]) : bool
+  (tc-match-arms-use-free-names-at?
+    expr-bases
+    (& arms)
+    names
+    bound
+    0
+    sets-only?))
 
 (define (tc-match-arms-use-free-names-at?
   [expr-bases : i64]
   [arms : (& arms ast.AstMatchArmList)]
   [names : TcStringList]
   [bound : TcStringList]
-  [index : i64]) : bool
+  [index : i64]
+  [sets-only? : bool]) : bool
   (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
@@ -49020,13 +48942,15 @@
               expr-bases
               body
               (tc-global-shared-view names)
-              (tc-pattern-add-bound-names pattern (tc-global-shared-view bound)))
+              (tc-pattern-add-bound-names pattern (tc-global-shared-view bound))
+              sets-only?)
             (tc-match-arms-use-free-names-at?
               expr-bases
               arms
               names
               bound
-              (+ index 1))))])))
+              (+ index 1)
+              sets-only?)))])))
 
 (define (tc-for-owned-name-id [expr-bases : i64] [expr-id : i64]) : i64
   (tc-expr-var-name-id (ast.ast-expr-segment-bases-get expr-bases expr-id)))
@@ -49056,14 +48980,17 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [names : TcStringList]
-  [bound : TcStringList]) : bool
+  [bound : TcStringList]
+  [sets-only? : bool]) : bool
   (match (tc-global-shared-view expr)
     [(ast.AstExpr.Var var-name)
-      (let
-        [text : String (tc-env-key-name-text var-name)]
-        (and
-          (tc-string-list-contains names (tc-global-shared-view text))
-          (not (tc-string-list-contains bound text))))]
+      (and
+        (not sets-only?)
+        (let
+          [text : String (tc-env-key-name-text var-name)]
+          (and
+            (tc-string-list-contains names (tc-global-shared-view text))
+            (not (tc-string-list-contains bound text)))))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -49075,12 +49002,14 @@
                 expr-bases
                 (tc-global-shared-view bindings)
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 body
                 names
-                (tc-let-binding-list-add-bound-names bindings bound))))])]
+                (tc-let-binding-list-add-bound-names bindings bound)
+                sets-only?)))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
@@ -49091,7 +49020,8 @@
               expr-bases
               body
               names
-              (tc-param-list-add-bound-names params bound)))])]
+              (tc-param-list-add-bound-names params bound)
+              sets-only?))])]
     [(ast.AstExpr.ForOwnedState payload)
       (let
         [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
@@ -49103,7 +49033,8 @@
               expr-bases
               (ast.ast-for-owned-state-source (& payload)))
             (tc-global-shared-view names)
-            (tc-global-shared-view bound))
+            (tc-global-shared-view bound)
+            sets-only?)
           (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get
@@ -49113,7 +49044,8 @@
             (tc-for-owned-add-bound-name
               expr-bases
               index-name
-              (tc-for-owned-add-bound-name expr-bases source-name bound)))))]
+              (tc-for-owned-add-bound-name expr-bases source-name bound))
+            sets-only?)))]
     [(ast.AstExpr.ForOwnedStep payload)
       (let
         [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
@@ -49127,29 +49059,34 @@
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases source-name)
             (tc-global-shared-view names)
-            (tc-global-shared-view bound))
+            (tc-global-shared-view bound)
+            sets-only?)
           (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases index-name)
             (tc-global-shared-view names)
-            (tc-global-shared-view bound))
+            (tc-global-shared-view bound)
+            sets-only?)
           (if (>= expected-type 0)
             (tc-expr-uses-free-names?
               expr-bases
               (ast.ast-expr-segment-bases-get expr-bases expected-type)
               (tc-global-shared-view names)
-              (tc-global-shared-view bound))
+              (tc-global-shared-view bound)
+              sets-only?)
             false)
           (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases done-name)
             (tc-global-shared-view names)
-            (tc-global-shared-view bound))
+            (tc-global-shared-view bound)
+            sets-only?)
           (tc-expr-uses-free-names?
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases body)
             names
-            (tc-for-owned-add-bound-name expr-bases binding-name bound))))]
+            (tc-for-owned-add-bound-name expr-bases binding-name bound)
+            sets-only?)))]
     [(ast.AstExpr.Set var-name value-box)
       (let
         [value : ast.AstExpr
@@ -49162,7 +49099,43 @@
                 (tc-global-shared-view names)
                 (tc-global-shared-view text))
               (not (tc-string-list-contains (tc-global-shared-view bound) text))))
-          (tc-expr-uses-free-names? expr-bases value names bound)))]
+          (tc-expr-uses-free-names? expr-bases value names bound sets-only?)))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases place-box)]
+        [replacement : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
+        (or
+          (and
+            sets-only?
+            (match (tc-move-root-projection-var-id
+              expr-bases
+              (tc-global-shared-view place))
+              [(TcMaybeNameId.Some root-id)
+                (let
+                  [text : String (tc-env-key-name-text root-id)]
+                  (and
+                    (tc-string-list-contains
+                      (tc-global-shared-view names)
+                      (tc-global-shared-view text))
+                    (not
+                      (tc-string-list-contains
+                        (tc-global-shared-view bound)
+                        text))))]
+              [(TcMaybeNameId.No) false]))
+          (tc-expr-uses-free-names?
+            expr-bases
+            place
+            (tc-global-shared-view names)
+            (tc-global-shared-view bound)
+            sets-only?)
+          (tc-expr-uses-free-names?
+            expr-bases
+            replacement
+            names
+            bound
+            sets-only?)))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
@@ -49174,8 +49147,14 @@
                 expr-bases
                 scrutinee
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
-              (tc-match-arms-use-free-names? expr-bases arms names bound)))])]
+                (tc-global-shared-view bound)
+                sets-only?)
+              (tc-match-arms-use-free-names?
+                expr-bases
+                arms
+                names
+                bound
+                sets-only?)))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index _ start-box end-box body-box)
@@ -49191,17 +49170,20 @@
                 expr-bases
                 start
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 end
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 body
                 names
-                (tc-string-list-add bound (tc-env-key-name-text index)))))])]
+                (tc-string-list-add bound (tc-env-key-name-text index))
+                sets-only?)))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
@@ -49226,22 +49208,26 @@
                 expr-bases
                 start
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 end
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 init
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 value
                 names
-                (tc-string-list-add bound (tc-env-key-name-text index)))))])]
+                (tc-string-list-add bound (tc-env-key-name-text index))
+                sets-only?)))])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
@@ -49279,23 +49265,32 @@
                 expr-bases
                 start
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 end
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 init
                 (tc-global-shared-view names)
-                bound)
+                bound
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 value
                 (tc-global-shared-view names)
-                value-bound)
-              (tc-expr-uses-free-names? expr-bases body names body-bound)))])]
+                value-bound
+                sets-only?)
+              (tc-expr-uses-free-names?
+                expr-bases
+                body
+                names
+                body-bound
+                sets-only?)))])]
     [(ast.AstExpr.SpmdCompact compact-box)
       (match (__tl-box-place compact-box)
         [(ast.AstSpmdCompact.Compact
@@ -49332,23 +49327,32 @@
                 expr-bases
                 start
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 end
                 (tc-global-shared-view names)
-                (tc-global-shared-view bound))
+                (tc-global-shared-view bound)
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 init
                 (tc-global-shared-view names)
-                bound)
+                bound
+                sets-only?)
               (tc-expr-uses-free-names?
                 expr-bases
                 keep
                 (tc-global-shared-view names)
-                keep-bound)
-              (tc-expr-uses-free-names? expr-bases body names body-bound)))])]
+                keep-bound
+                sets-only?)
+              (tc-expr-uses-free-names?
+                expr-bases
+                body
+                names
+                body-bound
+                sets-only?)))])]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
@@ -49357,18 +49361,48 @@
               expr-bases
               (tc-global-shared-view bindings)
               (tc-global-shared-view names)
-              (tc-global-shared-view bound))
+              (tc-global-shared-view bound)
+              sets-only?)
             (tc-expr-list-uses-free-names?
               expr-bases
               body
               names
-              (tc-resource-binding-list-add-bound-names bindings bound)))])]
+              (tc-resource-binding-list-add-bound-names bindings bound)
+              sets-only?))])]
     [_
       (tc-expr-list-uses-free-names?
         expr-bases
         (ast.ast-expr-child-ids expr)
         names
-        bound)]))
+        bound
+        sets-only?)]))
+
+;; Single-name entry points over the name-set walkers above.
+(define (tc-expr-uses-free-name?
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (tc-expr-uses-free-names? expr-bases expr (TcStringList.One name) bound false))
+
+(define (tc-expr-list-uses-free-name?
+  [expr-bases : i64]
+  [exprs : ast.AstExprList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (tc-expr-list-uses-free-names?
+    expr-bases
+    exprs
+    (TcStringList.One name)
+    bound
+    false))
+
+(define (tc-expr-sets-free-name?
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (tc-expr-uses-free-names? expr-bases expr (TcStringList.One name) bound true))
 
 ;; The id rule for a dot-free target text: the source-name id of an env key,
 ;; or -1 when the key's display can never equal the target. Pool ids render
@@ -49377,50 +49411,6 @@
 ;; dotted (with '/'), so they map to -1. For any dot-free target text T this
 ;; makes (= (tc-env-key-source-id-or-neg v) (intern T)) EXACTLY
 ;; (string.eq (tc-env-key-name-text v) T).
-;; Single-name entry points over the name-set walkers above.
-(define (tc-expr-uses-free-name?
-  [expr-bases : i64]
-  [expr : ast.AstExpr]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-expr-uses-free-names? expr-bases expr (TcStringList.One name) bound))
-
-(define (tc-expr-list-uses-free-name?
-  [expr-bases : i64]
-  [exprs : ast.AstExprList]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-expr-list-uses-free-names? expr-bases exprs (TcStringList.One name) bound))
-
-(define (tc-let-binding-list-uses-free-name?
-  [expr-bases : i64]
-  [bindings : ast.AstLetBindingList]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-let-binding-list-uses-free-names?
-    expr-bases
-    bindings
-    (TcStringList.One name)
-    bound))
-
-(define (tc-resource-binding-list-uses-free-name?
-  [expr-bases : i64]
-  [bindings : ast.AstResourceBindingList]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-resource-binding-list-uses-free-names?
-    expr-bases
-    bindings
-    (TcStringList.One name)
-    bound))
-
-(define (tc-match-arms-use-free-name?
-  [expr-bases : i64]
-  [arms : ast.AstMatchArmList]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-match-arms-use-free-names? expr-bases arms (TcStringList.One name) bound))
-
 (define (tc-env-key-source-id-or-neg
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
@@ -50185,489 +50175,6 @@
         target-2
         bound)]))
 
-;; Same shadowing rules as `tc-expr-uses-free-name?`, but it only returns true
-;; when the expression assigns to the free name. Lambda capture checks use this
-;; to reject mutation of captured bindings while allowing local parameter/let
-;; assignment inside the lambda.
-(define (tc-expr-list-sets-free-name?
-  [expr-bases : i64]
-  [exprs : ast.AstExprList]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-expr-list-sets-free-name-at? expr-bases (& exprs) 0 name bound))
-
-(define (tc-expr-list-sets-free-name-at?
-  [expr-bases : i64]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (tc-expr-sets-free-name?
-        expr-bases
-        (ast.ast-expr-segment-bases-get
-          expr-bases
-          (ast.ast-expr-list-get exprs index 0))
-        (tc-global-shared-view name)
-        (tc-global-shared-view bound))
-      (tc-expr-list-sets-free-name-at? expr-bases exprs (+ index 1) name bound))))
-
-(define (tc-let-binding-list-sets-free-name?
-  [expr-bases : i64]
-  [bindings : ast.AstLetBindingList]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-let-binding-list-sets-free-name-at? expr-bases (& bindings) name bound 0))
-
-(define (tc-let-binding-list-sets-free-name-at?
-  [expr-bases : i64]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [name : String]
-  [bound : TcStringList]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    false
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding bind-name _ init-box)
-        (let
-          [init : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases init-box)]
-          (or
-            (tc-expr-sets-free-name?
-              expr-bases
-              init
-              (tc-global-shared-view name)
-              (tc-global-shared-view bound))
-            (tc-let-binding-list-sets-free-name-at?
-              expr-bases
-              bindings
-              name
-              (tc-string-list-add bound (ci.intern-str bind-name))
-              (+ index 1))))])))
-
-(define (tc-resource-binding-list-sets-free-name?
-  [expr-bases : i64]
-  [bindings : ast.AstResourceBindingList]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-resource-binding-list-sets-free-name-at?
-    expr-bases
-    (& bindings)
-    name
-    bound
-    0))
-
-(define (tc-resource-binding-list-sets-free-name-at?
-  [expr-bases : i64]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [name : String]
-  [bound : TcStringList]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    false
-    (match (ast.ast-resource-binding-list-get
-      bindings
-      index
-      (ast.ast-resource-binding-fallback))
-      [(ast.AstResourceBinding.Binding bind-name init-box cleanup-box _)
-        (let
-          [init : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases init-box)]
-          [cleanup : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases cleanup-box)]
-          (or
-            (tc-expr-sets-free-name?
-              expr-bases
-              init
-              (tc-global-shared-view name)
-              (tc-global-shared-view bound))
-            (tc-expr-sets-free-name?
-              expr-bases
-              cleanup
-              (tc-global-shared-view name)
-              (tc-global-shared-view bound))
-            (tc-resource-binding-list-sets-free-name-at?
-              expr-bases
-              bindings
-              name
-              (tc-string-list-add bound (ci.intern-str bind-name))
-              (+ index 1))))])))
-
-(define (tc-match-arms-set-free-name?
-  [expr-bases : i64]
-  [arms : ast.AstMatchArmList]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-match-arms-set-free-name-at? expr-bases (& arms) name bound 0))
-
-(define (tc-match-arms-set-free-name-at?
-  [expr-bases : i64]
-  [arms : (& arms ast.AstMatchArmList)]
-  [name : String]
-  [bound : TcStringList]
-  [index : i64]) : bool
-  (if (>= index arms.len)
-    false
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm pattern body-box)
-        (let
-          [body : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases body-box)]
-          (or
-            (tc-expr-sets-free-name?
-              expr-bases
-              body
-              (tc-global-shared-view name)
-              (tc-pattern-add-bound-names pattern (tc-global-shared-view bound)))
-            (tc-match-arms-set-free-name-at?
-              expr-bases
-              arms
-              name
-              bound
-              (+ index 1))))])))
-
-(define (tc-expr-sets-free-name?
-  [expr-bases : i64]
-  [expr : ast.AstExpr]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (match (tc-global-shared-view expr)
-    [(ast.AstExpr.Let let-box)
-      (match (ast.ast-let-box-shared-view let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            (or
-              (tc-let-binding-list-sets-free-name?
-                expr-bases
-                (tc-global-shared-view bindings)
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                body
-                name
-                (tc-let-binding-list-add-bound-names bindings bound))))])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda params _ body-box)
-          (let
-            [body : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            (tc-expr-sets-free-name?
-              expr-bases
-              body
-              name
-              (tc-param-list-add-bound-names params bound)))])]
-    [(ast.AstExpr.Replace place-box replacement-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        [replacement : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
-        [sets-target : bool
-          (match (tc-move-root-projection-var-id
-            expr-bases
-            (tc-global-shared-view place))
-            [(TcMaybeNameId.Some root-id)
-              (and
-                (string.eq (tc-env-key-name-text root-id) name)
-                (not
-                  (tc-string-list-contains
-                    (tc-global-shared-view bound)
-                    (tc-global-shared-view name))))]
-            [(TcMaybeNameId.No) false])]
-        (or
-          sets-target
-          (tc-expr-sets-free-name?
-            expr-bases
-            place
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name? expr-bases replacement name bound)))]
-    [(ast.AstExpr.ForOwnedState payload)
-      (let
-        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
-        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            (ast.ast-expr-segment-bases-get
-              expr-bases
-              (ast.ast-for-owned-state-source (& payload)))
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name?
-            expr-bases
-            (ast.ast-expr-segment-bases-get
-              expr-bases
-              (ast.ast-for-owned-state-body (& payload)))
-            name
-            (tc-for-owned-add-bound-name
-              expr-bases
-              index-name
-              (tc-for-owned-add-bound-name expr-bases source-name bound)))))]
-    [(ast.AstExpr.ForOwnedStep payload)
-      (let
-        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
-        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
-        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
-        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
-        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
-        [body : i64 (ast.ast-for-owned-step-body (& payload))]
-        (or
-          (tc-expr-sets-free-name?
-            expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases source-name)
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name?
-            expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases index-name)
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (if (>= expected-type 0)
-            (tc-expr-sets-free-name?
-              expr-bases
-              (ast.ast-expr-segment-bases-get expr-bases expected-type)
-              (tc-global-shared-view name)
-              (tc-global-shared-view bound))
-            false)
-          (tc-expr-sets-free-name?
-            expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases done-name)
-            (tc-global-shared-view name)
-            (tc-global-shared-view bound))
-          (tc-expr-sets-free-name?
-            expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases body)
-            name
-            (tc-for-owned-add-bound-name expr-bases binding-name bound))))]
-    [(ast.AstExpr.Set var-name value-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (or
-          (and
-            (string.eq (tc-env-key-name-text var-name) name)
-            (not
-              (tc-string-list-contains
-                (tc-global-shared-view bound)
-                (tc-global-shared-view name))))
-          (tc-expr-sets-free-name? expr-bases value name bound)))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
-          (let
-            [scrutinee : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases scrutinee-box)]
-            (or
-              (tc-expr-sets-free-name?
-                expr-bases
-                scrutinee
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-match-arms-set-free-name? expr-bases arms name bound)))])]
-    [(ast.AstExpr.Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(ast.AstForeach.Foreach index _ start-box end-box body-box)
-          (let
-            [start : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases start-box)]
-            [end : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases end-box)]
-            [body : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            (or
-              (tc-expr-sets-free-name?
-                expr-bases
-                start
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                end
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                body
-                name
-                (tc-string-list-add bound (tc-env-key-name-text index)))))])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(ast.AstSpmdReduce.Reduce
-            _
-            index
-            _
-            start-box
-            end-box
-            init-box
-            value-box)
-          (let
-            [start : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases start-box)]
-            [end : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases end-box)]
-            [init : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases init-box)]
-            [value : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases value-box)]
-            (or
-              (tc-expr-sets-free-name?
-                expr-bases
-                start
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                end
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                init
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                value
-                name
-                (tc-string-list-add bound (tc-env-key-name-text index)))))])]
-    [(ast.AstExpr.SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(ast.AstSpmdScan.Scan
-            _
-            index
-            _
-            start-box
-            end-box
-            prefix
-            _
-            init-box
-            value-box
-            body-box)
-          (let
-            [start : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases start-box)]
-            [end : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases end-box)]
-            [init : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases init-box)]
-            [value : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases value-box)]
-            [body : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            [value-bound : TcStringList
-              (tc-string-list-add
-                (tc-global-shared-view bound)
-                (tc-env-key-name-text index))]
-            [body-bound : TcStringList
-              (tc-string-list-add
-                (tc-global-shared-view value-bound)
-                (tc-env-key-name-text prefix))]
-            (or
-              (tc-expr-sets-free-name?
-                expr-bases
-                start
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                end
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                init
-                (tc-global-shared-view name)
-                bound)
-              (tc-expr-sets-free-name?
-                expr-bases
-                value
-                (tc-global-shared-view name)
-                value-bound)
-              (tc-expr-sets-free-name? expr-bases body name body-bound)))])]
-    [(ast.AstExpr.SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(ast.AstSpmdCompact.Compact
-            index
-            _
-            start-box
-            end-box
-            slot
-            _
-            init-box
-            keep-box
-            body-box)
-          (let
-            [start : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases start-box)]
-            [end : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases end-box)]
-            [init : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases init-box)]
-            [keep : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
-            [body : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            [keep-bound : TcStringList
-              (tc-string-list-add
-                (tc-global-shared-view bound)
-                (tc-env-key-name-text index))]
-            [body-bound : TcStringList
-              (tc-string-list-add
-                (tc-global-shared-view keep-bound)
-                (tc-env-key-name-text slot))]
-            (or
-              (tc-expr-sets-free-name?
-                expr-bases
-                start
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                end
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-expr-sets-free-name?
-                expr-bases
-                init
-                (tc-global-shared-view name)
-                bound)
-              (tc-expr-sets-free-name?
-                expr-bases
-                keep
-                (tc-global-shared-view name)
-                keep-bound)
-              (tc-expr-sets-free-name? expr-bases body name body-bound)))])]
-    [(ast.AstExpr.WithResource wr-box)
-      (match (__tl-box-place wr-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (or
-            (tc-resource-binding-list-sets-free-name?
-              expr-bases
-              (tc-global-shared-view bindings)
-              (tc-global-shared-view name)
-              (tc-global-shared-view bound))
-            (tc-expr-list-sets-free-name?
-              expr-bases
-              body
-              name
-              (tc-resource-binding-list-add-bound-names bindings bound)))])]
-    [_
-      (tc-expr-list-sets-free-name?
-        expr-bases
-        (ast.ast-expr-child-ids expr)
-        name
-        bound)]))
-
 (define (tc-name-is-free-cleanup-owner?
   [owners : TcStringList]
   [name : String]
@@ -51401,20 +50908,20 @@
     (=
       (csym.compiler-symbol-handle-kind handle)
       (csym.compiler-symbol-kind-defenum)))
-    (match (csym.compiler-symbols-decl-at-index
-      (tc-context-symbols ctx)
-      (csym.compiler-symbol-handle-index handle))
-      [(parser.ResultAstDecl.Ok decl)
-        (match decl
-          [(ast.AstDecl.DefEnum decl-meta _ _ variants)
-            (parser.ResultAstVariantDefList.Ok variants)]
-          [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
-            (parser.ResultAstVariantDefList.Ok variants)]
-          [_
-            (parser.ResultAstVariantDefList.Err
-              (str_cat.str-cat "typecheck: unknown enum " enum-name))])]
-      [(parser.ResultAstDecl.Err message)
-        (parser.ResultAstVariantDefList.Err message)])
+    (let
+      [decl : ast.AstDecl
+        (try
+          (csym.compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            (csym.compiler-symbol-handle-index handle)))]
+      (match decl
+        [(ast.AstDecl.DefEnum decl-meta _ _ variants)
+          (parser.ResultAstVariantDefList.Ok variants)]
+        [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
+          (parser.ResultAstVariantDefList.Ok variants)]
+        [_
+          (parser.ResultAstVariantDefList.Err
+            (str_cat.str-cat "typecheck: unknown enum " enum-name))]))
     (tc-context-enum-variants-id ctx enum-name-id enum-name)))
 
 (define (tc-layout-info-size [info : TcLayoutInfo]) : i64
@@ -51902,19 +51409,20 @@
     (=
       (csym.compiler-symbol-handle-kind handle)
       (csym.compiler-symbol-kind-defstruct)))
-    (match (csym.compiler-symbols-decl-at-index
-      (tc-context-symbols ctx)
-      (csym.compiler-symbol-handle-index handle))
-      [(parser.ResultAstDecl.Ok decl)
-        (match decl
-          [(ast.AstDecl.DefStruct decl-meta _ repr cleanup fields)
-            (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
-          [(ast.AstDecl.DefStructLifetimes decl-meta _ _ repr cleanup fields)
-            (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
-          [_
-            (ResultTcStructDecl.Err
-              "typecheck: struct symbol owner is not a struct")])]
-      [(parser.ResultAstDecl.Err message) (ResultTcStructDecl.Err message)])
+    (let
+      [decl : ast.AstDecl
+        (try
+          (csym.compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            (csym.compiler-symbol-handle-index handle)))]
+      (match decl
+        [(ast.AstDecl.DefStruct decl-meta _ repr cleanup fields)
+          (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
+        [(ast.AstDecl.DefStructLifetimes decl-meta _ _ repr cleanup fields)
+          (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
+        [_
+          (ResultTcStructDecl.Err
+            "typecheck: struct symbol owner is not a struct")]))
     (tc-struct-decl-id ctx struct-name-id)))
 
 (define (tc-enum-decl-id [ctx : TcContext] [enum-name-id : i64]) : ResultTcEnumDecl
@@ -51929,19 +51437,20 @@
       (if (=
         (csym.compiler-symbol-handle-kind handle)
         (csym.compiler-symbol-kind-defenum))
-        (match (csym.compiler-symbols-decl-at-index
-          symbols
-          (csym.compiler-symbol-handle-index handle))
-          [(parser.ResultAstDecl.Ok decl)
-            (match decl
-              [(ast.AstDecl.DefEnum decl-meta _ cleanup variants)
-                (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
-              [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
-                (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
-              [_
-                (ResultTcEnumDecl.Err
-                  "typecheck: enum symbol owner is not an enum")])]
-          [(parser.ResultAstDecl.Err message) (ResultTcEnumDecl.Err message)])
+        (let
+          [decl : ast.AstDecl
+            (try
+              (csym.compiler-symbols-decl-at-index
+                symbols
+                (csym.compiler-symbol-handle-index handle)))]
+          (match decl
+            [(ast.AstDecl.DefEnum decl-meta _ cleanup variants)
+              (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
+            [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
+              (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
+            [_
+              (ResultTcEnumDecl.Err
+                "typecheck: enum symbol owner is not an enum")]))
         (ResultTcEnumDecl.Err
           (str_cat.str-cat
             "typecheck: unknown enum "
@@ -52413,25 +51922,24 @@
     (tc-global-shared-view struct-name))
     (ResultTcInlineAggregateLayout.Err
       (tc-inline-aggregate-cycle-message struct-name stack))
-    (match (tc-struct-decl-at-handle ctx handle struct-name-id struct-name)
-      [(ResultTcStructDecl.Ok decl)
-        (match decl
-          [(TcStructDecl _ _ fields)
-            (match (tc-inline-aggregate-field-defs-layout
-              ctx
-              fields
-              0
-              0
-              (tc-string-list-cons stack struct-name))
-              [(ResultTcInlineFieldsLayout.Ok layout)
-                (match layout
-                  [(TcInlineFieldsLayout.Fields size align fields-layout)
-                    (ResultTcInlineAggregateLayout.Ok
-                      (TcInlineAggregateLayout.Struct size align fields-layout))])]
-              [(ResultTcInlineFieldsLayout.Err message)
-                (ResultTcInlineAggregateLayout.Err message)])])]
-      [(ResultTcStructDecl.Err message)
-        (ResultTcInlineAggregateLayout.Err message)])))
+    (let
+      [decl : TcStructDecl
+        (try (tc-struct-decl-at-handle ctx handle struct-name-id struct-name))]
+      (match decl
+        [(TcStructDecl _ _ fields)
+          (let
+            [layout : TcInlineFieldsLayout
+              (try
+                (tc-inline-aggregate-field-defs-layout
+                  ctx
+                  fields
+                  0
+                  0
+                  (tc-string-list-cons stack struct-name)))]
+            (match layout
+              [(TcInlineFieldsLayout.Fields size align fields-layout)
+                (ResultTcInlineAggregateLayout.Ok
+                  (TcInlineAggregateLayout.Struct size align fields-layout))]))]))))
 
 (define (tc-inline-aggregate-variants-layout
   [ctx : TcContext]
@@ -52873,71 +52381,72 @@
         0
         stack)]
     [(ast.AstType.Array elem count)
-      (match (tc-inline-aggregate-type-layout-with-stack
-        ctx
-        (tc-context-type-get ctx elem)
-        stack)
-        [(ResultTcLayoutInfo.Ok elem-info)
-          (ResultTcLayoutInfo.Ok
-            (TcLayoutInfo
-              (tc-inline-aggregate-array-size
-                (tc-layout-info-size elem-info)
-                (tc-layout-info-align elem-info)
-                count)
-              (tc-layout-info-align elem-info)))]
-        [(ResultTcLayoutInfo.Err message) (ResultTcLayoutInfo.Err message)])]
+      (let
+        [elem-info : TcLayoutInfo
+          (try
+            (tc-inline-aggregate-type-layout-with-stack
+              ctx
+              (tc-context-type-get ctx elem)
+              stack))]
+        (ResultTcLayoutInfo.Ok
+          (TcLayoutInfo
+            (tc-inline-aggregate-array-size
+              (tc-layout-info-size elem-info)
+              (tc-layout-info-align elem-info)
+              count)
+            (tc-layout-info-align elem-info))))]
     [(ast.AstType.Struct name)
-      (match (tc-inline-aggregate-layout-for-with-stack
-        ctx
-        (tc-nominal-name-id-display name)
-        name
-        stack)
-        [(ResultTcInlineAggregateLayout.Ok layout)
-          (ResultTcLayoutInfo.Ok
-            (TcLayoutInfo
-              (tc-inline-aggregate-layout-size (tc-global-shared-view layout))
-              (tc-inline-aggregate-layout-align layout)))]
-        [(ResultTcInlineAggregateLayout.Err message)
-          (ResultTcLayoutInfo.Err message)])]
+      (let
+        [layout : TcInlineAggregateLayout
+          (try
+            (tc-inline-aggregate-layout-for-with-stack
+              ctx
+              (tc-nominal-name-id-display name)
+              name
+              stack))]
+        (ResultTcLayoutInfo.Ok
+          (TcLayoutInfo
+            (tc-inline-aggregate-layout-size (tc-global-shared-view layout))
+            (tc-inline-aggregate-layout-align layout))))]
     [(ast.AstType.StructArgs name _)
-      (match (tc-inline-aggregate-layout-for-with-stack
-        ctx
-        (tc-nominal-name-id-display name)
-        name
-        stack)
-        [(ResultTcInlineAggregateLayout.Ok layout)
-          (ResultTcLayoutInfo.Ok
-            (TcLayoutInfo
-              (tc-inline-aggregate-layout-size (tc-global-shared-view layout))
-              (tc-inline-aggregate-layout-align layout)))]
-        [(ResultTcInlineAggregateLayout.Err message)
-          (ResultTcLayoutInfo.Err message)])]
+      (let
+        [layout : TcInlineAggregateLayout
+          (try
+            (tc-inline-aggregate-layout-for-with-stack
+              ctx
+              (tc-nominal-name-id-display name)
+              name
+              stack))]
+        (ResultTcLayoutInfo.Ok
+          (TcLayoutInfo
+            (tc-inline-aggregate-layout-size (tc-global-shared-view layout))
+            (tc-inline-aggregate-layout-align layout))))]
     [(ast.AstType.Enum name)
-      (match (tc-inline-aggregate-layout-for-with-stack
-        ctx
-        (tc-nominal-name-id-display name)
-        name
-        stack)
-        [(ResultTcInlineAggregateLayout.Ok layout)
-          (ResultTcLayoutInfo.Ok
-            (TcLayoutInfo
-              (tc-inline-aggregate-layout-size (tc-global-shared-view layout))
-              (tc-inline-aggregate-layout-align layout)))]
-        [(ResultTcInlineAggregateLayout.Err message)
-          (ResultTcLayoutInfo.Err message)])]
+      (let
+        [layout : TcInlineAggregateLayout
+          (try
+            (tc-inline-aggregate-layout-for-with-stack
+              ctx
+              (tc-nominal-name-id-display name)
+              name
+              stack))]
+        (ResultTcLayoutInfo.Ok
+          (TcLayoutInfo
+            (tc-inline-aggregate-layout-size (tc-global-shared-view layout))
+            (tc-inline-aggregate-layout-align layout))))]
     [(ast.AstType.EnumArgs name _)
-      (match (tc-inline-aggregate-layout-for-with-stack
-        ctx
-        (tc-nominal-name-id-display name)
-        name
-        stack)
-        [(ResultTcInlineAggregateLayout.Ok layout)
-          (ResultTcLayoutInfo.Ok
-            (TcLayoutInfo
-              (tc-inline-aggregate-layout-size (tc-global-shared-view layout))
-              (tc-inline-aggregate-layout-align layout)))]
-        [(ResultTcInlineAggregateLayout.Err message)
-          (ResultTcLayoutInfo.Err message)])]))
+      (let
+        [layout : TcInlineAggregateLayout
+          (try
+            (tc-inline-aggregate-layout-for-with-stack
+              ctx
+              (tc-nominal-name-id-display name)
+              name
+              stack))]
+        (ResultTcLayoutInfo.Ok
+          (TcLayoutInfo
+            (tc-inline-aggregate-layout-size (tc-global-shared-view layout))
+            (tc-inline-aggregate-layout-align layout))))]))
 
 (define (tc-inline-aggregate-type-layout [ctx : TcContext] [ty : ast.AstType]) : ResultTcLayoutInfo
   (tc-inline-aggregate-type-layout-with-stack ctx ty TcStringList.Nil))
@@ -53361,59 +52870,55 @@
     [(ast.AstType.Struct nested)
       (let
         [nested-str : String (tc-nominal-name-id-display nested)]
-        (match (tc-struct-decl-id ctx nested)
-          [(ResultTcStructDecl.Ok decl)
-            (match decl
-              [(TcStructDecl repr _ _)
-                (if (ast.ast-struct-repr-c? repr)
-                  (match (tc-repr-c-struct-layout-with-seen
-                    ctx
-                    nested-str
-                    nested
-                    seen)
-                    [(ResultTcReprCLayout.Ok layout)
-                      (ResultTcLayoutInfo.Ok
-                        (TcLayoutInfo
-                          (tc-repr-c-layout-size (tc-global-shared-view layout))
-                          (tc-repr-c-layout-align layout)))]
-                    [(ResultTcReprCLayout.Err message)
-                      (ResultTcLayoutInfo.Err message)])
-                  ;; Embed a default-layout struct by value using its
-                  ;; default inline C-rule layout (default layout follows C
-                  ;; layout). `seen` carries the repr-c owners so a
-                  ;; cycle back through this struct is still detected.
-                  (tc-inline-aggregate-type-layout-with-stack
-                    ctx
-                    (ast.AstType.Struct nested)
-                    seen))])]
-          [(ResultTcStructDecl.Err message) (ResultTcLayoutInfo.Err message)]))]
+        [decl : TcStructDecl (try (tc-struct-decl-id ctx nested))]
+        (match decl
+          [(TcStructDecl repr _ _)
+            (if (ast.ast-struct-repr-c? repr)
+              (let
+                [layout : TcReprCLayout
+                  (try
+                    (tc-repr-c-struct-layout-with-seen
+                      ctx
+                      nested-str
+                      nested
+                      seen))]
+                (ResultTcLayoutInfo.Ok
+                  (TcLayoutInfo
+                    (tc-repr-c-layout-size (tc-global-shared-view layout))
+                    (tc-repr-c-layout-align layout))))
+              ;; Embed a default-layout struct by value using its
+              ;; default inline C-rule layout (default layout follows C
+              ;; layout). `seen` carries the repr-c owners so a
+              ;; cycle back through this struct is still detected.
+              (tc-inline-aggregate-type-layout-with-stack
+                ctx
+                (ast.AstType.Struct nested)
+                seen))]))]
     [(ast.AstType.StructArgs nested lifetimes)
       (let
         [nested-str : String (tc-nominal-name-id-display nested)]
-        (match (tc-struct-decl-id ctx nested)
-          [(ResultTcStructDecl.Ok decl)
-            (match decl
-              [(TcStructDecl repr _ _)
-                (if (ast.ast-struct-repr-c? repr)
-                  (match (tc-repr-c-struct-layout-with-seen
-                    ctx
-                    nested-str
-                    nested
-                    seen)
-                    [(ResultTcReprCLayout.Ok layout)
-                      (ResultTcLayoutInfo.Ok
-                        (TcLayoutInfo
-                          (tc-repr-c-layout-size (tc-global-shared-view layout))
-                          (tc-repr-c-layout-align layout)))]
-                    [(ResultTcReprCLayout.Err message)
-                      (ResultTcLayoutInfo.Err message)])
-                  ;; Embed a default-layout struct (with type args) by value
-                  ;; using its default inline C-rule layout.
-                  (tc-inline-aggregate-type-layout-with-stack
-                    ctx
-                    (ast.AstType.StructArgs nested lifetimes)
-                    seen))])]
-          [(ResultTcStructDecl.Err message) (ResultTcLayoutInfo.Err message)]))]
+        [decl : TcStructDecl (try (tc-struct-decl-id ctx nested))]
+        (match decl
+          [(TcStructDecl repr _ _)
+            (if (ast.ast-struct-repr-c? repr)
+              (let
+                [layout : TcReprCLayout
+                  (try
+                    (tc-repr-c-struct-layout-with-seen
+                      ctx
+                      nested-str
+                      nested
+                      seen))]
+                (ResultTcLayoutInfo.Ok
+                  (TcLayoutInfo
+                    (tc-repr-c-layout-size (tc-global-shared-view layout))
+                    (tc-repr-c-layout-align layout))))
+              ;; Embed a default-layout struct (with type args) by value
+              ;; using its default inline C-rule layout.
+              (tc-inline-aggregate-type-layout-with-stack
+                ctx
+                (ast.AstType.StructArgs nested lifetimes)
+                seen))]))]
     ;; Embed an enum by value using its default inline layout (tag +
     ;; payload). Enums have no separate repr-c layout; the inline engine threads
     ;; `seen` for cycle detection.
@@ -53518,23 +53023,20 @@
       (str_cat.str-cat
         "typecheck: recursive repr c struct layout cycle involving "
         struct-name))
-    (match (tc-struct-decl-id ctx struct-name-id)
-      [(ResultTcStructDecl.Ok decl)
-        (match decl
-          [(TcStructDecl repr _ fields)
-            (if (ast.ast-struct-repr-c? repr)
-              (tc-repr-c-fields-layout
-                ctx
-                (tc-global-shared-view struct-name)
-                fields
-                0
-                0
-                (tc-string-list-add seen struct-name))
-              (ResultTcReprCLayout.Err
-                (str_cat.str-cat
-                  "typecheck: struct is not repr c: "
-                  struct-name)))])]
-      [(ResultTcStructDecl.Err message) (ResultTcReprCLayout.Err message)])))
+    (let
+      [decl : TcStructDecl (try (tc-struct-decl-id ctx struct-name-id))]
+      (match decl
+        [(TcStructDecl repr _ fields)
+          (if (ast.ast-struct-repr-c? repr)
+            (tc-repr-c-fields-layout
+              ctx
+              (tc-global-shared-view struct-name)
+              fields
+              0
+              0
+              (tc-string-list-add seen struct-name))
+            (ResultTcReprCLayout.Err
+              (str_cat.str-cat "typecheck: struct is not repr c: " struct-name)))]))))
 
 (define (tc-repr-c-struct-layout-id
   [ctx : TcContext]
@@ -53897,14 +53399,13 @@
   [ok-fields : ast.AstTypeList]
   [err-name : i64]
   [err-fields : ast.AstTypeList]) : ResultTcResultInfo
-  (match (tc-result-variant-payload-type ctx ok-name ok-fields)
-    [(ResultTcType.Ok ok-ty)
-      (match (tc-result-variant-payload-type ctx err-name err-fields)
-        [(ResultTcType.Ok err-ty)
-          (ResultTcResultInfo.Ok
-            (TcResultInfo try-kind enum-name ok-name ok-ty err-name err-ty))]
-        [(ResultTcType.Err message) (ResultTcResultInfo.Err message)])]
-    [(ResultTcType.Err message) (ResultTcResultInfo.Err message)]))
+  (let
+    [ok-ty : ast.AstType
+      (try (tc-result-variant-payload-type ctx ok-name ok-fields))]
+    [err-ty : ast.AstType
+      (try (tc-result-variant-payload-type ctx err-name err-fields))]
+    (ResultTcResultInfo.Ok
+      (TcResultInfo try-kind enum-name ok-name ok-ty err-name err-ty))))
 
 (define (tc-option-none-variant-type
   [variant-name : i64]
@@ -54025,21 +53526,17 @@
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
         [enum-ctx : TcContext
           (tc-context-with-nominal-owner-module-id ctx enum-name)]
-        (match (tc-context-enum-variants-id ctx enum-name enum-name-str)
-          [(parser.ResultAstVariantDefList.Ok variants)
-            (tc-result-info-from-variants enum-ctx enum-name variants)]
-          [(parser.ResultAstVariantDefList.Err message)
-            (ResultTcResultInfo.Err message)]))]
+        [variants : ast.AstVariantDefList
+          (try (tc-context-enum-variants-id ctx enum-name enum-name-str))]
+        (tc-result-info-from-variants enum-ctx enum-name variants))]
     [(ast.AstType.EnumArgs enum-name _)
       (let
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
         [enum-ctx : TcContext
           (tc-context-with-nominal-owner-module-id ctx enum-name)]
-        (match (tc-context-enum-variants-id ctx enum-name enum-name-str)
-          [(parser.ResultAstVariantDefList.Ok variants)
-            (tc-result-info-from-variants enum-ctx enum-name variants)]
-          [(parser.ResultAstVariantDefList.Err message)
-            (ResultTcResultInfo.Err message)]))]
+        [variants : ast.AstVariantDefList
+          (try (tc-context-enum-variants-id ctx enum-name enum-name-str))]
+        (tc-result-info-from-variants enum-ctx enum-name variants))]
     [_ (ResultTcResultInfo.Err "typecheck: try requires Result-like enum")]))
 
 (define (tc-try-classify-carrier [ctx : TcContext] [ty : ast.AstType]) : TcTryCarrierClassification
@@ -54151,19 +53648,18 @@
       "typecheck: try inside foreach is not supported"]))
 
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
-  (match (tc-expr ctx env inner)
-    [(ResultTcType.Ok operand-ty)
-      (match (tc-current-return-type env)
-        [(ResultTcType.Ok return-ty)
-          (match (tc-try-query ctx operand-ty return-ty TcTryEarlyExitAllowed)
-            [(TcTryQueryCompatible operand-info _)
-              (ResultTcType.Ok (tc-result-info-ok-type operand-info))]
-            [(TcTryQueryIncompatible _ _ reason)
-              (ResultTcType.Err (tc-try-incompatibility-message reason))])]
-        [(ResultTcType.Err _)
-          (ResultTcType.Err
-            "typecheck: try requires enclosing Result-like function")])]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [operand-ty : ast.AstType (try (tc-expr ctx env inner))]
+    (match (tc-current-return-type env)
+      [(ResultTcType.Ok return-ty)
+        (match (tc-try-query ctx operand-ty return-ty TcTryEarlyExitAllowed)
+          [(TcTryQueryCompatible operand-info _)
+            (ResultTcType.Ok (tc-result-info-ok-type operand-info))]
+          [(TcTryQueryIncompatible _ _ reason)
+            (ResultTcType.Err (tc-try-incompatibility-message reason))])]
+      [(ResultTcType.Err _)
+        (ResultTcType.Err
+          "typecheck: try requires enclosing Result-like function")])))
 
 (define (tc-return-expr
   [ctx : TcContext]
@@ -54351,12 +53847,12 @@
           (tc-context-with-nominal-owner-index-module
             ctx
             (csym.compiler-registry-handle-owner-index handle))]
-        (match (csym.compiler-registries-struct-field-type-indexed
-          (tc-context-symbols ctx)
-          handle)
-          [(parser.ResultAstType.Ok ty)
-            (ResultTcType.Ok (tc-resolve-type field-ctx ty))]
-          [(parser.ResultAstType.Err message) (ResultTcType.Err message)]))
+        [ty : ast.AstType
+          (try
+            (csym.compiler-registries-struct-field-type-indexed
+              (tc-context-symbols ctx)
+              handle))]
+        (ResultTcType.Ok (tc-resolve-type field-ctx ty)))
       (ResultTcType.Err
         (tc-unknown-struct-field-message ctx struct-name-id field-id)))))
 
@@ -54370,14 +53866,13 @@
     ;; Arena's single checker-only brand is phantom: its one-word runtime
     ;; declaration intentionally has no lifetime parameter or field to rewrite.
     (ResultTcLifetimeSubst.Ok TcLifetimeSubst.Nil)
-    (match (tc-nominal-lifetimes-id ctx name-id)
-      [(ResultTcLifetimeList.Ok params)
-        (tc-infer-lifetime-list
-          (tc-global-shared-view params)
-          TcLifetimeSubst.Nil
-          params
-          args)]
-      [(ResultTcLifetimeList.Err message) (ResultTcLifetimeSubst.Err message)])))
+    (let
+      [params : ast.AstLifetimeList (try (tc-nominal-lifetimes-id ctx name-id))]
+      (tc-infer-lifetime-list
+        (tc-global-shared-view params)
+        TcLifetimeSubst.Nil
+        params
+        args))))
 
 (define (tc-struct-field-type-with-args-id
   [ctx : TcContext]
@@ -54397,19 +53892,19 @@
           (tc-context-with-nominal-owner-index-module
             ctx
             (csym.compiler-registry-handle-owner-index handle))]
-        (match (csym.compiler-registries-struct-field-type
-          (tc-context-program ctx)
-          handle)
-          [(parser.ResultAstType.Ok ty)
-            (match (tc-lifetime-subst-from-nominal-args-id
+        [ty : ast.AstType
+          (try
+            (csym.compiler-registries-struct-field-type
+              (tc-context-program ctx)
+              handle))]
+        [subst : TcLifetimeSubst
+          (try
+            (tc-lifetime-subst-from-nominal-args-id
               field-ctx
               struct-name-id
-              lifetimes)
-              [(ResultTcLifetimeSubst.Ok subst)
-                (ResultTcType.Ok
-                  (tc-resolve-type field-ctx (tc-lifetime-subst-type subst ty)))]
-              [(ResultTcLifetimeSubst.Err message) (ResultTcType.Err message)])]
-          [(parser.ResultAstType.Err message) (ResultTcType.Err message)]))
+              lifetimes))]
+        (ResultTcType.Ok
+          (tc-resolve-type field-ctx (tc-lifetime-subst-type subst ty))))
       (ResultTcType.Err
         (tc-unknown-struct-field-message ctx struct-name-id field-id)))))
 
@@ -54629,21 +54124,22 @@
     [(TcBorrowPlace lifetime receiver-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(ast.AstType.Struct struct-name)
-          (match (tc-struct-field-type-id ctx struct-name field-id)
-            [(ResultTcType.Ok field-ty)
-              (ResultTcBorrowPlace.Ok
-                (tc-borrow-place-projected-type lifetime field-ty))]
-            [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)])]
+          (let
+            [field-ty : ast.AstType
+              (try (tc-struct-field-type-id ctx struct-name field-id))]
+            (ResultTcBorrowPlace.Ok
+              (tc-borrow-place-projected-type lifetime field-ty)))]
         [(ast.AstType.StructArgs struct-name lifetimes)
-          (match (tc-struct-field-type-with-args-id
-            ctx
-            struct-name
-            (ast.ast-lifetime-list-box-shared-view lifetimes)
-            field-id)
-            [(ResultTcType.Ok field-ty)
-              (ResultTcBorrowPlace.Ok
-                (tc-borrow-place-projected-type lifetime field-ty))]
-            [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)])]
+          (let
+            [field-ty : ast.AstType
+              (try
+                (tc-struct-field-type-with-args-id
+                  ctx
+                  struct-name
+                  (ast.ast-lifetime-list-box-shared-view lifetimes)
+                  field-id))]
+            (ResultTcBorrowPlace.Ok
+              (tc-borrow-place-projected-type lifetime field-ty)))]
         [_
           (ResultTcBorrowPlace.Err
             "typecheck: field projection borrow requires struct place")])]))
@@ -54656,13 +54152,14 @@
     [(TcBorrowPlace lifetime tuple-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
         [(ast.AstType.Tuple elems)
-          (match (tc-type-list-ref
-            (ast.ast-type-list-box-shared-view elems)
-            index)
-            [(ResultTcType.Ok elem-ty)
-              (ResultTcBorrowPlace.Ok
-                (tc-borrow-place-projected-type lifetime elem-ty))]
-            [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)])]
+          (let
+            [elem-ty : ast.AstType
+              (try
+                (tc-type-list-ref
+                  (ast.ast-type-list-box-shared-view elems)
+                  index))]
+            (ResultTcBorrowPlace.Ok
+              (tc-borrow-place-projected-type lifetime elem-ty)))]
         [_
           (ResultTcBorrowPlace.Err
             "typecheck: tuple-ref borrow requires tuple place")])]))
@@ -54717,10 +54214,10 @@
     [(ResultTcType.Ok receiver-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(ast.AstType.Box _)
-          (match (tc-borrow-place ctx expr-bases env receiver)
-            [(ResultTcBorrowPlace.Ok place) (tc-borrow-place-box-get ctx place)]
-            [(ResultTcBorrowPlace.Err message)
-              (ResultTcBorrowPlace.Err message)])]
+          (let
+            [place : TcBorrowPlace
+              (try (tc-borrow-place ctx expr-bases env receiver))]
+            (tc-borrow-place-box-get ctx place))]
         [(ast.AstType.Ref _ _) (tc-borrow-place ctx expr-bases env receiver)]
         [(ast.AstType.MutRef _ _) (tc-borrow-place ctx expr-bases env receiver)]
         [_
@@ -54902,9 +54399,9 @@
               env
               (tc-context-expr-get ctx virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcNameId.Err message)])
-        (match (tc-lookup-visible-id ctx env name)
-          [(ResultTcType.Ok ty) (tc-store-place-lifetime-var name ty)]
-          [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
+        (let
+          [ty : ast.AstType (try (tc-lookup-visible-id ctx env name))]
+          (tc-store-place-lifetime-var name ty)))]
     [(ast.AstExpr.StructGet receiver-box _)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
@@ -54917,12 +54414,10 @@
       (let
         [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
         [index : ast.AstExpr (tc-context-expr-get ctx index-box)]
-        (match (tc-expr ctx env index)
-          [(ResultTcType.Ok index-ty)
-            (if (tc-integer-type? index-ty)
-              (tc-store-place-lifetime ctx env array)
-              (ResultTcNameId.Err "typecheck: array index must be integer"))]
-          [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
+        [index-ty : ast.AstType (try (tc-expr ctx env index))]
+        (if (tc-integer-type? index-ty)
+          (tc-store-place-lifetime ctx env array)
+          (ResultTcNameId.Err "typecheck: array index must be integer")))]
     [(ast.AstExpr.BoxGet box-box)
       (let
         [box-expr : ast.AstExpr (tc-context-expr-get ctx box-box)]
@@ -55073,12 +54568,39 @@
       (ResultTcEnv.Err
         "typecheck: scalar match only supports literal, binding, or wildcard patterns")]))
 
-(define (tc-bind-sub-pattern-list
+;; How a pattern list binds each element against its type: as a variant
+;; payload, a tuple or array element, a struct field, or the borrowed forms
+;; of the first two with the borrow's lifetime.
+(defenum TcPatternListMode
+  (Sub)
+  (Element)
+  (StructField)
+  (BorrowedSub i64)
+  (BorrowedElement i64))
+
+(define (tc-bind-pattern-list-element
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
+  [pattern : ast.AstPattern]
+  [ty : ast.AstType]) : ResultTcEnv
+  (match mode
+    [(TcPatternListMode.Sub) (tc-bind-sub-pattern ctx env pattern ty)]
+    [(TcPatternListMode.Element) (tc-bind-tuple-sub-pattern ctx env pattern ty)]
+    [(TcPatternListMode.StructField)
+      (tc-bind-struct-field-pattern ctx env pattern ty)]
+    [(TcPatternListMode.BorrowedSub lifetime)
+      (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty)]
+    [(TcPatternListMode.BorrowedElement lifetime)
+      (tc-bind-borrowed-tuple-sub-pattern ctx env lifetime pattern ty)]))
+
+(define (tc-bind-pattern-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [patterns : ast.AstPatternList]
   [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-sub-pattern-list-at ctx env (& patterns) (& types) 0))
+  (tc-bind-pattern-list-at ctx env mode (& patterns) (& types) 0))
 
 (define (tc-pattern-arity-message [expected : i64] [found : i64]) : String
   (str_cat.str-cat
@@ -55087,9 +54609,10 @@
     ", found "
     (string.int->string found)))
 
-(define (tc-bind-sub-pattern-list-at
+(define (tc-bind-pattern-list-at
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [patterns : (& patterns ast.AstPatternList)]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : ResultTcEnv
@@ -55111,15 +54634,9 @@
         [ty : ast.AstType
           (ast.ty-node-get
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        (match (tc-bind-sub-pattern ctx env pattern ty)
-          [(ResultTcEnv.Ok next-env)
-            (tc-bind-sub-pattern-list-at
-              ctx
-              next-env
-              patterns
-              types
-              (+ index 1))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
+        [next-env : TcTypeEnv
+          (try (tc-bind-pattern-list-element ctx env mode pattern ty))]
+        (tc-bind-pattern-list-at ctx next-env mode patterns types (+ index 1))))))
 
 (define (tc-tuple-pattern-element-types
   [ctx : TcContext]
@@ -55151,9 +54668,10 @@
       (ResultTcArrayPatternInfo.Err
         "typecheck: array pattern requires fixed Array scrutinee")]))
 
-(define (tc-bind-array-sub-pattern-list-at
+(define (tc-bind-array-pattern-list-at
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [patterns : (& patterns ast.AstPatternList)]
   [elem-ty : ast.AstType]
   [count : i64]
@@ -55166,15 +54684,17 @@
     (if (>= index count)
       (ResultTcEnv.Err
         (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns)))
-      (match (tc-bind-tuple-sub-pattern
+      (match (tc-bind-pattern-list-element
         ctx
         env
+        mode
         (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
         (tc-global-shared-view elem-ty))
         [(ResultTcEnv.Ok next-env)
-          (tc-bind-array-sub-pattern-list-at
+          (tc-bind-array-pattern-list-at
             ctx
             next-env
+            mode
             patterns
             elem-ty
             count
@@ -55184,63 +54704,24 @@
 (define (tc-bind-array-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [array-ty : ast.AstType]
   [patterns : ast.AstPatternList]) : ResultTcEnv
   (match (tc-array-pattern-info ctx array-ty)
     [(ResultTcArrayPatternInfo.Ok elem-ty count)
-      (tc-bind-array-sub-pattern-list-at ctx env (& patterns) elem-ty count 0)]
+      (tc-bind-array-pattern-list-at ctx env mode (& patterns) elem-ty count 0)]
     [(ResultTcArrayPatternInfo.Err message) (ResultTcEnv.Err message)]))
-
-(define (tc-bind-tuple-sub-pattern-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [patterns : ast.AstPatternList]
-  [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-tuple-sub-pattern-list-at ctx env (& patterns) (& types) 0))
-
-(define (tc-bind-tuple-sub-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [patterns : (& patterns ast.AstPatternList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns))))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns)))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        (match (tc-bind-tuple-sub-pattern ctx env pattern ty)
-          [(ResultTcEnv.Ok next-env)
-            (tc-bind-tuple-sub-pattern-list-at
-              ctx
-              next-env
-              patterns
-              types
-              (+ index 1))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
 
 (define (tc-bind-tuple-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mode : TcPatternListMode]
   [tuple-ty : ast.AstType]
   [patterns : ast.AstPatternList]) : ResultTcEnv
-  (match (tc-tuple-pattern-element-types ctx tuple-ty)
-    [(ResultTcTypeList.Ok elem-types)
-      (tc-bind-tuple-sub-pattern-list ctx env patterns elem-types)]
-    [(ResultTcTypeList.Err message) (ResultTcEnv.Err message)]))
+  (let
+    [elem-types : ast.AstTypeList
+      (try (tc-tuple-pattern-element-types ctx tuple-ty))]
+    (tc-bind-pattern-list ctx env mode patterns elem-types)))
 
 (define (tc-bind-tuple-sub-pattern
   [ctx : TcContext]
@@ -55255,12 +54736,14 @@
       (tc-bind-tuple-pattern
         ctx
         env
+        TcPatternListMode.Element
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
     [(ast.AstPattern.Array patterns-box)
       (tc-bind-array-pattern
         ctx
         env
+        TcPatternListMode.Element
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
     [(ast.AstPattern.Variant name _)
@@ -55297,15 +54780,15 @@
     [resolved-fields : ast.AstTypeList (tc-resolve-type-list field-ctx fields)]
     (if (ast.ast-lifetime-list-empty? (& enum-lifetimes))
       (ResultTcVariantPayloadTypes.Ok resolved-fields)
-      (match (tc-lifetime-subst-from-nominal-args-id
-        field-ctx
-        enum-name-id
-        enum-lifetimes)
-        [(ResultTcLifetimeSubst.Ok subst)
-          (ResultTcVariantPayloadTypes.Ok
-            (tc-lifetime-subst-type-list subst resolved-fields))]
-        [(ResultTcLifetimeSubst.Err message)
-          (ResultTcVariantPayloadTypes.Err message)]))))
+      (let
+        [subst : TcLifetimeSubst
+          (try
+            (tc-lifetime-subst-from-nominal-args-id
+              field-ctx
+              enum-name-id
+              enum-lifetimes))]
+        (ResultTcVariantPayloadTypes.Ok
+          (tc-lifetime-subst-type-list subst resolved-fields))))))
 
 (define (tc-bind-variant-pattern
   [ctx : TcContext]
@@ -55337,25 +54820,26 @@
           (or
             (tc-nominal-name-id-eq? owner-id enum-name-id)
             (tc-nominal-name-id-canonical-eq? ctx owner-id enum-name-id)))
-          (match (csym.compiler-registries-variant-fields-indexed
-            (tc-context-symbols ctx)
-            handle)
-            [(parser.ResultAstTypeList.Ok fields)
-              (match (tc-variant-pattern-payload-types
-                ctx
-                owner-id
-                (csym.compiler-registry-handle-owner-index handle)
-                enum-lifetimes
-                fields)
-                [(ResultTcVariantPayloadTypes.Ok payload-fields)
-                  (tc-bind-sub-pattern-list
-                    ctx
-                    env
-                    args
-                    (tc-tag-type-list-regions payload-regions payload-fields))]
-                [(ResultTcVariantPayloadTypes.Err message)
-                  (ResultTcEnv.Err message)])]
-            [(parser.ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
+          (let
+            [fields : ast.AstTypeList
+              (try
+                (csym.compiler-registries-variant-fields-indexed
+                  (tc-context-symbols ctx)
+                  handle))]
+            [payload-fields : ast.AstTypeList
+              (try
+                (tc-variant-pattern-payload-types
+                  ctx
+                  owner-id
+                  (csym.compiler-registry-handle-owner-index handle)
+                  enum-lifetimes
+                  fields))]
+            (tc-bind-pattern-list
+              ctx
+              env
+              TcPatternListMode.Sub
+              args
+              (tc-tag-type-list-regions payload-regions payload-fields)))
           (ResultTcEnv.Err
             (str_cat.str-cat
               "typecheck: variant "
@@ -55531,71 +55015,32 @@
         (tc-resolve-type ctx (tc-global-shared-view scrut-ty)))]
     (match resolved-scrut-ty
       [(ast.AstType.StructArgs _ lifetimes)
-        (match (tc-lifetime-subst-from-nominal-args-id
-          ctx
-          struct-name-id
-          (ast.ast-lifetime-list-box-shared-view lifetimes))
-          [(ResultTcLifetimeSubst.Ok subst)
-            (ResultTcTypeList.Ok
-              (tc-project-type-list-from-region-container
-                scrut-ty
-                (tc-lifetime-subst-type-list subst field-types)))]
-          [(ResultTcLifetimeSubst.Err message) (ResultTcTypeList.Err message)])]
+        (let
+          [subst : TcLifetimeSubst
+            (try
+              (tc-lifetime-subst-from-nominal-args-id
+                ctx
+                struct-name-id
+                (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+          (ResultTcTypeList.Ok
+            (tc-project-type-list-from-region-container
+              scrut-ty
+              (tc-lifetime-subst-type-list subst field-types))))]
       [(ast.AstType.VarArgs _ lifetimes)
-        (match (tc-lifetime-subst-from-nominal-args-id
-          ctx
-          struct-name-id
-          (ast.ast-lifetime-list-box-shared-view lifetimes))
-          [(ResultTcLifetimeSubst.Ok subst)
-            (ResultTcTypeList.Ok
-              (tc-project-type-list-from-region-container
-                scrut-ty
-                (tc-lifetime-subst-type-list subst field-types)))]
-          [(ResultTcLifetimeSubst.Err message) (ResultTcTypeList.Err message)])]
+        (let
+          [subst : TcLifetimeSubst
+            (try
+              (tc-lifetime-subst-from-nominal-args-id
+                ctx
+                struct-name-id
+                (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+          (ResultTcTypeList.Ok
+            (tc-project-type-list-from-region-container
+              scrut-ty
+              (tc-lifetime-subst-type-list subst field-types))))]
       [_
         (ResultTcTypeList.Ok
           (tc-project-type-list-from-region-container scrut-ty field-types))])))
-
-(define (tc-bind-struct-field-pattern-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [patterns : ast.AstPatternList]
-  [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-struct-field-pattern-list-at ctx env (& patterns) (& types) 0))
-
-(define (tc-bind-struct-field-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [patterns : (& patterns ast.AstPatternList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns))))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns)))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        (match (tc-bind-struct-field-pattern ctx env pattern ty)
-          [(ResultTcEnv.Ok next-env)
-            (tc-bind-struct-field-pattern-list-at
-              ctx
-              next-env
-              patterns
-              types
-              (+ index 1))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
 
 (define (tc-bind-struct-pattern
   [ctx : TcContext]
@@ -55613,19 +55058,24 @@
     pattern-name-id)
     [(ResultTcString.Ok lookup-name)
       (if (string.eq lookup-name struct-name)
-        (match (tc-struct-decl-id ctx struct-name-id)
-          [(ResultTcStructDecl.Ok decl)
-            (match decl
-              [(TcStructDecl _ _ fields)
-                (match (tc-struct-pattern-field-types-for-scrut
+        (let
+          [decl : TcStructDecl (try (tc-struct-decl-id ctx struct-name-id))]
+          (match decl
+            [(TcStructDecl _ _ fields)
+              (let
+                [field-types : ast.AstTypeList
+                  (try
+                    (tc-struct-pattern-field-types-for-scrut
+                      ctx
+                      struct-name-id
+                      scrut-ty
+                      fields))]
+                (tc-bind-pattern-list
                   ctx
-                  struct-name-id
-                  scrut-ty
-                  fields)
-                  [(ResultTcTypeList.Ok field-types)
-                    (tc-bind-struct-field-pattern-list ctx env args field-types)]
-                  [(ResultTcTypeList.Err message) (ResultTcEnv.Err message)])])]
-          [(ResultTcStructDecl.Err message) (ResultTcEnv.Err message)])
+                  env
+                  TcPatternListMode.StructField
+                  args
+                  field-types))]))
         (ResultTcEnv.Err
           (tc-struct-pattern-head-message pattern-name struct-name)))]
     [(ResultTcString.Err message) (ResultTcEnv.Err message)]))
@@ -55645,12 +55095,14 @@
         (tc-bind-tuple-pattern
           ctx
           env
+          TcPatternListMode.Element
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Array patterns-box)
         (tc-bind-array-pattern
           ctx
           env
+          TcPatternListMode.Element
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Variant name args-box)
@@ -55717,12 +55169,14 @@
         (tc-bind-tuple-pattern
           ctx
           env
+          TcPatternListMode.Element
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Array patterns-box)
         (tc-bind-array-pattern
           ctx
           env
+          TcPatternListMode.Element
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Variant name args-box)
@@ -55785,123 +55239,6 @@
 (define (tc-borrowed-field-ref-type [lifetime : i64] [field-ty : ast.AstType]) : ast.AstType
   (ast.ast-ty-ref lifetime (tc-borrow-referent-type field-ty)))
 
-(define (tc-bind-borrowed-array-sub-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : (& patterns ast.AstPatternList)]
-  [elem-ty : ast.AstType]
-  [count : i64]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index count)
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns))))
-    (if (>= index count)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns)))
-      (match (tc-bind-borrowed-tuple-sub-pattern
-        ctx
-        env
-        lifetime
-        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
-        (tc-global-shared-view elem-ty))
-        [(ResultTcEnv.Ok next-env)
-          (tc-bind-borrowed-array-sub-pattern-list-at
-            ctx
-            next-env
-            lifetime
-            patterns
-            elem-ty
-            count
-            (+ index 1))]
-        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))))
-
-(define (tc-bind-borrowed-array-pattern
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [array-ty : ast.AstType]
-  [patterns : ast.AstPatternList]) : ResultTcEnv
-  (match (tc-array-pattern-info ctx array-ty)
-    [(ResultTcArrayPatternInfo.Ok elem-ty count)
-      (tc-bind-borrowed-array-sub-pattern-list-at
-        ctx
-        env
-        lifetime
-        (& patterns)
-        elem-ty
-        count
-        0)]
-    [(ResultTcArrayPatternInfo.Err message) (ResultTcEnv.Err message)]))
-
-(define (tc-bind-borrowed-tuple-sub-pattern-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : ast.AstPatternList]
-  [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-borrowed-tuple-sub-pattern-list-at
-    ctx
-    env
-    lifetime
-    (& patterns)
-    (& types)
-    0))
-
-(define (tc-bind-borrowed-tuple-sub-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : (& patterns ast.AstPatternList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns))))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns)))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        (match (tc-bind-borrowed-tuple-sub-pattern ctx env lifetime pattern ty)
-          [(ResultTcEnv.Ok next-env)
-            (tc-bind-borrowed-tuple-sub-pattern-list-at
-              ctx
-              next-env
-              lifetime
-              patterns
-              types
-              (+ index 1))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
-
-(define (tc-bind-borrowed-tuple-pattern
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [tuple-ty : ast.AstType]
-  [patterns : ast.AstPatternList]) : ResultTcEnv
-  (match (tc-tuple-pattern-element-types ctx tuple-ty)
-    [(ResultTcTypeList.Ok elem-types)
-      (tc-bind-borrowed-tuple-sub-pattern-list
-        ctx
-        env
-        lifetime
-        patterns
-        elem-types)]
-    [(ResultTcTypeList.Err message) (ResultTcEnv.Err message)]))
-
 (define (tc-bind-borrowed-struct-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -55919,24 +55256,24 @@
     pattern-name-id)
     [(ResultTcString.Ok lookup-name)
       (if (string.eq lookup-name struct-name)
-        (match (tc-struct-decl-id ctx struct-name-id)
-          [(ResultTcStructDecl.Ok decl)
-            (match decl
-              [(TcStructDecl _ _ fields)
-                (match (tc-struct-pattern-field-types-for-scrut
-                  ctx
-                  struct-name-id
-                  scrut-ty
-                  fields)
-                  [(ResultTcTypeList.Ok field-types)
-                    (tc-bind-borrowed-tuple-sub-pattern-list
+        (let
+          [decl : TcStructDecl (try (tc-struct-decl-id ctx struct-name-id))]
+          (match decl
+            [(TcStructDecl _ _ fields)
+              (let
+                [field-types : ast.AstTypeList
+                  (try
+                    (tc-struct-pattern-field-types-for-scrut
                       ctx
-                      env
-                      lifetime
-                      args
-                      field-types)]
-                  [(ResultTcTypeList.Err message) (ResultTcEnv.Err message)])])]
-          [(ResultTcStructDecl.Err message) (ResultTcEnv.Err message)])
+                      struct-name-id
+                      scrut-ty
+                      fields))]
+                (tc-bind-pattern-list
+                  ctx
+                  env
+                  (TcPatternListMode.BorrowedElement lifetime)
+                  args
+                  field-types))]))
         (ResultTcEnv.Err
           (tc-struct-pattern-head-message pattern-name struct-name)))]
     [(ResultTcString.Err message) (ResultTcEnv.Err message)]))
@@ -55956,17 +55293,17 @@
         (tc-bind-id env name (tc-borrowed-field-ref-type lifetime elem-ty)))]
     [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
     [(ast.AstPattern.Tuple patterns-box)
-      (tc-bind-borrowed-tuple-pattern
+      (tc-bind-tuple-pattern
         ctx
         env
-        lifetime
+        (TcPatternListMode.BorrowedElement lifetime)
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
     [(ast.AstPattern.Array patterns-box)
-      (tc-bind-borrowed-array-pattern
+      (tc-bind-array-pattern
         ctx
         env
-        lifetime
+        (TcPatternListMode.BorrowedElement lifetime)
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
     [(ast.AstPattern.Variant name args-box)
@@ -56001,56 +55338,6 @@
       (ResultTcEnv.Err
         "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern")]))
 
-(define (tc-bind-borrowed-sub-pattern-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : ast.AstPatternList]
-  [types : ast.AstTypeList]) : ResultTcEnv
-  (tc-bind-borrowed-sub-pattern-list-at
-    ctx
-    env
-    lifetime
-    (& patterns)
-    (& types)
-    0))
-
-(define (tc-bind-borrowed-sub-pattern-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [lifetime : i64]
-  [patterns : (& patterns ast.AstPatternList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultTcEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns))))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultTcEnv.Err
-        (tc-pattern-arity-message
-          (ast.ast-type-list-len types)
-          (ast.ast-pattern-list-len patterns)))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        (match (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty)
-          [(ResultTcEnv.Ok next-env)
-            (tc-bind-borrowed-sub-pattern-list-at
-              ctx
-              next-env
-              lifetime
-              patterns
-              types
-              (+ index 1))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
-
 (define (tc-bind-borrowed-variant-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -56081,26 +55368,26 @@
           (or
             (tc-nominal-name-id-eq? owner-id enum-name-id)
             (tc-nominal-name-id-canonical-eq? ctx owner-id enum-name-id)))
-          (match (csym.compiler-registries-variant-fields-indexed
-            (tc-context-symbols ctx)
-            handle)
-            [(parser.ResultAstTypeList.Ok fields)
-              (match (tc-variant-pattern-payload-types
-                ctx
-                owner-id
-                (csym.compiler-registry-handle-owner-index handle)
-                enum-lifetimes
-                fields)
-                [(ResultTcVariantPayloadTypes.Ok payload-fields)
-                  (tc-bind-borrowed-sub-pattern-list
-                    ctx
-                    env
-                    lifetime
-                    args
-                    payload-fields)]
-                [(ResultTcVariantPayloadTypes.Err message)
-                  (ResultTcEnv.Err message)])]
-            [(parser.ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
+          (let
+            [fields : ast.AstTypeList
+              (try
+                (csym.compiler-registries-variant-fields-indexed
+                  (tc-context-symbols ctx)
+                  handle))]
+            [payload-fields : ast.AstTypeList
+              (try
+                (tc-variant-pattern-payload-types
+                  ctx
+                  owner-id
+                  (csym.compiler-registry-handle-owner-index handle)
+                  enum-lifetimes
+                  fields))]
+            (tc-bind-pattern-list
+              ctx
+              env
+              (TcPatternListMode.BorrowedSub lifetime)
+              args
+              payload-fields))
           (ResultTcEnv.Err
             (str_cat.str-cat
               "typecheck: variant "
@@ -56130,17 +55417,17 @@
       [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
       [(ast.AstPattern.Literal lit) (tc-bind-literal-pattern env lit ty)]
       [(ast.AstPattern.Tuple patterns-box)
-        (tc-bind-borrowed-tuple-pattern
+        (tc-bind-tuple-pattern
           ctx
           env
-          lifetime
+          (TcPatternListMode.BorrowedElement lifetime)
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Array patterns-box)
-        (tc-bind-borrowed-array-pattern
+        (tc-bind-array-pattern
           ctx
           env
-          lifetime
+          (TcPatternListMode.BorrowedElement lifetime)
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
       [(ast.AstPattern.Variant name args-box)
@@ -56295,10 +55582,10 @@
               [(ast.AstPattern.Binding name)
                 (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
               [(ast.AstPattern.Tuple patterns-box)
-                (tc-bind-borrowed-tuple-pattern
+                (tc-bind-tuple-pattern
                   ctx
                   env
-                  lifetime
+                  (TcPatternListMode.BorrowedElement lifetime)
                   referent-ty
                   (ast.ast-pattern-list-box-shared-view patterns-box))]
               [_
@@ -56310,10 +55597,10 @@
               [(ast.AstPattern.Binding name)
                 (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
               [(ast.AstPattern.Array patterns-box)
-                (tc-bind-borrowed-array-pattern
+                (tc-bind-array-pattern
                   ctx
                   env
-                  lifetime
+                  (TcPatternListMode.BorrowedElement lifetime)
                   referent-ty
                   (ast.ast-pattern-list-box-shared-view patterns-box))]
               [_
@@ -56431,6 +55718,7 @@
           (tc-bind-tuple-pattern
             ctx
             env
+            TcPatternListMode.Element
             scrut-ty
             (ast.ast-pattern-list-box-shared-view patterns-box))]
         [_
@@ -56445,6 +55733,7 @@
           (tc-bind-array-pattern
             ctx
             env
+            TcPatternListMode.Element
             scrut-ty
             (ast.ast-pattern-list-box-shared-view patterns-box))]
         [_
@@ -57575,10 +56864,10 @@
   [env : TcTypeEnv]
   [variant-id : i64]
   [args : ast.AstPatternList]) : ResultTcEnv
-  (match (tc-expr-variant-payload-types ctx variant-id)
-    [(ResultTcTypeList.Ok payloads)
-      (tc-bind-sub-pattern-list ctx env args payloads)]
-    [(ResultTcTypeList.Err message) (ResultTcEnv.Err message)]))
+  (let
+    [payloads : ast.AstTypeList
+      (try (tc-expr-variant-payload-types ctx variant-id))]
+    (tc-bind-pattern-list ctx env TcPatternListMode.Sub args payloads)))
 
 (define (tc-bind-expr-match-pattern
   [ctx : TcContext]
@@ -57608,9 +56897,10 @@
       (ResultTcEnv.Ok (tc-bind-id env name (tc-macro-expr-clause-type)))]
     [(ast.AstPattern.Variant variant-name args-box)
       (if (tc-expr-clause-pattern-name? variant-name)
-        (tc-bind-sub-pattern-list
+        (tc-bind-pattern-list
           ctx
           env
+          TcPatternListMode.Sub
           (ast.ast-pattern-list-box-shared-view args-box)
           (tc-type-list2 (ast.AstType.Expr) (ast.AstType.Expr)))
         (ResultTcEnv.Err
@@ -58363,29 +57653,8 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [scrut-ty : ast.AstType]
-  [arms : ast.AstMatchArmList]) : ResultTcType
-  (let
-    [coverage-ty : ast.AstType
-      (tc-match-coverage-type ctx (tc-global-shared-view scrut-ty))]
-    (match (tc-match-arm-reachability-ok
-      ctx
-      (tc-global-shared-view coverage-ty)
-      (tc-global-shared-view arms))
-      [(ResultTcUnit.Ok)
-        (match (tc-check-match-arm-types ctx env scrut-ty arms)
-          [(ResultTcType.Ok result-ty)
-            (match (tc-match-exhaustiveness-ok ctx coverage-ty arms)
-              [(ResultTcUnit.Ok) (ResultTcType.Ok result-ty)]
-              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])]
-      [(ResultTcUnit.Err message) (ResultTcType.Err message)])))
-
-(define (tc-match-expr-with-expected
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [scrut-ty : ast.AstType]
   [arms : ast.AstMatchArmList]
-  [expected : ast.AstType]) : ResultTcType
+  [expected : ast.AstMaybeType]) : ResultTcType
   (let
     [coverage-ty : ast.AstType
       (tc-match-coverage-type ctx (tc-global-shared-view scrut-ty))]
@@ -58394,17 +57663,22 @@
       (tc-global-shared-view coverage-ty)
       (tc-global-shared-view arms))
       [(ResultTcUnit.Ok)
-        (match (tc-check-match-arm-types-with-expected
-          ctx
-          env
-          scrut-ty
-          arms
-          expected)
-          [(ResultTcType.Ok result-ty)
-            (match (tc-match-exhaustiveness-ok ctx coverage-ty arms)
-              [(ResultTcUnit.Ok) (ResultTcType.Ok result-ty)]
-              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])]
+        (let
+          [result-ty : ast.AstType
+            (try
+              (match expected
+                [(ast.AstMaybeType.Some ty)
+                  (tc-check-match-arm-types-with-expected
+                    ctx
+                    env
+                    scrut-ty
+                    arms
+                    ty)]
+                [(ast.AstMaybeType.No)
+                  (tc-check-match-arm-types ctx env scrut-ty arms)]))]
+          (match (tc-match-exhaustiveness-ok ctx coverage-ty arms)
+            [(ResultTcUnit.Ok) (ResultTcType.Ok result-ty)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
       [(ResultTcUnit.Err message) (ResultTcType.Err message)])))
 
 ;; spmd-reduce operator/type rules (SPEC 5.15): the init/value/result type
@@ -58669,26 +57943,25 @@
   [op : ast.AstReduceOp]
   [init : ast.AstExpr]
   [value : ast.AstExpr]) : ResultTcType
-  (match (tc-expr ctx value-env value)
-    [(ResultTcType.Ok value-ty)
-      (if (tc-reduce-op-type-ok?
-        op
-        (tc-resolve-type ctx (tc-global-shared-view value-ty)))
-        (match (tc-expr-with-expected-or-actual
-          ctx
-          env
-          init
-          (tc-global-shared-view value-ty))
-          [(ResultTcType.Ok init-ty)
-            (match (tc-expect
-              init-ty
-              (tc-global-shared-view value-ty)
-              "typecheck: spmd-reduce init and value type mismatch")
-              [(ResultTcUnit.Ok) (ResultTcType.Ok value-ty)]
-              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])
-        (ResultTcType.Err (tc-reduce-op-type-msg op)))]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [value-ty : ast.AstType (try (tc-expr ctx value-env value))]
+    (if (tc-reduce-op-type-ok?
+      op
+      (tc-resolve-type ctx (tc-global-shared-view value-ty)))
+      (match (tc-expr-with-expected-or-actual
+        ctx
+        env
+        init
+        (tc-global-shared-view value-ty))
+        [(ResultTcType.Ok init-ty)
+          (match (tc-expect
+            init-ty
+            (tc-global-shared-view value-ty)
+            "typecheck: spmd-reduce init and value type mismatch")
+            [(ResultTcUnit.Ok) (ResultTcType.Ok value-ty)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])
+      (ResultTcType.Err (tc-reduce-op-type-msg op)))))
 
 (define (tc-spmd-reduce-type-from-value-or-message
   [ctx : TcContext]
@@ -58823,114 +58096,104 @@
             (ast.AstType.I64)
             "typecheck: spmd-compact slot type must be i64")
             [(ResultTcUnit.Ok)
-              (match (tc-expr-with-expected-or-actual-id
-                ctx
-                env
-                start-box
-                (ast.AstType.I64))
-                [(ResultTcType.Ok start-ty)
-                  (match (tc-expect
-                    (tc-resolve-type ctx start-ty)
-                    (ast.AstType.I64)
-                    "typecheck: spmd-compact start expression must have type i64")
-                    [(ResultTcUnit.Ok)
-                      (match (tc-expr-with-expected-or-actual-id
-                        ctx
-                        env
-                        end-box
-                        (ast.AstType.I64))
-                        [(ResultTcType.Ok end-ty)
-                          (match (tc-expect
-                            (tc-resolve-type ctx end-ty)
-                            (ast.AstType.I64)
-                            "typecheck: spmd-compact end expression must have type i64")
-                            [(ResultTcUnit.Ok)
-                              (match (tc-expr-with-expected-or-actual-id
-                                ctx
-                                env
-                                init-box
-                                (ast.AstType.I64))
-                                [(ResultTcType.Ok init-ty)
+              (let
+                [start-ty : ast.AstType
+                  (try
+                    (tc-expr-with-expected-or-actual-id
+                      ctx
+                      env
+                      start-box
+                      (ast.AstType.I64)))]
+                (match (tc-expect
+                  (tc-resolve-type ctx start-ty)
+                  (ast.AstType.I64)
+                  "typecheck: spmd-compact start expression must have type i64")
+                  [(ResultTcUnit.Ok)
+                    (let
+                      [end-ty : ast.AstType
+                        (try
+                          (tc-expr-with-expected-or-actual-id
+                            ctx
+                            env
+                            end-box
+                            (ast.AstType.I64)))]
+                      (match (tc-expect
+                        (tc-resolve-type ctx end-ty)
+                        (ast.AstType.I64)
+                        "typecheck: spmd-compact end expression must have type i64")
+                        [(ResultTcUnit.Ok)
+                          (let
+                            [init-ty : ast.AstType
+                              (try
+                                (tc-expr-with-expected-or-actual-id
+                                  ctx
+                                  env
+                                  init-box
+                                  (ast.AstType.I64)))]
+                            (match (tc-expect
+                              (tc-resolve-type ctx init-ty)
+                              (ast.AstType.I64)
+                              "typecheck: spmd-compact initial slot must have type i64")
+                              [(ResultTcUnit.Ok)
+                                (let
+                                  [index-env : TcTypeEnv
+                                    (tc-bind-id
+                                      env
+                                      index
+                                      (tc-global-shared-view resolved-index-ty))]
+                                  [body-env : TcTypeEnv
+                                    (tc-bind-id
+                                      index-env
+                                      slot
+                                      (tc-global-shared-view resolved-slot-ty))]
+                                  [keep : ast.AstExpr
+                                    (tc-context-expr-get ctx keep-box)]
+                                  [body : ast.AstExpr
+                                    (tc-context-expr-get ctx body-box)]
+                                  [keep-ty : ast.AstType
+                                    (try
+                                      (tc-expr-with-expected-or-actual-id
+                                        ctx
+                                        index-env
+                                        keep-box
+                                        (ast.AstType.Bool)))]
                                   (match (tc-expect
-                                    (tc-resolve-type ctx init-ty)
-                                    (ast.AstType.I64)
-                                    "typecheck: spmd-compact initial slot must have type i64")
+                                    (tc-resolve-type ctx keep-ty)
+                                    (ast.AstType.Bool)
+                                    "typecheck: spmd-compact predicate must have type bool")
                                     [(ResultTcUnit.Ok)
                                       (let
-                                        [index-env : TcTypeEnv
-                                          (tc-bind-id
-                                            env
-                                            index
-                                            (tc-global-shared-view
-                                              resolved-index-ty))]
-                                        [body-env : TcTypeEnv
-                                          (tc-bind-id
-                                            index-env
-                                            slot
-                                            (tc-global-shared-view
-                                              resolved-slot-ty))]
-                                        [keep : ast.AstExpr
-                                          (tc-context-expr-get ctx keep-box)]
-                                        [body : ast.AstExpr
-                                          (tc-context-expr-get ctx body-box)]
-                                        (match (tc-expr-with-expected-or-actual-id
-                                          ctx
-                                          index-env
-                                          keep-box
-                                          (ast.AstType.Bool))
-                                          [(ResultTcType.Ok keep-ty)
-                                            (match (tc-expect
-                                              (tc-resolve-type ctx keep-ty)
-                                              (ast.AstType.Bool)
-                                              "typecheck: spmd-compact predicate must have type bool")
+                                        [body-ty : ast.AstType
+                                          (try
+                                            (tc-expr-id ctx body-env body-box))]
+                                        (match (tc-expect
+                                          body-ty
+                                          (ast.AstType.Unit)
+                                          "typecheck: spmd-compact body must be unit")
+                                          [(ResultTcUnit.Ok)
+                                            (match (tc-spmd-check-compact
+                                              ctx
+                                              (tc-context-expr-bases ctx)
+                                              env
+                                              index
+                                              resolved-index-ty
+                                              slot
+                                              resolved-slot-ty
+                                              keep
+                                              body)
                                               [(ResultTcUnit.Ok)
-                                                (match (tc-expr-id
-                                                  ctx
-                                                  body-env
-                                                  body-box)
-                                                  [(ResultTcType.Ok body-ty)
-                                                    (match (tc-expect
-                                                      body-ty
-                                                      (ast.AstType.Unit)
-                                                      "typecheck: spmd-compact body must be unit")
-                                                      [(ResultTcUnit.Ok)
-                                                        (match (tc-spmd-check-compact
-                                                          ctx
-                                                          (tc-context-expr-bases
-                                                            ctx)
-                                                          env
-                                                          index
-                                                          resolved-index-ty
-                                                          slot
-                                                          resolved-slot-ty
-                                                          keep
-                                                          body)
-                                                          [(ResultTcUnit.Ok)
-                                                            (ResultTcType.Ok
-                                                              (ast.AstType.I64))]
-                                                          [(ResultTcUnit.Err
-                                                              message)
-                                                            (ResultTcType.Err
-                                                              message)])]
-                                                      [(ResultTcUnit.Err
-                                                          message)
-                                                        (ResultTcType.Err
-                                                          message)])]
-                                                  [(ResultTcType.Err message)
-                                                    (ResultTcType.Err message)])]
+                                                (ResultTcType.Ok
+                                                  (ast.AstType.I64))]
                                               [(ResultTcUnit.Err message)
                                                 (ResultTcType.Err message)])]
-                                          [(ResultTcType.Err message)
+                                          [(ResultTcUnit.Err message)
                                             (ResultTcType.Err message)]))]
                                     [(ResultTcUnit.Err message)
-                                      (ResultTcType.Err message)])]
-                                [(ResultTcType.Err message)
-                                  (ResultTcType.Err message)])]
-                            [(ResultTcUnit.Err message)
-                              (ResultTcType.Err message)])]
-                        [(ResultTcType.Err message) (ResultTcType.Err message)])]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])]
+                                      (ResultTcType.Err message)]))]
+                              [(ResultTcUnit.Err message)
+                                (ResultTcType.Err message)]))]
+                        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+                  [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))))
 
@@ -58940,13 +58203,11 @@
   [place : ast.AstExpr]) : ResultTcType
   (match (tc-require-unsafe ctx env "ptr-addr-of")
     [(ResultTcUnit.Ok)
-      (match (tc-ptr-addr-of-place ctx env place)
-        [(ResultTcType.Ok ty)
-          (let
-            [resolved : ast.AstType (tc-resolve-type ctx ty)]
-            (ResultTcType.Ok
-              (ast.ast-ty-mut-ptr (tc-type-without-regions resolved))))]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [ty : ast.AstType (try (tc-ptr-addr-of-place ctx env place))]
+        [resolved : ast.AstType (tc-resolve-type ctx ty)]
+        (ResultTcType.Ok
+          (ast.ast-ty-mut-ptr (tc-type-without-regions resolved))))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-ptr-read-expr
@@ -58955,15 +58216,14 @@
   [ptr : ast.AstExpr]) : ResultTcType
   (match (tc-require-unsafe ctx env "ptr-read")
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env ptr)
-        [(ResultTcType.Ok ptr-ty)
-          (match (tc-raw-pointer-elem
-            (tc-resolve-type ctx ptr-ty)
-            "typecheck: ptr-read requires a raw pointer operand")
-            [(ResultTcType.Ok elem)
-              (ResultTcType.Ok (tc-resolve-type ctx elem))]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
+        [elem : ast.AstType
+          (try
+            (tc-raw-pointer-elem
+              (tc-resolve-type ctx ptr-ty)
+              "typecheck: ptr-read requires a raw pointer operand"))]
+        (ResultTcType.Ok (tc-resolve-type ctx elem)))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-ptr-write-expr
@@ -58973,27 +58233,26 @@
   [value : ast.AstExpr]) : ResultTcType
   (match (tc-require-unsafe ctx env "ptr-write!")
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env ptr)
-        [(ResultTcType.Ok ptr-ty)
-          (match (tc-mut-pointer-elem
-            (tc-resolve-type ctx ptr-ty)
-            "typecheck: ptr-write! requires a MutPtr pointer operand")
-            [(ResultTcType.Ok elem)
-              (match (tc-expr-with-expected-or-actual
-                ctx
-                env
-                value
-                (tc-resolve-type ctx (tc-global-shared-view elem)))
-                [(ResultTcType.Ok value-ty)
-                  (match (tc-expect
-                    value-ty
-                    (tc-resolve-type ctx elem)
-                    "typecheck: ptr-write! value type mismatch")
-                    [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Unit))]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
+        [elem : ast.AstType
+          (try
+            (tc-mut-pointer-elem
+              (tc-resolve-type ctx ptr-ty)
+              "typecheck: ptr-write! requires a MutPtr pointer operand"))]
+        (match (tc-expr-with-expected-or-actual
+          ctx
+          env
+          value
+          (tc-resolve-type ctx (tc-global-shared-view elem)))
+          [(ResultTcType.Ok value-ty)
+            (match (tc-expect
+              value-ty
+              (tc-resolve-type ctx elem)
+              "typecheck: ptr-write! value type mismatch")
+              [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Unit))]
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-ptr-offset-expr
@@ -59003,27 +58262,26 @@
   [offset : ast.AstExpr]) : ResultTcType
   (match (tc-require-unsafe ctx env "ptr-offset")
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env ptr)
-        [(ResultTcType.Ok ptr-ty)
-          (let
-            [resolved-ptr : ast.AstType (tc-resolve-type ctx ptr-ty)]
-            (match (tc-raw-pointer-elem
-              (tc-global-shared-view resolved-ptr)
-              "typecheck: ptr-offset requires a raw pointer operand")
-              [(ResultTcType.Ok _)
-                (match (tc-expr-with-expected-or-actual
-                  ctx
-                  env
-                  offset
-                  (ast.AstType.I64))
-                  [(ResultTcType.Ok offset-ty)
-                    (if (tc-integer-type? offset-ty)
-                      (ResultTcType.Ok resolved-ptr)
-                      (ResultTcType.Err
-                        "typecheck: ptr-offset requires an integer offset"))]
-                  [(ResultTcType.Err message) (ResultTcType.Err message)])]
-              [(ResultTcType.Err message) (ResultTcType.Err message)]))]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
+        [resolved-ptr : ast.AstType (tc-resolve-type ctx ptr-ty)]
+        (match (tc-raw-pointer-elem
+          (tc-global-shared-view resolved-ptr)
+          "typecheck: ptr-offset requires a raw pointer operand")
+          [(ResultTcType.Ok _)
+            (let
+              [offset-ty : ast.AstType
+                (try
+                  (tc-expr-with-expected-or-actual
+                    ctx
+                    env
+                    offset
+                    (ast.AstType.I64)))]
+              (if (tc-integer-type? offset-ty)
+                (ResultTcType.Ok resolved-ptr)
+                (ResultTcType.Err
+                  "typecheck: ptr-offset requires an integer offset")))]
+          [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-ptr-cast-expr
@@ -59036,13 +58294,12 @@
       (let
         [resolved-target : ast.AstType (tc-resolve-type ctx target)]
         (if (tc-raw-pointer-type? (tc-global-shared-view resolved-target))
-          (match (tc-expr ctx env ptr)
-            [(ResultTcType.Ok ptr-ty)
-              (if (tc-raw-pointer-type? (tc-resolve-type ctx ptr-ty))
-                (ResultTcType.Ok resolved-target)
-                (ResultTcType.Err
-                  "typecheck: ptr-cast requires a raw pointer operand"))]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])
+          (let
+            [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
+            (if (tc-raw-pointer-type? (tc-resolve-type ctx ptr-ty))
+              (ResultTcType.Ok resolved-target)
+              (ResultTcType.Err
+                "typecheck: ptr-cast requires a raw pointer operand")))
           (ResultTcType.Err
             "typecheck: ptr-cast target must be a raw pointer type")))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -59053,13 +58310,12 @@
   [ptr : ast.AstExpr]) : ResultTcType
   (match (tc-require-unsafe ctx env "ptr->int")
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env ptr)
-        [(ResultTcType.Ok ptr-ty)
-          (if (tc-raw-pointer-type? (tc-resolve-type ctx ptr-ty))
-            (ResultTcType.Ok (ast.AstType.U64))
-            (ResultTcType.Err
-              "typecheck: ptr->int requires a raw pointer operand"))]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
+        (if (tc-raw-pointer-type? (tc-resolve-type ctx ptr-ty))
+          (ResultTcType.Ok (ast.AstType.U64))
+          (ResultTcType.Err
+            "typecheck: ptr->int requires a raw pointer operand")))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-int-to-ptr-expr
@@ -59072,13 +58328,12 @@
       (let
         [resolved-target : ast.AstType (tc-resolve-type ctx target)]
         (if (tc-raw-pointer-type? (tc-global-shared-view resolved-target))
-          (match (tc-expr ctx env value)
-            [(ResultTcType.Ok value-ty)
-              (if (tc-integer-type? value-ty)
-                (ResultTcType.Ok resolved-target)
-                (ResultTcType.Err
-                  "typecheck: int->ptr requires an integer operand"))]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])
+          (let
+            [value-ty : ast.AstType (try (tc-expr ctx env value))]
+            (if (tc-integer-type? value-ty)
+              (ResultTcType.Ok resolved-target)
+              (ResultTcType.Err
+                "typecheck: int->ptr requires an integer operand")))
           (ResultTcType.Err
             "typecheck: int->ptr target must be a raw pointer type")))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -59089,12 +58344,11 @@
   [str : ast.AstExpr]) : ResultTcType
   (match (tc-require-unsafe ctx env "string-data")
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env str)
-        [(ResultTcType.Ok str-ty)
-          (if (tc-length-handle-type? str-ty)
-            (ResultTcType.Ok (ast.ast-ty-ptr (ast.AstType.U8)))
-            (ResultTcType.Err "typecheck: string-data requires String or bytes"))]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [str-ty : ast.AstType (try (tc-expr ctx env str))]
+        (if (tc-length-handle-type? str-ty)
+          (ResultTcType.Ok (ast.ast-ty-ptr (ast.AstType.U8)))
+          (ResultTcType.Err "typecheck: string-data requires String or bytes")))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-string-from-bytes-expr
@@ -59104,43 +58358,44 @@
   [len : ast.AstExpr]) : ResultTcType
   (match (tc-require-unsafe ctx env "string-from-bytes")
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env ptr)
-        [(ResultTcType.Ok ptr-ty)
-          (match (tc-type-strip-region (tc-resolve-type ctx ptr-ty))
-            [(ast.AstType.Ptr elem)
-              (if (tc-type-compatible? (ast.ty-node-get elem) (ast.AstType.U8))
-                (match (tc-expr-with-expected-or-actual
-                  ctx
-                  env
-                  len
-                  (ast.AstType.I64))
-                  [(ResultTcType.Ok len-ty)
-                    (if (tc-integer-type? len-ty)
-                      (ResultTcType.Ok (ast.AstType.String))
-                      (ResultTcType.Err
-                        "typecheck: string-from-bytes length must be integer"))]
-                  [(ResultTcType.Err message) (ResultTcType.Err message)])
-                (ResultTcType.Err
-                  "typecheck: string-from-bytes pointer must point at u8"))]
-            [(ast.AstType.MutPtr elem)
-              (if (tc-type-compatible? (ast.ty-node-get elem) (ast.AstType.U8))
-                (match (tc-expr-with-expected-or-actual
-                  ctx
-                  env
-                  len
-                  (ast.AstType.I64))
-                  [(ResultTcType.Ok len-ty)
-                    (if (tc-integer-type? len-ty)
-                      (ResultTcType.Ok (ast.AstType.String))
-                      (ResultTcType.Err
-                        "typecheck: string-from-bytes length must be integer"))]
-                  [(ResultTcType.Err message) (ResultTcType.Err message)])
-                (ResultTcType.Err
-                  "typecheck: string-from-bytes pointer must point at u8"))]
-            [_
+      (let
+        [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
+        (match (tc-type-strip-region (tc-resolve-type ctx ptr-ty))
+          [(ast.AstType.Ptr elem)
+            (if (tc-type-compatible? (ast.ty-node-get elem) (ast.AstType.U8))
+              (let
+                [len-ty : ast.AstType
+                  (try
+                    (tc-expr-with-expected-or-actual
+                      ctx
+                      env
+                      len
+                      (ast.AstType.I64)))]
+                (if (tc-integer-type? len-ty)
+                  (ResultTcType.Ok (ast.AstType.String))
+                  (ResultTcType.Err
+                    "typecheck: string-from-bytes length must be integer")))
               (ResultTcType.Err
-                "typecheck: string-from-bytes requires a raw u8 pointer")])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+                "typecheck: string-from-bytes pointer must point at u8"))]
+          [(ast.AstType.MutPtr elem)
+            (if (tc-type-compatible? (ast.ty-node-get elem) (ast.AstType.U8))
+              (let
+                [len-ty : ast.AstType
+                  (try
+                    (tc-expr-with-expected-or-actual
+                      ctx
+                      env
+                      len
+                      (ast.AstType.I64)))]
+                (if (tc-integer-type? len-ty)
+                  (ResultTcType.Ok (ast.AstType.String))
+                  (ResultTcType.Err
+                    "typecheck: string-from-bytes length must be integer")))
+              (ResultTcType.Err
+                "typecheck: string-from-bytes pointer must point at u8"))]
+          [_
+            (ResultTcType.Err
+              "typecheck: string-from-bytes requires a raw u8 pointer")]))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-array-data-expr
@@ -59149,16 +58404,14 @@
   [array : ast.AstExpr]) : ResultTcType
   (match (tc-require-unsafe ctx env "__tl_array-data")
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env array)
-        [(ResultTcType.Ok array-ty)
-          (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
-            [(ast.AstType.Array elem-ty _)
-              (ResultTcType.Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
-            [(ast.AstType.DynArray elem-ty)
-              (ResultTcType.Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
-            [_
-              (ResultTcType.Err "typecheck: __tl_array-data requires an array")])]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [array-ty : ast.AstType (try (tc-expr ctx env array))]
+        (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+          [(ast.AstType.Array elem-ty _)
+            (ResultTcType.Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
+          [(ast.AstType.DynArray elem-ty)
+            (ResultTcType.Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
+          [_ (ResultTcType.Err "typecheck: __tl_array-data requires an array")]))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-program-entry-ptr-expr
@@ -59175,32 +58428,29 @@
   [env : TcTypeEnv]
   [leaf : ast.AstExpr]
   [subleaf : ast.AstExpr]) : ResultTcType
-  (match (tc-expr-with-expected-or-actual ctx env leaf (ast.AstType.I64))
-    [(ResultTcType.Ok leaf-ty)
-      (if (tc-integer-type? leaf-ty)
-        (match (tc-expr-with-expected-or-actual
-          ctx
-          env
-          subleaf
-          (ast.AstType.I64))
-          [(ResultTcType.Ok subleaf-ty)
-            (if (tc-integer-type? subleaf-ty)
-              (ResultTcType.Ok (ast.AstType.I64))
-              (ResultTcType.Err "typecheck: cpuid subleaf must be integer"))]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])
-        (ResultTcType.Err "typecheck: cpuid leaf must be integer"))]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [leaf-ty : ast.AstType
+      (try (tc-expr-with-expected-or-actual ctx env leaf (ast.AstType.I64)))]
+    (if (tc-integer-type? leaf-ty)
+      (let
+        [subleaf-ty : ast.AstType
+          (try
+            (tc-expr-with-expected-or-actual ctx env subleaf (ast.AstType.I64)))]
+        (if (tc-integer-type? subleaf-ty)
+          (ResultTcType.Ok (ast.AstType.I64))
+          (ResultTcType.Err "typecheck: cpuid subleaf must be integer")))
+      (ResultTcType.Err "typecheck: cpuid leaf must be integer"))))
 
 (define (tc-xgetbv-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
   [index : ast.AstExpr]) : ResultTcType
-  (match (tc-expr-with-expected-or-actual ctx env index (ast.AstType.I64))
-    [(ResultTcType.Ok index-ty)
-      (if (tc-integer-type? index-ty)
-        (ResultTcType.Ok (ast.AstType.I64))
-        (ResultTcType.Err "typecheck: xgetbv index must be integer"))]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [index-ty : ast.AstType
+      (try (tc-expr-with-expected-or-actual ctx env index (ast.AstType.I64)))]
+    (if (tc-integer-type? index-ty)
+      (ResultTcType.Ok (ast.AstType.I64))
+      (ResultTcType.Err "typecheck: xgetbv index must be integer"))))
 
 ;; Each syscall operand (number and arguments) must be an integer; the raw
 ;; kernel result is an i64.
@@ -59283,15 +58533,14 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [box-expr : ast.AstExpr]) : ResultTcType
-  (match (tc-expr ctx env box-expr)
-    [(ResultTcType.Ok box-ty)
-      (match (tc-type-strip-region
-        (tc-resolve-type ctx (tc-global-shared-view box-ty)))
-        [(ast.AstType.Box inner-ty)
-          (ResultTcType.Ok
-            (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
-        [_ (ResultTcType.Err "typecheck: deref requires Box or reference type")])]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [box-ty : ast.AstType (try (tc-expr ctx env box-expr))]
+    (match (tc-type-strip-region
+      (tc-resolve-type ctx (tc-global-shared-view box-ty)))
+      [(ast.AstType.Box inner-ty)
+        (ResultTcType.Ok
+          (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
+      [_ (ResultTcType.Err "typecheck: deref requires Box or reference type")])))
 
 (define (tc-box-get-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -59338,9 +58587,9 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [receiver : ast.AstExpr]) : ResultTcType
-  (match (tc-expr ctx env receiver)
-    [(ResultTcType.Ok receiver-ty) (tc-deref-result-type ctx receiver-ty)]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [receiver-ty : ast.AstType (try (tc-expr ctx env receiver))]
+    (tc-deref-result-type ctx receiver-ty)))
 
 (define (tc-deref-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -59354,19 +58603,17 @@
         [(ast.AstType.Box _)
           (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]
         [_
-          (match (tc-deref-result-type ctx receiver-ty)
-            [(ResultTcType.Ok projected)
-              (if (tc-type-compatible?
-                (tc-global-shared-view expected)
-                (tc-global-shared-view projected))
-                (ResultTcType.Ok (tc-contextual-result-type expected projected))
-                (ResultTcType.Ok projected))]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])])]
+          (let
+            [projected : ast.AstType
+              (try (tc-deref-result-type ctx receiver-ty))]
+            (if (tc-type-compatible?
+              (tc-global-shared-view expected)
+              (tc-global-shared-view projected))
+              (ResultTcType.Ok (tc-contextual-result-type expected projected))
+              (ResultTcType.Ok projected)))])]
     [(ResultTcType.Err _)
       ;; Preserve contextual inference for `(deref (box (init)))`.
-      (match (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)
-        [(ResultTcType.Ok inner-ty) (ResultTcType.Ok inner-ty)]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]))
+      (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]))
 
 (define (tc-box-set-inner-type [ctx : TcContext] [box-ty : ast.AstType]) : ResultTcType
   (match (tc-type-strip-region
@@ -59391,49 +58638,48 @@
     [(ResultTcNameId.Ok _)
       (match (tc-expr ctx env (tc-global-shared-view box-expr))
         [(ResultTcType.Ok box-ty)
-          (match (tc-box-set-inner-type ctx box-ty)
-            [(ResultTcType.Ok inner-ty)
-              (match (tc-expr-with-expected-or-actual
-                ctx
-                env
-                (tc-global-shared-view value)
-                (tc-global-shared-view inner-ty))
-                [(ResultTcType.Ok value-ty)
-                  (match (tc-expect
-                    (tc-global-shared-view value-ty)
-                    (tc-global-shared-view inner-ty)
-                    "typecheck: box assignment type mismatch")
-                    [(ResultTcUnit.Ok)
-                      (match (tc-ensure-cleanup-resource-not-stored-expr
-                        ctx
-                        env
-                        value)
-                        [(ResultTcUnit.Ok)
-                          (match (tc-ensure-region-value-can-flow-into
-                            env
-                            inner-ty
-                            (tc-global-shared-view value-ty)
-                            "box")
-                            [(ResultTcUnit.Ok)
-                              (match (tc-ensure-reference-value-can-store-in-place
+          (let
+            [inner-ty : ast.AstType (try (tc-box-set-inner-type ctx box-ty))]
+            (match (tc-expr-with-expected-or-actual
+              ctx
+              env
+              (tc-global-shared-view value)
+              (tc-global-shared-view inner-ty))
+              [(ResultTcType.Ok value-ty)
+                (match (tc-expect
+                  (tc-global-shared-view value-ty)
+                  (tc-global-shared-view inner-ty)
+                  "typecheck: box assignment type mismatch")
+                  [(ResultTcUnit.Ok)
+                    (match (tc-ensure-cleanup-resource-not-stored-expr
+                      ctx
+                      env
+                      value)
+                      [(ResultTcUnit.Ok)
+                        (match (tc-ensure-region-value-can-flow-into
+                          env
+                          inner-ty
+                          (tc-global-shared-view value-ty)
+                          "box")
+                          [(ResultTcUnit.Ok)
+                            (match (tc-ensure-reference-value-can-store-in-place
+                              ctx
+                              env
+                              (tc-context-expr-get
                                 ctx
-                                env
-                                (tc-context-expr-get
-                                  ctx
-                                  (ast.ast-expr-box-get
-                                    (ast.ast-node-push box-expr)))
-                                value-ty
-                                "box")
-                                [(ResultTcUnit.Ok)
-                                  (ResultTcType.Ok (ast.AstType.Unit))]
-                                [(ResultTcUnit.Err message)
-                                  (ResultTcType.Err message)])]
-                            [(ResultTcUnit.Err message)
-                              (ResultTcType.Err message)])]
-                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+                                (ast.ast-expr-box-get
+                                  (ast.ast-node-push box-expr)))
+                              value-ty
+                              "box")
+                              [(ResultTcUnit.Ok)
+                                (ResultTcType.Ok (ast.AstType.Unit))]
+                              [(ResultTcUnit.Err message)
+                                (ResultTcType.Err message)])]
+                          [(ResultTcUnit.Err message)
+                            (ResultTcType.Err message)])]
+                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+              [(ResultTcType.Err message) (ResultTcType.Err message)]))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcNameId.Err message) (ResultTcType.Err message)]))
 
@@ -59908,38 +59154,19 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [region : i64]
-  [body : ast.AstExprList]) : ResultTcType
-  (let
-    [region-env : TcTypeEnv (tc-push-region env region)]
-    (match (tc-begin-list ctx region-env body)
-      [(ResultTcType.Ok body-ty)
-        (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
-          (ResultTcType.Err
-            (str_cat.str-cat
-              "typecheck: region-tagged value cannot escape with-arena '"
-              (tc-lifetime-name-render region)
-              "'"))
-          (ResultTcType.Ok body-ty))]
-      [(ResultTcType.Err message) (ResultTcType.Err message)])))
-
-(define (tc-with-region-expr-with-expected
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [region : i64]
   [body : ast.AstExprList]
-  [expected : ast.AstType]) : ResultTcType
+  [expected : ast.AstMaybeType]) : ResultTcType
   (let
     [region-env : TcTypeEnv (tc-push-region env region)]
-    (match (tc-begin-list-with-expected ctx region-env body expected)
-      [(ResultTcType.Ok body-ty)
-        (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
-          (ResultTcType.Err
-            (str_cat.str-cat
-              "typecheck: region-tagged value cannot escape with-arena '"
-              (tc-lifetime-name-render region)
-              "'"))
-          (ResultTcType.Ok body-ty))]
-      [(ResultTcType.Err message) (ResultTcType.Err message)])))
+    [body-ty : ast.AstType
+      (try (tc-begin-list-maybe-expected ctx region-env body expected))]
+    (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
+      (ResultTcType.Err
+        (str_cat.str-cat
+          "typecheck: region-tagged value cannot escape with-arena '"
+          (tc-lifetime-name-render region)
+          "'"))
+      (ResultTcType.Ok body-ty))))
 
 ;; with-escape is a first-class scratch-arena clone path, not a lexical
 ;; lifetime binder. The scratch expression is just an arena handle, and
@@ -59948,85 +59175,40 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [scratch : ast.AstExpr]
-  [body : ast.AstExprList]) : ResultTcType
-  (match (tc-expr ctx env scratch)
-    [(ResultTcType.Ok scratch-ty)
-      (if (tc-arena-type? ctx scratch-ty)
-        (match (tc-begin-list ctx env body)
-          [(ResultTcType.Ok body-ty)
-            (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
-              (let
-                [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
-                (begin
-                  (tc-clone-root-collection-note!
-                    ctx
-                    (tc-global-shared-view clone-ty))
-                  (ResultTcType.Ok clone-ty)))
-              (ResultTcType.Err
-                (tc-with-escape-unsupported-message ctx body-ty)))]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])
-        (ResultTcType.Err "typecheck: with-escape arena must be Arena"))]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
-
-(define (tc-with-escape-expr-with-expected
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [scratch : ast.AstExpr]
   [body : ast.AstExprList]
-  [expected : ast.AstType]) : ResultTcType
-  (match (tc-expr ctx env scratch)
-    [(ResultTcType.Ok scratch-ty)
-      (if (tc-arena-type? ctx scratch-ty)
-        (match (tc-begin-list-with-expected ctx env body expected)
-          [(ResultTcType.Ok body-ty)
-            (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
-              (let
-                [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
-                (begin
-                  (tc-clone-root-collection-note!
-                    ctx
-                    (tc-global-shared-view clone-ty))
-                  (ResultTcType.Ok clone-ty)))
-              (ResultTcType.Err
-                (tc-with-escape-unsupported-message ctx body-ty)))]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])
-        (ResultTcType.Err "typecheck: with-escape arena must be Arena"))]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (let
+    [scratch-ty : ast.AstType (try (tc-expr ctx env scratch))]
+    (if (tc-arena-type? ctx scratch-ty)
+      (let
+        [body-ty : ast.AstType
+          (try (tc-begin-list-maybe-expected ctx env body expected))]
+        (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
+          (let
+            [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
+            (begin
+              (tc-clone-root-collection-note!
+                ctx
+                (tc-global-shared-view clone-ty))
+              (ResultTcType.Ok clone-ty)))
+          (ResultTcType.Err (tc-with-escape-unsupported-message ctx body-ty))))
+      (ResultTcType.Err "typecheck: with-escape arena must be Arena"))))
 
 (define (tc-with-scratch-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [body : ast.AstExprList]) : ResultTcType
-  (match (tc-begin-list ctx env body)
-    [(ResultTcType.Ok body-ty)
-      (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
-        (let
-          [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
-          (begin
-            (tc-clone-root-collection-note!
-              ctx
-              (tc-global-shared-view clone-ty))
-            (ResultTcType.Ok clone-ty)))
-        (ResultTcType.Err (tc-with-scratch-unsupported-message ctx body-ty)))]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
-
-(define (tc-with-scratch-expr-with-expected
-  [ctx : TcContext]
-  [env : TcTypeEnv]
   [body : ast.AstExprList]
-  [expected : ast.AstType]) : ResultTcType
-  (match (tc-begin-list-with-expected ctx env body expected)
-    [(ResultTcType.Ok body-ty)
-      (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
-        (let
-          [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
-          (begin
-            (tc-clone-root-collection-note!
-              ctx
-              (tc-global-shared-view clone-ty))
-            (ResultTcType.Ok clone-ty)))
-        (ResultTcType.Err (tc-with-scratch-unsupported-message ctx body-ty)))]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (let
+    [body-ty : ast.AstType
+      (try (tc-begin-list-maybe-expected ctx env body expected))]
+    (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
+      (let
+        [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
+        (begin
+          (tc-clone-root-collection-note! ctx (tc-global-shared-view clone-ty))
+          (ResultTcType.Ok clone-ty)))
+      (ResultTcType.Err (tc-with-scratch-unsupported-message ctx body-ty)))))
 
 (define (tc-in-arena-owner [env : TcTypeEnv] [arena : ast.AstExpr]) : TcMaybeNameId
   (let
@@ -60092,35 +59274,12 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [arena : ast.AstExpr]
-  [body : ast.AstExprList]) : ResultTcType
-  (match (tc-expr ctx env (tc-global-shared-view arena))
-    [(ResultTcType.Ok arena-ty)
-      (if (tc-arena-type? ctx (tc-global-shared-view arena-ty))
-        (match (tc-begin-list
-          ctx
-          (tc-in-arena-body-env
-            ctx
-            env
-            (tc-global-shared-view arena)
-            (tc-global-shared-view arena-ty))
-          body)
-          [(ResultTcType.Ok body-ty)
-            (ResultTcType.Ok
-              (tc-in-arena-body-result ctx env arena arena-ty body-ty))]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])
-        (ResultTcType.Err "typecheck: in-arena arena must be Arena"))]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
-
-(define (tc-in-arena-expr-with-expected
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [arena : ast.AstExpr]
   [body : ast.AstExprList]
-  [expected : ast.AstType]) : ResultTcType
+  [expected : ast.AstMaybeType]) : ResultTcType
   (match (tc-expr ctx env (tc-global-shared-view arena))
     [(ResultTcType.Ok arena-ty)
       (if (tc-arena-type? ctx (tc-global-shared-view arena-ty))
-        (match (tc-begin-list-with-expected
+        (match (tc-begin-list-maybe-expected
           ctx
           (tc-in-arena-body-env
             ctx
@@ -60140,67 +59299,31 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [bindings : ast.AstResourceBindingList]
-  [body : ast.AstExprList]) : ResultTcType
-  (match (tc-resource-bindings ctx env bindings)
-    [(ResultTcEnv.Ok body-env)
-      (match (tc-begin-list ctx body-env body)
-        [(ResultTcType.Ok body-ty)
-          (if (tc-expr-list-result-uses-cleanup-owner?
-            (tc-context-expr-bases ctx)
-            body
-            (tc-resource-binding-list-add-bound-names bindings TcStringList.Nil)
-            TcStringList.Nil)
-            (ResultTcType.Err
-              "typecheck: cleanup-required resource would escape with scope")
-            (ResultTcType.Ok body-ty))]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
-    [(ResultTcEnv.Err message) (ResultTcType.Err message)]))
-
-(define (tc-with-resource-expr-with-expected
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [bindings : ast.AstResourceBindingList]
   [body : ast.AstExprList]
-  [expected : ast.AstType]) : ResultTcType
-  (match (tc-resource-bindings ctx env bindings)
-    [(ResultTcEnv.Ok body-env)
-      (match (tc-begin-list-with-expected ctx body-env body expected)
-        [(ResultTcType.Ok body-ty)
-          (if (tc-expr-list-result-uses-cleanup-owner?
-            (tc-context-expr-bases ctx)
-            body
-            (tc-resource-binding-list-add-bound-names bindings TcStringList.Nil)
-            TcStringList.Nil)
-            (ResultTcType.Err
-              "typecheck: cleanup-required resource would escape with scope")
-            (ResultTcType.Ok body-ty))]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
-    [(ResultTcEnv.Err message) (ResultTcType.Err message)]))
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (let
+    [body-env : TcTypeEnv (try (tc-resource-bindings ctx env bindings))]
+    [body-ty : ast.AstType
+      (try (tc-begin-list-maybe-expected ctx body-env body expected))]
+    (if (tc-expr-list-result-uses-cleanup-owner?
+      (tc-context-expr-bases ctx)
+      body
+      (tc-resource-binding-list-add-bound-names bindings TcStringList.Nil)
+      TcStringList.Nil)
+      (ResultTcType.Err
+        "typecheck: cleanup-required resource would escape with scope")
+      (ResultTcType.Ok body-ty))))
 
 (define (tc-unsafe-begin-list-scoped
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]
+  [expected : ast.AstMaybeType]
   [span : TcMaybeAstSourceSpan]) : ResultTcType
   (let
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
-    [result : ResultTcType (tc-unsafe-begin-list ctx env exprs span)]
-    (begin
-      (tc-type-env-scoped-runtime-restore! saved)
-      result)))
-
-(define (tc-unsafe-begin-list-with-expected-scoped
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
-  [expected : ast.AstType]
-  [span : TcMaybeAstSourceSpan]) : ResultTcType
-  (let
-    [saved : TcTypeEnvScopedRuntimeSave
-      (tc-type-env-scoped-runtime-enter-env! env)]
-    [result : ResultTcType
-      (tc-unsafe-begin-list-with-expected ctx env exprs expected span)]
+    [result : ResultTcType (tc-unsafe-begin-list ctx env exprs expected span)]
     (begin
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
@@ -60209,26 +59332,12 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [region : i64]
-  [body : ast.AstExprList]) : ResultTcType
-  (let
-    [saved : TcTypeEnvScopedRuntimeSave
-      (tc-type-env-scoped-runtime-enter-env! env)]
-    [result : ResultTcType (tc-with-region-expr ctx env region body)]
-    (begin
-      (tc-type-env-scoped-runtime-restore! saved)
-      result)))
-
-(define (tc-with-region-expr-with-expected-scoped
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [region : i64]
   [body : ast.AstExprList]
-  [expected : ast.AstType]) : ResultTcType
+  [expected : ast.AstMaybeType]) : ResultTcType
   (let
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
-    [result : ResultTcType
-      (tc-with-region-expr-with-expected ctx env region body expected)]
+    [result : ResultTcType (tc-with-region-expr ctx env region body expected)]
     (begin
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
@@ -60237,26 +59346,12 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [arena : ast.AstExpr]
-  [body : ast.AstExprList]) : ResultTcType
-  (let
-    [saved : TcTypeEnvScopedRuntimeSave
-      (tc-type-env-scoped-runtime-enter-env! env)]
-    [result : ResultTcType (tc-in-arena-expr ctx env arena body)]
-    (begin
-      (tc-type-env-scoped-runtime-restore! saved)
-      result)))
-
-(define (tc-in-arena-expr-with-expected-scoped
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [arena : ast.AstExpr]
   [body : ast.AstExprList]
-  [expected : ast.AstType]) : ResultTcType
+  [expected : ast.AstMaybeType]) : ResultTcType
   (let
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
-    [result : ResultTcType
-      (tc-in-arena-expr-with-expected ctx env arena body expected)]
+    [result : ResultTcType (tc-in-arena-expr ctx env arena body expected)]
     (begin
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
@@ -60378,35 +59473,34 @@
   [allow-immutable-reference-captures : bool]) : ResultTcType
   (match maybe-ret
     [(ast.AstMaybeType.Some ret)
-      (match (tc-elide-function-signature
-        (tc-context-type-bases ctx)
-        params
-        ret)
-        [(ResultTcElidedSignature.Ok signature)
-          (tc-lambda-expr-normalized-with-capture-check
-            ctx
-            env
-            signature.params
-            (ast.AstMaybeType.Some signature.ret)
-            body
-            allow-immutable-reference-captures)]
-        [(ResultTcElidedSignature.Err message) (ResultTcType.Err message)])]
+      (let
+        [signature : TcElidedSignature
+          (try
+            (tc-elide-function-signature (tc-context-type-bases ctx) params ret))]
+        (tc-lambda-expr-normalized-with-capture-check
+          ctx
+          env
+          signature.params
+          (ast.AstMaybeType.Some signature.ret)
+          body
+          allow-immutable-reference-captures))]
     [(ast.AstMaybeType.No)
-      (match (tc-elide-input-params-at
-        (tc-context-type-bases ctx)
-        (& params)
-        0
-        0
-        (ast.ast-param-list-new))
-        [(ResultTcElidedParams.Ok inputs)
-          (tc-lambda-expr-normalized-with-capture-check
-            ctx
-            env
-            inputs.params
-            (ast.AstMaybeType.No)
-            body
-            allow-immutable-reference-captures)]
-        [(ResultTcElidedParams.Err message) (ResultTcType.Err message)])]))
+      (let
+        [inputs : TcElidedParams
+          (try
+            (tc-elide-input-params-at
+              (tc-context-type-bases ctx)
+              (& params)
+              0
+              0
+              (ast.ast-param-list-new)))]
+        (tc-lambda-expr-normalized-with-capture-check
+          ctx
+          env
+          inputs.params
+          (ast.AstMaybeType.No)
+          body
+          allow-immutable-reference-captures))]))
 
 (define (tc-lambda-expr
   [ctx : TcContext]
@@ -60561,36 +59655,34 @@
       (if (tc-fixed-array-take-active-cleanup-owner-place? ctx env array)
         (ResultTcType.Err
           "typecheck: array-take! cannot take from an active cleanup owner")
-        (match (tc-expr-id ctx env array-box)
-          [(ResultTcType.Ok array-ty)
-            (match (tc-fixed-array-take-receiver ctx array-ty)
-              [(ResultTcArrayReceiver.Ok receiver)
-                (match receiver
-                  [(TcArrayReceiver _ elem-ty)
-                    (match (tc-init-type-supported
-                      ctx
-                      env
-                      (tc-global-shared-view elem-ty))
-                      [(ResultTcUnit.Ok)
-                        (match (tc-expr-with-expected-or-actual-id
+        (let
+          [array-ty : ast.AstType (try (tc-expr-id ctx env array-box))]
+          [receiver : TcArrayReceiver
+            (try (tc-fixed-array-take-receiver ctx array-ty))]
+          (match receiver
+            [(TcArrayReceiver _ elem-ty)
+              (match (tc-init-type-supported
+                ctx
+                env
+                (tc-global-shared-view elem-ty))
+                [(ResultTcUnit.Ok)
+                  (let
+                    [index-ty : ast.AstType
+                      (try
+                        (tc-expr-with-expected-or-actual-id
                           ctx
                           env
                           index-box
-                          (ast.AstType.I64))
-                          [(ResultTcType.Ok index-ty)
-                            (if (tc-integer-type? index-ty)
-                              (ResultTcType.Ok elem-ty)
-                              (ResultTcType.Err
-                                "typecheck: array-take! index must be integer"))]
-                          [(ResultTcType.Err message)
-                            (ResultTcType.Err message)])]
-                      [(ResultTcUnit.Err message)
-                        (ResultTcType.Err
-                          (str_cat.str-cat
-                            "typecheck: array-take! element cannot be reinitialized; "
-                            message))])])]
-              [(ResultTcArrayReceiver.Err message) (ResultTcType.Err message)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)]))]
+                          (ast.AstType.I64)))]
+                    (if (tc-integer-type? index-ty)
+                      (ResultTcType.Ok elem-ty)
+                      (ResultTcType.Err
+                        "typecheck: array-take! index must be integer")))]
+                [(ResultTcUnit.Err message)
+                  (ResultTcType.Err
+                    (str_cat.str-cat
+                      "typecheck: array-take! element cannot be reinitialized; "
+                      message))])])))]
     [(ResultTcNameId.Err _)
       (ResultTcType.Err
         "typecheck: array-take! receiver must be a fixed-array storage place")]))
@@ -60613,64 +59705,63 @@
                 (tc-context-expr-bases ctx)
                 virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcType.Err message)])
-        (match (tc-lookup-visible-id ctx env name)
-          [(ResultTcType.Ok ty)
-            (match (tc-type-strip-region
-              (tc-resolve-type ctx (tc-global-shared-view ty)))
-              [(ast.AstType.MutRef _ referent-id)
-                (ResultTcType.Ok (tc-context-type-get ctx referent-id))]
-              [(ast.AstType.Ref _ _)
-                (ResultTcType.Err
-                  "typecheck: replace! requires mutable place access")]
-              [_ (ResultTcType.Ok (tc-resolve-type ctx ty))])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)]))]
+        (let
+          [ty : ast.AstType (try (tc-lookup-visible-id ctx env name))]
+          (match (tc-type-strip-region
+            (tc-resolve-type ctx (tc-global-shared-view ty)))
+            [(ast.AstType.MutRef _ referent-id)
+              (ResultTcType.Ok (tc-context-type-get ctx referent-id))]
+            [(ast.AstType.Ref _ _)
+              (ResultTcType.Err
+                "typecheck: replace! requires mutable place access")]
+            [_ (ResultTcType.Ok (tc-resolve-type ctx ty))])))]
     [(ast.AstExpr.StructGet receiver-box field)
-      (match (tc-replace-place-value-type
-        ctx
-        env
-        (ast.ast-expr-segment-bases-get
-          (tc-context-expr-bases ctx)
-          receiver-box))
-        [(ResultTcType.Ok receiver-ty)
-          (tc-struct-set-field-type-id ctx receiver-ty field)]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [receiver-ty : ast.AstType
+          (try
+            (tc-replace-place-value-type
+              ctx
+              env
+              (ast.ast-expr-segment-bases-get
+                (tc-context-expr-bases ctx)
+                receiver-box)))]
+        (tc-struct-set-field-type-id ctx receiver-ty field))]
     [(ast.AstExpr.TupleRef receiver-box index)
-      (match (tc-replace-place-value-type
-        ctx
-        env
-        (ast.ast-expr-segment-bases-get
-          (tc-context-expr-bases ctx)
-          receiver-box))
-        [(ResultTcType.Ok receiver-ty)
-          (tc-tuple-set-element-type ctx receiver-ty index)]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [receiver-ty : ast.AstType
+          (try
+            (tc-replace-place-value-type
+              ctx
+              env
+              (ast.ast-expr-segment-bases-get
+                (tc-context-expr-bases ctx)
+                receiver-box)))]
+        (tc-tuple-set-element-type ctx receiver-ty index))]
     [(ast.AstExpr.ArrayRef array-box index-box)
-      (match (tc-expr-with-expected-or-actual-id
-        ctx
-        env
-        index-box
-        (ast.AstType.I64))
-        [(ResultTcType.Ok index-ty)
-          (if (tc-integer-type? index-ty)
-            (match (tc-expr-id ctx env array-box)
-              [(ResultTcType.Ok array-ty)
-                (match (tc-array-set-receiver ctx array-ty)
-                  [(ResultTcArrayReceiver.Ok receiver)
-                    (match receiver
-                      [(TcArrayReceiver _ elem-ty) (ResultTcType.Ok elem-ty)])]
-                  [(ResultTcArrayReceiver.Err message)
-                    (ResultTcType.Err message)])]
-              [(ResultTcType.Err message) (ResultTcType.Err message)])
-            (ResultTcType.Err "typecheck: replace! array index must be integer"))]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [index-ty : ast.AstType
+          (try
+            (tc-expr-with-expected-or-actual-id
+              ctx
+              env
+              index-box
+              (ast.AstType.I64)))]
+        (if (tc-integer-type? index-ty)
+          (let
+            [array-ty : ast.AstType (try (tc-expr-id ctx env array-box))]
+            [receiver : TcArrayReceiver
+              (try (tc-array-set-receiver ctx array-ty))]
+            (match receiver
+              [(TcArrayReceiver _ elem-ty) (ResultTcType.Ok elem-ty)]))
+          (ResultTcType.Err "typecheck: replace! array index must be integer")))]
     [(ast.AstExpr.BoxGet receiver-box)
-      (match (tc-expr-id ctx env receiver-box)
-        [(ResultTcType.Ok receiver-ty) (tc-box-set-inner-type ctx receiver-ty)]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [receiver-ty : ast.AstType (try (tc-expr-id ctx env receiver-box))]
+        (tc-box-set-inner-type ctx receiver-ty))]
     [(ast.AstExpr.BoxTake receiver-box)
-      (match (tc-expr-id ctx env receiver-box)
-        [(ResultTcType.Ok receiver-ty) (tc-box-set-inner-type ctx receiver-ty)]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      (let
+        [receiver-ty : ast.AstType (try (tc-expr-id ctx env receiver-box))]
+        (tc-box-set-inner-type ctx receiver-ty))]
     [_ (ResultTcType.Err "typecheck: replace! target must be a mutable place")]))
 
 (define (tc-replace-type
@@ -60858,52 +59949,52 @@
     [(ResultTcNameId.Ok _)
       (match (tc-expr ctx env (tc-global-shared-view receiver))
         [(ResultTcType.Ok receiver-ty)
-          (match (tc-struct-set-field-type-id ctx receiver-ty field-id)
-            [(ResultTcType.Ok field-ty)
-              (match (tc-expr-with-expected-or-actual
-                ctx
-                env
-                (tc-global-shared-view value)
-                (tc-global-shared-view field-ty))
-                [(ResultTcType.Ok value-ty)
-                  (match (tc-expect
-                    (tc-global-shared-view value-ty)
-                    (tc-global-shared-view field-ty)
-                    (if (ast.ast-tuple-set-field-id? field-id)
-                      "typecheck: tuple element assignment type mismatch"
-                      "typecheck: struct field assignment type mismatch"))
-                    [(ResultTcUnit.Ok)
-                      (match (tc-ensure-cleanup-resource-not-stored-expr
-                        ctx
-                        env
-                        value)
-                        [(ResultTcUnit.Ok)
-                          (match (tc-ensure-region-value-can-flow-into
-                            env
-                            field-ty
-                            (tc-global-shared-view value-ty)
-                            (if (ast.ast-tuple-set-field-id? field-id)
-                              "tuple element"
-                              "struct field"))
-                            [(ResultTcUnit.Ok)
-                              (match (tc-ensure-reference-value-can-store-in-place
-                                ctx
-                                env
-                                receiver
-                                value-ty
-                                (if (ast.ast-tuple-set-field-id? field-id)
-                                  "tuple element"
-                                  "struct field"))
-                                [(ResultTcUnit.Ok)
-                                  (ResultTcType.Ok (ast.AstType.Unit))]
-                                [(ResultTcUnit.Err message)
-                                  (ResultTcType.Err message)])]
-                            [(ResultTcUnit.Err message)
-                              (ResultTcType.Err message)])]
-                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+          (let
+            [field-ty : ast.AstType
+              (try (tc-struct-set-field-type-id ctx receiver-ty field-id))]
+            (match (tc-expr-with-expected-or-actual
+              ctx
+              env
+              (tc-global-shared-view value)
+              (tc-global-shared-view field-ty))
+              [(ResultTcType.Ok value-ty)
+                (match (tc-expect
+                  (tc-global-shared-view value-ty)
+                  (tc-global-shared-view field-ty)
+                  (if (ast.ast-tuple-set-field-id? field-id)
+                    "typecheck: tuple element assignment type mismatch"
+                    "typecheck: struct field assignment type mismatch"))
+                  [(ResultTcUnit.Ok)
+                    (match (tc-ensure-cleanup-resource-not-stored-expr
+                      ctx
+                      env
+                      value)
+                      [(ResultTcUnit.Ok)
+                        (match (tc-ensure-region-value-can-flow-into
+                          env
+                          field-ty
+                          (tc-global-shared-view value-ty)
+                          (if (ast.ast-tuple-set-field-id? field-id)
+                            "tuple element"
+                            "struct field"))
+                          [(ResultTcUnit.Ok)
+                            (match (tc-ensure-reference-value-can-store-in-place
+                              ctx
+                              env
+                              receiver
+                              value-ty
+                              (if (ast.ast-tuple-set-field-id? field-id)
+                                "tuple element"
+                                "struct field"))
+                              [(ResultTcUnit.Ok)
+                                (ResultTcType.Ok (ast.AstType.Unit))]
+                              [(ResultTcUnit.Err message)
+                                (ResultTcType.Err message)])]
+                          [(ResultTcUnit.Err message)
+                            (ResultTcType.Err message)])]
+                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+              [(ResultTcType.Err message) (ResultTcType.Err message)]))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcNameId.Err message) (ResultTcType.Err message)]))
 
@@ -61173,15 +60264,14 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [body-id : i64]) : ResultTcType
-  (match (tc-expr-id ctx env body-id)
-    [(ResultTcType.Ok body-ty)
-      (match (tc-expect
-        body-ty
-        (ast.AstType.Unit)
-        "typecheck: scalar for body must produce unit")
-        [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Unit))]
-        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [body-ty : ast.AstType (try (tc-expr-id ctx env body-id))]
+    (match (tc-expect
+      body-ty
+      (ast.AstType.Unit)
+      "typecheck: scalar for body must produce unit")
+      [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Unit))]
+      [(ResultTcUnit.Err message) (ResultTcType.Err message)])))
 
 (define (tc-for-owned-state-expr
   [ctx : TcContext]
@@ -61190,28 +60280,25 @@
   [index-name-id : i64]
   [source-id : i64]
   [body-id : i64]) : ResultTcType
-  (match (tc-for-owned-name-id-result ctx source-name-id "source state")
-    [(ResultTcExprId.Ok source-name)
-      (match (tc-for-owned-name-id-result ctx index-name-id "source index")
-        [(ResultTcExprId.Ok index-name)
-          (match (tc-expr-id ctx env source-id)
-            [(ResultTcType.Ok source-ty)
-              (match (tc-type-strip-region
-                (tc-resolve-type ctx (tc-global-shared-view source-ty)))
-                [(ast.AstType.Array _ _)
-                  (tc-for-owned-body-unit
-                    ctx
-                    (tc-bind-id
-                      (tc-bind-id env source-name source-ty)
-                      index-name
-                      (ast.AstType.I64))
-                    body-id)]
-                [_
-                  (ResultTcType.Err
-                    "typecheck: scalar for owned planner requires a fixed-array source")])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])]
-        [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
-    [(ResultTcExprId.Err message) (ResultTcType.Err message)]))
+  (let
+    [source-name : i64
+      (try (tc-for-owned-name-id-result ctx source-name-id "source state"))]
+    [index-name : i64
+      (try (tc-for-owned-name-id-result ctx index-name-id "source index"))]
+    [source-ty : ast.AstType (try (tc-expr-id ctx env source-id))]
+    (match (tc-type-strip-region
+      (tc-resolve-type ctx (tc-global-shared-view source-ty)))
+      [(ast.AstType.Array _ _)
+        (tc-for-owned-body-unit
+          ctx
+          (tc-bind-id
+            (tc-bind-id env source-name source-ty)
+            index-name
+            (ast.AstType.I64))
+          body-id)]
+      [_
+        (ResultTcType.Err
+          "typecheck: scalar for owned planner requires a fixed-array source")])))
 
 (define (tc-for-owned-step-after-types
   [ctx : TcContext]
@@ -61249,54 +60336,52 @@
     [(ResultTcExprId.Ok _)
       (match (tc-for-owned-name-id-result ctx index-id "source index")
         [(ResultTcExprId.Ok _)
-          (match (tc-for-owned-name-id-result ctx binding-id "item binding")
-            [(ResultTcExprId.Ok binding-name)
-              (match (tc-for-owned-name-id-result ctx done-id "done flag")
-                [(ResultTcExprId.Ok _)
-                  (match (tc-expr-id ctx env source-id)
-                    [(ResultTcType.Ok source-ty)
-                      (match (tc-type-strip-region
-                        (tc-resolve-type ctx source-ty))
-                        [(ast.AstType.Array elem-id _)
-                          (match (tc-expr-with-expected-or-actual-id
-                            ctx
-                            env
-                            index-id
-                            (ast.AstType.I64))
-                            [(ResultTcType.Ok index-ty)
-                              (if (tc-integer-type? index-ty)
-                                (match (tc-expr-with-expected-or-actual-id
+          (let
+            [binding-name : i64
+              (try (tc-for-owned-name-id-result ctx binding-id "item binding"))]
+            (match (tc-for-owned-name-id-result ctx done-id "done flag")
+              [(ResultTcExprId.Ok _)
+                (let
+                  [source-ty : ast.AstType (try (tc-expr-id ctx env source-id))]
+                  (match (tc-type-strip-region (tc-resolve-type ctx source-ty))
+                    [(ast.AstType.Array elem-id _)
+                      (let
+                        [index-ty : ast.AstType
+                          (try
+                            (tc-expr-with-expected-or-actual-id
+                              ctx
+                              env
+                              index-id
+                              (ast.AstType.I64)))]
+                        (if (tc-integer-type? index-ty)
+                          (let
+                            [done-ty : ast.AstType
+                              (try
+                                (tc-expr-with-expected-or-actual-id
                                   ctx
                                   env
                                   done-id
-                                  (ast.AstType.Bool))
-                                  [(ResultTcType.Ok done-ty)
-                                    (match (tc-expect
-                                      done-ty
-                                      (ast.AstType.Bool)
-                                      "typecheck: scalar for done state must be bool")
-                                      [(ResultTcUnit.Ok)
-                                        (tc-for-owned-step-after-types
-                                          ctx
-                                          env
-                                          binding-name
-                                          expected-id
-                                          (tc-context-type-get ctx elem-id)
-                                          body-id)]
-                                      [(ResultTcUnit.Err message)
-                                        (ResultTcType.Err message)])]
-                                  [(ResultTcType.Err message)
-                                    (ResultTcType.Err message)])
-                                (ResultTcType.Err
-                                  "typecheck: scalar for owned-array index must be integer"))]
-                            [(ResultTcType.Err message)
-                              (ResultTcType.Err message)])]
-                        [_
+                                  (ast.AstType.Bool)))]
+                            (match (tc-expect
+                              done-ty
+                              (ast.AstType.Bool)
+                              "typecheck: scalar for done state must be bool")
+                              [(ResultTcUnit.Ok)
+                                (tc-for-owned-step-after-types
+                                  ctx
+                                  env
+                                  binding-name
+                                  expected-id
+                                  (tc-context-type-get ctx elem-id)
+                                  body-id)]
+                              [(ResultTcUnit.Err message)
+                                (ResultTcType.Err message)]))
                           (ResultTcType.Err
-                            "typecheck: scalar for owned step requires its matching fixed-array state")])]
-                    [(ResultTcType.Err message) (ResultTcType.Err message)])]
-                [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
-            [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+                            "typecheck: scalar for owned-array index must be integer")))]
+                    [_
+                      (ResultTcType.Err
+                        "typecheck: scalar for owned step requires its matching fixed-array state")]))]
+              [(ResultTcExprId.Err message) (ResultTcType.Err message)]))]
         [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
     [(ResultTcExprId.Err message) (ResultTcType.Err message)]))
 
@@ -61324,6 +60409,7 @@
                       ctx
                       env
                       exprs
+                      ast.AstMaybeType.No
                       (TcMaybeAstSourceSpan.Some span))]
                   [_ (tc-expr-id ctx env inner-box)])]
               (match result
@@ -61674,7 +60760,12 @@
     ;; `(unsafe ...)` types like `begin`; the unsafe-context flag exists for
     ;; the raw-pointer op checks.
     [(ast.AstExpr.Unsafe exprs)
-      (tc-unsafe-begin-list-scoped ctx env exprs TcMaybeAstSourceSpan.No)]
+      (tc-unsafe-begin-list-scoped
+        ctx
+        env
+        exprs
+        ast.AstMaybeType.No
+        TcMaybeAstSourceSpan.No)]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
       (match (tc-expr-id ctx env cond-box)
         [(ResultTcType.Ok cond-ty)
@@ -62042,7 +61133,8 @@
       (match (ast.ast-match-box-shared-view match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (match (tc-expr-id ctx env scrutinee-box)
-            [(ResultTcType.Ok scrut-ty) (tc-match-expr ctx env scrut-ty arms)]
+            [(ResultTcType.Ok scrut-ty)
+              (tc-match-expr ctx env scrut-ty arms ast.AstMaybeType.No)]
             [(ResultTcType.Err message) (ResultTcType.Err message)])])]
     [(ast.AstExpr.StructGet receiver-box field)
       (match (tc-expr-id ctx env receiver-box)
@@ -62055,20 +61147,21 @@
         [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
         (tc-struct-field-mutation-value-id ctx env receiver field value))]
     [(ast.AstExpr.WithRegion region body)
-      (tc-with-region-expr-scoped ctx env region body)]
+      (tc-with-region-expr-scoped ctx env region body ast.AstMaybeType.No)]
     [(ast.AstExpr.WithEscape scratch-box body)
       (let
         [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
-        (tc-with-escape-expr ctx env scratch body))]
-    [(ast.AstExpr.WithScratch body) (tc-with-scratch-expr ctx env body)]
+        (tc-with-escape-expr ctx env scratch body ast.AstMaybeType.No))]
+    [(ast.AstExpr.WithScratch body)
+      (tc-with-scratch-expr ctx env body ast.AstMaybeType.No)]
     [(ast.AstExpr.InArena arena-box body)
       (let
         [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
-        (tc-in-arena-expr-scoped ctx env arena body))]
+        (tc-in-arena-expr-scoped ctx env arena body ast.AstMaybeType.No))]
     [(ast.AstExpr.WithResource wr-box)
       (match (ast.ast-with-resource-box-shared-view wr-box)
         [(ast.AstWithResource.WithResource bindings body)
-          (tc-with-resource-expr ctx env bindings body)])]
+          (tc-with-resource-expr ctx env bindings body ast.AstMaybeType.No)])]
     [(ast.AstExpr.Box inner-box)
       (let
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
@@ -68908,17 +68001,17 @@
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [owner : i64]) : TcMoveResult
-  (match (tc-move-check-atomic-arena-hidden-users-released moved owner)
-    [(TcMoveResult.Ok moved1)
-      (tc-move-check-atomic-arena-users-released-scan
-        ctx
-        env
-        (tc-global-shared-view locals)
-        moved1
-        owner
-        TcNameIdList.Nil
-        (tc-moved-len locals))]
-    [(TcMoveResult.Err message) (TcMoveResult.Err message)]))
+  (let
+    [moved1 : TcMovedSet
+      (try (tc-move-check-atomic-arena-hidden-users-released moved owner))]
+    (tc-move-check-atomic-arena-users-released-scan
+      ctx
+      env
+      (tc-global-shared-view locals)
+      moved1
+      owner
+      TcNameIdList.Nil
+      (tc-moved-len locals))))
 
 (define (tc-move-safe-arena-rewind-effect
   [ctx : TcContext]
@@ -69358,27 +68451,10 @@
     (tc-moved-len locals)
     body))
 
-(define (tc-move-check-exprs-with-types-no-auto
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [loop-carried : TcMovedSet]
-  [moved : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [types : ast.AstTypeList]) : TcMoveResult
-  (tc-move-check-exprs-with-types-no-auto-at
-    ctx
-    expr-bases
-    env
-    locals
-    loop-carried
-    moved
-    (& exprs)
-    (& types)
-    0))
-
-(define (tc-move-check-exprs-with-types-no-auto-at
+;; Call arguments consumed in order. With `auto-borrow?` (the callee has an
+;; immutable-reference formal) each argument is checked as the effective
+;; expression the call passes, auto-borrow included.
+(define (tc-move-check-exprs-with-types-at
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
@@ -69387,87 +68463,8 @@
   [moved : TcMovedSet]
   [exprs : (& exprs ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
-  [index : i64]) : TcMoveResult
-  (if (>= index exprs.len)
-    (if (>= index (ast.ast-type-list-len types))
-      (TcMoveResult.Ok moved)
-      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check")))
-    (if (>= index (ast.ast-type-list-len types))
-      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check"))
-      (let
-        [head : i64 (ast.ast-expr-list-get exprs index 0)]
-        [head-expr : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases head)]
-        [raw-ty : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        [value-ty : ast.AstType
-          (match (tc-body-type-fact-expr-id "move.call_arg_value" ctx env head)
-            [(ResultTcType.Ok ty) ty]
-            [(ResultTcType.Err _) raw-ty])]
-        (match (tc-move-check-expr-id
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view locals)
-          (tc-global-shared-view loop-carried)
-          moved
-          head)
-          [(TcMoveResult.Ok moved1)
-            (match (tc-move-after-consuming-value
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view locals)
-              (tc-global-shared-view loop-carried)
-              moved1
-              head-expr
-              raw-ty
-              value-ty)
-              [(TcMoveResult.Ok moved2)
-                (tc-move-check-exprs-with-types-no-auto-at
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  loop-carried
-                  moved2
-                  exprs
-                  types
-                  (+ index 1))]
-              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)])))))
-
-(define (tc-move-check-exprs-with-types-auto
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [loop-carried : TcMovedSet]
-  [moved : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [types : ast.AstTypeList]) : TcMoveResult
-  (tc-move-check-exprs-with-types-auto-at
-    ctx
-    expr-bases
-    env
-    locals
-    loop-carried
-    moved
-    (& exprs)
-    (& types)
-    0))
-
-(define (tc-move-check-exprs-with-types-auto-at
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [loop-carried : TcMovedSet]
-  [moved : TcMovedSet]
-  [exprs : (& exprs ast.AstExprList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : TcMoveResult
+  [index : i64]
+  [auto-borrow? : bool]) : TcMoveResult
   (if (>= index exprs.len)
     (if (>= index (ast.ast-type-list-len types))
       (TcMoveResult.Ok moved)
@@ -69483,25 +68480,29 @@
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
         [value-ty : ast.AstType
           (match (tc-body-type-fact-expr-id
-            "move.call_arg_value_auto"
+            (if auto-borrow?
+              "move.call_arg_value_auto"
+              "move.call_arg_value")
             ctx
             env
             head)
             [(ResultTcType.Ok actual) actual]
             [(ResultTcType.Err _) raw-ty])]
-        (match (cfg
-          compile-profile
-          (compiler-tc-reinfer-profile-effective-arg-expr
-            "move.call_arg"
-            ctx
-            env
-            head-expr
-            (tc-global-shared-view raw-ty))
-          (tc-call-effective-arg-expr
-            ctx
-            env
-            head-expr
-            (tc-global-shared-view raw-ty)))
+        (match (if auto-borrow?
+          (cfg
+            compile-profile
+            (compiler-tc-reinfer-profile-effective-arg-expr
+              "move.call_arg"
+              ctx
+              env
+              head-expr
+              (tc-global-shared-view raw-ty))
+            (tc-call-effective-arg-expr
+              ctx
+              env
+              head-expr
+              (tc-global-shared-view raw-ty)))
+          (ResultTcExpr.Ok head-expr))
           [(ResultTcExpr.Ok effective-head)
             (match (tc-move-check-expr
               ctx
@@ -69523,7 +68524,7 @@
                   raw-ty
                   value-ty)
                   [(TcMoveResult.Ok moved2)
-                    (tc-move-check-exprs-with-types-auto-at
+                    (tc-move-check-exprs-with-types-at
                       ctx
                       expr-bases
                       env
@@ -69532,7 +68533,8 @@
                       moved2
                       exprs
                       types
-                      (+ index 1))]
+                      (+ index 1)
+                      auto-borrow?)]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(ResultTcExpr.Err message) (TcMoveResult.Err message)])))))
@@ -69546,25 +68548,20 @@
   [moved : TcMovedSet]
   [exprs : ast.AstExprList]
   [types : ast.AstTypeList]) : TcMoveResult
-  (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
-    (tc-move-check-exprs-with-types-auto
+  (let
+    [auto-borrow? : bool
+      (tc-call-type-list-has-immutable-ref-formal? ctx types)]
+    (tc-move-check-exprs-with-types-at
       ctx
       expr-bases
       env
       locals
       loop-carried
       moved
-      exprs
-      types)
-    (tc-move-check-exprs-with-types-no-auto
-      ctx
-      expr-bases
-      env
-      locals
-      loop-carried
-      moved
-      exprs
-      types)))
+      (& exprs)
+      (& types)
+      0
+      auto-borrow?)))
 
 ;; Tuple and nominal-constructor expressions store each element by value.
 ;; Unlike an ordinary non-consuming function argument, a reference-bearing
@@ -69671,33 +68668,30 @@
   (if (tc-thread-channel-send-call? ctx env (tc-global-shared-view func))
     (match (tc-thread-channel-send-call-name ctx func)
       [(TcMaybeString.Some _)
-        (match (tc-thread-channel-send-message-param params)
-          [(ResultTcType.Ok message-ty)
-            (match (tc-thread-channel-send-message-arg args)
-              [(ResultTcExpr.Ok message-expr)
-                (match (tc-move-after-move-only-value
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  loop-carried
-                  moved
-                  (tc-global-shared-view message-expr)
-                  (tc-global-shared-view message-ty))
-                  [(TcMoveResult.Ok moved2)
-                    (TcMoveResult.Ok
-                      (tc-move-mark-hidden-atomic-arena-users
-                        moved2
-                        (match (tc-expr ctx env message-expr)
-                          [(ResultTcType.Ok actual-message-ty)
-                            (tc-type-atomic-arena-owner-regions
-                              env
-                              actual-message-ty)]
-                          [(ResultTcType.Err _)
-                            (tc-type-atomic-arena-owner-regions env message-ty)])))]
-                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-              [(ResultTcExpr.Err message) (TcMoveResult.Err message)])]
-          [(ResultTcType.Err message) (TcMoveResult.Err message)])]
+        (let
+          [message-ty : ast.AstType
+            (try (tc-thread-channel-send-message-param params))]
+          [message-expr : ast.AstExpr
+            (try (tc-thread-channel-send-message-arg args))]
+          (match (tc-move-after-move-only-value
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            (tc-global-shared-view message-expr)
+            (tc-global-shared-view message-ty))
+            [(TcMoveResult.Ok moved2)
+              (TcMoveResult.Ok
+                (tc-move-mark-hidden-atomic-arena-users
+                  moved2
+                  (match (tc-expr ctx env message-expr)
+                    [(ResultTcType.Ok actual-message-ty)
+                      (tc-type-atomic-arena-owner-regions env actual-message-ty)]
+                    [(ResultTcType.Err _)
+                      (tc-type-atomic-arena-owner-regions env message-ty)])))]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
       [(TcMaybeString.No) (TcMoveResult.Ok moved)])
     (TcMoveResult.Ok moved)))
 
@@ -70434,30 +69428,6 @@
           (set! cursor (tc-name-id-list-rest cursor))))
       out)))
 
-(define (tc-move-pattern-bound-names
-  [ctx : TcContext]
-  [scrut-ty : ast.AstType]
-  [pattern : ast.AstPattern]) : TcNameIdList
-  (match (tc-type-strip-region
-    (tc-resolve-type ctx (tc-match-coverage-type ctx scrut-ty)))
-    [(ast.AstType.Enum _)
-      (match pattern
-        [(ast.AstPattern.Variant _ patterns-box)
-          (let
-            [patterns : ast.AstPatternList
-              (ast.ast-pattern-list-box-shared-view patterns-box)]
-            (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
-        [_ TcNameIdList.Nil])]
-    [(ast.AstType.EnumArgs _ _)
-      (match pattern
-        [(ast.AstPattern.Variant _ patterns-box)
-          (let
-            [patterns : ast.AstPatternList
-              (ast.ast-pattern-list-box-shared-view patterns-box)]
-            (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
-        [_ TcNameIdList.Nil])]
-    [_ (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
-
 ;; Each arm is checked from the same post-scrutinee state; results are unioned so
 ;; a place moved on any arm is considered moved after the match.
 (define (tc-move-check-arms
@@ -70669,7 +69639,7 @@
           [body : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
           [bound : TcNameIdList
-            (tc-move-pattern-bound-names
+            (tc-borrow-check-pattern-bound-names
               ctx
               (tc-global-shared-view scrut-ty)
               (tc-global-shared-view pattern))]
@@ -70708,21 +69678,21 @@
                         (tc-global-shared-view moved)
                         (tc-move-remove-bound-root-states arm-moved bound)
                         body-box)]
-                    (match (tc-move-check-arms-at
-                      ctx
-                      expr-bases
-                      env
-                      (tc-moved-clone locals)
-                      (tc-moved-clone loop-carried)
-                      (tc-moved-clone moved)
-                      parameter-id
-                      scrut-ty
-                      arms
-                      (+ index 1))
-                      [(TcMoveResult.Ok rest-moved)
-                        (TcMoveResult.Ok
-                          (tc-moved-union visible-arm-moved rest-moved))]
-                      [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+                    [rest-moved : TcMovedSet
+                      (try
+                        (tc-move-check-arms-at
+                          ctx
+                          expr-bases
+                          env
+                          (tc-moved-clone locals)
+                          (tc-moved-clone loop-carried)
+                          (tc-moved-clone moved)
+                          parameter-id
+                          scrut-ty
+                          arms
+                          (+ index 1)))]
+                    (TcMoveResult.Ok
+                      (tc-moved-union visible-arm-moved rest-moved)))]
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [(ResultTcEnv.Err message) (TcMoveResult.Err message)]))])))
 
@@ -71532,7 +70502,7 @@
           [body : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
           [bound : TcNameIdList
-            (tc-move-pattern-bound-names
+            (tc-borrow-check-pattern-bound-names
               ctx
               (tc-global-shared-view scrut-ty)
               (tc-global-shared-view pattern))]
@@ -74735,7 +73705,7 @@
           [(ResultTcEnv.Ok arm-env)
             (let
               [bound : TcNameIdList
-                (tc-move-pattern-bound-names
+                (tc-borrow-check-pattern-bound-names
                   ctx
                   (tc-global-shared-view scrut-ty)
                   pattern)]
@@ -74959,18 +73929,19 @@
         then-box
         (tc-global-shared-view result-ty))
         [(TcMoveResult.Ok then-moved)
-          (match (tc-move-check-result-expr-id
-            ctx
-            expr-bases
-            env
-            (tc-moved-clone locals)
-            (tc-moved-clone loop-carried)
-            (tc-moved-clone moved)
-            else-box
-            result-ty)
-            [(TcMoveResult.Ok else-moved)
-              (TcMoveResult.Ok (tc-moved-union then-moved else-moved))]
-            [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          (let
+            [else-moved : TcMovedSet
+              (try
+                (tc-move-check-result-expr-id
+                  ctx
+                  expr-bases
+                  env
+                  (tc-moved-clone locals)
+                  (tc-moved-clone loop-carried)
+                  (tc-moved-clone moved)
+                  else-box
+                  result-ty))]
+            (TcMoveResult.Ok (tc-moved-union then-moved else-moved)))]
         [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(ast.AstExpr.Let let-box)
       (match (ast.ast-let-box-shared-view let-box)
@@ -75265,91 +74236,45 @@
     source-locals
     (tc-moved-empty)))
 
-(define (tc-lambda-capture-has-mut-reference-scan?
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [bound : TcStringList]
-  [body : ast.AstExpr]
-  [seen : TcStringList]) : bool
-  (match (tc-type-env-marker-step env)
-    [(TcTypeEnvMarkerStep.Done) false]
-    [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-lambda-capture-has-mut-reference-scan?
-        expr-bases
-        rest-env
-        bound
-        body
-        seen)]
-    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
-      (let
-        [name : String (tc-env-key-name-text key)]
-        (cond
-          [(= key (tc-default-boundary-id)) false]
-          [(or
-              (= key (tc-region-marker-id))
-              (tc-cleanup-owner-marker-entry? key ty)
-              (tc-ordinary-arena-owner-marker-entry?
-                key
-                (tc-global-shared-view ty))
-              (tc-atomic-arena-owner-marker-entry?
-                key
-                (tc-global-shared-view ty))
-              (tc-string-list-contains
-                (tc-global-shared-view seen)
-                (tc-global-shared-view name)))
-            (tc-lambda-capture-has-mut-reference-scan?
-              expr-bases
-              rest-env
-              bound
-              body
-              seen)]
-          [(and
-              (tc-expr-uses-free-name?
-                expr-bases
-                (tc-global-shared-view body)
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-type-contains-mut-reference? ty))
-            true]
-          [else
-            (tc-lambda-capture-has-mut-reference-scan?
-              expr-bases
-              rest-env
-              bound
-              body
-              (tc-string-list-add seen name))]))]))
+;; What a captured-binding scan asks of each binding a lambda body names: does
+;; its type hold a mutable reference, is it move-only (as a local fact or by
+;; type), or is it move-only and already moved.
+(defenum TcCaptureQuery
+  (MutReference)
+  (MoveOnly TcMovedSet)
+  (Consumed TcMovedSet TcMovedSet))
 
-(define (tc-lambda-capture-has-mut-reference?
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [params : ast.AstParamList]
-  [body : ast.AstExpr]) : bool
-  (tc-lambda-capture-has-mut-reference-scan?
-    expr-bases
-    (tc-type-env-marker-start env)
-    (tc-param-bound-names params)
-    body
-    TcStringList.Nil))
+(define (tc-capture-query-matches?
+  [ctx : TcContext]
+  [query : TcCaptureQuery]
+  [key : i64]
+  [ty : ast.AstType]) : bool
+  (match query
+    [(TcCaptureQuery.MutReference) (tc-type-contains-mut-reference? ty)]
+    [(TcCaptureQuery.MoveOnly locals)
+      (tc-move-local-or-type-move-only? ctx locals key ty)]
+    [(TcCaptureQuery.Consumed locals moved)
+      (and
+        (tc-move-local-or-type-move-only? ctx locals key ty)
+        (match (tc-moved-root-conflict moved key)
+          [(TcMoveConflict.Some _ _) true]
+          [TcMoveConflict.No false]))]))
 
-(define (tc-lambda-capture-has-move-only-scan?
+;; Whether some binding the lambda captures answers `query`. Bindings are
+;; visited innermost first up to the default boundary; a shadowed binding is
+;; skipped.
+(define (tc-lambda-capture-scan?
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : ast.AstExpr]
-  [locals : TcMovedSet]
+  [query : TcCaptureQuery]
   [seen : TcStringList]) : bool
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Done) false]
     [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-lambda-capture-has-move-only-scan?
-        ctx
-        expr-bases
-        rest-env
-        bound
-        body
-        locals
-        seen)]
+      (tc-lambda-capture-scan? ctx expr-bases rest-env bound body query seen)]
     [(TcTypeEnvMarkerStep.Bind key ty rest-env)
       (let
         [name : String (tc-env-key-name-text key)]
@@ -75367,13 +74292,13 @@
               (tc-string-list-contains
                 (tc-global-shared-view seen)
                 (tc-global-shared-view name)))
-            (tc-lambda-capture-has-move-only-scan?
+            (tc-lambda-capture-scan?
               ctx
               expr-bases
               rest-env
               bound
               body
-              locals
+              query
               seen)]
           [(and
               (tc-expr-uses-free-name?
@@ -75381,21 +74306,36 @@
                 (tc-global-shared-view body)
                 (tc-global-shared-view name)
                 (tc-global-shared-view bound))
-              (tc-move-local-or-type-move-only?
+              (tc-capture-query-matches?
                 ctx
-                (tc-global-shared-view locals)
+                (tc-global-shared-view query)
                 key
                 ty))
             true]
           [else
-            (tc-lambda-capture-has-move-only-scan?
+            (tc-lambda-capture-scan?
               ctx
               expr-bases
               rest-env
               bound
               body
-              locals
+              query
               (tc-string-list-add seen name))]))]))
+
+(define (tc-lambda-capture-has-mut-reference?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [params : ast.AstParamList]
+  [body : ast.AstExpr]) : bool
+  (tc-lambda-capture-scan?
+    ctx
+    expr-bases
+    (tc-type-env-marker-start env)
+    (tc-param-bound-names params)
+    body
+    TcCaptureQuery.MutReference
+    TcStringList.Nil))
 
 (define (tc-lambda-capture-has-move-only-with-locals?
   [ctx : TcContext]
@@ -75404,13 +74344,13 @@
   [locals : TcMovedSet]
   [params : ast.AstParamList]
   [body : ast.AstExpr]) : bool
-  (tc-lambda-capture-has-move-only-scan?
+  (tc-lambda-capture-scan?
     ctx
     expr-bases
     (tc-type-env-marker-start env)
     (tc-param-bound-names params)
     body
-    locals
+    (TcCaptureQuery.MoveOnly locals)
     TcStringList.Nil))
 
 (define (tc-lambda-capture-has-move-only?
@@ -75460,79 +74400,6 @@
     (tc-move-value-concrete-closure-move-only? ctx expr-bases env locals expr)
     (tc-type-move-only? ctx fallback-ty)))
 
-(define (tc-lambda-capture-consumed-scan?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [bound : TcStringList]
-  [body : ast.AstExpr]
-  [locals : TcMovedSet]
-  [moved : TcMovedSet]
-  [seen : TcStringList]) : bool
-  (match (tc-type-env-marker-step env)
-    [(TcTypeEnvMarkerStep.Done) false]
-    [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-lambda-capture-consumed-scan?
-        ctx
-        expr-bases
-        rest-env
-        bound
-        body
-        locals
-        moved
-        seen)]
-    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
-      (let
-        [name : String (tc-env-key-name-text key)]
-        (cond
-          [(= key (tc-default-boundary-id)) false]
-          [(or
-              (= key (tc-region-marker-id))
-              (tc-cleanup-owner-marker-entry? key ty)
-              (tc-ordinary-arena-owner-marker-entry?
-                key
-                (tc-global-shared-view ty))
-              (tc-atomic-arena-owner-marker-entry?
-                key
-                (tc-global-shared-view ty))
-              (tc-string-list-contains
-                (tc-global-shared-view seen)
-                (tc-global-shared-view name)))
-            (tc-lambda-capture-consumed-scan?
-              ctx
-              expr-bases
-              rest-env
-              bound
-              body
-              locals
-              moved
-              seen)]
-          [(and
-              (tc-expr-uses-free-name?
-                expr-bases
-                (tc-global-shared-view body)
-                (tc-global-shared-view name)
-                (tc-global-shared-view bound))
-              (tc-move-local-or-type-move-only?
-                ctx
-                (tc-global-shared-view locals)
-                key
-                ty)
-              (match (tc-moved-root-conflict (tc-global-shared-view moved) key)
-                [(TcMoveConflict.Some _ _) true]
-                [TcMoveConflict.No false]))
-            true]
-          [else
-            (tc-lambda-capture-consumed-scan?
-              ctx
-              expr-bases
-              rest-env
-              bound
-              body
-              locals
-              moved
-              (tc-string-list-add seen name))]))]))
-
 (define (tc-lambda-call-capability-fallback-with-locals
   [ctx : TcContext]
   [expr-bases : i64]
@@ -75548,7 +74415,7 @@
     (tc-global-shared-view params)
     (tc-global-shared-view body))
     (tc-closure-call-capability-once)
-    (if (tc-lambda-capture-has-mut-reference? expr-bases env params body)
+    (if (tc-lambda-capture-has-mut-reference? ctx expr-bases env params body)
       (tc-closure-call-capability-mut)
       (tc-closure-call-capability-shared))))
 
@@ -75592,17 +74459,17 @@
               (tc-global-shared-view body)
               body-ty)
               [(TcMoveResult.Ok final-moved)
-                (if (tc-lambda-capture-consumed-scan?
+                (if (tc-lambda-capture-scan?
                   ctx
                   expr-bases
                   (tc-type-env-marker-start env)
                   (tc-param-bound-names (tc-global-shared-view params))
                   (tc-global-shared-view body)
-                  lambda-locals
-                  final-moved
+                  (TcCaptureQuery.Consumed lambda-locals final-moved)
                   TcStringList.Nil)
                   (tc-closure-call-capability-once)
                   (if (tc-lambda-capture-has-mut-reference?
+                    ctx
                     expr-bases
                     env
                     params
@@ -76188,11 +75055,6 @@
           borrowed)
         borrowed)]
     [(TcMaybeSliceSplitProjection.No) borrowed]))
-
-(define (tc-borrow-check-remove-root-state
-  [borrowed : TcMovedSet]
-  [name-id : i64]) : TcMovedSet
-  (tc-moved-remove-root-state borrowed name-id))
 
 (define (tc-moved-path-facts-remove-lending
   [facts : TcMovedPathFacts]
@@ -78961,26 +77823,6 @@
         return-lifetimes)]
     [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
 
-(define (tc-borrow-check-add-names [locals : TcMovedSet] [names : TcNameIdList]) : TcMovedSet
-  (tc-move-add-bound-names locals names))
-
-(define (tc-borrow-check-remove-root-states
-  [borrowed : TcMovedSet]
-  [names : TcNameIdList]) : TcMovedSet
-  (let
-    [cursor : TcNameIdList names]
-    [out : TcMovedSet borrowed]
-    (begin
-      (while (not (tc-name-id-list-empty? cursor))
-        (begin
-          (set!
-            out
-            (tc-borrow-check-remove-root-state
-              out
-              (tc-name-id-list-head cursor)))
-          (set! cursor (tc-name-id-list-rest cursor))))
-      out)))
-
 (define (tc-borrow-check-pattern-bound-names
   [ctx : TcContext]
   [scrut-ty : ast.AstType]
@@ -79010,7 +77852,7 @@
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]
   [locals : TcMovedSet]) : TcMovedSet
-  (tc-borrow-check-add-names
+  (tc-move-add-bound-names
     locals
     (tc-borrow-check-pattern-bound-names ctx scrut-ty pattern)))
 
@@ -79624,20 +78466,19 @@
   (if (tc-thread-channel-send-call? ctx env (tc-global-shared-view func))
     (match (tc-thread-channel-send-call-name ctx func)
       [(TcMaybeString.Some _)
-        (match (tc-thread-channel-send-message-param params)
-          [(ResultTcType.Ok message-ty)
-            (match (tc-thread-channel-send-message-arg args)
-              [(ResultTcExpr.Ok message-expr)
-                (tc-borrow-check-after-move-only-value
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  borrowed
-                  message-expr
-                  message-ty)]
-              [(ResultTcExpr.Err message) (TcBorrowCheckResult.Err message)])]
-          [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+        (let
+          [message-ty : ast.AstType
+            (try (tc-thread-channel-send-message-param params))]
+          [message-expr : ast.AstExpr
+            (try (tc-thread-channel-send-message-arg args))]
+          (tc-borrow-check-after-move-only-value
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            message-expr
+            message-ty))]
       [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])
     (TcBorrowCheckResult.Ok borrowed)))
 
@@ -79670,88 +78511,82 @@
         (tc-global-shared-view args)
         (tc-global-shared-view types)
         foreign-boundary)]
-    (match validation-result
-      [(TcBorrowCheckResult.Ok checked-borrowed)
-        (let
-          [borrowed-with-uses : TcMovedSet
-            (tc-borrow-check-propagate-lending-uses checked-borrowed borrowed)]
-          (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
-            (match (tc-borrow-check-auto-borrowed-call-args
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view locals)
-              (tc-global-shared-view borrowed-with-uses)
-              (tc-global-shared-view args)
-              (tc-global-shared-view types))
-              [(TcBorrowCheckResult.Ok borrowed2)
-                (match (tc-borrow-check-thread-channel-send-message
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view borrowed2)
-                  (tc-global-shared-view func)
-                  (tc-global-shared-view args)
-                  types)
-                  [(TcBorrowCheckResult.Ok borrowed3)
-                    (match (tc-borrow-check-after-call-effects
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      borrowed3
-                      (tc-global-shared-view call-expr)
-                      func
-                      args
-                      return-lifetimes)
-                      [(TcBorrowCheckResult.Ok borrowed4)
-                        ;; Auto-borrows are call temporaries unless the resolved
-                        ;; result type retains their lifetime. This is the same
-                        ;; type-driven lifetime pruning used for assignment
-                        ;; values; it must not depend on the callee's spelling.
-                        (if (=
-                          (tc-moved-len borrowed2)
-                          (tc-moved-len
-                            (tc-global-shared-view borrowed-with-uses)))
-                          (TcBorrowCheckResult.Ok borrowed4)
-                          (TcBorrowCheckResult.Ok
-                            (tc-borrow-check-prune-value-temporaries
-                              ctx
-                              expr-bases
-                              env
-                              borrowed-with-uses
-                              borrowed4
-                              call-expr)))]
-                      [(TcBorrowCheckResult.Err message)
-                        (TcBorrowCheckResult.Err message)])]
-                  [(TcBorrowCheckResult.Err message)
-                    (TcBorrowCheckResult.Err message)])]
-              [(TcBorrowCheckResult.Err message)
-                (TcBorrowCheckResult.Err message)])
-            (match (tc-borrow-check-thread-channel-send-message
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view locals)
-              borrowed-with-uses
-              (tc-global-shared-view func)
-              (tc-global-shared-view args)
-              types)
-              [(TcBorrowCheckResult.Ok borrowed2)
-                (tc-borrow-check-after-call-effects
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  borrowed2
-                  call-expr
-                  func
-                  args
-                  return-lifetimes)]
-              [(TcBorrowCheckResult.Err message)
-                (TcBorrowCheckResult.Err message)])))]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+    [checked-borrowed : TcMovedSet (try validation-result)]
+    [borrowed-with-uses : TcMovedSet
+      (tc-borrow-check-propagate-lending-uses checked-borrowed borrowed)]
+    (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
+      (match (tc-borrow-check-auto-borrowed-call-args
+        ctx
+        expr-bases
+        env
+        (tc-global-shared-view locals)
+        (tc-global-shared-view borrowed-with-uses)
+        (tc-global-shared-view args)
+        (tc-global-shared-view types))
+        [(TcBorrowCheckResult.Ok borrowed2)
+          (match (tc-borrow-check-thread-channel-send-message
+            ctx
+            expr-bases
+            env
+            (tc-global-shared-view locals)
+            (tc-global-shared-view borrowed2)
+            (tc-global-shared-view func)
+            (tc-global-shared-view args)
+            types)
+            [(TcBorrowCheckResult.Ok borrowed3)
+              (match (tc-borrow-check-after-call-effects
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed3
+                (tc-global-shared-view call-expr)
+                func
+                args
+                return-lifetimes)
+                [(TcBorrowCheckResult.Ok borrowed4)
+                  ;; Auto-borrows are call temporaries unless the resolved
+                  ;; result type retains their lifetime. This is the same
+                  ;; type-driven lifetime pruning used for assignment
+                  ;; values; it must not depend on the callee's spelling.
+                  (if (=
+                    (tc-moved-len borrowed2)
+                    (tc-moved-len (tc-global-shared-view borrowed-with-uses)))
+                    (TcBorrowCheckResult.Ok borrowed4)
+                    (TcBorrowCheckResult.Ok
+                      (tc-borrow-check-prune-value-temporaries
+                        ctx
+                        expr-bases
+                        env
+                        borrowed-with-uses
+                        borrowed4
+                        call-expr)))]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])
+      (match (tc-borrow-check-thread-channel-send-message
+        ctx
+        expr-bases
+        env
+        (tc-global-shared-view locals)
+        borrowed-with-uses
+        (tc-global-shared-view func)
+        (tc-global-shared-view args)
+        types)
+        [(TcBorrowCheckResult.Ok borrowed2)
+          (tc-borrow-check-after-call-effects
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed2
+            call-expr
+            func
+            args
+            return-lifetimes)]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))))
 
 (define (tc-borrow-check-exprs-retry-after-prune
   [ctx : TcContext]
@@ -80495,7 +79330,7 @@
     loop-env
     entry
     (if (>= remove-root-id 0)
-      (tc-borrow-check-remove-root-state state remove-root-id)
+      (tc-moved-remove-root-state state remove-root-id)
       state)))
 
 (define (tc-borrow-loop-result-exit-state
@@ -81014,7 +79849,7 @@
                 [(TcBorrowCheckResult.Ok arm-borrowed)
                   (let
                     [visible-arm-borrowed : TcMovedSet
-                      (tc-borrow-check-remove-root-states
+                      (tc-move-remove-bound-root-states
                         arm-borrowed
                         (tc-borrow-check-pattern-bound-names
                           ctx
@@ -81180,22 +80015,23 @@
               borrowed
               scrut)
               [(TcBorrowCheckResult.Ok borroweds)
-                (match (tc-body-type-fact-expr-id
-                  "borrow.match_scrutinee"
-                  ctx
-                  env
-                  scrut-box)
-                  [(ResultTcType.Ok scrut-ty)
-                    (tc-borrow-check-arms-loop
-                      ctx
-                      expr-bases
-                      env
-                      loop-env
-                      locals
-                      borroweds
-                      scrut-ty
-                      arms)]
-                  [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+                (let
+                  [scrut-ty : ast.AstType
+                    (try
+                      (tc-body-type-fact-expr-id
+                        "borrow.match_scrutinee"
+                        ctx
+                        env
+                        scrut-box))]
+                  (tc-borrow-check-arms-loop
+                    ctx
+                    expr-bases
+                    env
+                    loop-env
+                    locals
+                    borroweds
+                    scrut-ty
+                    arms))]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
     [(ast.AstExpr.SpmdCompact compact-box)
@@ -81227,63 +80063,56 @@
               (tc-moved-add
                 (tc-moved-clone (tc-global-shared-view keep-locals))
                 slot)]
-            (match (tc-borrow-check-exprs
+            [outer-borrowed : TcMovedSet
+              (try
+                (tc-borrow-check-exprs
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  borrowed
+                  (ast.ast-expr-cons
+                    start-box
+                    (ast.ast-expr-cons
+                      end-box
+                      (ast.ast-expr-cons init-box (ast.ast-expr-list-new))))))]
+            [keep-entry : TcMovedSet
+              (tc-moved-remove-root-state (tc-moved-clone outer-borrowed) index)]
+            (match (tc-borrow-check-expr-loop
               ctx
               expr-bases
+              keep-env
               env
-              locals
-              borrowed
-              (ast.ast-expr-cons
-                start-box
-                (ast.ast-expr-cons
-                  end-box
-                  (ast.ast-expr-cons init-box (ast.ast-expr-list-new)))))
-              [(TcBorrowCheckResult.Ok outer-borrowed)
+              keep-locals
+              (tc-global-shared-view keep-entry)
+              keep-entry
+              keep)
+              [(TcBorrowCheckResult.Ok keep-borrowed)
                 (let
-                  [keep-entry : TcMovedSet
-                    (tc-borrow-check-remove-root-state
-                      (tc-moved-clone outer-borrowed)
-                      index)]
+                  [body-entry : TcMovedSet
+                    (tc-moved-remove-root-state
+                      (tc-moved-remove-root-state
+                        (tc-moved-clone (tc-global-shared-view keep-borrowed))
+                        index)
+                      slot)]
                   (match (tc-borrow-check-expr-loop
                     ctx
                     expr-bases
-                    keep-env
+                    body-env
                     env
-                    keep-locals
-                    (tc-global-shared-view keep-entry)
-                    keep-entry
-                    keep)
-                    [(TcBorrowCheckResult.Ok keep-borrowed)
-                      (let
-                        [body-entry : TcMovedSet
-                          (tc-borrow-check-remove-root-state
-                            (tc-borrow-check-remove-root-state
-                              (tc-moved-clone
-                                (tc-global-shared-view keep-borrowed))
-                              index)
-                            slot)]
-                        (match (tc-borrow-check-expr-loop
+                    body-locals
+                    (tc-global-shared-view body-entry)
+                    body-entry
+                    body)
+                    [(TcBorrowCheckResult.Ok body-borrowed)
+                      (TcBorrowCheckResult.Ok
+                        (tc-borrow-check-loop-visible-body-borrows
                           ctx
-                          expr-bases
-                          body-env
                           env
-                          body-locals
-                          (tc-global-shared-view body-entry)
-                          body-entry
-                          body)
-                          [(TcBorrowCheckResult.Ok body-borrowed)
-                            (TcBorrowCheckResult.Ok
-                              (tc-borrow-check-loop-visible-body-borrows
-                                ctx
-                                env
-                                keep-borrowed
-                                (tc-borrow-check-remove-root-state
-                                  (tc-borrow-check-remove-root-state
-                                    body-borrowed
-                                    index)
-                                  slot)))]
-                          [(TcBorrowCheckResult.Err message)
-                            (TcBorrowCheckResult.Err message)]))]
+                          keep-borrowed
+                          (tc-moved-remove-root-state
+                            (tc-moved-remove-root-state body-borrowed index)
+                            slot)))]
                     [(TcBorrowCheckResult.Err message)
                       (TcBorrowCheckResult.Err message)]))]
               [(TcBorrowCheckResult.Err message)
@@ -82138,7 +80967,7 @@
                           locals
                           name
                           init)
-                        (tc-borrow-check-remove-root-state borrowed5 name)
+                        (tc-moved-remove-root-state borrowed5 name)
                         protected
                         bindings
                         body-box
@@ -82271,7 +81100,7 @@
                           name
                           (tc-type-without-regions init-ty))
                         (tc-moved-add locals name)
-                        (tc-borrow-check-remove-root-state borrowed2 name)
+                        (tc-moved-remove-root-state borrowed2 name)
                         bindings
                         (+ index 1))]
                     [(ResultTcType.Err message)
@@ -82335,7 +81164,7 @@
               [(TcBorrowCheckResult.Ok arm-borrowed)
                 (let
                   [visible-arm-borrowed : TcMovedSet
-                    (tc-borrow-check-remove-root-states
+                    (tc-move-remove-bound-root-states
                       arm-borrowed
                       (tc-borrow-check-pattern-bound-names
                         ctx
@@ -82566,51 +81395,48 @@
             (tc-global-shared-view borrowed)
             source-id)
             [(TcBorrowCheckResult.Ok borrowed1)
-              (match (tc-body-type-fact-expr-id
-                "borrow.for_owned_source"
-                ctx
-                env
-                source-id)
-                [(ResultTcType.Ok source-ty)
-                  (match (tc-borrow-check-after-bind-known-type-id
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    borrowed1
-                    source-name
-                    source-id
-                    (tc-global-shared-view source-ty))
-                    [(TcBorrowCheckResult.Ok borrowed2)
-                      (match (tc-borrow-check-expr-with-protected-id
-                        ctx
-                        expr-bases
-                        (tc-bind-id
-                          (tc-bind-id env source-name source-ty)
-                          index-name
-                          (ast.AstType.I64))
-                        (tc-moved-add
-                          (tc-moved-add locals source-name)
-                          index-name)
-                        (tc-borrow-check-remove-root-state
-                          (tc-borrow-check-remove-root-state
-                            borrowed2
-                            source-name)
-                          index-name)
-                        borrowed
-                        body-id)
-                        [(TcBorrowCheckResult.Ok borrowed3)
-                          (TcBorrowCheckResult.Ok
-                            (tc-borrow-check-remove-root-state
-                              (tc-borrow-check-remove-root-state
-                                borrowed3
-                                source-name)
-                              index-name))]
-                        [(TcBorrowCheckResult.Err message)
-                          (TcBorrowCheckResult.Err message)])]
-                    [(TcBorrowCheckResult.Err message)
-                      (TcBorrowCheckResult.Err message)])]
-                [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+              (let
+                [source-ty : ast.AstType
+                  (try
+                    (tc-body-type-fact-expr-id
+                      "borrow.for_owned_source"
+                      ctx
+                      env
+                      source-id))]
+                (match (tc-borrow-check-after-bind-known-type-id
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  borrowed1
+                  source-name
+                  source-id
+                  (tc-global-shared-view source-ty))
+                  [(TcBorrowCheckResult.Ok borrowed2)
+                    (let
+                      [borrowed3 : TcMovedSet
+                        (try
+                          (tc-borrow-check-expr-with-protected-id
+                            ctx
+                            expr-bases
+                            (tc-bind-id
+                              (tc-bind-id env source-name source-ty)
+                              index-name
+                              (ast.AstType.I64))
+                            (tc-moved-add
+                              (tc-moved-add locals source-name)
+                              index-name)
+                            (tc-moved-remove-root-state
+                              (tc-moved-remove-root-state borrowed2 source-name)
+                              index-name)
+                            borrowed
+                            body-id))]
+                      (TcBorrowCheckResult.Ok
+                        (tc-moved-remove-root-state
+                          (tc-moved-remove-root-state borrowed3 source-name)
+                          index-name)))]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)]))]
             [(TcBorrowCheckResult.Err message)
               (TcBorrowCheckResult.Err message)])))]
     [(ast.AstExpr.ForOwnedStep payload)
@@ -82648,40 +81474,40 @@
                     borrowed2
                     done-id)
                     [(TcBorrowCheckResult.Ok borrowed3)
-                      (match (tc-body-type-fact-expr-id
-                        "borrow.for_owned_step_source"
-                        ctx
-                        env
-                        source-id)
-                        [(ResultTcType.Ok source-ty)
-                          (match (tc-type-strip-region
-                            (tc-resolve-type ctx source-ty))
-                            [(ast.AstType.Array elem-id _)
-                              (match (tc-borrow-check-expr-with-protected-id
-                                ctx
-                                expr-bases
-                                (tc-bind-id
-                                  env
-                                  binding-name
-                                  (tc-context-type-get ctx elem-id))
-                                (tc-moved-add locals binding-name)
-                                (tc-borrow-check-remove-root-state
-                                  borrowed3
-                                  binding-name)
-                                borrowed
-                                body-id)
-                                [(TcBorrowCheckResult.Ok borrowed4)
-                                  (TcBorrowCheckResult.Ok
-                                    (tc-borrow-check-remove-root-state
-                                      borrowed4
-                                      binding-name))]
-                                [(TcBorrowCheckResult.Err message)
-                                  (TcBorrowCheckResult.Err message)])]
-                            [_
-                              (TcBorrowCheckResult.Err
-                                "typecheck: scalar for owned step requires fixed-array state")])]
-                        [(ResultTcType.Err message)
-                          (TcBorrowCheckResult.Err message)])]
+                      (let
+                        [source-ty : ast.AstType
+                          (try
+                            (tc-body-type-fact-expr-id
+                              "borrow.for_owned_step_source"
+                              ctx
+                              env
+                              source-id))]
+                        (match (tc-type-strip-region
+                          (tc-resolve-type ctx source-ty))
+                          [(ast.AstType.Array elem-id _)
+                            (let
+                              [borrowed4 : TcMovedSet
+                                (try
+                                  (tc-borrow-check-expr-with-protected-id
+                                    ctx
+                                    expr-bases
+                                    (tc-bind-id
+                                      env
+                                      binding-name
+                                      (tc-context-type-get ctx elem-id))
+                                    (tc-moved-add locals binding-name)
+                                    (tc-moved-remove-root-state
+                                      borrowed3
+                                      binding-name)
+                                    borrowed
+                                    body-id))]
+                              (TcBorrowCheckResult.Ok
+                                (tc-moved-remove-root-state
+                                  borrowed4
+                                  binding-name)))]
+                          [_
+                            (TcBorrowCheckResult.Err
+                              "typecheck: scalar for owned step requires fixed-array state")]))]
                     [(TcBorrowCheckResult.Err message)
                       (TcBorrowCheckResult.Err message)])]
                 [(TcBorrowCheckResult.Err message)
@@ -82868,17 +81694,17 @@
             (tc-moved-clone (tc-global-shared-view borrowedc))
             then-branch-box)
             [(TcBorrowCheckResult.Ok borrowedt)
-              (match (tc-borrow-check-expr-id
-                ctx
-                expr-bases
-                env
-                (tc-moved-clone locals)
-                (tc-moved-clone borrowedc)
-                else-branch-box)
-                [(TcBorrowCheckResult.Ok borrowede)
-                  (TcBorrowCheckResult.Ok (tc-moved-union borrowedt borrowede))]
-                [(TcBorrowCheckResult.Err message)
-                  (TcBorrowCheckResult.Err message)])]
+              (let
+                [borrowede : TcMovedSet
+                  (try
+                    (tc-borrow-check-expr-id
+                      ctx
+                      expr-bases
+                      env
+                      (tc-moved-clone locals)
+                      (tc-moved-clone borrowedc)
+                      else-branch-box))]
+                (TcBorrowCheckResult.Ok (tc-moved-union borrowedt borrowede)))]
             [(TcBorrowCheckResult.Err message)
               (TcBorrowCheckResult.Err message)])]
         [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
@@ -83253,18 +82079,17 @@
                               reserved
                               consumed-borrowed
                               replacement)]
-                          (match (tc-borrow-check-activate-two-phase-mut-borrows
-                            expr-bases
-                            pruned
-                            expr)
-                            [(TcBorrowCheckResult.Ok activated)
-                              (TcBorrowCheckResult.Ok
-                                (tc-borrow-check-remove-two-phase-mut-place
-                                  expr-bases
-                                  activated
-                                  place))]
-                            [(TcBorrowCheckResult.Err message)
-                              (TcBorrowCheckResult.Err message)]))]
+                          [activated : TcMovedSet
+                            (try
+                              (tc-borrow-check-activate-two-phase-mut-borrows
+                                expr-bases
+                                pruned
+                                expr))]
+                          (TcBorrowCheckResult.Ok
+                            (tc-borrow-check-remove-two-phase-mut-place
+                              expr-bases
+                              activated
+                              place)))]
                       [(TcBorrowCheckResult.Err message)
                         (TcBorrowCheckResult.Err message)])]
                   [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
@@ -83615,21 +82440,22 @@
               borrowed
               scrut)
               [(TcBorrowCheckResult.Ok borroweds)
-                (match (tc-body-type-fact-expr-id
-                  "borrow.match_scrutinee"
-                  ctx
-                  env
-                  scrut-box)
-                  [(ResultTcType.Ok scrut-ty)
-                    (tc-borrow-check-arms
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      borroweds
-                      scrut-ty
-                      arms)]
-                  [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+                (let
+                  [scrut-ty : ast.AstType
+                    (try
+                      (tc-body-type-fact-expr-id
+                        "borrow.match_scrutinee"
+                        ctx
+                        env
+                        scrut-box))]
+                  (tc-borrow-check-arms
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    borroweds
+                    scrut-ty
+                    arms))]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
     [(ast.AstExpr.Foreach fe-box)
@@ -83664,7 +82490,7 @@
                       [body-locals : TcMovedSet
                         (tc-moved-add (tc-moved-clone locals) index)]
                       [body-entry : TcMovedSet
-                        (tc-borrow-check-remove-root-state
+                        (tc-moved-remove-root-state
                           (tc-moved-clone borrowed2)
                           index)]
                       (tc-borrow-loop-result-exit-state
@@ -83782,62 +82608,62 @@
                   borrowed1
                   end)
                   [(TcBorrowCheckResult.Ok borrowed2)
-                    (match (tc-borrow-check-expr
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      borrowed2
-                      init)
-                      [(TcBorrowCheckResult.Ok borrowed3)
-                        (match (tc-borrow-check-expr-loop
-                          ctx
-                          expr-bases
-                          value-env
-                          env
-                          value-locals
-                          (tc-borrow-check-remove-root-state
-                            (tc-moved-clone (tc-global-shared-view borrowed3))
-                            index)
-                          (tc-borrow-check-remove-root-state
-                            (tc-moved-clone borrowed3)
-                            index)
-                          value)
-                          [(TcBorrowCheckResult.Ok borrowed4)
-                            (let
-                              [body-entry : TcMovedSet
-                                (tc-borrow-check-remove-root-state
-                                  (tc-borrow-check-remove-root-state
-                                    (tc-moved-clone
-                                      (tc-global-shared-view borrowed4))
-                                    index)
-                                  prefix)]
-                              (match (tc-borrow-check-expr-loop
-                                ctx
-                                expr-bases
-                                body-env
-                                env
-                                body-locals
-                                (tc-global-shared-view body-entry)
-                                body-entry
-                                body)
-                                [(TcBorrowCheckResult.Ok body-borrowed)
-                                  (TcBorrowCheckResult.Ok
-                                    (tc-borrow-check-loop-visible-body-borrows
-                                      ctx
-                                      env
-                                      borrowed4
-                                      (tc-borrow-check-remove-root-state
-                                        (tc-borrow-check-remove-root-state
-                                          body-borrowed
-                                          index)
-                                        prefix)))]
-                                [(TcBorrowCheckResult.Err message)
-                                  (TcBorrowCheckResult.Err message)]))]
-                          [(TcBorrowCheckResult.Err message)
-                            (TcBorrowCheckResult.Err message)])]
-                      [(TcBorrowCheckResult.Err message)
-                        (TcBorrowCheckResult.Err message)])]
+                    (let
+                      [borrowed3 : TcMovedSet
+                        (try
+                          (tc-borrow-check-expr
+                            ctx
+                            expr-bases
+                            env
+                            locals
+                            borrowed2
+                            init))]
+                      (match (tc-borrow-check-expr-loop
+                        ctx
+                        expr-bases
+                        value-env
+                        env
+                        value-locals
+                        (tc-moved-remove-root-state
+                          (tc-moved-clone (tc-global-shared-view borrowed3))
+                          index)
+                        (tc-moved-remove-root-state
+                          (tc-moved-clone borrowed3)
+                          index)
+                        value)
+                        [(TcBorrowCheckResult.Ok borrowed4)
+                          (let
+                            [body-entry : TcMovedSet
+                              (tc-moved-remove-root-state
+                                (tc-moved-remove-root-state
+                                  (tc-moved-clone
+                                    (tc-global-shared-view borrowed4))
+                                  index)
+                                prefix)]
+                            (match (tc-borrow-check-expr-loop
+                              ctx
+                              expr-bases
+                              body-env
+                              env
+                              body-locals
+                              (tc-global-shared-view body-entry)
+                              body-entry
+                              body)
+                              [(TcBorrowCheckResult.Ok body-borrowed)
+                                (TcBorrowCheckResult.Ok
+                                  (tc-borrow-check-loop-visible-body-borrows
+                                    ctx
+                                    env
+                                    borrowed4
+                                    (tc-moved-remove-root-state
+                                      (tc-moved-remove-root-state
+                                        body-borrowed
+                                        index)
+                                      prefix)))]
+                              [(TcBorrowCheckResult.Err message)
+                                (TcBorrowCheckResult.Err message)]))]
+                        [(TcBorrowCheckResult.Err message)
+                          (TcBorrowCheckResult.Err message)]))]
                   [(TcBorrowCheckResult.Err message)
                     (TcBorrowCheckResult.Err message)])]
               [(TcBorrowCheckResult.Err message)
@@ -83871,63 +82697,56 @@
               (tc-moved-add
                 (tc-moved-clone (tc-global-shared-view keep-locals))
                 slot)]
-            (match (tc-borrow-check-exprs
+            [outer-borrowed : TcMovedSet
+              (try
+                (tc-borrow-check-exprs
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  borrowed
+                  (ast.ast-expr-cons
+                    start-box
+                    (ast.ast-expr-cons
+                      end-box
+                      (ast.ast-expr-cons init-box (ast.ast-expr-list-new))))))]
+            [keep-entry : TcMovedSet
+              (tc-moved-remove-root-state (tc-moved-clone outer-borrowed) index)]
+            (match (tc-borrow-check-expr-loop
               ctx
               expr-bases
+              keep-env
               env
-              locals
-              borrowed
-              (ast.ast-expr-cons
-                start-box
-                (ast.ast-expr-cons
-                  end-box
-                  (ast.ast-expr-cons init-box (ast.ast-expr-list-new)))))
-              [(TcBorrowCheckResult.Ok outer-borrowed)
+              keep-locals
+              (tc-global-shared-view keep-entry)
+              keep-entry
+              keep)
+              [(TcBorrowCheckResult.Ok keep-borrowed)
                 (let
-                  [keep-entry : TcMovedSet
-                    (tc-borrow-check-remove-root-state
-                      (tc-moved-clone outer-borrowed)
-                      index)]
+                  [body-entry : TcMovedSet
+                    (tc-moved-remove-root-state
+                      (tc-moved-remove-root-state
+                        (tc-moved-clone (tc-global-shared-view keep-borrowed))
+                        index)
+                      slot)]
                   (match (tc-borrow-check-expr-loop
                     ctx
                     expr-bases
-                    keep-env
+                    body-env
                     env
-                    keep-locals
-                    (tc-global-shared-view keep-entry)
-                    keep-entry
-                    keep)
-                    [(TcBorrowCheckResult.Ok keep-borrowed)
-                      (let
-                        [body-entry : TcMovedSet
-                          (tc-borrow-check-remove-root-state
-                            (tc-borrow-check-remove-root-state
-                              (tc-moved-clone
-                                (tc-global-shared-view keep-borrowed))
-                              index)
-                            slot)]
-                        (match (tc-borrow-check-expr-loop
+                    body-locals
+                    (tc-global-shared-view body-entry)
+                    body-entry
+                    body)
+                    [(TcBorrowCheckResult.Ok body-borrowed)
+                      (TcBorrowCheckResult.Ok
+                        (tc-borrow-check-loop-visible-body-borrows
                           ctx
-                          expr-bases
-                          body-env
                           env
-                          body-locals
-                          (tc-global-shared-view body-entry)
-                          body-entry
-                          body)
-                          [(TcBorrowCheckResult.Ok body-borrowed)
-                            (TcBorrowCheckResult.Ok
-                              (tc-borrow-check-loop-visible-body-borrows
-                                ctx
-                                env
-                                keep-borrowed
-                                (tc-borrow-check-remove-root-state
-                                  (tc-borrow-check-remove-root-state
-                                    body-borrowed
-                                    index)
-                                  slot)))]
-                          [(TcBorrowCheckResult.Err message)
-                            (TcBorrowCheckResult.Err message)]))]
+                          keep-borrowed
+                          (tc-moved-remove-root-state
+                            (tc-moved-remove-root-state body-borrowed index)
+                            slot)))]
                     [(TcBorrowCheckResult.Err message)
                       (TcBorrowCheckResult.Err message)]))]
               [(TcBorrowCheckResult.Err message)
@@ -86433,20 +85252,17 @@
       (cfg
         compile-profile
         (compiler-tc-macro-profile-note-live-registry-rebuild))
-      (match (csym.build-compiler-registries-with-symbols program symbols)
-        [(csym.ResultCompilerRegistries.Ok registries)
-          (begin
-            (set!
-              (array-ref
-                (tc-macro-walk-field state macro-live-registries-cell)
-                0)
-              registries)
-            (tc-macro-walk-set! state macro-live-registries-ready true)
-            (tc-macro-walk-set! state macro-live-registries-fallback false)
-            (csym.ResultCompilerRegistries.Ok
-              (macro-live-registries-shared-view state)))]
-        [(csym.ResultCompilerRegistries.Err message)
-          (csym.ResultCompilerRegistries.Err message)]))))
+      (let
+        [registries : csym.CompilerRegistries
+          (try (csym.build-compiler-registries-with-symbols program symbols))]
+        (begin
+          (set!
+            (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
+            registries)
+          (tc-macro-walk-set! state macro-live-registries-ready true)
+          (tc-macro-walk-set! state macro-live-registries-fallback false)
+          (csym.ResultCompilerRegistries.Ok
+            (macro-live-registries-shared-view state)))))))
 
 (define (macro-live-symbols-reserved-capacity [program : ast.AstProgram]) : i64
   (match program
@@ -91307,14 +90123,14 @@
   [exprs : ast.AstExprList]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
-  (match (macro-expr-list-to-spanned-sexpr session exprs span origin)
-    [(ResultMacroSexpr.Ok tail)
-      (ResultMacroSexpr.Ok
-        (reader.spanned-sexpr-list-prepend
-          (macro-spanned-symbol-id name-id span)
-          tail
-          span))]
-    [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
+  (let
+    [tail : reader.SpannedSexpr
+      (try (macro-expr-list-to-spanned-sexpr session exprs span origin))]
+    (ResultMacroSexpr.Ok
+      (reader.spanned-sexpr-list-prepend
+        (macro-spanned-symbol-id name-id span)
+        tail
+        span))))
 
 ;; Serialize a child expression node (referenced by node-pool id) back to a
 ;; spanned sexpr. Used by the declaration-emitting macro output serializer to
@@ -91617,19 +90433,20 @@
     [(ast.AstType.Slice elem)
       (macro-type-unary-sexpr-id session (ci.intern "Slice") elem span origin)]
     [(ast.AstType.Array elem count)
-      (match (macro-type-to-spanned-sexpr
-        session
-        (ast.ty-node-get elem)
-        span
-        origin)
-        [(ResultMacroSexpr.Ok selem)
-          (ResultMacroSexpr.Ok
-            (macro-form2-id
-              (cbi.compiler-builtin-ctfe "Array")
-              selem
-              (reader.SpannedSexpr.Int count (string.int->string count) span)
-              span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      (let
+        [selem : reader.SpannedSexpr
+          (try
+            (macro-type-to-spanned-sexpr
+              session
+              (ast.ty-node-get elem)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (macro-form2-id
+            (cbi.compiler-builtin-ctfe "Array")
+            selem
+            (reader.SpannedSexpr.Int count (string.int->string count) span)
+            span)))]
     [(ast.AstType.Box inner)
       (macro-type-unary-sexpr-id
         session
@@ -91652,18 +90469,19 @@
         span
         origin)]
     [(ast.AstType.Tuple items)
-      (match (macro-type-list-to-spanned-sexpr
-        session
-        (ast.ast-type-list-box-shared-view items)
-        span
-        origin)
-        [(ResultMacroSexpr.Ok stail)
-          (ResultMacroSexpr.Ok
-            (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "Tuple") span)
-              stail
-              span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      (let
+        [stail : reader.SpannedSexpr
+          (try
+            (macro-type-list-to-spanned-sexpr
+              session
+              (ast.ast-type-list-box-shared-view items)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-list-prepend
+            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "Tuple") span)
+            stail
+            span)))]
     [(ast.AstType.Func args ret)
       (match (macro-type-list-to-spanned-sexpr
         session
@@ -91671,49 +90489,50 @@
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sargs)
-          (match (macro-type-to-spanned-sexpr
-            session
-            (ast.ty-node-get ret)
-            span
-            origin)
-            [(ResultMacroSexpr.Ok sret)
-              (ResultMacroSexpr.Ok
-                (reader.spanned-sexpr-list-from-builder
-                  (reader.spanned-sexpr-builder-push
-                    (reader.spanned-sexpr-builder-extend
-                      (reader.spanned-sexpr-builder-push
-                        (reader.spanned-sexpr-builder-new)
-                        (macro-spanned-symbol-id
-                          (cbi.compiler-builtin-ctfe "->")
-                          span))
-                      sargs)
-                    sret)
-                  span))]
-            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+          (let
+            [sret : reader.SpannedSexpr
+              (try
+                (macro-type-to-spanned-sexpr
+                  session
+                  (ast.ty-node-get ret)
+                  span
+                  origin))]
+            (ResultMacroSexpr.Ok
+              (reader.spanned-sexpr-list-from-builder
+                (reader.spanned-sexpr-builder-push
+                  (reader.spanned-sexpr-builder-extend
+                    (reader.spanned-sexpr-builder-push
+                      (reader.spanned-sexpr-builder-new)
+                      (macro-spanned-symbol-id
+                        (cbi.compiler-builtin-ctfe "->")
+                        span))
+                    sargs)
+                  sret)
+                span)))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstType.CFunc signature mode)
-      (match (macro-type-to-spanned-sexpr
-        session
-        (ast.ty-node-get signature)
-        span
-        origin)
-        [(ResultMacroSexpr.Ok signature-sexpr)
-          (ResultMacroSexpr.Ok
-            (reader.spanned-sexpr-list-from-builder
+      (let
+        [signature-sexpr : reader.SpannedSexpr
+          (try
+            (macro-type-to-spanned-sexpr
+              session
+              (ast.ty-node-get signature)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-list-from-builder
+            (reader.spanned-sexpr-builder-push
               (reader.spanned-sexpr-builder-push
                 (reader.spanned-sexpr-builder-push
-                  (reader.spanned-sexpr-builder-push
-                    (reader.spanned-sexpr-builder-new)
-                    (macro-spanned-symbol-id
-                      (ci.intern-generated-name "CFunc")
-                      span))
+                  (reader.spanned-sexpr-builder-new)
                   (macro-spanned-symbol-id
-                    (ci.intern-generated-name
-                      (ast.ast-c-function-mode-name mode))
+                    (ci.intern-generated-name "CFunc")
                     span))
-                signature-sexpr)
-              span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+                (macro-spanned-symbol-id
+                  (ci.intern-generated-name (ast.ast-c-function-mode-name mode))
+                  span))
+              signature-sexpr)
+            span)))]
     [(ast.AstType.Struct name)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
@@ -91758,51 +90577,54 @@
         (ast.ast-lifetime-list-box-shared-view lifetimes)
         span)]
     [(ast.AstType.Ref region inner)
-      (match (macro-type-to-spanned-sexpr
-        session
-        (ast.ty-node-get inner)
-        span
-        origin)
-        [(ResultMacroSexpr.Ok sinner)
-          (ResultMacroSexpr.Ok
-            (if (= region cbi.compiler-builtin-id-fix-empty)
-              (macro-form1-id (cbi.compiler-builtin-ctfe "&") sinner span)
-              (macro-form2-id
-                (cbi.compiler-builtin-ctfe "&")
-                (macro-spanned-symbol-id region span)
-                sinner
-                span)))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(ast.AstType.MutRef region inner)
-      (match (macro-type-to-spanned-sexpr
-        session
-        (ast.ty-node-get inner)
-        span
-        origin)
-        [(ResultMacroSexpr.Ok sinner)
-          (ResultMacroSexpr.Ok
-            (if (= region cbi.compiler-builtin-id-fix-empty)
-              (macro-form1-id (cbi.compiler-builtin-ctfe "&mut") sinner span)
-              (macro-form2-id
-                (cbi.compiler-builtin-ctfe "&mut")
-                (macro-spanned-symbol-id region span)
-                sinner
-                span)))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(ast.AstType.Region region inner)
-      (match (macro-type-to-spanned-sexpr
-        session
-        (ast.ty-node-get inner)
-        span
-        origin)
-        [(ResultMacroSexpr.Ok sinner)
-          (ResultMacroSexpr.Ok
+      (let
+        [sinner : reader.SpannedSexpr
+          (try
+            (macro-type-to-spanned-sexpr
+              session
+              (ast.ty-node-get inner)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (if (= region cbi.compiler-builtin-id-fix-empty)
+            (macro-form1-id (cbi.compiler-builtin-ctfe "&") sinner span)
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe "in")
+              (cbi.compiler-builtin-ctfe "&")
               (macro-spanned-symbol-id region span)
               sinner
-              span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
+              span))))]
+    [(ast.AstType.MutRef region inner)
+      (let
+        [sinner : reader.SpannedSexpr
+          (try
+            (macro-type-to-spanned-sexpr
+              session
+              (ast.ty-node-get inner)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (if (= region cbi.compiler-builtin-id-fix-empty)
+            (macro-form1-id (cbi.compiler-builtin-ctfe "&mut") sinner span)
+            (macro-form2-id
+              (cbi.compiler-builtin-ctfe "&mut")
+              (macro-spanned-symbol-id region span)
+              sinner
+              span))))]
+    [(ast.AstType.Region region inner)
+      (let
+        [sinner : reader.SpannedSexpr
+          (try
+            (macro-type-to-spanned-sexpr
+              session
+              (ast.ty-node-get inner)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (macro-form2-id
+            (cbi.compiler-builtin-ctfe "in")
+            (macro-spanned-symbol-id region span)
+            sinner
+            span)))]))
 
 (define (macro-child-form1-id
   [session : cis.InternStructuralSessionHandle]
@@ -91828,10 +90650,10 @@
     span
     (tc-global-shared-view origin))
     [(ResultMacroSexpr.Ok sleft)
-      (match (macro-child-to-spanned-sexpr session right-id span origin)
-        [(ResultMacroSexpr.Ok sright)
-          (ResultMacroSexpr.Ok (macro-form2-id name-id sleft sright span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      (let
+        [sright : reader.SpannedSexpr
+          (try (macro-child-to-spanned-sexpr session right-id span origin))]
+        (ResultMacroSexpr.Ok (macro-form2-id name-id sleft sright span)))]
     [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
 (define (macro-child-type-form3-id
@@ -91847,16 +90669,16 @@
     span
     (tc-global-shared-view origin))
     [(ResultMacroSexpr.Ok sexpr)
-      (match (macro-type-to-spanned-sexpr session ty span origin)
-        [(ResultMacroSexpr.Ok sty)
-          (ResultMacroSexpr.Ok
-            (macro-form3-id
-              name-id
-              sexpr
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
-              sty
-              span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      (let
+        [sty : reader.SpannedSexpr
+          (try (macro-type-to-spanned-sexpr session ty span origin))]
+        (ResultMacroSexpr.Ok
+          (macro-form3-id
+            name-id
+            sexpr
+            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
+            sty
+            span)))]
     [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
 (define (macro-literal-to-spanned-sexpr
@@ -91942,49 +90764,52 @@
     [(ast.AstPattern.Literal lit)
       (ResultMacroSexpr.Ok (macro-literal-to-spanned-sexpr lit span))]
     [(ast.AstPattern.Variant name args-box)
-      (match (macro-pattern-list-to-spanned-sexpr
-        session
-        (ast.ast-pattern-list-box-shared-view args-box)
-        span
-        origin)
-        [(ResultMacroSexpr.Ok args)
-          (ResultMacroSexpr.Ok
-            (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id
-                (macro-output-source-identity-id-at
-                  session
-                  name
-                  "pattern-variant")
-                span)
-              args
-              span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      (let
+        [args : reader.SpannedSexpr
+          (try
+            (macro-pattern-list-to-spanned-sexpr
+              session
+              (ast.ast-pattern-list-box-shared-view args-box)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-list-prepend
+            (macro-spanned-symbol-id
+              (macro-output-source-identity-id-at
+                session
+                name
+                "pattern-variant")
+              span)
+            args
+            span)))]
     [(ast.AstPattern.Tuple patterns-box)
-      (match (macro-pattern-list-to-spanned-sexpr
-        session
-        (ast.ast-pattern-list-box-shared-view patterns-box)
-        span
-        origin)
-        [(ResultMacroSexpr.Ok patterns)
-          (ResultMacroSexpr.Ok
-            (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "tuple") span)
-              patterns
-              span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      (let
+        [patterns : reader.SpannedSexpr
+          (try
+            (macro-pattern-list-to-spanned-sexpr
+              session
+              (ast.ast-pattern-list-box-shared-view patterns-box)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-list-prepend
+            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "tuple") span)
+            patterns
+            span)))]
     [(ast.AstPattern.Array patterns-box)
-      (match (macro-pattern-list-to-spanned-sexpr
-        session
-        (ast.ast-pattern-list-box-shared-view patterns-box)
-        span
-        origin)
-        [(ResultMacroSexpr.Ok patterns)
-          (ResultMacroSexpr.Ok
-            (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "array") span)
-              patterns
-              span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+      (let
+        [patterns : reader.SpannedSexpr
+          (try
+            (macro-pattern-list-to-spanned-sexpr
+              session
+              (ast.ast-pattern-list-box-shared-view patterns-box)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-list-prepend
+            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "array") span)
+            patterns
+            span)))]
     [(ast.AstPattern.Var _ _)
       (ResultMacroSexpr.Err
         (box
@@ -92005,13 +90830,13 @@
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok spattern)
-          (match (macro-child-to-spanned-sexpr session body-id span origin)
-            [(ResultMacroSexpr.Ok sbody)
-              (ResultMacroSexpr.Ok
-                (reader.spanned-sexpr-bracket-list
-                  (reader.spanned-sexpr-list2 spattern sbody span)
-                  span))]
-            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+          (let
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr session body-id span origin))]
+            (ResultMacroSexpr.Ok
+              (reader.spanned-sexpr-bracket-list
+                (reader.spanned-sexpr-list2 spattern sbody span)
+                span)))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-match-arm-list-to-spanned-sexpr
@@ -92090,25 +90915,25 @@
                     span)
                   span))]
             [(ast.AstMaybeType.Some ty)
-              (match (macro-type-to-spanned-sexpr session ty span origin)
-                [(ResultMacroSexpr.Ok sty)
-                  (ResultMacroSexpr.Ok
-                    (reader.spanned-sexpr-bracket-list
-                      (reader.spanned-sexpr-list4
-                        (macro-spanned-symbol-id
-                          (macro-output-source-identity-id-at
-                            session
-                            name
-                            "typed-let-binding")
-                          span)
-                        (macro-spanned-symbol-id
-                          (cbi.compiler-builtin-ctfe ":")
-                          span)
-                        sty
-                        svalue
+              (let
+                [sty : reader.SpannedSexpr
+                  (try (macro-type-to-spanned-sexpr session ty span origin))]
+                (ResultMacroSexpr.Ok
+                  (reader.spanned-sexpr-bracket-list
+                    (reader.spanned-sexpr-list4
+                      (macro-spanned-symbol-id
+                        (macro-output-source-identity-id-at
+                          session
+                          name
+                          "typed-let-binding")
                         span)
-                      span))]
-                [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
+                      (macro-spanned-symbol-id
+                        (cbi.compiler-builtin-ctfe ":")
+                        span)
+                      sty
+                      svalue
+                      span)
+                    span)))])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-let-tail
@@ -93081,17 +91906,17 @@
         head-expr
         (tc-global-shared-view origin))
         [(ResultMacroParsedDecls.Ok head-decls)
-          (match (macro-parse-decls-from-exprs-at
-            session
-            dispatch
-            exprs
-            (+ index 1)
-            origin)
-            [(ResultMacroParsedDecls.Ok rest-decls)
-              (ResultMacroParsedDecls.Ok
-                (macro-decl-list-append head-decls rest-decls))]
-            [(ResultMacroParsedDecls.Err diag)
-              (ResultMacroParsedDecls.Err diag)])]
+          (let
+            [rest-decls : ast.AstDeclList
+              (try
+                (macro-parse-decls-from-exprs-at
+                  session
+                  dispatch
+                  exprs
+                  (+ index 1)
+                  origin))]
+            (ResultMacroParsedDecls.Ok
+              (macro-decl-list-append head-decls rest-decls)))]
         [(ResultMacroParsedDecls.Err diag) (ResultMacroParsedDecls.Err diag)]))))
 
 (define (macro-parse-decls-from-expr
@@ -93911,7 +92736,8 @@
     expr-bases
     expr
     (macro-expr-type-helper-names)
-    TcStringList.Nil))
+    TcStringList.Nil
+    false))
 
 (define (macro-collect-expr-type-decl-name
   [expr-bases : i64]
@@ -99421,23 +98247,24 @@
   [ctx : TcContext]
   [symbols : (& symbols csym.CompilerSymbols)]
   [lookup-id : i64]) : ResultMacroCallDecl
-  (match (macro-prelude-resolve-module
-    ctx
-    symbols
-    cbi.compiler-builtin-id-core-macros-module
-    lookup-id)
-    [(ResultMacroCallDecl.Ok maybe-decl)
-      (match (tc-global-shared-view maybe-decl)
-        [(MacroMaybeDecl.No)
-          ;; Compatibility fallback for sources loaded with the old module
-          ;; identity before the core_macros spelling migration.
-          (macro-prelude-resolve-module
-            ctx
-            symbols
-            cbi.compiler-builtin-id-core-macros-legacy-module
-            lookup-id)]
-        [_ (ResultMacroCallDecl.Ok maybe-decl)])]
-    [(ResultMacroCallDecl.Err diag) (ResultMacroCallDecl.Err diag)]))
+  (let
+    [maybe-decl : MacroMaybeDecl
+      (try
+        (macro-prelude-resolve-module
+          ctx
+          symbols
+          cbi.compiler-builtin-id-core-macros-module
+          lookup-id))]
+    (match (tc-global-shared-view maybe-decl)
+      [(MacroMaybeDecl.No)
+        ;; Compatibility fallback for sources loaded with the old module
+        ;; identity before the core_macros spelling migration.
+        (macro-prelude-resolve-module
+          ctx
+          symbols
+          cbi.compiler-builtin-id-core-macros-legacy-module
+          lookup-id)]
+      [_ (ResultMacroCallDecl.Ok maybe-decl)])))
 
 (define (macro-prelude-call-decl
   [ctx : TcContext]
@@ -101215,29 +100042,28 @@
         (tc-global-shared-view fallback-module)
         fallback-module-id
         (tc-global-shared-view ty))
-      (match (macro-expr-clause-list-from-args args)
-        [(ResultMacroClauseList.Ok clauses)
-          (ResultMacroCapturedValue.Ok
-            (macro-captured-expr-clause-list-value
-              ctx
-              (macro-variadic-syntax-pools-after-check env syntax-pools)
-              clauses))]
-        [(ResultMacroClauseList.Err diag) (ResultMacroCapturedValue.Err diag)])]
+      (let
+        [clauses : ast.AstExprClauseList
+          (try (macro-expr-clause-list-from-args args))]
+        (ResultMacroCapturedValue.Ok
+          (macro-captured-expr-clause-list-value
+            ctx
+            (macro-variadic-syntax-pools-after-check env syntax-pools)
+            clauses)))]
     [(macro-param-expr-binding-clause?
         ctx
         (tc-global-shared-view fallback-module)
         fallback-module-id
         (tc-global-shared-view ty))
-      (match (macro-expr-binding-clause-list-from-args args)
-        [(ResultMacroBindingClauseList.Ok clauses)
-          (ResultMacroCapturedValue.Ok
-            (macro-captured-binding-clause-list-value
-              ctx
-              type-env
-              capture-expr-types
-              clauses))]
-        [(ResultMacroBindingClauseList.Err diag)
-          (ResultMacroCapturedValue.Err diag)])]
+      (let
+        [clauses : ast.AstExprBindingClauseList
+          (try (macro-expr-binding-clause-list-from-args args))]
+        (ResultMacroCapturedValue.Ok
+          (macro-captured-binding-clause-list-value
+            ctx
+            type-env
+            capture-expr-types
+            clauses)))]
     [else
       (match (macro-check-variadic-operands
         ctx
@@ -101264,32 +100090,32 @@
   [args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]
   [capture-expr-types : bool]) : ResultMacroEnv
-  (match (macro-capture-variadic-param
-    ctx
-    type-env
-    fallback-module
-    fallback-module-id
-    name
-    ty
-    args
-    env
-    (ctfe_support.ctfe-env-syntax-pools env)
-    capture-expr-types)
-    [(ResultMacroCapturedValue.Ok value)
-      (let
-        ;; Binding-clause values carry child expression IDs but no pool-bearing
-        ;; value variant. Rebase after operand typing so CTFE builders cannot
-        ;; allocate over a newly appended borrow/place child and form a cycle.
-        [captured-env : ctfe_support.CtfeEnv
-          (match (& value)
-            [(ctfe_support.CompilerCtfeValue.ExprBindingClauseList _)
-              (ctfe_support.ctfe-env-rebase-syntax-pools
-                env
-                (ast.ast-node-pool-context-capture-active))]
-            [_ env])]
-        (ResultMacroEnv.Ok
-          (ctfe_support.ctfe-env-extend-id captured-env name value)))]
-    [(ResultMacroCapturedValue.Err diag) (ResultMacroEnv.Err diag)]))
+  (let
+    [value : ctfe_support.CompilerCtfeValue
+      (try
+        (macro-capture-variadic-param
+          ctx
+          type-env
+          fallback-module
+          fallback-module-id
+          name
+          ty
+          args
+          env
+          (ctfe_support.ctfe-env-syntax-pools env)
+          capture-expr-types))]
+    ;; Binding-clause values carry child expression IDs but no pool-bearing
+    ;; value variant. Rebase after operand typing so CTFE builders cannot
+    ;; allocate over a newly appended borrow/place child and form a cycle.
+    [captured-env : ctfe_support.CtfeEnv
+      (match (& value)
+        [(ctfe_support.CompilerCtfeValue.ExprBindingClauseList _)
+          (ctfe_support.ctfe-env-rebase-syntax-pools
+            env
+            (ast.ast-node-pool-context-capture-active))]
+        [_ env])]
+    (ResultMacroEnv.Ok
+      (ctfe_support.ctfe-env-extend-id captured-env name value))))
 
 ;; A direct caller string literal is the one `Expr` shape that public macro
 ;; code can inspect without evaluating. Keep its literal node in the active
@@ -101422,25 +100248,24 @@
         (cond
           [(tc-macro-expr-clause-type?
               (tc-global-shared-view resolved-expected))
-            (match (macro-expr-clause-from-arg arg-expr)
-              [(ResultMacroClause.Ok clause)
-                (ResultMacroCapturedValue.Ok
-                  (ctfe_support.CompilerCtfeValue.ExprClause
-                    (macro-caller-origin-expr-clause ctx clause)))]
-              [(ResultMacroClause.Err diag) (ResultMacroCapturedValue.Err diag)])]
+            (let
+              [clause : ast.AstExprClause
+                (try (macro-expr-clause-from-arg arg-expr))]
+              (ResultMacroCapturedValue.Ok
+                (ctfe_support.CompilerCtfeValue.ExprClause
+                  (macro-caller-origin-expr-clause ctx clause))))]
           [(tc-macro-expr-binding-clause-type?
               (tc-global-shared-view resolved-expected))
-            (match (macro-expr-binding-clause-from-arg arg-expr)
-              [(ResultMacroBindingClause.Ok clause)
-                (ResultMacroCapturedValue.Ok
-                  (ctfe_support.CompilerCtfeValue.ExprBindingClause
-                    (macro-captured-binding-clause
-                      ctx
-                      type-env
-                      capture-expr-types
-                      clause)))]
-              [(ResultMacroBindingClause.Err diag)
-                (ResultMacroCapturedValue.Err diag)])]
+            (let
+              [clause : ast.AstExprBindingClause
+                (try (macro-expr-binding-clause-from-arg arg-expr))]
+              (ResultMacroCapturedValue.Ok
+                (ctfe_support.CompilerCtfeValue.ExprBindingClause
+                  (macro-captured-binding-clause
+                    ctx
+                    type-env
+                    capture-expr-types
+                    clause))))]
           [else
             (match (macro-check-operand-with-resolved
               ctx
@@ -101601,51 +100426,47 @@
                 (tc-global-shared-view fallback-module)
                 fallback-module-id
                 pty)
-                (match (macro-expr-binding-clause-prefix-from-args
-                  args
-                  arg-index)
-                  [(ResultMacroBindingClauseList.Ok clauses)
-                    (let
-                      ;; Capture this definition-owned flag before typing a
-                      ;; caller clause can install a newer active syntax pool.
-                      [rebase-captured-env? : bool
-                        (match (ast.ast-macro-param-list-get
-                          params
-                          (+ param-index 1)
-                          (ast.ast-macro-param-fallback))
-                          [(ast.AstMacroParam.Param _ _ next-variadic _)
-                            next-variadic])]
-                      [value : ctfe_support.CompilerCtfeValue
-                        (macro-captured-binding-clause-list-value
-                          ctx
-                          type-env
-                          capture-expr-types
-                          (tc-global-shared-view clauses))]
-                      [captured-env : ctfe_support.CtfeEnv
-                        (if rebase-captured-env?
-                          (ctfe_support.ctfe-env-rebase-syntax-pools
-                            env
-                            (ast.ast-node-pool-context-capture-active))
-                          env)]
-                      (macro-bind-params-at
-                        ctx
-                        decls
-                        fallback-module
-                        fallback-module-id
-                        type-env
-                        macro-name
-                        params
+                (let
+                  [clauses : ast.AstExprBindingClauseList
+                    (try
+                      (macro-expr-binding-clause-prefix-from-args
                         args
-                        (+ param-index 1)
-                        (+ arg-index clauses.len)
-                        (ctfe_support.ctfe-env-extend-id
-                          captured-env
-                          pname
-                          value)
-                        capture-expr-types
-                        call-expr))]
-                  [(ResultMacroBindingClauseList.Err diag)
-                    (ResultMacroEnv.Err diag)])
+                        arg-index))]
+                  ;; Capture this definition-owned flag before typing a
+                  ;; caller clause can install a newer active syntax pool.
+                  [rebase-captured-env? : bool
+                    (match (ast.ast-macro-param-list-get
+                      params
+                      (+ param-index 1)
+                      (ast.ast-macro-param-fallback))
+                      [(ast.AstMacroParam.Param _ _ next-variadic _)
+                        next-variadic])]
+                  [value : ctfe_support.CompilerCtfeValue
+                    (macro-captured-binding-clause-list-value
+                      ctx
+                      type-env
+                      capture-expr-types
+                      (tc-global-shared-view clauses))]
+                  [captured-env : ctfe_support.CtfeEnv
+                    (if rebase-captured-env?
+                      (ctfe_support.ctfe-env-rebase-syntax-pools
+                        env
+                        (ast.ast-node-pool-context-capture-active))
+                      env)]
+                  (macro-bind-params-at
+                    ctx
+                    decls
+                    fallback-module
+                    fallback-module-id
+                    type-env
+                    macro-name
+                    params
+                    args
+                    (+ param-index 1)
+                    (+ arg-index clauses.len)
+                    (ctfe_support.ctfe-env-extend-id captured-env pname value)
+                    capture-expr-types
+                    call-expr))
                 (ResultMacroEnv.Err
                   (box
                     (ctfe_support.ctfe-diagnostic-at-expr
@@ -103662,26 +102483,26 @@
     [len : i64 items.len]
     (if (<= len 1)
       (ResultMacroExpr.Ok (ast.ast-expr-bracket-clause items))
-      (match (macro-expand-node
-        ctx
-        type-env
-        decls
-        depth
-        (ast.ast-expr-list-get (& items) (- len 1) 0))
-        [(ResultMacroExpr.Ok ninit)
-          (let
-            [out : ast.AstExprList (ast.ast-expr-list-with-capacity len)]
-            [index : i64 0]
+      (let
+        [ninit : i64
+          (try
+            (macro-expand-node
+              ctx
+              type-env
+              decls
+              depth
+              (ast.ast-expr-list-get (& items) (- len 1) 0)))]
+        [out : ast.AstExprList (ast.ast-expr-list-with-capacity len)]
+        [index : i64 0]
+        (begin
+          (while (< index (- len 1))
             (begin
-              (while (< index (- len 1))
-                (begin
-                  (ast.ast-expr-list-push
-                    (&mut out)
-                    (ast.ast-expr-list-get (& items) index 0))
-                  (set! index (+ index 1))))
-              (ast.ast-expr-list-push (&mut out) ninit)
-              (ResultMacroExpr.Ok (ast.ast-expr-bracket-clause out))))]
-        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))))
+              (ast.ast-expr-list-push
+                (&mut out)
+                (ast.ast-expr-list-get (& items) index 0))
+              (set! index (+ index 1))))
+          (ast.ast-expr-list-push (&mut out) ninit)
+          (ResultMacroExpr.Ok (ast.ast-expr-bracket-clause out)))))))
 
 (define (macro-expand-binding-prefix-form
   [ctx : TcContext]
@@ -106044,10 +104865,10 @@
     [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
     (match (tc-global-shared-view decl)
       [(ast.AstDecl.Def decl-meta name maybe-ty expr-box)
-        (match (macro-expand-node ctx global-env decls 0 expr-box)
-          [(ResultMacroExpr.Ok nexpr)
-            (ResultMacroDecl.Ok (ast.ast-decl-def-id name maybe-ty nexpr))]
-          [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)])]
+        (let
+          [nexpr : i64
+            (try (macro-expand-node ctx global-env decls 0 expr-box))]
+          (ResultMacroDecl.Ok (ast.ast-decl-def-id name maybe-ty nexpr)))]
       [(ast.AstDecl.DefFn decl-meta name params ret body-box metadata)
         (let
           [params-env : TcTypeEnv
@@ -106055,11 +104876,9 @@
           [resolved-ret : ast.AstType
             (tc-resolve-type ctx (tc-global-shared-view ret))]
           [body-env : TcTypeEnv (tc-bind-return-type params-env resolved-ret)]
-          (match (macro-expand-node ctx body-env decls 0 body-box)
-            [(ResultMacroExpr.Ok nbody)
-              (ResultMacroDecl.Ok
-                (ast.ast-decl-def-fn-metadata-id name params ret nbody metadata))]
-            [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
+          [nbody : i64 (try (macro-expand-node ctx body-env decls 0 body-box))]
+          (ResultMacroDecl.Ok
+            (ast.ast-decl-def-fn-metadata-id name params ret nbody metadata)))]
       [(ast.AstDecl.Test _ _ _ _) (ResultMacroDecl.Ok decl)]
       [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ _ _ _))
         (match kind
@@ -106071,10 +104890,9 @@
       [(ast.AstDecl.Unsafe inner-box)
         (let
           [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
-          (match (macro-expand-decl ctx top-env decls inner)
-            [(ResultMacroDecl.Ok ninner)
-              (ResultMacroDecl.Ok (ast.ast-decl-unsafe ninner))]
-            [(ResultMacroDecl.Err diag) (ResultMacroDecl.Err diag)]))]
+          [ninner : ast.AstDecl
+            (try (macro-expand-decl ctx top-env decls inner))]
+          (ResultMacroDecl.Ok (ast.ast-decl-unsafe ninner)))]
       [_ (ResultMacroDecl.Ok decl)])))
 
 (define (macro-single-decl-expansion
@@ -109542,15 +108360,16 @@
   [module-id : i64]) : ResultTcEnv
   (begin
     (tc-top-env-reresolve-caches! ctx base-env)
-    (match (tc-build-top-env-list-explicit-in-module
-      ctx
-      splice
-      base-env
-      module
-      module-id)
-      [(ResultTcEnv.Ok splice-env)
-        (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit splice-env))]
-      [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))
+    (let
+      [splice-env : TcTypeEnv
+        (try
+          (tc-build-top-env-list-explicit-in-module
+            ctx
+            splice
+            base-env
+            module
+            module-id))]
+      (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit splice-env)))))
 
 (define (macro-splice-top-env
   [ctx : TcContext]
@@ -109563,25 +108382,24 @@
     [(MacroSpliceEnvPlan.Extend base-env splice)
       (tc-extend-top-env-for-splice ctx base-env splice module module-id)]
     [(MacroSpliceEnvPlan.ExtendGeneratedModule base-env summary marker)
-      (match (env-extend-with-module ctx base-env summary)
-        [(ResultTcEnv.Ok module-env)
-          (match (macro-extend-top-env-with-module-marker
-            ctx
-            module-env
-            decls
-            marker
-            module
-            module-id)
-            [(ResultTcEnv.Ok marker-env)
-              (begin
-                ;; The marker records a named lazy-import surface before old
-                ;; unresolved signatures are revisited. The combined summary
-                ;; + marker prefix is then cached once.
-                (tc-top-env-reresolve-caches! ctx marker-env)
-                (ResultTcEnv.Ok
-                  (tc-env-with-cache-layer-over-explicit marker-env)))]
-            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
-        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
+      (let
+        [module-env : TcTypeEnv
+          (try (env-extend-with-module ctx base-env summary))]
+        [marker-env : TcTypeEnv
+          (try
+            (macro-extend-top-env-with-module-marker
+              ctx
+              module-env
+              decls
+              marker
+              module
+              module-id))]
+        (begin
+          ;; The marker records a named lazy-import surface before old
+          ;; unresolved signatures are revisited. The combined summary
+          ;; + marker prefix is then cached once.
+          (tc-top-env-reresolve-caches! ctx marker-env)
+          (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit marker-env))))]))
 
 (define (macro-expand-rebuild-context-for-splice
   [cur-ctx : TcContext]
@@ -111562,8 +110380,7 @@
       ;; rebuilds it via macro-expand-ctfe-env-build-once!; it is then reused by
       ;; every in-pass splice rebuild and by the downstream typecheck/lower
       ;; comptime, never rebuilt per splice. This is the "build the CTFE-env
-      ;; once, after expansion" boundary. The typecheck entry wraps that boundary
-      ;; in macro-expand-then-build-envs-with-load-state.
+      ;; once, after expansion" boundary.
       (compiler-typecheck-ctfe-env-cache-clear!
         (tc-job-state-macro-state job-state))
       ;; Reset the live symbols/registries cache once per program (plan P2): the
@@ -111753,98 +110570,18 @@
     cfgs
     intern-state))
 
-(define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state
-  [load-state : cload.CompilerLoadSessionState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
-    load-state
-    program
-    paths
-    pools
-    (ci.intern-source-name-session-capture-active-handle)
-    job-state
-    stdlib-roots
-    cfgs))
-
-(define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
-  [load-state : cload.CompilerLoadSessionState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state
-    load-state
-    (tc-serial-job-state)
-    program
-    paths
-    pools
-    stdlib-roots
-    cfgs))
-
 ;; Serial/test compatibility adapter. Production macro-expansion jobs call the
 ;; explicit load-state, job-state, and intern-state entry above.
-(define (macro-expand-program-with-paths-and-pools-roots-cfg
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
+(define (macro-expand-program [program : ast.AstProgram]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
     (cload.compiler-load-serial-test-session-state)
     program
-    paths
-    pools
-    stdlib-roots
-    cfgs))
-
-(define (macro-expand-then-build-envs-with-load-state-and-job-state-and-intern-state
-  [load-state : cload.CompilerLoadSessionState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [intern-state : ci.InternCompatState]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
-    load-state
-    job-state
-    program
-    paths
-    pools
-    stdlib-roots
-    cfgs
-    intern-state))
-
-;; Serial/test compatibility adapter. Production typecheck jobs call the
-;; explicit load-state, job-state, and intern-state entry above.
-(define (macro-expand-program-with-paths-and-pools
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg
-    program
-    paths
-    pools
+    (ast.ast-decl-path-list-new)
+    (ast.ast-node-pool-context-capture-active)
+    (ci.intern-source-name-session-capture-active-handle)
+    (tc-serial-job-state)
     (svec.new)
     (parser.compiler-cfg-empty)))
-
-(define (macro-expand-program-with-paths
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools
-    program
-    paths
-    (ast.ast-node-pool-context-capture-active)))
-
-(define (macro-expand-program [program : ast.AstProgram]) : ResultMacroExpand
-  (macro-expand-program-with-paths program (ast.ast-decl-path-list-new)))
 
 (define (tc-cleanup-owning-struct-type? [ctx : TcContext] [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -114124,7 +112861,7 @@
                               (set! cur-paths rest-paths))]))))]))]))
       result)))
 
-(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
+(define (tc-typecheck-specialized-program-checked-inner
   [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
   [program : ast.AstProgram]
@@ -114268,7 +113005,7 @@
     [checked : ResultCompilerTypecheckChecked
       (tc-typecheck-checked-result-with-pool-check
         job-state
-        (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
+        (tc-typecheck-specialized-program-checked-inner
           load-state
           prefix-cache
           program
@@ -114305,30 +113042,6 @@
           (begin
             (tc-body-early-exit-facts-abort! body-state)
             (ResultCompilerTypecheckChecked.Err diag))]))))
-
-(define (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state-and-intern-state
-  [load-state : cload.CompilerLoadSessionState]
-  [prefix-cache : TcPrefixSnapshotCacheState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state : ci.InternCompatState]) : ResultCompilerTypecheck
-  (tc-typecheck-checked-result-summary
-    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
-      load-state
-      prefix-cache
-      job-state
-      program
-      paths
-      stdlib-roots
-      cache-scope
-      pools
-      source-names
-      intern-state)))
 
 (define (compiler-typecheck-clear-macro-expanded-source-caches-for-job!
   [job-state : TcJobState]) : unit

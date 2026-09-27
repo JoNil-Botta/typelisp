@@ -20811,6 +20811,7 @@
         state
         env
         type-env
+        (LowerBindMode.Owned)
         value
         inner-ty
         (deref patterns-box))]
@@ -20820,6 +20821,7 @@
         state
         env
         type-env
+        (LowerBindMode.Owned)
         value
         inner-ty
         (deref patterns-box))]
@@ -20918,20 +20920,14 @@
   (match (tc_core.tc-type-strip-region
     (tc_core.tc-resolve-type ctx (lower-global-shared-view resolved)))
     [(ast.AstType.Box _)
-      (match (if scrut-reg-group?
-        (lower-read-register-group-payload
-          ctx
-          state
-          (lower-global-shared-view base)
-          (ast.AstType.Enum enum-id)
-          offset
-          (lower-global-shared-view resolved))
-        (lower-load-inline-value-at-offset
-          ctx
-          state
-          (lower-global-shared-view base)
-          offset
-          (lower-global-shared-view resolved)))
+      (match (lower-bind-payload-value
+        ctx
+        state
+        (lower-global-shared-view base)
+        enum-id
+        offset
+        (lower-global-shared-view resolved)
+        scrut-reg-group?)
         [(LowerExpr.Expr field-state field-value _)
           (match (lower-bind-box-pattern
             ctx
@@ -20947,6 +20943,7 @@
                 box-state
                 box-env
                 box-type-env
+                (LowerBindMode.Owned)
                 base
                 rest-patterns
                 rest-types
@@ -20984,20 +20981,14 @@
   [next-cursor : i64]
   [fail-label : i64]
   [scrut-reg-group? : bool]) : ResultLowerEnv
-  (match (if scrut-reg-group?
-    (lower-read-register-group-payload
-      ctx
-      state
-      (lower-global-shared-view base)
-      (ast.AstType.Enum enum-id)
-      offset
-      (lower-global-shared-view resolved))
-    (lower-load-inline-value-at-offset
-      ctx
-      state
-      (lower-global-shared-view base)
-      offset
-      (lower-global-shared-view resolved)))
+  (match (lower-bind-payload-value
+    ctx
+    state
+    (lower-global-shared-view base)
+    enum-id
+    offset
+    (lower-global-shared-view resolved)
+    scrut-reg-group?)
     [(LowerExpr.Expr field-state field-value _)
       (match (lower-bind-struct-pattern
         ctx
@@ -21015,6 +21006,7 @@
             struct-state
             struct-env
             struct-type-env
+            (LowerBindMode.Owned)
             base
             rest-patterns
             rest-types
@@ -21029,17 +21021,93 @@
             scrut-reg-group?)]
         [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))
 
-;; Bind a matched variant's payload fields. Irrefutable subpatterns (wildcard,
-;; binding) just load/bind; a refutable literal subpattern loads the
-;; field, compares it to the literal, and on mismatch branches to `fail-label`
-;; (the enclosing arm's next-arm test) so matching continues. Nested variant
-;; subpatterns recurse on the field's tag. `fail-label` is unused when every subpattern
-;; is irrefutable.
+;; How a pattern binds the parts of the value it matches: owned patterns load
+;; each part, borrowed ones (a match on a reference) bind references to the parts
+;; with the scrutinee borrow's lifetime.
+(defenum LowerBindMode
+  (Owned)
+  (Borrowed i64))
+
+;; An owned payload's value: read out of a register-group scrutinee, or loaded
+;; from memory.
+(define (lower-bind-payload-value
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [base : ir.CompilerIrValue]
+  [enum-id : i64]
+  [offset : i64]
+  [resolved : ast.AstType]
+  [scrut-reg-group? : bool]) : LowerExpr
+  (if scrut-reg-group?
+    (lower-read-register-group-payload
+      ctx
+      state
+      base
+      (ast.AstType.Enum enum-id)
+      offset
+      resolved)
+    (lower-load-inline-value-at-offset ctx state base offset resolved)))
+
+;; What a name pattern binds to a payload, typed as the binding: the payload's
+;; value when owned, a reference to it with the borrow's lifetime when borrowed.
+(define (lower-bind-payload-name-value
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [bind-mode : LowerBindMode]
+  [base : ir.CompilerIrValue]
+  [enum-id : i64]
+  [offset : i64]
+  [resolved : ast.AstType]
+  [scrut-reg-group? : bool]) : LowerExpr
+  (match bind-mode
+    [(LowerBindMode.Owned)
+      (match (lower-bind-payload-value
+        ctx
+        state
+        base
+        enum-id
+        offset
+        (lower-global-shared-view resolved)
+        scrut-reg-group?)
+        [(LowerExpr.Expr load-state value _)
+          (LowerExpr.Expr load-state value resolved)])]
+    [(LowerBindMode.Borrowed borrow-lifetime)
+      (let
+        [ref-ty : ast.AstType
+          (tc_core.tc-borrowed-field-ref-type
+            borrow-lifetime
+            (lower-global-shared-view resolved))]
+        (lower-borrowed-payload-ref-expr ctx state base offset resolved ref-ty))]))
+
+;; A tuple or fixed-array payload for its element patterns: the loaded value
+;; when owned, the payload's address when borrowed.
+(define (lower-bind-payload-aggregate
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [bind-mode : LowerBindMode]
+  [base : ir.CompilerIrValue]
+  [enum-id : i64]
+  [offset : i64]
+  [resolved : ast.AstType]
+  [scrut-reg-group? : bool]) : LowerExpr
+  (match bind-mode
+    [(LowerBindMode.Owned)
+      (lower-bind-payload-value
+        ctx
+        state
+        base
+        enum-id
+        offset
+        resolved
+        scrut-reg-group?)]
+    [(LowerBindMode.Borrowed _) (lower-gep-byte state base offset)]))
+
 (define (lower-bind-variant-payloads
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [bind-mode : LowerBindMode]
   [base : ir.CompilerIrValue]
   [patterns : ast.AstPatternList]
   [types : ast.AstTypeList]
@@ -21055,534 +21123,9 @@
   ;; ONCE by the caller and threaded here. Recomputing it per payload field (a full
   ;; transient layout rebuild) at every binding site across the whole compiler was
   ;; heavy enough to overflow the per-function scratch arena into a second chunk
-  ;; and trip its rewind, corrupting later lowering.
+  ;; and trip its rewind, corrupting later lowering. Always false when borrowed:
+  ;; a borrowed scrutinee is matched behind a pointer.
   [scrut-reg-group? : bool]) : ResultLowerEnv
-  (if (ast.ast-pattern-list-empty? (& patterns))
-    (if (ast.ast-type-list-empty? (& types))
-      (ResultLowerEnv.Ok state env type-env)
-      (ResultLowerEnv.Err
-        (box (lower-diagnostic "lower: enum payload pattern arity mismatch"))))
-    (let
-      [pattern : ast.AstPattern
-        (ast.ast-pattern-list-get (& patterns) 0 (ast.ast-pattern-fallback))]
-      [rest-patterns : ast.AstPatternList (ast.ast-pattern-list-tail patterns)]
-      (if (ast.ast-type-list-empty? (& types))
-        (ResultLowerEnv.Err
-          (box (lower-diagnostic "lower: enum payload pattern arity mismatch")))
-        (let
-          [ty : i64
-            (ast.ast-type-list-get (& types) 0 (ast.ast-type-id-fallback))]
-          [rest-types : ast.AstTypeList (ast.ast-type-list-slice types 1)]
-          (let
-            [ty : ast.AstType (tc_core.tc-context-type-get ctx ty)]
-            [field-ctx : tc_core.TcContext
-              (tc_core.tc-context-with-owner-name-module
-                ctx
-                (lower-variant-owner-id-for-enum ctx enum-id variant-name-id))]
-            [resolved : ast.AstType (tc_core.tc-resolve-type field-ctx ty)]
-            [default-offset : i64
-              (lower-align-up
-                cursor
-                (lower-type-align ctx (lower-global-shared-view resolved)))]
-            [offset : i64
-              (lower-variant-payload-offset
-                ctx
-                enum-id
-                enum-name
-                (lower-global-shared-view variant-name)
-                variant-name-id
-                index
-                cursor
-                (lower-global-shared-view resolved))]
-            [next-cursor : i64
-              (+
-                default-offset
-                (lower-type-size ctx (lower-global-shared-view resolved)))]
-            [next-index : i64 (+ index 1)]
-            (if (< offset 0)
-              (ResultLowerEnv.Err
-                (box
-                  (lower-diagnostic
-                    (str_cat.str-cat
-                      "lower: inline enum layout missing payload for "
-                      variant-name))))
-              (match pattern
-                [(ast.AstPattern.Wildcard)
-                  (lower-bind-variant-payloads
-                    ctx
-                    state
-                    env
-                    type-env
-                    base
-                    rest-patterns
-                    rest-types
-                    mode
-                    enum-id
-                    enum-name
-                    variant-name
-                    variant-name-id
-                    next-index
-                    next-cursor
-                    fail-label
-                    scrut-reg-group?)]
-                [(ast.AstPattern.Binding name)
-                  (match (if scrut-reg-group?
-                    (lower-read-register-group-payload
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      (ast.AstType.Enum enum-id)
-                      offset
-                      (lower-global-shared-view resolved))
-                    (lower-load-inline-value-at-offset
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      offset
-                      (lower-global-shared-view resolved)))
-                    [(LowerExpr.Expr load-state value _)
-                      (match value
-                        [(ir.CompilerIrValue.Var field-var)
-                          (lower-bind-variant-payloads
-                            ctx
-                            load-state
-                            (sym_i64_env.sym-i64-bind-id env name field-var)
-                            (tc_core.tc-bind-id type-env name resolved)
-                            base
-                            rest-patterns
-                            rest-types
-                            mode
-                            enum-id
-                            enum-name
-                            variant-name
-                            variant-name-id
-                            next-index
-                            next-cursor
-                            fail-label
-                            scrut-reg-group?)]
-                        [_
-                          (ResultLowerEnv.Err
-                            (box
-                              (lower-diagnostic
-                                "lower: internal enum payload load failed")))])])]
-                [(ast.AstPattern.Var name _)
-                  (match (if scrut-reg-group?
-                    (lower-read-register-group-payload
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      (ast.AstType.Enum enum-id)
-                      offset
-                      (lower-global-shared-view resolved))
-                    (lower-load-inline-value-at-offset
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      offset
-                      (lower-global-shared-view resolved)))
-                    [(LowerExpr.Expr load-state value _)
-                      (match value
-                        [(ir.CompilerIrValue.Var field-var)
-                          (lower-bind-variant-payloads
-                            ctx
-                            load-state
-                            (sym_i64_env.sym-i64-bind-id env name field-var)
-                            (tc_core.tc-bind-id type-env name resolved)
-                            base
-                            rest-patterns
-                            rest-types
-                            mode
-                            enum-id
-                            enum-name
-                            variant-name
-                            variant-name-id
-                            next-index
-                            next-cursor
-                            fail-label
-                            scrut-reg-group?)]
-                        [_
-                          (ResultLowerEnv.Err
-                            (box
-                              (lower-diagnostic
-                                "lower: internal enum payload load failed")))])])]
-                [(ast.AstPattern.Tuple patterns-box)
-                  (match (if scrut-reg-group?
-                    (lower-read-register-group-payload
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      (ast.AstType.Enum enum-id)
-                      offset
-                      (lower-global-shared-view resolved))
-                    (lower-load-inline-value-at-offset
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      offset
-                      (lower-global-shared-view resolved)))
-                    [(LowerExpr.Expr field-state field-value _)
-                      (match (lower-bind-tuple-pattern
-                        ctx
-                        field-state
-                        env
-                        type-env
-                        field-value
-                        resolved
-                        (deref patterns-box))
-                        [(ResultLowerEnv.Ok
-                            tuple-state
-                            tuple-env
-                            tuple-type-env)
-                          (lower-bind-variant-payloads
-                            ctx
-                            tuple-state
-                            tuple-env
-                            tuple-type-env
-                            base
-                            rest-patterns
-                            rest-types
-                            mode
-                            enum-id
-                            enum-name
-                            variant-name
-                            variant-name-id
-                            next-index
-                            next-cursor
-                            fail-label
-                            scrut-reg-group?)]
-                        [(ResultLowerEnv.Err message)
-                          (ResultLowerEnv.Err message)])])]
-                [(ast.AstPattern.Array patterns-box)
-                  (match (if scrut-reg-group?
-                    (lower-read-register-group-payload
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      (ast.AstType.Enum enum-id)
-                      offset
-                      (lower-global-shared-view resolved))
-                    (lower-load-inline-value-at-offset
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      offset
-                      (lower-global-shared-view resolved)))
-                    [(LowerExpr.Expr field-state field-value _)
-                      (match (lower-bind-array-pattern
-                        ctx
-                        field-state
-                        env
-                        type-env
-                        field-value
-                        resolved
-                        (deref patterns-box))
-                        [(ResultLowerEnv.Ok
-                            array-state
-                            array-env
-                            array-type-env)
-                          (lower-bind-variant-payloads
-                            ctx
-                            array-state
-                            array-env
-                            array-type-env
-                            base
-                            rest-patterns
-                            rest-types
-                            mode
-                            enum-id
-                            enum-name
-                            variant-name
-                            variant-name-id
-                            next-index
-                            next-cursor
-                            fail-label
-                            scrut-reg-group?)]
-                        [(ResultLowerEnv.Err message)
-                          (ResultLowerEnv.Err message)])])]
-                [(ast.AstPattern.Literal lit)
-                  (if (lower-literal-payload-supported?
-                    (lower-global-shared-view lit))
-                    (match (if scrut-reg-group?
-                      (lower-read-register-group-payload
-                        ctx
-                        state
-                        (lower-global-shared-view base)
-                        (ast.AstType.Enum enum-id)
-                        offset
-                        (lower-global-shared-view resolved))
-                      (lower-load-at-offset
-                        state
-                        (lower-global-shared-view base)
-                        offset
-                        (lower-global-shared-view resolved)))
-                      [(LowerExpr.Expr load-state field-value _)
-                        (match (lower-literal-payload-eq
-                          ctx
-                          load-state
-                          field-value
-                          lit
-                          resolved)
-                          [(ResultLowerExpr.Ok lowered-eq)
-                            (match lowered-eq
-                              [(LowerExpr.Expr eq-state eq-value _)
-                                (match (lower-state-fresh-label
-                                  eq-state
-                                  "payload_ok")
-                                  [(LowerLabel.Label ok-state ok-label)
-                                    (lower-bind-variant-payloads
-                                      ctx
-                                      (lower-state-finish-block
-                                        (lower-state-emit
-                                          ok-state
-                                          (ir.CompilerIrInstr.Branch
-                                            eq-value
-                                            ok-label
-                                            fail-label))
-                                        ok-label)
-                                      env
-                                      type-env
-                                      base
-                                      rest-patterns
-                                      rest-types
-                                      mode
-                                      enum-id
-                                      enum-name
-                                      variant-name
-                                      variant-name-id
-                                      next-index
-                                      next-cursor
-                                      fail-label
-                                      scrut-reg-group?)])])]
-                          [(ResultLowerExpr.Err message)
-                            (ResultLowerEnv.Err message)])])
-                    (ResultLowerEnv.Err
-                      (box
-                        (lower-diagnostic
-                          "lower: unsupported enum payload literal pattern type"))))]
-                [(ast.AstPattern.Variant nested-name nested-args-box)
-                  ;; Refutable nested variant payloads test the loaded
-                  ;; enum tag and branch to `fail-label` on mismatch. An
-                  ;; explicit `(box ...)` payload pattern is irrefutable here;
-                  ;; it loads the boxed value and binds the inner pattern.
-                  (let
-                    [nested-name-str : String
-                      (tc_core.tc-env-key-name-text nested-name)]
-                    [nested-args : ast.AstPatternList (deref nested-args-box)]
-                    (if (lower-box-pattern-name? nested-name)
-                      (lower-bind-box-variant-payload
-                        ctx
-                        state
-                        env
-                        type-env
-                        base
-                        nested-args
-                        resolved
-                        mode
-                        enum-id
-                        enum-name
-                        variant-name
-                        variant-name-id
-                        rest-patterns
-                        rest-types
-                        offset
-                        next-index
-                        next-cursor
-                        fail-label
-                        scrut-reg-group?)
-                      (if (lower-struct-pattern-for-type?
-                        ctx
-                        (lower-global-shared-view resolved)
-                        nested-name)
-                        (lower-bind-struct-variant-payload
-                          ctx
-                          state
-                          env
-                          type-env
-                          base
-                          nested-args
-                          resolved
-                          mode
-                          enum-id
-                          enum-name
-                          variant-name
-                          variant-name-id
-                          rest-patterns
-                          rest-types
-                          offset
-                          next-index
-                          next-cursor
-                          fail-label
-                          scrut-reg-group?)
-                        (let
-                          [symbols : (& ctx csym.CompilerSymbols)
-                            (tc_core.tc-context-symbols ctx)]
-                          [handle : i64
-                            (lower-variant-handle-for-scrut-id-or
-                              ctx
-                              (lower-global-shared-view resolved)
-                              nested-name
-                              (csym.compiler-symbols-missing-handle))]
-                          (if (not (csym.compiler-symbols-handle-found? handle))
-                            (ResultLowerEnv.Err
-                              (box
-                                (lower-diagnostic
-                                  (str_cat.str-cat
-                                    "lower: unknown nested variant "
-                                    nested-name-str))))
-                            (match (csym.compiler-registries-variant-fields-indexed
-                              symbols
-                              handle)
-                              [(parser.ResultAstTypeList.Err message)
-                                (ResultLowerEnv.Err
-                                  (box (lower-diagnostic message)))]
-                              [(parser.ResultAstTypeList.Ok nested-fields)
-                                (match (lower-load-inline-value-at-offset
-                                  ctx
-                                  state
-                                  (lower-global-shared-view base)
-                                  offset
-                                  (lower-global-shared-view resolved))
-                                  [(LowerExpr.Expr field-state field-value _)
-                                    ;; For a register-resident enum field
-                                    ;; the loaded value IS the tag word; for a
-                                    ;; memory enum it is a pointer to the field,
-                                    ;; so the tag is loaded from offset 0.
-                                    ;; Dereferencing a register-resident tag word
-                                    ;; would fault (it is a small integer, not an
-                                    ;; address).
-                                    (match (if (lower-type-register-resident?
-                                      ctx
-                                      (lower-global-shared-view resolved))
-                                      (LowerExpr.Expr
-                                        field-state
-                                        (lower-global-shared-view field-value)
-                                        (ast.AstType.I64))
-                                      (lower-load-at-offset
-                                        field-state
-                                        (lower-global-shared-view field-value)
-                                        0
-                                        (ast.AstType.I64)))
-                                      [(LowerExpr.Expr tag-state tag-value _)
-                                        (match (lower-state-alloc-var tag-state)
-                                          [(LowerAlloc.Alloc eq-alloc eq-var)
-                                            (match (lower-state-fresh-label
-                                              (lower-state-emit
-                                                eq-alloc
-                                                (ir.CompilerIrInstr.BinOp
-                                                  eq-var
-                                                  ir.CompilerIrBinOp.Eq
-                                                  tag-value
-                                                  (ir.CompilerIrValue.I64
-                                                    (csym.compiler-registry-handle-child-index
-                                                      handle))
-                                                  (ast.AstType.I64)))
-                                              "payload_ok")
-                                              [(LowerLabel.Label
-                                                  ok-state
-                                                  ok-label)
-                                                (match (lower-bind-variant-payloads
-                                                  ctx
-                                                  (lower-state-finish-block
-                                                    (lower-state-emit
-                                                      ok-state
-                                                      (ir.CompilerIrInstr.Branch
-                                                        (ir.CompilerIrValue.Var
-                                                          eq-var)
-                                                        ok-label
-                                                        fail-label))
-                                                    ok-label)
-                                                  env
-                                                  type-env
-                                                  field-value
-                                                  nested-args
-                                                  nested-fields
-                                                  mode
-                                                  (lower-enum-type-name-id-or
-                                                    (lower-global-shared-view
-                                                      resolved)
-                                                    -1)
-                                                  (lower-enum-type-name-or-empty
-                                                    (lower-global-shared-view
-                                                      resolved))
-                                                  nested-name-str
-                                                  (lower-variant-handle-name-id-or
-                                                    ctx
-                                                    handle
-                                                    nested-name)
-                                                  0
-                                                  8
-                                                  fail-label
-                                                  ;; nested enum: rare path, so
-                                                  ;; computing its group-ness once
-                                                  ;; here is cheap.
-                                                  (lower-type-register-group?
-                                                    ctx
-                                                    resolved))
-                                                  [(ResultLowerEnv.Ok
-                                                      nested-state
-                                                      nested-env
-                                                      nested-type-env)
-                                                    (lower-bind-variant-payloads
-                                                      ctx
-                                                      nested-state
-                                                      nested-env
-                                                      nested-type-env
-                                                      base
-                                                      rest-patterns
-                                                      rest-types
-                                                      mode
-                                                      enum-id
-                                                      enum-name
-                                                      variant-name
-                                                      variant-name-id
-                                                      next-index
-                                                      next-cursor
-                                                      fail-label
-                                                      scrut-reg-group?)]
-                                                  [(ResultLowerEnv.Err message)
-                                                    (ResultLowerEnv.Err message)])])])])])]))))))]
-                [_
-                  (ResultLowerEnv.Err
-                    (box
-                      (lower-diagnostic
-                        "lower: unsupported enum payload pattern")))]))))))))
-
-(define (lower-borrowed-payload-ref-expr
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [base : ir.CompilerIrValue]
-  [offset : i64]
-  [field-ty : ast.AstType]
-  [ref-ty : ast.AstType]) : LowerExpr
-  ;; Enum payload aggregates are stored inline in the enum slot. Borrowing a
-  ;; tuple, fixed array, struct, or enum payload therefore takes the payload's
-  ;; address even when that aggregate is normally represented by a pointer.
-  (if (lower-str-ref-type? ctx (lower-global-shared-view ref-ty))
-    (let
-      [loaded : LowerExpr (lower-load-at-offset state base offset field-ty)]
-      (match loaded
-        [(LowerExpr.Expr loaded-state value _)
-          (LowerExpr.Expr loaded-state value ref-ty)]))
-    (match (lower-gep-byte state base offset)
-      [(LowerExpr.Expr ptr-state ptr _) (LowerExpr.Expr ptr-state ptr ref-ty)])))
-
-(define (lower-bind-borrowed-variant-payloads
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [borrow-lifetime : i64]
-  [base : ir.CompilerIrValue]
-  [patterns : ast.AstPatternList]
-  [types : ast.AstTypeList]
-  [mode : CompilerLowerMode]
-  [enum-id : i64]
-  [enum-name : String]
-  [variant-name : String]
-  [variant-name-id : i64]
-  [index : i64]
-  [cursor : i64]
-  [fail-label : i64]) : ResultLowerEnv
   (if (ast.ast-pattern-list-empty? (& patterns))
     (if (ast.ast-type-list-empty? (& types))
       (ResultLowerEnv.Ok state env type-env)
@@ -21633,12 +21176,12 @@
                     variant-name))))
             (match pattern
               [(ast.AstPattern.Wildcard)
-                (lower-bind-borrowed-variant-payloads
+                (lower-bind-variant-payloads
                   ctx
                   state
                   env
                   type-env
-                  borrow-lifetime
+                  bind-mode
                   base
                   rest-patterns
                   rest-types
@@ -21649,109 +21192,107 @@
                   variant-name-id
                   next-index
                   next-cursor
-                  fail-label)]
+                  fail-label
+                  scrut-reg-group?)]
               [(ast.AstPattern.Binding name)
-                (let
-                  [ref-ty : ast.AstType
-                    (tc_core.tc-borrowed-field-ref-type
-                      borrow-lifetime
-                      (lower-global-shared-view resolved))]
-                  [ref-expr : LowerExpr
-                    (lower-borrowed-payload-ref-expr
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      offset
-                      resolved
-                      (lower-global-shared-view ref-ty))]
-                  (match ref-expr
-                    [(LowerExpr.Expr ref-state ref-value _)
-                      (match ref-value
-                        [(ir.CompilerIrValue.Var field-var)
-                          (lower-bind-borrowed-variant-payloads
-                            ctx
-                            ref-state
-                            (sym_i64_env.sym-i64-bind-id env name field-var)
-                            (tc_core.tc-bind-id type-env name ref-ty)
-                            borrow-lifetime
-                            base
-                            rest-patterns
-                            rest-types
-                            mode
-                            enum-id
-                            enum-name
-                            variant-name
-                            variant-name-id
-                            next-index
-                            next-cursor
-                            fail-label)]
-                        [_
-                          (ResultLowerEnv.Err
-                            (box
-                              (lower-diagnostic
-                                "lower: internal borrowed enum payload reference failed")))])]))]
-              [(ast.AstPattern.Var name _)
-                (let
-                  [ref-ty : ast.AstType
-                    (tc_core.tc-borrowed-field-ref-type
-                      borrow-lifetime
-                      (lower-global-shared-view resolved))]
-                  [ref-expr : LowerExpr
-                    (lower-borrowed-payload-ref-expr
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      offset
-                      resolved
-                      (lower-global-shared-view ref-ty))]
-                  (match ref-expr
-                    [(LowerExpr.Expr ref-state ref-value _)
-                      (match ref-value
-                        [(ir.CompilerIrValue.Var field-var)
-                          (lower-bind-borrowed-variant-payloads
-                            ctx
-                            ref-state
-                            (sym_i64_env.sym-i64-bind-id env name field-var)
-                            (tc_core.tc-bind-id type-env name ref-ty)
-                            borrow-lifetime
-                            base
-                            rest-patterns
-                            rest-types
-                            mode
-                            enum-id
-                            enum-name
-                            variant-name
-                            variant-name-id
-                            next-index
-                            next-cursor
-                            fail-label)]
-                        [_
-                          (ResultLowerEnv.Err
-                            (box
-                              (lower-diagnostic
-                                "lower: internal borrowed enum payload reference failed")))])]))]
-              [(ast.AstPattern.Tuple patterns-box)
-                (match (lower-gep-byte
+                (match (lower-bind-payload-name-value
+                  ctx
                   state
+                  bind-mode
                   (lower-global-shared-view base)
-                  offset)
-                  [(LowerExpr.Expr address-state address _)
-                    (match (lower-bind-borrowed-tuple-pattern
+                  enum-id
+                  offset
+                  resolved
+                  scrut-reg-group?)
+                  [(LowerExpr.Expr bound-state bound-value bound-ty)
+                    (match bound-value
+                      [(ir.CompilerIrValue.Var field-var)
+                        (lower-bind-variant-payloads
+                          ctx
+                          bound-state
+                          (sym_i64_env.sym-i64-bind-id env name field-var)
+                          (tc_core.tc-bind-id type-env name bound-ty)
+                          bind-mode
+                          base
+                          rest-patterns
+                          rest-types
+                          mode
+                          enum-id
+                          enum-name
+                          variant-name
+                          variant-name-id
+                          next-index
+                          next-cursor
+                          fail-label
+                          scrut-reg-group?)]
+                      [_
+                        (ResultLowerEnv.Err
+                          (box
+                            (lower-diagnostic
+                              (lower-bind-payload-name-failure bind-mode))))])])]
+              [(ast.AstPattern.Var name _)
+                (match (lower-bind-payload-name-value
+                  ctx
+                  state
+                  bind-mode
+                  (lower-global-shared-view base)
+                  enum-id
+                  offset
+                  resolved
+                  scrut-reg-group?)
+                  [(LowerExpr.Expr bound-state bound-value bound-ty)
+                    (match bound-value
+                      [(ir.CompilerIrValue.Var field-var)
+                        (lower-bind-variant-payloads
+                          ctx
+                          bound-state
+                          (sym_i64_env.sym-i64-bind-id env name field-var)
+                          (tc_core.tc-bind-id type-env name bound-ty)
+                          bind-mode
+                          base
+                          rest-patterns
+                          rest-types
+                          mode
+                          enum-id
+                          enum-name
+                          variant-name
+                          variant-name-id
+                          next-index
+                          next-cursor
+                          fail-label
+                          scrut-reg-group?)]
+                      [_
+                        (ResultLowerEnv.Err
+                          (box
+                            (lower-diagnostic
+                              (lower-bind-payload-name-failure bind-mode))))])])]
+              [(ast.AstPattern.Tuple patterns-box)
+                (match (lower-bind-payload-aggregate
+                  ctx
+                  state
+                  bind-mode
+                  (lower-global-shared-view base)
+                  enum-id
+                  offset
+                  (lower-global-shared-view resolved)
+                  scrut-reg-group?)
+                  [(LowerExpr.Expr field-state field-value _)
+                    (match (lower-bind-tuple-pattern
                       ctx
-                      address-state
+                      field-state
                       env
                       type-env
-                      borrow-lifetime
-                      address
+                      bind-mode
+                      field-value
                       resolved
                       (deref patterns-box))
                       [(ResultLowerEnv.Ok tuple-state tuple-env tuple-type-env)
-                        (lower-bind-borrowed-variant-payloads
+                        (lower-bind-variant-payloads
                           ctx
                           tuple-state
                           tuple-env
                           tuple-type-env
-                          borrow-lifetime
+                          bind-mode
                           base
                           rest-patterns
                           rest-types
@@ -21762,31 +21303,37 @@
                           variant-name-id
                           next-index
                           next-cursor
-                          fail-label)]
+                          fail-label
+                          scrut-reg-group?)]
                       [(ResultLowerEnv.Err message)
                         (ResultLowerEnv.Err message)])])]
               [(ast.AstPattern.Array patterns-box)
-                (match (lower-gep-byte
+                (match (lower-bind-payload-aggregate
+                  ctx
                   state
+                  bind-mode
                   (lower-global-shared-view base)
-                  offset)
-                  [(LowerExpr.Expr address-state address _)
-                    (match (lower-bind-borrowed-array-pattern
+                  enum-id
+                  offset
+                  (lower-global-shared-view resolved)
+                  scrut-reg-group?)
+                  [(LowerExpr.Expr field-state field-value _)
+                    (match (lower-bind-array-pattern
                       ctx
-                      address-state
+                      field-state
                       env
                       type-env
-                      borrow-lifetime
-                      address
+                      bind-mode
+                      field-value
                       resolved
                       (deref patterns-box))
                       [(ResultLowerEnv.Ok array-state array-env array-type-env)
-                        (lower-bind-borrowed-variant-payloads
+                        (lower-bind-variant-payloads
                           ctx
                           array-state
                           array-env
                           array-type-env
-                          borrow-lifetime
+                          bind-mode
                           base
                           rest-patterns
                           rest-types
@@ -21797,17 +21344,26 @@
                           variant-name-id
                           next-index
                           next-cursor
-                          fail-label)]
+                          fail-label
+                          scrut-reg-group?)]
                       [(ResultLowerEnv.Err message)
                         (ResultLowerEnv.Err message)])])]
               [(ast.AstPattern.Literal lit)
                 (if (lower-literal-payload-supported?
                   (lower-global-shared-view lit))
-                  (match (lower-load-at-offset
-                    state
-                    (lower-global-shared-view base)
-                    offset
-                    (lower-global-shared-view resolved))
+                  (match (if scrut-reg-group?
+                    (lower-read-register-group-payload
+                      ctx
+                      state
+                      (lower-global-shared-view base)
+                      (ast.AstType.Enum enum-id)
+                      offset
+                      (lower-global-shared-view resolved))
+                    (lower-load-at-offset
+                      state
+                      (lower-global-shared-view base)
+                      offset
+                      (lower-global-shared-view resolved)))
                     [(LowerExpr.Expr load-state field-value _)
                       (match (lower-literal-payload-eq
                         ctx
@@ -21822,7 +21378,7 @@
                                 eq-state
                                 "payload_ok")
                                 [(LowerLabel.Label ok-state ok-label)
-                                  (lower-bind-borrowed-variant-payloads
+                                  (lower-bind-variant-payloads
                                     ctx
                                     (lower-state-finish-block
                                       (lower-state-emit
@@ -21834,7 +21390,7 @@
                                       ok-label)
                                     env
                                     type-env
-                                    borrow-lifetime
+                                    bind-mode
                                     base
                                     rest-patterns
                                     rest-types
@@ -21845,7 +21401,8 @@
                                     variant-name-id
                                     next-index
                                     next-cursor
-                                    fail-label)])])]
+                                    fail-label
+                                    scrut-reg-group?)])])]
                         [(ResultLowerExpr.Err message)
                           (ResultLowerEnv.Err message)])])
                   (ResultLowerEnv.Err
@@ -21853,123 +21410,230 @@
                       (lower-diagnostic
                         "lower: unsupported enum payload literal pattern type"))))]
               [(ast.AstPattern.Variant nested-name nested-args-box)
+                ;; Refutable nested variant payloads test the loaded enum tag
+                ;; and branch to `fail-label` on mismatch. An owned `(box ...)`
+                ;; payload pattern is irrefutable here; it loads the boxed value
+                ;; and binds the inner pattern, as an owned struct pattern binds
+                ;; its fields.
                 (let
-                  [nested-args : ast.AstPatternList (deref nested-args-box)]
                   [nested-name-str : String
                     (tc_core.tc-env-key-name-text nested-name)]
-                  [symbols : (& ctx csym.CompilerSymbols)
-                    (tc_core.tc-context-symbols ctx)]
-                  [handle : i64
-                    (lower-variant-handle-for-scrut-id-or
-                      ctx
-                      (lower-global-shared-view resolved)
-                      nested-name
-                      (csym.compiler-symbols-missing-handle))]
-                  (if (not (csym.compiler-symbols-handle-found? handle))
-                    (ResultLowerEnv.Err
-                      (box
-                        (lower-diagnostic
-                          (str_cat.str-cat
-                            "lower: unknown nested variant "
-                            nested-name-str))))
-                    (match (csym.compiler-registries-variant-fields-indexed
-                      symbols
-                      handle)
-                      [(parser.ResultAstTypeList.Err message)
-                        (ResultLowerEnv.Err (box (lower-diagnostic message)))]
-                      [(parser.ResultAstTypeList.Ok nested-fields)
-                        (match (lower-load-inline-value-at-offset
+                  [nested-args : ast.AstPatternList (deref nested-args-box)]
+                  [owned? : bool
+                    (match bind-mode
+                      [(LowerBindMode.Owned) true]
+                      [(LowerBindMode.Borrowed _) false])]
+                  (cond
+                    [(and owned? (lower-box-pattern-name? nested-name))
+                      (lower-bind-box-variant-payload
+                        ctx
+                        state
+                        env
+                        type-env
+                        base
+                        nested-args
+                        resolved
+                        mode
+                        enum-id
+                        enum-name
+                        variant-name
+                        variant-name-id
+                        rest-patterns
+                        rest-types
+                        offset
+                        next-index
+                        next-cursor
+                        fail-label
+                        scrut-reg-group?)]
+                    [(and
+                        owned?
+                        (lower-struct-pattern-for-type?
                           ctx
-                          state
-                          (lower-global-shared-view base)
-                          offset
-                          (lower-global-shared-view resolved))
-                          [(LowerExpr.Expr field-state field-value _)
-                            (match (if (lower-type-register-resident?
-                              ctx
-                              (lower-global-shared-view resolved))
-                              (LowerExpr.Expr
-                                field-state
-                                (lower-global-shared-view field-value)
-                                (ast.AstType.I64))
-                              (lower-load-at-offset
-                                field-state
-                                (lower-global-shared-view field-value)
-                                0
-                                (ast.AstType.I64)))
-                              [(LowerExpr.Expr tag-state tag-value _)
-                                (match (lower-state-alloc-var tag-state)
-                                  [(LowerAlloc.Alloc eq-alloc eq-var)
-                                    (match (lower-state-fresh-label
-                                      (lower-state-emit
-                                        eq-alloc
-                                        (ir.CompilerIrInstr.BinOp
-                                          eq-var
-                                          ir.CompilerIrBinOp.Eq
-                                          tag-value
-                                          (ir.CompilerIrValue.I64
-                                            (csym.compiler-registry-handle-child-index
-                                              handle))
-                                          (ast.AstType.I64)))
-                                      "payload_ok")
-                                      [(LowerLabel.Label ok-state ok-label)
-                                        (match (lower-bind-borrowed-variant-payloads
-                                          ctx
-                                          (lower-state-finish-block
+                          (lower-global-shared-view resolved)
+                          nested-name))
+                      (lower-bind-struct-variant-payload
+                        ctx
+                        state
+                        env
+                        type-env
+                        base
+                        nested-args
+                        resolved
+                        mode
+                        enum-id
+                        enum-name
+                        variant-name
+                        variant-name-id
+                        rest-patterns
+                        rest-types
+                        offset
+                        next-index
+                        next-cursor
+                        fail-label
+                        scrut-reg-group?)]
+                    [else
+                      (let
+                        [symbols : (& ctx csym.CompilerSymbols)
+                          (tc_core.tc-context-symbols ctx)]
+                        [handle : i64
+                          (lower-variant-handle-for-scrut-id-or
+                            ctx
+                            (lower-global-shared-view resolved)
+                            nested-name
+                            (csym.compiler-symbols-missing-handle))]
+                        (if (not (csym.compiler-symbols-handle-found? handle))
+                          (ResultLowerEnv.Err
+                            (box
+                              (lower-diagnostic
+                                (str_cat.str-cat
+                                  "lower: unknown nested variant "
+                                  nested-name-str))))
+                          (match (csym.compiler-registries-variant-fields-indexed
+                            symbols
+                            handle)
+                            [(parser.ResultAstTypeList.Err message)
+                              (ResultLowerEnv.Err
+                                (box (lower-diagnostic message)))]
+                            [(parser.ResultAstTypeList.Ok nested-fields)
+                              (match (lower-load-inline-value-at-offset
+                                ctx
+                                state
+                                (lower-global-shared-view base)
+                                offset
+                                (lower-global-shared-view resolved))
+                                [(LowerExpr.Expr field-state field-value _)
+                                  ;; For a register-resident enum field the
+                                  ;; loaded value IS the tag word; for a memory
+                                  ;; enum it is a pointer to the field, so the
+                                  ;; tag is loaded from offset 0. Dereferencing
+                                  ;; a register-resident tag word would fault
+                                  ;; (it is a small integer, not an address).
+                                  (match (if (lower-type-register-resident?
+                                    ctx
+                                    (lower-global-shared-view resolved))
+                                    (LowerExpr.Expr
+                                      field-state
+                                      (lower-global-shared-view field-value)
+                                      (ast.AstType.I64))
+                                    (lower-load-at-offset
+                                      field-state
+                                      (lower-global-shared-view field-value)
+                                      0
+                                      (ast.AstType.I64)))
+                                    [(LowerExpr.Expr tag-state tag-value _)
+                                      (match (lower-state-alloc-var tag-state)
+                                        [(LowerAlloc.Alloc eq-alloc eq-var)
+                                          (match (lower-state-fresh-label
                                             (lower-state-emit
-                                              ok-state
-                                              (ir.CompilerIrInstr.Branch
-                                                (ir.CompilerIrValue.Var eq-var)
-                                                ok-label
-                                                fail-label))
-                                            ok-label)
-                                          env
-                                          type-env
-                                          borrow-lifetime
-                                          field-value
-                                          nested-args
-                                          nested-fields
-                                          mode
-                                          (lower-enum-type-name-id-or
-                                            (lower-global-shared-view resolved)
-                                            -1)
-                                          (lower-enum-type-name-or-empty
-                                            resolved)
-                                          nested-name-str
-                                          (lower-variant-handle-name-id-or
-                                            ctx
-                                            handle
-                                            nested-name)
-                                          0
-                                          8
-                                          fail-label)
-                                          [(ResultLowerEnv.Ok
-                                              nested-state
-                                              nested-env
-                                              nested-type-env)
-                                            (lower-bind-borrowed-variant-payloads
-                                              ctx
-                                              nested-state
-                                              nested-env
-                                              nested-type-env
-                                              borrow-lifetime
-                                              base
-                                              rest-patterns
-                                              rest-types
-                                              mode
-                                              enum-id
-                                              enum-name
-                                              variant-name
-                                              variant-name-id
-                                              next-index
-                                              next-cursor
-                                              fail-label)]
-                                          [(ResultLowerEnv.Err message)
-                                            (ResultLowerEnv.Err message)])])])])])])))]
+                                              eq-alloc
+                                              (ir.CompilerIrInstr.BinOp
+                                                eq-var
+                                                ir.CompilerIrBinOp.Eq
+                                                tag-value
+                                                (ir.CompilerIrValue.I64
+                                                  (csym.compiler-registry-handle-child-index
+                                                    handle))
+                                                (ast.AstType.I64)))
+                                            "payload_ok")
+                                            [(LowerLabel.Label
+                                                ok-state
+                                                ok-label)
+                                              (match (lower-bind-variant-payloads
+                                                ctx
+                                                (lower-state-finish-block
+                                                  (lower-state-emit
+                                                    ok-state
+                                                    (ir.CompilerIrInstr.Branch
+                                                      (ir.CompilerIrValue.Var
+                                                        eq-var)
+                                                      ok-label
+                                                      fail-label))
+                                                  ok-label)
+                                                env
+                                                type-env
+                                                bind-mode
+                                                field-value
+                                                nested-args
+                                                nested-fields
+                                                mode
+                                                (lower-enum-type-name-id-or
+                                                  (lower-global-shared-view
+                                                    resolved)
+                                                  -1)
+                                                (lower-enum-type-name-or-empty
+                                                  (lower-global-shared-view
+                                                    resolved))
+                                                nested-name-str
+                                                (lower-variant-handle-name-id-or
+                                                  ctx
+                                                  handle
+                                                  nested-name)
+                                                0
+                                                8
+                                                fail-label
+                                                ;; nested enum: rare path, so
+                                                ;; computing its group-ness
+                                                ;; once here is cheap.
+                                                (match bind-mode
+                                                  [(LowerBindMode.Owned)
+                                                    (lower-type-register-group?
+                                                      ctx
+                                                      resolved)]
+                                                  [(LowerBindMode.Borrowed _)
+                                                    false]))
+                                                [(ResultLowerEnv.Ok
+                                                    nested-state
+                                                    nested-env
+                                                    nested-type-env)
+                                                  (lower-bind-variant-payloads
+                                                    ctx
+                                                    nested-state
+                                                    nested-env
+                                                    nested-type-env
+                                                    bind-mode
+                                                    base
+                                                    rest-patterns
+                                                    rest-types
+                                                    mode
+                                                    enum-id
+                                                    enum-name
+                                                    variant-name
+                                                    variant-name-id
+                                                    next-index
+                                                    next-cursor
+                                                    fail-label
+                                                    scrut-reg-group?)]
+                                                [(ResultLowerEnv.Err message)
+                                                  (ResultLowerEnv.Err message)])])])])])])))]))]
               [_
                 (ResultLowerEnv.Err
                   (box
                     (lower-diagnostic "lower: unsupported enum payload pattern")))])))))))
+
+(define (lower-bind-payload-name-failure [bind-mode : LowerBindMode]) : String
+  (match bind-mode
+    [(LowerBindMode.Owned) "lower: internal enum payload load failed"]
+    [(LowerBindMode.Borrowed _)
+      "lower: internal borrowed enum payload reference failed"]))
+
+(define (lower-borrowed-payload-ref-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [field-ty : ast.AstType]
+  [ref-ty : ast.AstType]) : LowerExpr
+  ;; Enum payload aggregates are stored inline in the enum slot. Borrowing a
+  ;; tuple, fixed array, struct, or enum payload therefore takes the payload's
+  ;; address even when that aggregate is normally represented by a pointer.
+  (if (lower-str-ref-type? ctx (lower-global-shared-view ref-ty))
+    (let
+      [loaded : LowerExpr (lower-load-at-offset state base offset field-ty)]
+      (match loaded
+        [(LowerExpr.Expr loaded-state value _)
+          (LowerExpr.Expr loaded-state value ref-ty)]))
+    (match (lower-gep-byte state base offset)
+      [(LowerExpr.Expr ptr-state ptr _) (LowerExpr.Expr ptr-state ptr ref-ty)])))
 
 (define (lower-bind-match-variant-payloads
   [ctx : tc_core.TcContext]
@@ -21996,6 +21660,7 @@
         state
         env
         type-env
+        (LowerBindMode.Owned)
         base
         patterns
         types
@@ -22012,12 +21677,12 @@
       ;; A borrowed scrutinee is always memory-backed (matched behind a pointer),
       ;; never a 2-word register-group value, so the register-group path does not
       ;; apply here.
-      (lower-bind-borrowed-variant-payloads
+      (lower-bind-variant-payloads
         ctx
         state
         env
         type-env
-        lifetime
+        (LowerBindMode.Borrowed lifetime)
         base
         patterns
         types
@@ -22028,7 +21693,8 @@
         variant-name-id
         index
         cursor
-        fail-label)]))
+        fail-label
+        false)]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time.
 ;; Literals and nested enum variants are refutable; `(box ...)` follows its
@@ -64426,6 +64092,7 @@
                 field-state
                 env
                 type-env
+                (LowerBindMode.Owned)
                 field-value
                 field-ty
                 (deref patterns-box))])]
@@ -64448,6 +64115,7 @@
                 field-state
                 env
                 type-env
+                (LowerBindMode.Owned)
                 field-value
                 field-ty
                 (deref patterns-box))])]
@@ -64614,46 +64282,30 @@
     [(parser.ResultAstFieldDefList.Err message)
       (ResultLowerEnv.Err (box (lower-diagnostic message)))]))
 
-(define (lower-bind-tuple-element-pattern
+;; Binds one tuple, fixed-array or struct element: `value` is the element's
+;; loaded value when owned, and its address when borrowed.
+(define (lower-bind-element-pattern
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [bind-mode : LowerBindMode]
   [value : ir.CompilerIrValue]
   [pattern : ast.AstPattern]
   [elem-ty : ast.AstType]) : ResultLowerEnv
   (match pattern
     [(ast.AstPattern.Wildcard) (ResultLowerEnv.Ok state env type-env)]
     [(ast.AstPattern.Binding name)
-      (match value
-        [(ir.CompilerIrValue.Var value-var)
-          (ResultLowerEnv.Ok
-            state
-            (sym_i64_env.sym-i64-bind-id env name value-var)
-            (tc_core.tc-bind-id type-env name elem-ty))]
-        [_
-          (ResultLowerEnv.Err
-            (box
-              (lower-diagnostic
-                "lower: internal tuple element pattern load failed")))])]
+      (lower-bind-element-name state env type-env bind-mode value name elem-ty)]
     [(ast.AstPattern.Var name _)
-      (match value
-        [(ir.CompilerIrValue.Var value-var)
-          (ResultLowerEnv.Ok
-            state
-            (sym_i64_env.sym-i64-bind-id env name value-var)
-            (tc_core.tc-bind-id type-env name elem-ty))]
-        [_
-          (ResultLowerEnv.Err
-            (box
-              (lower-diagnostic
-                "lower: internal tuple element pattern load failed")))])]
+      (lower-bind-element-name state env type-env bind-mode value name elem-ty)]
     [(ast.AstPattern.Tuple patterns-box)
       (lower-bind-tuple-pattern
         ctx
         state
         env
         type-env
+        bind-mode
         value
         elem-ty
         (deref patterns-box))]
@@ -64663,48 +64315,141 @@
         state
         env
         type-env
+        bind-mode
         value
         elem-ty
         (deref patterns-box))]
     [(ast.AstPattern.Variant name args-box)
-      (if (lower-box-pattern-for-type?
-        ctx
-        (lower-global-shared-view elem-ty)
-        name)
-        (lower-bind-box-pattern
-          ctx
-          state
-          env
-          type-env
-          value
-          elem-ty
-          (deref args-box))
-        (if (lower-struct-pattern-for-type?
-          ctx
-          (lower-global-shared-view elem-ty)
-          name)
-          (lower-bind-struct-pattern
+      (match bind-mode
+        [(LowerBindMode.Owned)
+          (if (lower-box-pattern-for-type?
             ctx
-            state
-            env
-            type-env
-            value
             (lower-global-shared-view elem-ty)
-            (lower-struct-type-name-or-empty
-              (tc_core.tc-type-strip-region
-                (tc_core.tc-resolve-type ctx elem-ty)))
-            (deref args-box))
-          (ResultLowerEnv.Err
-            (box (lower-diagnostic "lower: unsupported tuple element pattern")))))]
+            name)
+            (lower-bind-box-pattern
+              ctx
+              state
+              env
+              type-env
+              value
+              elem-ty
+              (deref args-box))
+            (if (lower-struct-pattern-for-type?
+              ctx
+              (lower-global-shared-view elem-ty)
+              name)
+              (lower-bind-struct-pattern
+                ctx
+                state
+                env
+                type-env
+                value
+                (lower-global-shared-view elem-ty)
+                (lower-struct-type-name-or-empty
+                  (tc_core.tc-type-strip-region
+                    (tc_core.tc-resolve-type ctx elem-ty)))
+                (deref args-box))
+              (ResultLowerEnv.Err
+                (box
+                  (lower-diagnostic "lower: unsupported tuple element pattern")))))]
+        [(LowerBindMode.Borrowed borrow-lifetime)
+          (if (lower-struct-pattern-for-type?
+            ctx
+            (lower-global-shared-view elem-ty)
+            name)
+            (lower-bind-borrowed-struct-pattern
+              ctx
+              state
+              env
+              type-env
+              borrow-lifetime
+              value
+              (lower-global-shared-view elem-ty)
+              (lower-struct-type-name-or-empty
+                (tc_core.tc-type-strip-region
+                  (tc_core.tc-resolve-type ctx elem-ty)))
+              (deref args-box))
+            (ResultLowerEnv.Err
+              (box
+                (lower-diagnostic
+                  "lower: unsupported borrowed tuple element pattern"))))])]
     [_
       (ResultLowerEnv.Err
-        (box (lower-diagnostic "lower: unsupported tuple element pattern")))]))
+        (box
+          (lower-diagnostic
+            (match bind-mode
+              [(LowerBindMode.Owned) "lower: unsupported tuple element pattern"]
+              [(LowerBindMode.Borrowed _)
+                "lower: unsupported borrowed tuple element pattern"]))))]))
+
+(define (lower-bind-element-name
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [bind-mode : LowerBindMode]
+  [value : ir.CompilerIrValue]
+  [name : i64]
+  [elem-ty : ast.AstType]) : ResultLowerEnv
+  (match value
+    [(ir.CompilerIrValue.Var value-var)
+      (let
+        [bound-ty : ast.AstType (lower-bind-mode-ref-type bind-mode elem-ty)]
+        (ResultLowerEnv.Ok
+          state
+          (sym_i64_env.sym-i64-bind-id env name value-var)
+          (tc_core.tc-bind-id type-env name bound-ty)))]
+    [_
+      (ResultLowerEnv.Err
+        (box
+          (lower-diagnostic
+            (match bind-mode
+              [(LowerBindMode.Owned)
+                "lower: internal tuple element pattern load failed"]
+              [(LowerBindMode.Borrowed _)
+                "lower: internal borrowed tuple element address failed"]))))]))
+
+;; An element's access for binding its pattern: the loaded value when owned; when
+;; borrowed, a str reference for a name binding and the address otherwise.
+(define (lower-bind-element-access
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [bind-mode : LowerBindMode]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [pattern : ast.AstPattern]
+  [elem-ty : ast.AstType]
+  [ref-ty : ast.AstType]) : LowerExpr
+  (match bind-mode
+    [(LowerBindMode.Owned)
+      (lower-load-inline-value-at-offset ctx state base offset elem-ty)]
+    [(LowerBindMode.Borrowed _)
+      (if (and
+        (match pattern
+          [(ast.AstPattern.Binding _) true]
+          [(ast.AstPattern.Var _ _) true]
+          [_ false])
+        (lower-str-ref-type? ctx (lower-global-shared-view ref-ty)))
+        (lower-borrowed-payload-ref-expr ctx state base offset elem-ty ref-ty)
+        (lower-gep-byte state base offset))]))
+
+;; The type a name bound to an element gets: the element type when owned, a
+;; reference with the borrow's lifetime when borrowed. The tuple and array
+;; binders build it before they skip a wildcard, so a borrowed pattern builds the
+;; reference type (a new type node) even for a wildcard element.
+(define (lower-bind-mode-ref-type
+  [bind-mode : LowerBindMode]
+  [elem-ty : ast.AstType]) : ast.AstType
+  (match bind-mode
+    [(LowerBindMode.Owned) elem-ty]
+    [(LowerBindMode.Borrowed borrow-lifetime)
+      (tc_core.tc-borrowed-field-ref-type borrow-lifetime elem-ty)]))
 
 (define (lower-bind-tuple-pattern
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [bind-mode : LowerBindMode]
   [base : ir.CompilerIrValue]
   [tuple-ty : ast.AstType]
   [patterns : ast.AstPatternList]) : ResultLowerEnv
@@ -64715,6 +64460,7 @@
         state
         env
         type-env
+        bind-mode
         base
         (& patterns)
         (& elem-types)
@@ -64728,6 +64474,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [bind-mode : LowerBindMode]
   [base : ir.CompilerIrValue]
   [patterns : (& patterns ast.AstPatternList)]
   [types : (& types ast.AstTypeList)]
@@ -64755,6 +64502,10 @@
             cursor
             (lower-type-align ctx (lower-global-shared-view resolved)))]
         [next-cursor : i64 (+ offset (lower-type-size ctx resolved))]
+        [ref-ty : ast.AstType
+          (lower-bind-mode-ref-type
+            bind-mode
+            (lower-global-shared-view elem-ty))]
         (if (match (lower-global-shared-view pattern)
           [(ast.AstPattern.Wildcard) true]
           [_ false])
@@ -64763,23 +64514,28 @@
             state
             env
             type-env
+            bind-mode
             base
             patterns
             types
             (+ index 1)
             next-cursor)
-          (match (lower-load-inline-value-at-offset
+          (match (lower-bind-element-access
             ctx
             state
+            bind-mode
             (lower-global-shared-view base)
             offset
-            (lower-global-shared-view elem-ty))
+            (lower-global-shared-view pattern)
+            (lower-global-shared-view elem-ty)
+            ref-ty)
             [(LowerExpr.Expr elem-state elem-value _)
-              (match (lower-bind-tuple-element-pattern
+              (match (lower-bind-element-pattern
                 ctx
                 elem-state
                 env
                 type-env
+                bind-mode
                 elem-value
                 pattern
                 elem-ty)
@@ -64789,6 +64545,7 @@
                     next-state
                     next-env
                     next-type-env
+                    bind-mode
                     base
                     patterns
                     types
@@ -64801,6 +64558,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [bind-mode : LowerBindMode]
   [base : ir.CompilerIrValue]
   [array-ty : ast.AstType]
   [patterns : ast.AstPatternList]) : ResultLowerEnv
@@ -64811,6 +64569,7 @@
         state
         env
         type-env
+        bind-mode
         base
         (& patterns)
         elem-ty
@@ -64824,6 +64583,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [bind-mode : LowerBindMode]
   [base : ir.CompilerIrValue]
   [patterns : (& patterns ast.AstPatternList)]
   [elem-ty : ast.AstType]
@@ -64843,6 +64603,10 @@
         [resolved : ast.AstType
           (tc_core.tc-resolve-type ctx (lower-global-shared-view elem-ty))]
         [offset : i64 (* index (lower-type-size ctx resolved))]
+        [ref-ty : ast.AstType
+          (lower-bind-mode-ref-type
+            bind-mode
+            (lower-global-shared-view elem-ty))]
         (if (match (lower-global-shared-view pattern)
           [(ast.AstPattern.Wildcard) true]
           [_ false])
@@ -64851,23 +64615,28 @@
             state
             env
             type-env
+            bind-mode
             base
             patterns
             elem-ty
             count
             (+ index 1))
-          (match (lower-load-inline-value-at-offset
+          (match (lower-bind-element-access
             ctx
             state
+            bind-mode
             (lower-global-shared-view base)
             offset
-            (lower-global-shared-view elem-ty))
+            (lower-global-shared-view pattern)
+            (lower-global-shared-view elem-ty)
+            ref-ty)
             [(LowerExpr.Expr elem-state elem-value _)
-              (match (lower-bind-tuple-element-pattern
+              (match (lower-bind-element-pattern
                 ctx
                 elem-state
                 env
                 type-env
+                bind-mode
                 elem-value
                 pattern
                 (lower-global-shared-view elem-ty))
@@ -64877,316 +64646,7 @@
                     next-state
                     next-env
                     next-type-env
-                    base
-                    patterns
-                    elem-ty
-                    count
-                    (+ index 1))]
-                [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))))))
-
-(define (lower-bind-borrowed-tuple-sub-pattern
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [borrow-lifetime : i64]
-  [address : ir.CompilerIrValue]
-  [pattern : ast.AstPattern]
-  [elem-ty : ast.AstType]) : ResultLowerEnv
-  (match pattern
-    [(ast.AstPattern.Wildcard) (ResultLowerEnv.Ok state env type-env)]
-    [(ast.AstPattern.Binding name)
-      (match address
-        [(ir.CompilerIrValue.Var address-var)
-          (let
-            [ref-ty : ast.AstType
-              (tc_core.tc-borrowed-field-ref-type borrow-lifetime elem-ty)]
-            (ResultLowerEnv.Ok
-              state
-              (sym_i64_env.sym-i64-bind-id env name address-var)
-              (tc_core.tc-bind-id type-env name ref-ty)))]
-        [_
-          (ResultLowerEnv.Err
-            (box
-              (lower-diagnostic
-                "lower: internal borrowed tuple element address failed")))])]
-    [(ast.AstPattern.Var name _)
-      (match address
-        [(ir.CompilerIrValue.Var address-var)
-          (let
-            [ref-ty : ast.AstType
-              (tc_core.tc-borrowed-field-ref-type borrow-lifetime elem-ty)]
-            (ResultLowerEnv.Ok
-              state
-              (sym_i64_env.sym-i64-bind-id env name address-var)
-              (tc_core.tc-bind-id type-env name ref-ty)))]
-        [_
-          (ResultLowerEnv.Err
-            (box
-              (lower-diagnostic
-                "lower: internal borrowed tuple element address failed")))])]
-    [(ast.AstPattern.Tuple patterns-box)
-      (lower-bind-borrowed-tuple-pattern
-        ctx
-        state
-        env
-        type-env
-        borrow-lifetime
-        address
-        elem-ty
-        (deref patterns-box))]
-    [(ast.AstPattern.Array patterns-box)
-      (lower-bind-borrowed-array-pattern
-        ctx
-        state
-        env
-        type-env
-        borrow-lifetime
-        address
-        elem-ty
-        (deref patterns-box))]
-    [(ast.AstPattern.Variant name args-box)
-      (if (lower-struct-pattern-for-type?
-        ctx
-        (lower-global-shared-view elem-ty)
-        name)
-        (lower-bind-borrowed-struct-pattern
-          ctx
-          state
-          env
-          type-env
-          borrow-lifetime
-          address
-          (lower-global-shared-view elem-ty)
-          (lower-struct-type-name-or-empty
-            (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx elem-ty)))
-          (deref args-box))
-        (ResultLowerEnv.Err
-          (box
-            (lower-diagnostic
-              "lower: unsupported borrowed tuple element pattern"))))]
-    [_
-      (ResultLowerEnv.Err
-        (box
-          (lower-diagnostic "lower: unsupported borrowed tuple element pattern")))]))
-
-(define (lower-bind-borrowed-tuple-pattern
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [borrow-lifetime : i64]
-  [base : ir.CompilerIrValue]
-  [tuple-ty : ast.AstType]
-  [patterns : ast.AstPatternList]) : ResultLowerEnv
-  (match (tc_core.tc-tuple-pattern-element-types ctx tuple-ty)
-    [(tc_core.ResultTcTypeList.Ok elem-types)
-      (lower-bind-borrowed-tuple-pattern-at
-        ctx
-        state
-        env
-        type-env
-        borrow-lifetime
-        base
-        (& patterns)
-        (& elem-types)
-        0
-        0)]
-    [(tc_core.ResultTcTypeList.Err message)
-      (ResultLowerEnv.Err (box (lower-diagnostic message)))]))
-
-(define (lower-bind-borrowed-tuple-pattern-at
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [borrow-lifetime : i64]
-  [base : ir.CompilerIrValue]
-  [patterns : (& patterns ast.AstPatternList)]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]
-  [cursor : i64]) : ResultLowerEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultLowerEnv.Ok state env type-env)
-      (ResultLowerEnv.Err
-        (box (lower-diagnostic "lower: tuple pattern arity mismatch"))))
-    (if (>= index (ast.ast-type-list-len types))
-      (ResultLowerEnv.Err
-        (box (lower-diagnostic "lower: tuple pattern arity mismatch")))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [elem-ty : ast.AstType
-          (tc_core.tc-context-type-get
-            ctx
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        [resolved : ast.AstType
-          (tc_core.tc-resolve-type ctx (lower-global-shared-view elem-ty))]
-        [offset : i64
-          (lower-align-up
-            cursor
-            (lower-type-align ctx (lower-global-shared-view resolved)))]
-        [next-cursor : i64 (+ offset (lower-type-size ctx resolved))]
-        [binds-name : bool
-          (match (lower-global-shared-view pattern)
-            [(ast.AstPattern.Binding _) true]
-            [(ast.AstPattern.Var _ _) true]
-            [_ false])]
-        [ref-ty : ast.AstType
-          (tc_core.tc-borrowed-field-ref-type
-            borrow-lifetime
-            (lower-global-shared-view elem-ty))]
-        (if (match (lower-global-shared-view pattern)
-          [(ast.AstPattern.Wildcard) true]
-          [_ false])
-          (lower-bind-borrowed-tuple-pattern-at
-            ctx
-            state
-            env
-            type-env
-            borrow-lifetime
-            base
-            patterns
-            types
-            (+ index 1)
-            next-cursor)
-          (match (if (and
-            binds-name
-            (lower-str-ref-type? ctx (lower-global-shared-view ref-ty)))
-            (lower-borrowed-payload-ref-expr
-              ctx
-              state
-              (lower-global-shared-view base)
-              offset
-              (lower-global-shared-view elem-ty)
-              ref-ty)
-            (lower-gep-byte state (lower-global-shared-view base) offset))
-            [(LowerExpr.Expr address-state address _)
-              (match (lower-bind-borrowed-tuple-sub-pattern
-                ctx
-                address-state
-                env
-                type-env
-                borrow-lifetime
-                address
-                pattern
-                elem-ty)
-                [(ResultLowerEnv.Ok next-state next-env next-type-env)
-                  (lower-bind-borrowed-tuple-pattern-at
-                    ctx
-                    next-state
-                    next-env
-                    next-type-env
-                    borrow-lifetime
-                    base
-                    patterns
-                    types
-                    (+ index 1)
-                    next-cursor)]
-                [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))))))
-
-(define (lower-bind-borrowed-array-pattern
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [borrow-lifetime : i64]
-  [base : ir.CompilerIrValue]
-  [array-ty : ast.AstType]
-  [patterns : ast.AstPatternList]) : ResultLowerEnv
-  (match (tc_core.tc-array-pattern-info ctx array-ty)
-    [(tc_core.ResultTcArrayPatternInfo.Ok elem-ty count)
-      (lower-bind-borrowed-array-pattern-at
-        ctx
-        state
-        env
-        type-env
-        borrow-lifetime
-        base
-        (& patterns)
-        elem-ty
-        count
-        0)]
-    [(tc_core.ResultTcArrayPatternInfo.Err message)
-      (ResultLowerEnv.Err (box (lower-diagnostic message)))]))
-
-(define (lower-bind-borrowed-array-pattern-at
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [borrow-lifetime : i64]
-  [base : ir.CompilerIrValue]
-  [patterns : (& patterns ast.AstPatternList)]
-  [elem-ty : ast.AstType]
-  [count : i64]
-  [index : i64]) : ResultLowerEnv
-  (if (>= index (ast.ast-pattern-list-len patterns))
-    (if (>= index count)
-      (ResultLowerEnv.Ok state env type-env)
-      (ResultLowerEnv.Err
-        (box (lower-diagnostic "lower: fixed-array pattern arity mismatch"))))
-    (if (>= index count)
-      (ResultLowerEnv.Err
-        (box (lower-diagnostic "lower: fixed-array pattern arity mismatch")))
-      (let
-        [pattern : ast.AstPattern
-          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
-        [resolved : ast.AstType
-          (tc_core.tc-resolve-type ctx (lower-global-shared-view elem-ty))]
-        [offset : i64 (* index (lower-type-size ctx resolved))]
-        [binds-name : bool
-          (match (lower-global-shared-view pattern)
-            [(ast.AstPattern.Binding _) true]
-            [(ast.AstPattern.Var _ _) true]
-            [_ false])]
-        [ref-ty : ast.AstType
-          (tc_core.tc-borrowed-field-ref-type
-            borrow-lifetime
-            (lower-global-shared-view elem-ty))]
-        (if (match (lower-global-shared-view pattern)
-          [(ast.AstPattern.Wildcard) true]
-          [_ false])
-          (lower-bind-borrowed-array-pattern-at
-            ctx
-            state
-            env
-            type-env
-            borrow-lifetime
-            base
-            patterns
-            elem-ty
-            count
-            (+ index 1))
-          (match (if (and
-            binds-name
-            (lower-str-ref-type? ctx (lower-global-shared-view ref-ty)))
-            (lower-borrowed-payload-ref-expr
-              ctx
-              state
-              (lower-global-shared-view base)
-              offset
-              (lower-global-shared-view elem-ty)
-              ref-ty)
-            (lower-gep-byte state (lower-global-shared-view base) offset))
-            [(LowerExpr.Expr address-state address _)
-              (match (lower-bind-borrowed-tuple-sub-pattern
-                ctx
-                address-state
-                env
-                type-env
-                borrow-lifetime
-                address
-                pattern
-                (lower-global-shared-view elem-ty))
-                [(ResultLowerEnv.Ok next-state next-env next-type-env)
-                  (lower-bind-borrowed-array-pattern-at
-                    ctx
-                    next-state
-                    next-env
-                    next-type-env
-                    borrow-lifetime
+                    bind-mode
                     base
                     patterns
                     elem-ty
@@ -65298,12 +64758,12 @@
                         (lower-global-shared-view base)
                         offset)
                         [(LowerExpr.Expr address-state address _)
-                          (match (lower-bind-borrowed-tuple-sub-pattern
+                          (match (lower-bind-element-pattern
                             ctx
                             address-state
                             env
                             type-env
-                            borrow-lifetime
+                            (LowerBindMode.Borrowed borrow-lifetime)
                             address
                             pattern
                             field-ty)
@@ -65351,6 +64811,7 @@
             state
             env
             type-env
+            (LowerBindMode.Owned)
             (ir.CompilerIrValue.Var scrut-var)
             scrut-ty
             (deref patterns-box))]
@@ -65363,12 +64824,12 @@
                 ctx
                 (lower-global-shared-view referent-ty)))
               [(ast.AstType.Tuple _)
-                (lower-bind-borrowed-tuple-pattern
+                (lower-bind-tuple-pattern
                   ctx
                   state
                   env
                   type-env
-                  borrow-lifetime
+                  (LowerBindMode.Borrowed borrow-lifetime)
                   (ir.CompilerIrValue.Var scrut-var)
                   referent-ty
                   (deref patterns-box))]
@@ -65390,6 +64851,7 @@
             state
             env
             type-env
+            (LowerBindMode.Owned)
             (ir.CompilerIrValue.Var scrut-var)
             scrut-ty
             (deref patterns-box))]
@@ -65402,12 +64864,12 @@
                 ctx
                 (lower-global-shared-view referent-ty)))
               [(ast.AstType.Array _ _)
-                (lower-bind-borrowed-array-pattern
+                (lower-bind-array-pattern
                   ctx
                   state
                   env
                   type-env
-                  borrow-lifetime
+                  (LowerBindMode.Borrowed borrow-lifetime)
                   (ir.CompilerIrValue.Var scrut-var)
                   referent-ty
                   (deref patterns-box))]

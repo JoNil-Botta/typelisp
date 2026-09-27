@@ -72254,86 +72254,30 @@
           (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var id))))]
     [_ (ir.CompilerIrMaybeValue.No)]))
 
-;; Recover a same-block derived induction phi
-;;
-;;   derived = phi(preheader_start, derived + positive_step)
-;;
-;; Copy/reinterpret chains on the back value and add source are harmless.
-;; The initializer must remain loop-invariant because the versioning guard
-;; evaluates it before entering the cloned loop.
+;; A same-block derived induction phi: the multi-block recovery over the loop's
+;; one block, with a step of either sign.
 (define (opt-bce-version-derived-induction
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [phi-count : i64]
-  [last : i64]
   [defs : (& defs opt_i64_i64_map.Map)]
   [loop-label : i64]
   [pred-label : i64]
   [phi-var : i64]
   [inputs : ir.CompilerIrPhiInputSeq]) : OptBceDerivedInduction
-  (match (opt-unroll-split-phi-inputs inputs loop-label)
-    [(OptUnrollPhiSplit.No) (OptBceDerivedInduction.No)]
-    [(OptUnrollPhiSplit.Split init back init-label)
-      (if (not (= init-label pred-label))
-        (OptBceDerivedInduction.No)
-        (match (opt-bce-version-invariant-operand
-          instrs
-          phi-count
-          last
-          defs
-          init)
-          [(ir.CompilerIrMaybeValue.No) (OptBceDerivedInduction.No)]
-          [(ir.CompilerIrMaybeValue.Some invariant-init)
-            (match back
-              [(ir.CompilerIrValue.Var back-raw)
-                (let
-                  [back-var : i64
-                    (opt-bce-version-resolve instrs phi-count last back-raw 16)]
-                  [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-                  [back-index : i64
-                    (opt-unroll-def-index
-                      (compiler-opt-global-shared-view slots)
-                      phi-count
-                      last
-                      back-var)]
-                  (if (< back-index 0)
-                    (OptBceDerivedInduction.No)
-                    (match (array-ref slots back-index)
-                      [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
-                        (match ty
-                          [(ast.AstType.I64)
-                            (match op
-                              [(ir.CompilerIrBinOp.Add)
-                                (match (opt-affine-var-const lhs rhs)
-                                  ;; The step is SIGNED: a phi that counts DOWN
-                                  ;; is a derived induction like any other, and
-                                  ;; the guard builder mirrors its range
-                                  ;; (opt-bce-version-mirror-guard). Zero is not
-                                  ;; an induction, and i64-MIN has no
-                                  ;; representable magnitude for the mirrored
-                                  ;; form to divide by.
-                                  [(OptAffineOperands.Some src step)
-                                    (if (and
-                                      (>
-                                        (opt-bce-counter-affine-magnitude step)
-                                        0)
-                                      (=
-                                        (opt-bce-version-resolve
-                                          instrs
-                                          phi-count
-                                          last
-                                          src
-                                          16)
-                                        phi-var))
-                                      (OptBceDerivedInduction.Some
-                                        invariant-init
-                                        step)
-                                      (OptBceDerivedInduction.No))]
-                                  [(OptAffineOperands.No)
-                                    (OptBceDerivedInduction.No)])]
-                              [_ (OptBceDerivedInduction.No)])]
-                          [_ (OptBceDerivedInduction.No)])]
-                      [_ (OptBceDerivedInduction.No)])))]
-              [_ (OptBceDerivedInduction.No)])]))]))
+  (let
+    [body-blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          0
+          (owned_view.compiler-owned-reference-shared-view instrs))
+        (ir.CompilerIrBlockList.Nil))]
+    (opt-bce-mb-derived-induction
+      body-blocks
+      defs
+      loop-label
+      pred-label
+      phi-var
+      inputs
+      true)))
 
 ;; Prove `scale * i + offset` is in range for every
 ;; `i in [seed, bound)`, with positive `scale`.
@@ -72819,7 +72763,7 @@
 
 ;; The strided side as a derived induction phi (possibly under peeled literal
 ;; addends): opt-bce-version-derived-induction pins the invariant init and
-;; the positive literal step.
+;; the literal step.
 (define (opt-bce-version-strided-derived
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -72848,8 +72792,6 @@
                 [(ast.AstType.I64)
                   (match (opt-bce-version-derived-induction
                     instrs
-                    phi-count
-                    last
                     defs
                     loop-label
                     pred-label
@@ -74679,8 +74621,6 @@
                 [(ast.AstType.I64)
                   (match (opt-bce-version-derived-induction
                     instrs
-                    phi-count
-                    last
                     defs
                     loop-label
                     pred-label
@@ -75253,8 +75193,6 @@
                       [(ast.AstType.I64)
                         (match (opt-bce-version-derived-induction
                           instrs
-                          phi-count
-                          last
                           defs
                           loop-label
                           pred-label
@@ -80910,16 +80848,27 @@
           (opt-bce-mb-bounded-inputs? body-blocks sphi rest fuel)
           false)))))
 
-;; Multi-block recovery of the same canonical positive-step derived phi used
-;; by single-block versioning. Its initializer comes from the loop preheader;
-;; its back value may be defined in any loop block.
+;; Recover a derived induction phi
+;;
+;;   derived = phi(preheader_start, derived + step)
+;;
+;; with a positive literal step. Its initializer comes from the loop preheader
+;; and must be loop-invariant, because the versioning guard evaluates it before
+;; entering the cloned loop; its back value may be defined in any loop block, and
+;; copy/reinterpret chains on it and on the add source are harmless.
+;;
+;; `any-sign?` admits a NEGATIVE step too: the single-block guard builder
+;; mirrors a phi that counts DOWN (opt-bce-version-mirror-guard). Zero is not an
+;; induction, and i64-MIN has no representable magnitude for the mirrored form to
+;; divide by.
 (define (opt-bce-mb-derived-induction
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [latch : i64]
   [preheader : i64]
   [phi-var : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]) : OptBceDerivedInduction
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [any-sign? : bool]) : OptBceDerivedInduction
   (match (opt-unroll-split-phi-inputs inputs latch)
     [(OptUnrollPhiSplit.No) (OptBceDerivedInduction.No)]
     [(OptUnrollPhiSplit.Split init back pred-label)
@@ -80944,7 +80893,12 @@
                                   (match (opt-affine-var-const lhs rhs)
                                     [(OptAffineOperands.Some src step)
                                       (if (and
-                                        (> step 0)
+                                        (if any-sign?
+                                          (>
+                                            (opt-bce-counter-affine-magnitude
+                                              step)
+                                            0)
+                                          (> step 0))
                                         (=
                                           (opt-bce-mb-resolve
                                             body-blocks
@@ -81148,9 +81102,9 @@
 ;; The shape: a four-block loop whose two checks are `base + cursor + 1` and
 ;; `base + cursor + 2` over a step-3 cursor.
 ;;
-;; The recovery is `opt-bce-mb-derived-induction`, which is the multi-block
-;; twin of the one the single-block arm uses and also serves the pair path: a
-;; header phi split (preheader, latch) whose initializer is loop-invariant and
+;; The recovery is `opt-bce-mb-derived-induction`, which the single-block arm
+;; also runs (over its one block) and which serves the pair path: a header phi
+;; split (preheader, latch) whose initializer is loop-invariant and
 ;; whose back-edge value is `phi + <positive literal>`. Its
 ;; guard is `opt-bce-version-derived-family`, the SAME family builder both
 ;; passes' scaled and derived members flush through, so nothing about the
@@ -81172,8 +81126,8 @@
 ;;   member under another name, and that member is the pico-trip economics class
 ;;   the loop-level verdicts price (opt-bce-version-guard-conds' scale-1
 ;;   census); routing it here would spend a synthesized seed on it and bypass
-;;   that pricing. `opt-bce-mb-derived-induction` only reports positive steps,
-;;   so this admits steps of two and up.
+;;   that pricing. `opt-bce-mb-derived-induction` reports only positive steps
+;;   here, so this admits steps of two and up.
 ;;
 ;;   ADD ORDER ONLY. `base - derived + k` would need `base - d0` as its origin,
 ;;   a subtraction of two invariant values the seed synthesis has no form for --
@@ -81212,7 +81166,8 @@
                     latch
                     preheader
                     core
-                    inputs)
+                    inputs
+                    false)
                     [(OptBceDerivedInduction.No) (OptBceVarBaseStrided.No)]
                     [(OptBceDerivedInduction.Some d0 step)
                       (if (> (opt-bce-counter-affine-magnitude step) 1)
@@ -82675,7 +82630,8 @@
                                                       latch
                                                       preheader
                                                       core
-                                                      inputs)
+                                                      inputs
+                                                      false)
                                                       [(OptBceDerivedInduction.No)
                                                         (OptBceVersionGuardAcc.No)]
                                                       [(OptBceDerivedInduction.Some
@@ -82785,7 +82741,8 @@
                                   latch
                                   preheader
                                   id
-                                  inputs)
+                                  inputs
+                                  false)
                                   [(OptBceDerivedInduction.No)
                                     (opt-bce-mb-masked-guard
                                       all-blocks

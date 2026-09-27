@@ -442,28 +442,6 @@
             (set! (array-ref out word-index) (bit-or old-bits mask))
             (CompilerLiveI64Set out)))))))
 
-(define (compiler-live-set-remove [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
-  (if (< value 0)
-    set
-    (let
-      [word-index : i64 (compiler-live-set-word-index value)]
-      [capacity : i64 (compiler-live-set-word-count set)]
-      [mask : i64 (compiler-live-set-bit-mask value)]
-      (if (>= word-index capacity)
-        set
-        (let
-          [old-bits : i64 (compiler-live-set-word-at-bounded set word-index)]
-          (if (= (bit-and old-bits mask) 0)
-            set
-            (let
-              [out : (__tl_dyn-array i64)
-                (compiler-live-set-copy-with-capacity set capacity)]
-              (begin
-                (set!
-                  (array-ref out word-index)
-                  (bit-and old-bits (bit-xor mask -1)))
-                (compiler-live-set-from-words-trimmed out capacity)))))))))
-
 (define (compiler-live-set-union
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
@@ -918,38 +896,6 @@
           (set! index (+ index 1))))
       count)))
 
-(define (compiler-live-set-score-word-desc
-  [bits : i64]
-  [base : i64]
-  [bit : i64]
-  [acc : i64]) : i64
-  (if (< bit 0)
-    acc
-    (compiler-live-set-score-word-desc
-      bits
-      base
-      (- bit 1)
-      (if (= (bit-and bits (shl 1 bit)) 0)
-        acc
-        (+ (+ base (+ bit 1)) (* 17 acc))))))
-
-(define (compiler-live-set-score [set : (& set CompilerLiveI64Set)]) : i64
-  (let
-    [index : i64 (- (compiler-live-set-word-count set) 1)]
-    [score : i64 0]
-    (begin
-      (while (>= index 0)
-        (begin
-          (set!
-            score
-            (compiler-live-set-score-word-desc
-              (compiler-live-set-word-at-bounded set index)
-              (* index (compiler-live-set-word-bits))
-              (- (compiler-live-set-word-bits) 1)
-              score))
-          (set! index (- index 1))))
-      score)))
-
 (define (compiler-live-set-builder-insert!
   [words : (&mut words (__tl_dyn-array i64))]
   [value : i64]) : unit
@@ -974,40 +920,6 @@
     [words : (__tl_dyn-array i64) (compiler-live-set-builder a)]
     (begin
       (compiler-live-set-builder-insert! (&mut words) a)
-      (CompilerLiveI64Set words))))
-
-(define (compiler-live-set2 [a : i64] [b : i64]) : CompilerLiveI64Set
-  (let
-    [words : (__tl_dyn-array i64)
-      (compiler-live-set-builder (compiler-live-set-max a b))]
-    (begin
-      (compiler-live-set-builder-insert! (&mut words) a)
-      (compiler-live-set-builder-insert! (&mut words) b)
-      (CompilerLiveI64Set words))))
-
-(define (compiler-live-set3 [a : i64] [b : i64] [c : i64]) : CompilerLiveI64Set
-  (let
-    [words : (__tl_dyn-array i64)
-      (compiler-live-set-builder
-        (compiler-live-set-max (compiler-live-set-max a b) c))]
-    (begin
-      (compiler-live-set-builder-insert! (&mut words) a)
-      (compiler-live-set-builder-insert! (&mut words) b)
-      (compiler-live-set-builder-insert! (&mut words) c)
-      (CompilerLiveI64Set words))))
-
-(define (compiler-live-set4 [a : i64] [b : i64] [c : i64] [d : i64]) : CompilerLiveI64Set
-  (let
-    [words : (__tl_dyn-array i64)
-      (compiler-live-set-builder
-        (compiler-live-set-max
-          (compiler-live-set-max a b)
-          (compiler-live-set-max c d)))]
-    (begin
-      (compiler-live-set-builder-insert! (&mut words) a)
-      (compiler-live-set-builder-insert! (&mut words) b)
-      (compiler-live-set-builder-insert! (&mut words) c)
-      (compiler-live-set-builder-insert! (&mut words) d)
       (CompilerLiveI64Set words))))
 
 (define (compiler-live-label-set-contains?
@@ -1594,64 +1506,6 @@
     (if (< dst 0)
       (compiler-live-set-empty)
       (compiler-live-set1 dst))))
-
-(define (compiler-live-block-use-def-instrs
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [uses : CompilerLiveI64Set]
-  [defs : CompilerLiveI64Set]) : CompilerLiveUseDef
-  (let
-    [cursor : i64 index]
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    ;; Leading phis read in parallel (see compiler-live-leading-phi-count).
-    [phi-end : i64
-      (if (= index 0)
-        (compiler-live-leading-phi-count (compiler-live-shared-view instrs))
-        0)]
-    [out-uses : CompilerLiveI64Set uses]
-    [out-defs : CompilerLiveI64Set defs]
-    (begin
-      (while (< cursor count)
-        (let
-          [instr : ir.CompilerIrInstr
-            (ir.compiler-ir-instr-seq-ref instrs cursor)]
-          [instr-uses : CompilerLiveI64Set
-            (compiler-live-instr-uses (compiler-live-shared-view instr))]
-          [instr-defs : CompilerLiveI64Set
-            (if (< cursor phi-end)
-              (compiler-live-set-empty)
-              (compiler-live-instr-defs instr))]
-          (begin
-            (set!
-              out-uses
-              (compiler-live-set-union
-                out-uses
-                (compiler-live-set-minus
-                  instr-uses
-                  (compiler-live-shared-view out-defs))))
-            (set! out-defs (compiler-live-set-union out-defs instr-defs))
-            (when
-              (= (+ cursor 1) phi-end)
-              (let
-                [j : i64 0]
-                (while (< j phi-end)
-                  (begin
-                    (set!
-                      out-defs
-                      (compiler-live-set-union
-                        out-defs
-                        (compiler-live-instr-defs
-                          (ir.compiler-ir-instr-seq-ref instrs j))))
-                    (set! j (+ j 1))))))
-            (set! cursor (+ cursor 1)))))
-      (CompilerLiveUseDef out-uses out-defs))))
-
-(define (compiler-live-block-use-def [instrs : ir.CompilerIrInstrSeq]) : CompilerLiveUseDef
-  (compiler-live-block-use-def-instrs
-    instrs
-    0
-    (compiler-live-set-empty)
-    (compiler-live-set-empty)))
 
 ;; Id form of compiler-live-block-use-def-step!: `uses |= instr-uses & ~defs`
 ;; and `defs |= instr-defs`, applied one bit at a time.
@@ -2633,9 +2487,6 @@
             (compiler-live-array-element-shared-view blocks index))
           CompilerLiveMaybeBlock.No))]))
 
-(define (compiler-live-block-uses [block : CompilerLiveBlock]) : CompilerLiveI64Set
-  block.uses)
-
 (define (compiler-live-block-defs [block : CompilerLiveBlock]) : CompilerLiveI64Set
   block.defs)
 
@@ -2644,9 +2495,6 @@
 
 (define (compiler-live-block-live-out [block : CompilerLiveBlock]) : CompilerLiveI64Set
   block.live-out)
-
-(define (compiler-live-block-successor-labels [block : CompilerLiveBlock]) : CompilerLiveLabelSet
-  block.successors)
 
 (define (compiler-live-block-instr-after [block : CompilerLiveBlock]) : CompilerLiveInstrSetVec
   block.instr-after)

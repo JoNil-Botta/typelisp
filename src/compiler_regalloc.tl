@@ -20,7 +20,6 @@
 (import compiler_abi as cabi)
 (import compiler_liveness as live)
 (import compiler_ir_types as ir)
-(import compiler_parallel_move as pmove)
 (import compiler_owned_view as owned_view)
 (import compiler_profile_state as profile_state)
 (import compiler_diagnostic as cdiag)
@@ -331,24 +330,6 @@
       compiler-reg-liveness-census-baseline-metric
       (+ compiler-reg-liveness-census-edge-precise-metric 1))
     unit))
-
-(define (compiler-reg-liveness-census-baseline-count
-  [_metrics : profile_state.CompilerProfileMetrics]) : i64
-  (cfg
-    test
-    (profile_state.compiler-profile-metrics-value
-      _metrics
-      compiler-reg-liveness-census-baseline-metric)
-    0))
-
-(define (compiler-reg-liveness-census-edge-precise-count
-  [_metrics : profile_state.CompilerProfileMetrics]) : i64
-  (cfg
-    test
-    (profile_state.compiler-profile-metrics-value
-      _metrics
-      compiler-reg-liveness-census-edge-precise-metric)
-    0))
 
 (define (compiler-reg-instr-seq-has-phi?
   [instrs : ir.CompilerIrInstrSeq]
@@ -1322,21 +1303,6 @@
       (set! out (compiler-reg-id-seq-push out cabi.compiler-reg-id-rbp))
       out)))
 
-;; Conservative caller-saved extension for the scalar opt2 pass. These registers
-;; are caller-saved on both SysV and Win64, are not callee-saved registers that
-;; would need prologue/epilogue save/restore, and are used only for intervals
-;; that do not span a modeled backend caller-clobber point. This legacy helper is
-;; intentionally the three-register subset; the unified greedy pool owns
-;; %r10/%r11/%r8 behind the same clobber filter.
-(define (compiler-reg-zero-call-caller-saved-integer-registers) : CompilerRegIdSeq
-  (let
-    [out : CompilerRegIdSeq (compiler-reg-id-seq-with-capacity 3)]
-    (begin
-      (set! out (compiler-reg-id-seq-push out cabi.compiler-reg-id-r9))
-      (set! out (compiler-reg-id-seq-push out cabi.compiler-reg-id-rcx))
-      (set! out (compiler-reg-id-seq-push out cabi.compiler-reg-id-rdx))
-      out)))
-
 (define (compiler-reg-caller-saved-integer-registers-from-abi
   [target-abi : cabi.CompilerRegTargetAbi]
   [idx : i64]) : CompilerRegIdSeq
@@ -1380,21 +1346,6 @@
               (cabi.compiler-abi-callee-saved-gp-register-id target-abi index)))
           (set! index (+ index 1))))
       out)))
-
-(define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegIdSeq
-  (compiler-reg-caller-saved-integer-registers-from-abi
-    cabi.CompilerRegTargetAbi.Linux
-    0))
-
-(define (compiler-reg-sysv-callee-saved-integer-registers) : CompilerRegIdSeq
-  (compiler-reg-callee-saved-integer-registers-from-abi
-    cabi.CompilerRegTargetAbi.Linux
-    0))
-
-(define (compiler-reg-win64-caller-saved-integer-registers) : CompilerRegIdSeq
-  (compiler-reg-caller-saved-integer-registers-from-abi
-    cabi.CompilerRegTargetAbi.Windows
-    0))
 
 (define (compiler-reg-win64-callee-saved-integer-registers) : CompilerRegIdSeq
   (compiler-reg-callee-saved-integer-registers-from-abi
@@ -1640,70 +1591,6 @@
               (cabi.compiler-abi-mask-register-id index)))
           (set! index (+ index 1))))
       out)))
-
-(define (compiler-reg-caller-saved-xmm-registers-from-abi
-  [target-abi : cabi.CompilerRegTargetAbi]
-  [idx : i64]) : CompilerRegIdSeq
-  (let
-    [count : i64 (cabi.compiler-abi-caller-saved-xmm-register-count target-abi)]
-    [index : i64 idx]
-    [out : CompilerRegIdSeq
-      (compiler-reg-id-seq-with-capacity
-        (if (< idx count)
-          (- count idx)
-          0))]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (compiler-reg-id-seq-push
-              out
-              (cabi.compiler-abi-caller-saved-xmm-register-id target-abi index)))
-          (set! index (+ index 1))))
-      out)))
-
-(define (compiler-reg-callee-saved-xmm-registers-from-abi
-  [target-abi : cabi.CompilerRegTargetAbi]
-  [idx : i64]) : CompilerRegIdSeq
-  (let
-    [count : i64 (cabi.compiler-abi-callee-saved-xmm-register-count target-abi)]
-    [index : i64 idx]
-    [out : CompilerRegIdSeq
-      (compiler-reg-id-seq-with-capacity
-        (if (< idx count)
-          (- count idx)
-          0))]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (compiler-reg-id-seq-push
-              out
-              (cabi.compiler-abi-callee-saved-xmm-register-id target-abi index)))
-          (set! index (+ index 1))))
-      out)))
-
-(define (compiler-reg-sysv-caller-saved-xmm-registers) : CompilerRegIdSeq
-  (compiler-reg-caller-saved-xmm-registers-from-abi
-    cabi.CompilerRegTargetAbi.Linux
-    0))
-
-(define (compiler-reg-sysv-callee-saved-xmm-registers) : CompilerRegIdSeq
-  (compiler-reg-callee-saved-xmm-registers-from-abi
-    cabi.CompilerRegTargetAbi.Linux
-    0))
-
-(define (compiler-reg-win64-caller-saved-xmm-registers) : CompilerRegIdSeq
-  (compiler-reg-caller-saved-xmm-registers-from-abi
-    cabi.CompilerRegTargetAbi.Windows
-    0))
-
-(define (compiler-reg-win64-callee-saved-xmm-registers) : CompilerRegIdSeq
-  (compiler-reg-callee-saved-xmm-registers-from-abi
-    cabi.CompilerRegTargetAbi.Windows
-    0))
 
 (define (compiler-reg-id-seq-contains? [regs : CompilerRegIdSeq] [want : i64]) : bool
   (let
@@ -2076,70 +1963,6 @@
 
 (define (compiler-reg-move-list-empty? [moves : (& moves CompilerRegMoveSeq)]) : bool
   (= moves.len 0))
-
-(define (compiler-reg-move-parallel-resource [var : i64]) : i64
-  (+ var 1))
-
-(define (compiler-reg-move-parallel-id [src : i64] [dst : i64]) : i64
-  (+ (* (+ src 1) 1000000) (+ dst 1)))
-
-(define (compiler-reg-move-parallel-edge [move : CompilerRegMove]) : pmove.CompilerParallelMoveEdge
-  (pmove.ParallelMoveEdge
-    (compiler-reg-move-parallel-id move.src move.dst)
-    (compiler-reg-move-parallel-resource move.dst)
-    0
-    (compiler-reg-move-parallel-resource move.src)
-    0))
-
-(define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveSeq]) : pmove.CompilerParallelMoveEdgeSeq
-  (let
-    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
-    [count : i64 moves.len]
-    [index : i64 (- count 1)]
-    [edges : pmove.CompilerParallelMoveEdgeSeq
-      (pmove.compiler-parallel-move-edge-seq-with-capacity count)]
-    (begin
-      ;; The former loop consed each ascending move onto the head. Walk the
-      ;; dense source backward so decision order remains newest-first.
-      (while (>= index 0)
-        (begin
-          (pmove.compiler-parallel-move-edge-push!
-            (&mut edges)
-            (compiler-reg-move-parallel-edge (array-ref slots index)))
-          (set! index (- index 1))))
-      edges)))
-
-(define (compiler-reg-move-list-parallel-decision [moves : CompilerRegMoveSeq]) : pmove.CompilerParallelMoveDecision
-  (let
-    [edges : pmove.CompilerParallelMoveEdgeSeq
-      (compiler-reg-move-list-parallel-edges moves)]
-    (pmove.compiler-parallel-move-decision
-      (compiler-reg-global-shared-view edges)
-      edges)))
-
-(define (compiler-reg-move-list-parallel-decision-ok?) : bool
-  (let
-    [chain : CompilerRegMoveSeq
-      (compiler-reg-move-seq-push
-        (compiler-reg-move-seq-push
-          (compiler-reg-move-seq-empty)
-          (CompilerRegMove 1 2 false))
-        (CompilerRegMove 0 1 false))]
-    [cycle : CompilerRegMoveSeq
-      (compiler-reg-move-seq-push
-        (compiler-reg-move-seq-push
-          (compiler-reg-move-seq-empty)
-          (CompilerRegMove 1 0 false))
-        (CompilerRegMove 0 1 false))]
-    (and
-      (match (compiler-reg-move-list-parallel-decision chain)
-        [(pmove.CompilerParallelMoveUnblocked id)
-          (= id (compiler-reg-move-parallel-id 1 2))]
-        [_ false])
-      (match (compiler-reg-move-list-parallel-decision cycle)
-        [(pmove.CompilerParallelMoveCycle id)
-          (= id (compiler-reg-move-parallel-id 0 1))]
-        [_ false]))))
 
 ;; Marks the NEWEST undirected match (the head of the former cons list) strict.
 (define (compiler-reg-move-list-mark-strict
@@ -3051,21 +2874,6 @@
           eligible
           prefer-rhs)
         strict-pairs)]))
-
-(define (compiler-reg-function-moves-with-destructive-and-casts
-  [func : ir.CompilerIrFunction]
-  [strict-pairs : bool]) : CompilerRegMoveSeq
-  (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ vars _ _)
-      (let
-        [eligible : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        (begin
-          (compiler-reg-fill-i64-array (&mut eligible) 1)
-          (compiler-reg-function-moves-with-destructive-and-casts-eligible
-            (compiler-reg-global-shared-view func)
-            strict-pairs
-            eligible
-            (compiler-reg-function-alu-prefer-rhs func))))]))
 
 (define (compiler-reg-move-list-filter-storage-identity
   [moves : CompilerRegMoveSeq]
@@ -5549,11 +5357,6 @@
             (compiler-reg-global-shared-view mask))
           mask))]))
 
-(define (compiler-reg-function-phi-touched-safe
-  [func : ir.CompilerIrFunction]
-  [liveness : live.CompilerFunctionLiveness]) : (__tl_dyn-array i64)
-  (compiler-reg-function-phi-touched-safe-mode func liveness true))
-
 ;; Hybrid segments: EP segments for phi-touched vars, conservative otherwise.
 (define (compiler-reg-hybrid-coalesce-index
   [cons-index : CompilerRegIntervalIndex]
@@ -7052,105 +6855,6 @@
               (set! i (+ i 1))))
           out))]))
 
-(define (compiler-reg-call-live-instr-seq
-  [instrs : ir.CompilerIrInstrSeq]
-  [liveness : live.CompilerFunctionLiveness]
-  [label : i64]
-  [start-index : i64]
-  [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [instr-index : i64 start-index]
-    [out : live.CompilerLiveI64Set set]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (match (array-ref slots index)
-              [(ir.CompilerIrInstr.Call _ _ _ _)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(ir.CompilerIrInstr.SpmdCall payload-box)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(ir.CompilerIrInstr.TailCall _ _ _)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [_ out]))
-          (set! instr-index (+ instr-index 1))
-          (set! index (+ index 1))))
-      out)))
-
-(define (compiler-reg-call-live-blocks
-  [blocks : ir.CompilerIrBlockList]
-  [liveness : live.CompilerFunctionLiveness]
-  [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (compiler-reg-call-live-blocks
-            (deref rest)
-            (compiler-reg-global-shared-view liveness)
-            (compiler-reg-call-live-instr-seq instrs liveness label 0 set))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [out : live.CompilerLiveI64Set set]
-        (begin
-          (while (< i count)
-            (begin
-              (match (ir.compiler-ir-block-seq-ref seq i)
-                [(ir.CompilerIrBlock.Block label instrs)
-                  (set!
-                    out
-                    (compiler-reg-call-live-instr-seq
-                      instrs
-                      (compiler-reg-global-shared-view liveness)
-                      label
-                      0
-                      out))])
-              (set! i (+ i 1))))
-          out))]))
-
 (define (compiler-reg-call-arg-vars-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
@@ -8458,34 +8162,6 @@
           (set! at (+ at 1))))
       conflict)))
 
-;; First register not in conflict with `var` over its live segments
-;; (CompilerRegMaybeId.No if every register is occupied by an interfering value).
-(define (compiler-reg-first-free-register-holes
-  [regs : CompilerRegIdSeq]
-  [active : CompilerRegActiveSeq]
-  [index : CompilerRegIntervalIndex]
-  [var : i64]
-  [hole-aware-vars : live.CompilerLiveI64Set]) : CompilerRegMaybeId
-  (let
-    [at : i64 0]
-    [result : CompilerRegMaybeId (CompilerRegMaybeId.No)]
-    [done : bool false]
-    (begin
-      (while (and (< at (compiler-reg-id-seq-count regs)) (not done))
-        (let
-          [reg : i64 (compiler-reg-id-seq-ref regs at)]
-          (if (compiler-reg-active-register-conflicts?
-            active
-            reg
-            index
-            var
-            hole-aware-vars)
-            (set! at (+ at 1))
-            (begin
-              (set! result (CompilerRegMaybeId.Some reg))
-              (set! done true)))))
-      result)))
-
 (define (compiler-reg-assignment-table-override-copy
   [assignments : CompilerRegAssignmentTable]
   [var : i64]
@@ -8658,79 +8334,6 @@
     (<= (array-ref starts var) hi)
     (<= lo (array-ref ends var))))
 
-(define (compiler-reg-assignment-table-register-free-at-point?
-  [starts : (__tl_dyn-array i64)]
-  [ends : (__tl_dyn-array i64)]
-  [assignment-index : CompilerRegAssignmentTable]
-  [vars : i64]
-  [point : i64]
-  [reg : i64]) : bool
-  (let
-    [v : i64 0]
-    [free : bool true]
-    (begin
-      (while (and (< v vars) free)
-        (begin
-          (if (and
-            (compiler-reg-var-live-at-point? starts ends v point)
-            (compiler-reg-assignment-table-var-uses-register?
-              assignment-index
-              v
-              reg))
-            (set! free false)
-            unit)
-          (set! v (+ v 1))))
-      free)))
-
-(define (compiler-reg-assignment-table-register-free-over-range?
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]
-  [assignment-index : CompilerRegAssignmentTable]
-  [vars : i64]
-  [lo : i64]
-  [hi : i64]
-  [reg : i64]) : bool
-  (let
-    [v : i64 0]
-    [free : bool true]
-    (begin
-      (while (and (< v vars) free)
-        (begin
-          (if (and
-            (compiler-reg-var-live-over-range? starts ends v lo hi)
-            (compiler-reg-assignment-table-var-uses-register?
-              assignment-index
-              v
-              reg))
-            (set! free false)
-            unit)
-          (set! v (+ v 1))))
-      free)))
-
-(define (compiler-reg-interval-lookup
-  [intervals : CompilerRegIntervalSeq]
-  [var : i64]) : CompilerRegMaybeInterval
-  (let
-    [index : i64 0]
-    [result : CompilerRegMaybeInterval CompilerRegMaybeInterval.No]
-    [done : bool false]
-    (begin
-      (while (and
-        (< index (compiler-reg-interval-seq-count intervals))
-        (not done))
-        (let
-          [interval : CompilerRegInterval
-            (compiler-reg-interval-seq-ref intervals index)]
-          [id : i64 interval.var]
-          (cond
-            [(= id var)
-              (begin
-                (set! result (CompilerRegMaybeInterval.Some interval))
-                (set! done true))]
-            [(> id var) (set! done true)]
-            [else (set! index (+ index 1))])))
-      result)))
-
 (define (compiler-reg-interval-overlap?
   [left : CompilerRegInterval]
   [right : CompilerRegInterval]) : bool
@@ -8815,16 +8418,6 @@
               (set! right-index (+ right-index 1))]
             [else (set! overlap true)])))
       overlap)))
-
-(define (compiler-reg-interval-range?
-  [intervals : CompilerRegIntervalSeq]
-  [var : i64]
-  [start : i64]
-  [end : i64]) : bool
-  (match (compiler-reg-interval-lookup intervals var)
-    [(CompilerRegMaybeInterval.Some interval)
-      (and (= interval.start start) (= interval.end end))]
-    [(CompilerRegMaybeInterval.No) false]))
 
 (define (compiler-reg-vars-interfere-index?
   [intervals : (& intervals CompilerRegIntervalIndex)]
@@ -8929,19 +8522,6 @@
         [(CompilerRegMaybeType.No) false])]
     [(CompilerRegMaybeType.No) false]))
 
-(define (compiler-reg-location-conflicts?
-  [assignments : CompilerRegAssignmentTable]
-  [intervals : (& intervals CompilerRegIntervalIndex)]
-  [var : i64]
-  [ignore-var : i64]
-  [location : CompilerRegLocation]) : bool
-  (compiler-reg-assignment-table-location-conflicts?
-    assignments
-    intervals
-    var
-    ignore-var
-    location))
-
 (define (compiler-reg-assignment-table-location-conflicts-from?
   [assignments : CompilerRegAssignmentTable]
   [intervals : (& intervals CompilerRegIntervalIndex)]
@@ -8994,65 +8574,6 @@
   [ignore-var : i64]
   [location : CompilerRegLocation]) : bool
   (compiler-reg-assignment-table-location-conflicts-from?
-    assignments
-    intervals
-    var
-    ignore-var
-    location
-    0))
-
-(define (compiler-reg-assignment-table-location-conflicts-segmented-from?
-  [assignments : CompilerRegAssignmentTable]
-  [intervals : (& intervals CompilerRegIntervalIndex)]
-  [var : i64]
-  [ignore-var : i64]
-  [location : CompilerRegLocation]
-  [index : i64]) : bool
-  (let
-    [present : (__tl_dyn-array i64)
-      (compiler-reg-assignment-table-present assignments)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (compiler-reg-assignment-table-items assignments)]
-    (cond
-      [(>= index (array-length present)) false]
-      [(= (compiler-reg-global-array-element-shared-view present index) 0)
-        (compiler-reg-assignment-table-location-conflicts-segmented-from?
-          assignments
-          intervals
-          var
-          ignore-var
-          location
-          (+ index 1))]
-      [(or (= index var) (= index ignore-var))
-        (compiler-reg-assignment-table-location-conflicts-segmented-from?
-          assignments
-          intervals
-          var
-          ignore-var
-          location
-          (+ index 1))]
-      [(and
-          (compiler-reg-location-overlaps?
-            (compiler-reg-global-array-element-shared-view items index)
-            (compiler-reg-global-shared-view location))
-          (compiler-reg-vars-interfere-segmented-index? intervals var index))
-        true]
-      [else
-        (compiler-reg-assignment-table-location-conflicts-segmented-from?
-          assignments
-          intervals
-          var
-          ignore-var
-          location
-          (+ index 1))])))
-
-(define (compiler-reg-assignment-table-location-conflicts-segmented?
-  [assignments : CompilerRegAssignmentTable]
-  [intervals : (& intervals CompilerRegIntervalIndex)]
-  [var : i64]
-  [ignore-var : i64]
-  [location : CompilerRegLocation]) : bool
-  (compiler-reg-assignment-table-location-conflicts-segmented-from?
     assignments
     intervals
     var
@@ -9365,12 +8886,6 @@
             eligible
             (&mut parents))
           parents))]))
-
-(define (compiler-reg-function-same-value-parents
-  [func : ir.CompilerIrFunction]) : (__tl_dyn-array i64)
-  (compiler-reg-function-same-value-parents-filtered
-    func
-    (__tl_make-array i64 0)))
 
 (define (compiler-reg-same-value-eligible-vars
   [interval-index : (& interval-index CompilerRegIntervalIndex)]
@@ -10337,69 +9852,6 @@
           sv-parents)
         (CompilerRegCoalesceMap parents)))))
 
-(define (compiler-reg-coalesce-location-from-class-from
-  [coalesce : (& coalesce CompilerRegCoalesceMap)]
-  [assignments : CompilerRegAssignmentTable]
-  [intervals : CompilerRegIntervalIndex]
-  [var : i64]
-  [root : i64]
-  [index : i64]) : CompilerRegMaybeLocation
-  (let
-    [parents : (__tl_dyn-array i64) coalesce.parents]
-    (cond
-      [(>= index (array-length parents)) CompilerRegMaybeLocation.No]
-      [(or (= index var) (not (= (array-ref parents index) root)))
-        (compiler-reg-coalesce-location-from-class-from
-          coalesce
-          assignments
-          intervals
-          var
-          root
-          (+ index 1))]
-      [else
-        (match (compiler-reg-assignment-table-lookup assignments index)
-          [(CompilerRegMaybeLocation.Some location)
-            (if (compiler-reg-assignment-table-location-conflicts-segmented?
-              assignments
-              intervals
-              var
-              index
-              (compiler-reg-global-shared-view location))
-              (compiler-reg-coalesce-location-from-class-from
-                coalesce
-                assignments
-                intervals
-                var
-                root
-                (+ index 1))
-              (CompilerRegMaybeLocation.Some location))]
-          [(CompilerRegMaybeLocation.No)
-            (compiler-reg-coalesce-location-from-class-from
-              coalesce
-              assignments
-              intervals
-              var
-              root
-              (+ index 1))])])))
-
-(define (compiler-reg-coalesce-location
-  [coalesce : CompilerRegCoalesceMap]
-  [assignments : CompilerRegAssignmentTable]
-  [intervals : CompilerRegIntervalIndex]
-  [var : i64]) : CompilerRegMaybeLocation
-  (let
-    [parents : (__tl_dyn-array i64) coalesce.parents]
-    [root : i64 (compiler-reg-coalesce-map-root-from-parents parents var)]
-    (if (< root 0)
-      CompilerRegMaybeLocation.No
-      (compiler-reg-coalesce-location-from-class-from
-        coalesce
-        assignments
-        intervals
-        var
-        root
-        0))))
-
 (define (compiler-reg-assignment-count
   [assignments : CompilerRegAssignmentTable]) : i64
   (let
@@ -10413,25 +9865,6 @@
           (if (= (array-ref present index) 0)
             unit
             (set! count (+ count 1)))
-          (set! index (+ index 1))))
-      count)))
-
-(define (compiler-reg-spill-count [assignments : CompilerRegAssignmentTable]) : i64
-  (let
-    [present : (__tl_dyn-array i64)
-      (compiler-reg-assignment-table-present assignments)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (compiler-reg-assignment-table-items assignments)]
-    [index : i64 0]
-    [count : i64 0]
-    (begin
-      (while (< index (array-length present))
-        (begin
-          (if (= (array-ref present index) 0)
-            unit
-            (match (array-ref items index)
-              [(CompilerRegLocation.Spill _) (set! count (+ count 1))]
-              [_ unit]))
           (set! index (+ index 1))))
       count)))
 
@@ -11046,40 +10479,6 @@
         (compiler-reg-clobber-binop-shift? op rhs ty))]
     [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
 
-;; Every instruction except allocation, bounds checks, CPU queries, calls,
-;; jumps and phis.
-(define (compiler-reg-backend-win64-extra-clobber-instr?
-  [instr : ir.CompilerIrInstr]) : bool
-  (match instr
-    [(ir.CompilerIrInstr.Alloc _ _) false]
-    [(ir.CompilerIrInstr.BoundsCheck _ _ _) false]
-    [(ir.CompilerIrInstr.CpuId _ _ _ _) false]
-    [(ir.CompilerIrInstr.Xgetbv _ _) false]
-    [(ir.CompilerIrInstr.Syscall _ _) false]
-    [(ir.CompilerIrInstr.Call _ _ _ _) false]
-    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) false]
-    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) false]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult _) false]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) false]
-    [(ir.CompilerIrInstr.SpmdCall _) false]
-    [(ir.CompilerIrInstr.TailCall _ _ _) false]
-    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) false]
-    [(ir.CompilerIrInstr.Jump _) false]
-    [(ir.CompilerIrInstr.Phi _ _ _) false]
-    [_ true]))
-
-(define (compiler-reg-backend-caller-clobber-instr-for-abi?
-  [target-abi : cabi.CompilerRegTargetAbi]
-  [instr : ir.CompilerIrInstr]) : bool
-  (match target-abi
-    [(cabi.CompilerRegTargetAbi.Linux)
-      (compiler-reg-backend-caller-clobber-instr? instr)]
-    [(cabi.CompilerRegTargetAbi.Windows)
-      (or
-        (compiler-reg-backend-caller-clobber-instr?
-          (compiler-reg-global-shared-view instr))
-        (compiler-reg-backend-win64-extra-clobber-instr? instr))]))
-
 ;; Per-register clobber model (15c). The merged caller-clobber set above is too
 ;; coarse for the greedy: it treats a div/shift exactly like a call (all
 ;; caller-saved unavailable across it). But idiv clobbers only rax:rdx, and a variable shift only rcx, so a value CAN cross a
@@ -11368,30 +10767,6 @@
                 (compiler-reg-call-word-range-mask low-bit high-bit))
               0)))))))
 
-(cfg
-  test
-  (define (compiler-reg-call-word-count-in-range
-    [bits : i64]
-    [var-base : i64]
-    [start : i64]
-    [end : i64]) : i64
-    (if (= bits 0)
-      0
-      (let
-        [i : i64 (compiler-reg-low-bit-index32 bits)]
-        [c : i64 (+ var-base i)]
-        [rest : i64
-          (compiler-reg-call-word-count-in-range
-            (bit-and bits (- bits 1))
-            var-base
-            start
-            end)]
-        (if (if (< start c)
-          (< c end)
-          false)
-          (+ 1 rest)
-          rest)))))
-
 (define (compiler-reg-call-set-in-range-words?
   [set : (& set live.CompilerLiveI64Set)]
   [start : i64]
@@ -11519,74 +10894,6 @@
               unit))
           (set! index (+ index 1))))
       hit)))
-
-(define (compiler-reg-direct-call-points-seq
-  [instrs : ir.CompilerIrInstrSeq]
-  [point : i64]
-  [set : live.CompilerLiveI64Set]) : CompilerRegCallScan
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [p : i64 point]
-    [out : live.CompilerLiveI64Set set]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (match (array-ref slots index)
-              [(ir.CompilerIrInstr.Call _ _ _ _)
-                (live.compiler-live-set-insert out p)]
-              [(ir.CompilerIrInstr.SpmdCall payload-box)
-                (live.compiler-live-set-insert out p)]
-              [_ out]))
-          (set! p (+ p 2))
-          (set! index (+ index 1))))
-      (CompilerRegCallScan.Scan p out))))
-
-(define (compiler-reg-direct-call-points-blocks
-  [blocks : ir.CompilerIrBlockList]
-  [point : i64]
-  [set : live.CompilerLiveI64Set]) : CompilerRegCallScan
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (match (compiler-reg-direct-call-points-seq instrs point set)
-            [(CompilerRegCallScan.Scan p2 s2)
-              (compiler-reg-direct-call-points-blocks (deref rest) p2 s2)])])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [out-point : i64 point]
-        [out-set : live.CompilerLiveI64Set set]
-        (begin
-          (while (< i count)
-            (begin
-              (match (ir.compiler-ir-block-seq-ref seq i)
-                [(ir.CompilerIrBlock.Block _ instrs)
-                  (match (compiler-reg-direct-call-points-seq
-                    instrs
-                    out-point
-                    (compiler-reg-global-shared-view out-set))
-                    [(CompilerRegCallScan.Scan p2 s2)
-                      (begin
-                        (set! out-point p2)
-                        (set! out-set s2))])])
-              (set! i (+ i 1))))
-          (CompilerRegCallScan.Scan out-point out-set)))]))
-
-(define (compiler-reg-direct-call-points [func : ir.CompilerIrFunction]) : live.CompilerLiveI64Set
-  (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-      (match (compiler-reg-direct-call-points-blocks
-        blocks
-        0
-        (live.compiler-live-set-empty))
-        [(CompilerRegCallScan.Scan _ set) set])]))
 
 (define (compiler-reg-loop-depth-max) : i64
   8)
@@ -12982,11 +12289,6 @@
   [weight : i64]) : unit
   (compiler-reg-ref-counts-add-set-words-weighted! counts set 0 weight))
 
-(define (compiler-reg-ref-counts-add-instr!
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [instr : ir.CompilerIrInstr]) : unit
-  (compiler-reg-ref-counts-add-instr-weighted! counts instr 1))
-
 (define (compiler-reg-ref-counts-add-instr-weighted!
   [counts : (&mut counts (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]
@@ -13015,20 +12317,6 @@
           (ir.compiler-ir-instr-dst instr)
           weight)))))
 
-(define (compiler-reg-ref-counts-seq!
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [instrs : ir.CompilerIrInstrSeq]) : unit
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (compiler-reg-ref-counts-add-instr!
-          counts
-          (compiler-reg-global-array-element-shared-view slots index))
-        (set! index (+ index 1))))))
-
 (define (compiler-reg-ref-counts-seq-weighted!
   [counts : (&mut counts (__tl_dyn-array i64))]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -13044,28 +12332,6 @@
           (compiler-reg-global-array-element-shared-view slots index)
           weight)
         (set! index (+ index 1))))))
-
-(define (compiler-reg-ref-counts-blocks!
-  [counts : (__tl_dyn-array i64)]
-  [blocks : ir.CompilerIrBlockList]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-ref-counts-seq! (&mut counts) instrs)])
-        (compiler-reg-ref-counts-blocks! counts (deref rest)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
-          (begin
-            (match (ir.compiler-ir-block-seq-ref seq i)
-              [(ir.CompilerIrBlock.Block _ instrs)
-                (compiler-reg-ref-counts-seq! (&mut counts) instrs)])
-            (set! i (+ i 1)))))]))
 
 ;; Boolean "does this variable appear in the IR at all?" walk.
 ;;
@@ -14711,58 +13977,6 @@
       (compiler-reg-foldable-rebate-add-value! rebates length weight)]
     [_ unit]))
 
-(define (compiler-reg-foldable-rebate-seq!
-  [rebates : (&mut rebates (__tl_dyn-array i64))]
-  [instrs : ir.CompilerIrInstrSeq]
-  [weight : i64]) : unit
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (compiler-reg-foldable-rebate-add-instr!
-          rebates
-          (compiler-reg-global-array-element-shared-view slots index)
-          weight)
-        (set! index (+ index 1))))))
-
-(define (compiler-reg-foldable-rebate-blocks!
-  [rebates : (&mut rebates (__tl_dyn-array i64))]
-  [blocks : ir.CompilerIrBlockList]
-  [weights : (__tl_dyn-array i64)]
-  [block-index : i64]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-foldable-rebate-seq!
-              rebates
-              instrs
-              (array-ref weights block-index))])
-        (compiler-reg-foldable-rebate-blocks!
-          rebates
-          (deref rest)
-          weights
-          (+ block-index 1)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [index : i64 block-index]
-        (while (< i count)
-          (begin
-            (match (ir.compiler-ir-block-seq-ref seq i)
-              [(ir.CompilerIrBlock.Block _ instrs)
-                (compiler-reg-foldable-rebate-seq!
-                  rebates
-                  instrs
-                  (array-ref weights index))])
-            (set! index (+ index 1))
-            (set! i (+ i 1)))))]))
-
 ;; Subtract the accumulated rebates. A var the ladder never scored keeps its
 ;; zero, so the "does this variable appear at all" consumers see no change.
 (define (compiler-reg-apply-foldable-rebates!
@@ -14783,16 +13997,6 @@
               (- (array-ref weights var) (array-ref rebates var))))
           unit)
         (set! var (+ var 1))))))
-
-(define (compiler-reg-function-foldable-rebates
-  [blocks : ir.CompilerIrBlockList]
-  [weights : (__tl_dyn-array i64)]
-  [vars : i64]) : (__tl_dyn-array i64)
-  (let
-    [rebates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    (begin
-      (compiler-reg-foldable-rebate-blocks! (&mut rebates) blocks weights 0)
-      rebates)))
 
 (define (compiler-reg-function-spill-weights [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
@@ -14861,28 +14065,6 @@
 (define (compiler-reg-edge-copy-list-count
   [copies : (& copies CompilerRegEdgeCopySeq)]) : i64
   copies.len)
-
-(define (compiler-reg-label-seq-contains?
-  [labels : CompilerRegLabelSeq]
-  [want : i64]) : bool
-  (let
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (< index (compiler-reg-label-seq-count labels)) (not found))
-        (begin
-          (if (= (compiler-reg-label-seq-ref labels index) want)
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
-
-(define (compiler-reg-region-label?
-  [region : (& region reg_label_i64_map.Map)]
-  [label : i64]) : bool
-  (match (reg_label_i64_map.get (& region) label)
-    [(reg_label_i64_map.LookupFound _) true]
-    [(reg_label_i64_map.LookupMissing) false]))
 
 (define (compiler-reg-edge-copy-live-block-label
   [block : (& block live.CompilerLiveBlock)]) : i64
@@ -15087,9 +14269,8 @@
             (set! b (+ b 1)))))
       (CompilerRegEdgeCopyPlan.Plan acc))))
 
-;; Region membership by block index: the index the label map resolves each
-;; region label to, exactly the block `compiler-reg-region-label?` would have
-;; answered for through that label.
+;; Region membership by block index: marks the block the liveness label index
+;; resolves each region label to.
 (define (compiler-reg-edge-copy-region-marks
   [liveness : live.CompilerFunctionLiveness]
   [count : i64]
@@ -15124,21 +14305,6 @@
     region-var
     ty
     (live.compiler-live-set-empty)))
-
-(define (compiler-reg-edge-copy-plan-for-region-members
-  [func : ir.CompilerIrFunction]
-  [region-labels : CompilerRegLabelSeq]
-  [stack-var : i64]
-  [region-var : i64]
-  [ty : ast.AstType]
-  [members : live.CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
-  (compiler-reg-edge-copy-plan-for-region-members-with-liveness
-    (live.compiler-live-analyze-function func)
-    region-labels
-    stack-var
-    region-var
-    ty
-    members))
 
 (define (compiler-reg-edge-copy-plan-for-region-members-with-liveness
   [liveness : live.CompilerFunctionLiveness]
@@ -17499,14 +16665,6 @@
                             (ir.CompilerIrBlockSeq out count))
                           function-abi)
                         vars))))))]))]))
-
-(define (compiler-reg-cold-call-rewrite-function
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : CompilerRegColdCallRewrite
-  (compiler-reg-cold-call-rewrite-function-with-representations
-    type-segment-bases
-    func
-    (ir.compiler-ir-representation-index-empty)))
 
 ;; ---------------------------------------------------------------------------
 ;; P3/P7 -- call-hole live-range splitting for call-spanning values.
@@ -25800,35 +24958,6 @@
                         regions
                         evictions))))])))))))
 
-(cfg
-  test
-  (define (compiler-reg-call-set-count-in-range-words
-    [set : live.CompilerLiveI64Set]
-    [start : i64]
-    [end : i64]
-    [word-index : i64]) : i64
-    (if (>= word-index (live.compiler-live-set-word-count set))
-      0
-      (+
-        (compiler-reg-call-word-count-in-range
-          (live.compiler-live-set-word-at-bounded set word-index)
-          (* word-index (live.compiler-live-set-word-bits))
-          start
-          end)
-        (compiler-reg-call-set-count-in-range-words
-          set
-          start
-          end
-          (+ word-index 1))))))
-
-(cfg
-  test
-  (define (compiler-reg-call-set-count-in-range
-    [set : live.CompilerLiveI64Set]
-    [start : i64]
-    [end : i64]) : i64
-    (compiler-reg-call-set-count-in-range-words set start end 0)))
-
 ;; Mark every var that is a member of `member-set` AND whose live interval
 ;; spans a call point as ineligible. Used by the SIMD planner to keep
 ;; call-spanning MASK values out of registers: opmask registers have no
@@ -26071,9 +25200,6 @@
 (define (compiler-reg-suppress-program-maps! [on : bool]) : unit
   (set! compiler-reg-program-maps-suppressed? on))
 
-(define (compiler-reg-program-maps-suppressed-current?) : bool
-  compiler-reg-program-maps-suppressed?)
-
 (define (compiler-reg-clear-c-memory-call-names!) : unit
   (set! compiler-reg-c-memory-call-names (reg_i64_i64_map.with-capacity 8)))
 
@@ -26147,58 +25273,6 @@
     [(ast.AstType.Slice _) true]
     [_ false]))
 
-;; Backend-private SysV MEMORY transport values retain a nominal Struct name
-;; carrying `__tl_internal_abi_mem_s<SIZE>__...`.  Regalloc only needs a
-;; conservative prefix/shape test to reserve staging scratch; the backend's
-;; bounded decoder is authoritative for the actual byte count.
-(define (compiler-reg-private-memory-name? [name : String]) : bool
-  (let
-    [prefix : String "__tl_internal_abi_mem_s"]
-    [prefix-len : i64 (string.string-length prefix)]
-    [n : i64 (string.string-length name)]
-    [i : i64 prefix-len]
-    [digits : i64 0]
-    [delimiter? : bool false]
-    [valid : bool
-      (and
-        (>= n prefix-len)
-        (string.eq (string.substring name 0 prefix-len) prefix))]
-    (begin
-      (while (and valid (< i n))
-        (let
-          [digit : i64 (cast (string.string-ref name i) : i64)]
-          (if (and (>= digit 48) (<= digit 57))
-            (begin
-              (set! digits (+ digits 1))
-              (set! i (+ i 1)))
-            (if (and
-              (= (cast (string.string-ref name i) : i64) 95)
-              (< (+ i 1) n)
-              (= (cast (string.string-ref name (+ i 1)) : i64) 95))
-              (begin
-                (set! delimiter? true)
-                (set! i n))
-              (set! valid false)))))
-      (and valid (> digits 0) delimiter?))))
-
-(define (compiler-reg-private-memory-type?
-  [type-segment-bases : i64]
-  [ty : ast.AstType]) : bool
-  (match ty
-    [(ast.AstType.Struct name)
-      (and
-        (ir.compiler-ir-symbol-owned? name)
-        (compiler-reg-private-memory-name? (ir.compiler-ir-symbol-text name)))]
-    [(ast.AstType.StructArgs name _)
-      (and
-        (ir.compiler-ir-symbol-owned? name)
-        (compiler-reg-private-memory-name? (ir.compiler-ir-symbol-text name)))]
-    [(ast.AstType.Region _ inner)
-      (compiler-reg-private-memory-type?
-        type-segment-bases
-        (ast.ast-type-segment-bases-get type-segment-bases inner))]
-    [_ false]))
-
 ;; True when a var's type is a >=2-word register-group per the program map.
 (define (compiler-reg-type-register-group?
   [type-segment-bases : i64]
@@ -26241,38 +25315,6 @@
         ty)
         [(ir.CompilerIrRepresentationKind.RegisterGroup _ mask) (> mask 0)]
         [_ false])]))
-
-(define (compiler-reg-type-register-group-word-sse?
-  [type-segment-bases : i64]
-  [representations : ir.CompilerIrRepresentationIndex]
-  [ty : ast.AstType]
-  [word-index : i64]) : bool
-  (match (compiler-reg-global-shared-view ty)
-    [(ast.AstType.Ref _ _) false]
-    [(ast.AstType.MutRef _ _) false]
-    [(ast.AstType.Region _ inner)
-      (compiler-reg-type-register-group-word-sse?
-        type-segment-bases
-        representations
-        (ast.ast-type-segment-bases-get type-segment-bases inner)
-        word-index)]
-    [_
-      (if (or (< word-index 0) (> word-index 1))
-        false
-        (match (ir.compiler-ir-representation-index-kind
-          type-segment-bases
-          representations
-          ty)
-          [(ir.CompilerIrRepresentationKind.RegisterGroup _ mask)
-            (not
-              (=
-                (bit-and
-                  mask
-                  (if (= word-index 0)
-                    1
-                    2))
-                0))]
-          [_ false]))]))
 
 (define (compiler-reg-var-register-group-has-sse?
   [type-segment-bases : i64]
@@ -32473,39 +31515,6 @@
     representations
     metrics))
 
-(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations
-  [type-segment-bases : i64]
-  [target-abi : cabi.CompilerRegTargetAbi]
-  [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
-  (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
-    type-segment-bases
-    target-abi
-    func
-    representations
-    (compiler-reg-profile-metrics-new)))
-
-(define (compiler-reg-plan-function-with-type-segment-bases-for-abi
-  [type-segment-bases : i64]
-  [target-abi : cabi.CompilerRegTargetAbi]
-  [func : ir.CompilerIrFunction]) : CompilerRegPlan
-  (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations
-    type-segment-bases
-    target-abi
-    func
-    (ir.compiler-ir-representation-index-empty)))
-
-(define (compiler-reg-plan-function-for-abi
-  [target-abi : cabi.CompilerRegTargetAbi]
-  [func : ir.CompilerIrFunction]) : CompilerRegPlan
-  (compiler-reg-plan-function-with-type-segment-bases-for-abi
-    (ast.ast-node-pool-reader-type-segment-bases)
-    target-abi
-    func))
-
-(define (compiler-reg-plan-function [func : ir.CompilerIrFunction]) : CompilerRegPlan
-  (compiler-reg-plan-function-for-abi cabi.CompilerRegTargetAbi.Linux func))
-
 (define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -32565,36 +31574,6 @@
     func
     representations
     metrics))
-
-(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations
-  [type-segment-bases : i64]
-  [target-abi : cabi.CompilerRegTargetAbi]
-  [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
-  (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics
-    type-segment-bases
-    target-abi
-    func
-    representations
-    (compiler-reg-profile-metrics-new)))
-
-(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi
-  [type-segment-bases : i64]
-  [target-abi : cabi.CompilerRegTargetAbi]
-  [func : ir.CompilerIrFunction]) : CompilerRegPlan
-  (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations
-    type-segment-bases
-    target-abi
-    func
-    (ir.compiler-ir-representation-index-empty)))
-
-(define (compiler-reg-plan-function-avx2-for-abi
-  [target-abi : cabi.CompilerRegTargetAbi]
-  [func : ir.CompilerIrFunction]) : CompilerRegPlan
-  (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi
-    (ast.ast-node-pool-reader-type-segment-bases)
-    target-abi
-    func))
 
 (define (compiler-reg-scalar-full-intervals?
   [func : (& func ir.CompilerIrFunction)]) : bool
@@ -33134,35 +32113,6 @@
   (compiler-reg-plan-function-scalar-for-abi
     cabi.CompilerRegTargetAbi.Linux
     func))
-
-;; The cold-call carrier is the ABI boundary: it must never be colored into a
-;; register or rematerialized, because the real call is deliberately absent
-;; from the GP clobber mask.  Missing assignments are the backend's ordinary
-;; stack-home representation and are therefore valid here.
-(cfg
-  test
-  (define (compiler-reg-cold-call-carriers-stack?
-    [plan : CompilerRegPlan]
-    [temp-start : i64]
-    [vars : i64]) : bool
-    (if (< temp-start 0)
-      true
-      (match plan
-        [(CompilerRegPlan.Plan assignments _ _ _ _ _)
-          (let
-            [v : i64 temp-start]
-            [ok : bool (< temp-start vars)]
-            (begin
-              (while (and ok (< v vars))
-                (begin
-                  (match (compiler-reg-assignment-lookup assignments v)
-                    [(CompilerRegMaybeLocation.No) unit]
-                    [(CompilerRegMaybeLocation.Some location)
-                      (match location
-                        [(CompilerRegLocation.Spill _) unit]
-                        [_ (set! ok false)])])
-                  (set! v (+ v 1))))
-              ok))]))))
 
 (define (compiler-reg-plan-function-stack-only-with-representations-and-metrics
   [func : ir.CompilerIrFunction]
@@ -37150,26 +36100,6 @@
         (CompilerRegColoring.Remap
           remap
           (compiler-reg-max slot-count param-floor))))))
-
-(define (compiler-reg-color-stack-slots
-  [type-segment-bases : i64]
-  [plan : CompilerRegPlan]
-  [group-vars : live.CompilerLiveI64Set]
-  [params : ir.CompilerIrParamSeq]
-  [blocks : ir.CompilerIrBlockList]
-  [vars : i64]
-  [slot-candidate-vars : i64]
-  [identity-pinned : live.CompilerLiveI64Set]) : CompilerRegColoring
-  (compiler-reg-color-stack-slots-with-stack-only
-    type-segment-bases
-    plan
-    group-vars
-    params
-    blocks
-    vars
-    slot-candidate-vars
-    identity-pinned
-    false))
 
 ;; --- var-id remap application ----------------------------------------------
 ;; The backend computes stack slots from variable ids at many emission sites,

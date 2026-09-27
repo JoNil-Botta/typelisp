@@ -1,0 +1,919 @@
+# Public build/run of the freshly bootstrapped compiler: source and package
+# builds, the root package (the compiler itself), package graphs, git
+# dependencies, the package cache and lock, scaffolding, run, REPL and the
+# work-queue chooser (gate stage2-cli-build-run-and-chooser-smoke).
+do none
+target -
+opt -
+
+file wide-and.tl
+(define (unconstrained-default) : i32
+  (let
+    [x (+ 1 2)]
+    x))
+
+(define (contextual-i64) : i64
+  (let
+    [x : i64 1]
+    x))
+
+(define (explicit-wide-cast) : i64
+  (cast (cast 0x100000000 : u64) : i64))
+
+(define (main) : i64
+  (if (and
+    (= (unconstrained-default) 3)
+    (= (contextual-i64) 1)
+    (= (explicit-wide-cast) 4294967296))
+    42
+    1))
+end-file
+
+case selfhost-cli-compile
+file main.tl
+(define (main) : i64 23)
+end-file
+run compile "{{dir}}/main.tl" -o "{{dir}}/main.s"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/main.s
+contains main:
+
+case selfhost-cli-build
+file main.tl
+(define (main) : i64 19)
+end-file
+run build "{{dir}}/main.tl" -o "{{dir}}/built-program{{exe}}"
+stderr empty
+stdout match Built[ ]
+test -f "{{dir}}/built-program{{exe}}"
+step built-program
+exec "{{dir}}/built-program{{exe}}"
+exit 19
+stdout empty
+stderr empty
+
+case selfhost-cli-default-wide-and
+step selfhost-cli-build-default-wide-and
+run build "{{work}}/wide-and.tl" -o "{{dir}}/wide-and{{exe}}" --target {{host-target}}
+stderr empty
+stdout match Built[ ]
+test -f "{{dir}}/wide-and{{exe}}"
+exec "{{dir}}/wide-and{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step selfhost-cli-run-default-wide-and
+run run "{{work}}/wide-and.tl" --target {{host-target}}
+exit 42
+stdout empty
+stderr empty
+
+# Generated target predicates survive package preparation, lowering and
+# direct-object/assembly emission (#7812). The root package build derives the
+# checked-in source identity itself: the shared bootstrap stamp is poisoned.
+case selfhost-cli-package
+file pkg/typelisp.pkg
+(package
+  (name "cli_pkg_smoke")
+  (version "0.1.0")
+  (kind bin))
+end-file
+file pkg/src/main.tl
+(defmacro (target-module) : Module
+  (let [head : Expr (expr-var "cfg")]
+    `(begin
+      (module generated.package_cfg)
+      (,head linux (define (answer) : i64 29))
+      (,head windows (define (answer) : i64 29))
+      (,head (all linux windows) (import nonexistent_package_cfg_dependency)))))
+(import (target-module) as selected)
+(define (main) : i64 (selected.answer))
+end-file
+cwd pkg
+step selfhost-cli-package-build
+run build --target {{host-target}} --opt-level 0
+stderr empty
+stdout match Built[ ]
+test -f "{{dir}}/pkg/target/release/cli_pkg_smoke{{exe}}"
+step package-program
+exec "{{dir}}/pkg/target/release/cli_pkg_smoke{{exe}}"
+exit 29
+stdout empty
+stderr empty
+sh rm -rf "{{dir}}/pkg/target"
+step selfhost-cli-package-run-default
+run run --target {{host-target}} --opt-level 0
+exit 29
+stdout empty
+stderr empty
+test -f "{{dir}}/pkg/target/release/cli_pkg_smoke{{exe}}"
+sh rm -rf "{{dir}}/pkg/target"
+step selfhost-cli-package-build-dev
+run build --target {{host-target}} --profile dev
+stderr empty
+stdout match Built[ ]
+test -f "{{dir}}/pkg/target/dev/cli_pkg_smoke{{exe}}"
+sh CCV_head=$(git -C "{{root}}" rev-parse HEAD | tr -d '\r\n')
+sh rm -rf "{{root}}/target/release" && mkdir -p "{{root}}/target/build-stage0"
+sh printf '%s' 0000000000000000000000000000000000000000 > "{{root}}/target/build-stage0/git-hash.txt"
+step selfhost-cli-root-package-build
+cwd {{root}}
+run build --target {{host-target}} --opt-level 0
+stderr empty
+stdout match Built[ ]
+test -f "{{root}}/target/release/typelisp{{exe}}"
+in file {{root}}/target/build-stage0/git-hash.txt
+contains {{head}}
+not-contains 0000000000000000000000000000000000000000
+cwd -
+step selfhost-cli-root-package-help
+exec "{{root}}/target/release/typelisp{{exe}}" --help
+stdout empty
+in stderr
+contains Usage:
+contains Synopsis:
+contains Commands:
+contains typelisp build          Build a source file or package artifact
+contains typelisp explain        Explain a diagnostic code
+contains typelisp inspect        Inspect a TypeLisp comptime image
+contains Run `typelisp <command> --help` for command-specific usage.
+step selfhost-cli-root-package-version
+exec "{{root}}/target/release/typelisp{{exe}}" --version
+stderr empty
+stdout match typelisp[ ]
+stdout match [ ]built[ ]
+stdout not-contains typelisp unknown
+step selfhost-cli-root-package-producer-identity
+exec "{{root}}/target/release/typelisp{{exe}}" --producer-identity
+stderr empty
+stdout contains {{head}}
+stdout not-contains unknown
+step selfhost-cli-root-package-build-help
+exec "{{root}}/target/release/typelisp{{exe}}" build --help
+stdout empty
+in stderr
+contains Summary:
+contains typelisp build [--manifest-path <typelisp.pkg>]
+contains --locked
+contains --update-lock
+sh rm -rf "{{dir}}/pkg/target"
+step selfhost-cli-root-package-downstream-run
+cwd pkg
+exec "{{root}}/target/release/typelisp{{exe}}" run --target {{host-target}} --opt-level 0
+exit 29
+stdout empty
+stderr empty
+cwd -
+# A library package cannot declare normal dependencies: the parent archive is
+# not built and the child is not resolved.
+file libdep/root/typelisp.pkg
+(package
+  (name "library_dependency_path_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (layer "../layer")))
+end-file
+file libdep/root/src/main.tl
+(define (main) : i64 0)
+end-file
+file libdep/layer/typelisp.pkg
+(package
+  (name "path_layer")
+  (version "0.1.0")
+  (kind staticlib)
+  (dependencies
+    (runtime "../runtime")))
+end-file
+file libdep/layer/src/lib.tl
+(define (layer-answer) : i64 42)
+end-file
+file libdep/runtime/typelisp.pkg
+(package
+  (name "path_runtime")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file libdep/runtime/src/lib.tl
+(define (runtime-answer) : i64 42)
+end-file
+step selfhost-cli-package-library-dependency-path
+exec "{{root}}/target/release/typelisp{{exe}}" build --manifest-path "{{dir}}/libdep/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stdout empty
+stderr contains library package `path_layer` cannot declare normal dependency `runtime`
+stderr contains declare `runtime` directly in the consuming application
+stderr contains use `link` for native libraries
+test ! -d "{{dir}}/libdep/layer/target"
+test ! -d "{{dir}}/libdep/runtime/target"
+
+# A prefetched git dependency checkout builds without the network.
+case selfhost-cli-package-graph-github-prefetch
+file root/typelisp.pkg
+(package
+  (name "github_prefetch_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "abc123")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.remote-answer))
+end-file
+file root/target/typelisp/git-deps/remote/typelisp.pkg
+(package
+  (name "github_prefetch_remote")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file root/target/typelisp/git-deps/remote/src/lib.tl
+(define (remote-answer) : i64 43)
+end-file
+run build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+stdout contains Built {{native-dir}}/root/target/typelisp/git-deps/remote/target/release/{{lib-prefix}}github_prefetch_remote{{lib-suffix}}
+stdout contains Built {{native-dir}}/root/target/release/github_prefetch_root{{exe}}
+step package-graph-github-prefetch-program
+exec "{{dir}}/root/target/release/github_prefetch_root{{exe}}"
+exit 43
+stdout empty
+stderr empty
+
+# The package cache: a first fetch fills it, an offline rebuild hits it, a
+# cache entry is confined to its locked checkout, and a corrupt entry is
+# preserved and refetched. The git remote is local, through insteadOf.
+case selfhost-cli-package-graph-github-cache
+file remote/typelisp.pkg
+(package
+  (name "gc_remote")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file remote/src/lib.tl
+(define (remote-answer) : i64 47)
+end-file
+sh git -C "{{dir}}/remote" init -q && git -C "{{dir}}/remote" add typelisp.pkg src/lib.tl
+sh git -C "{{dir}}/remote" -c user.email=typelisp@example.invalid -c user.name=typelisp commit -q -m "seed cache smoke remote"
+sh CCV_rev=$(git -C "{{dir}}/remote" rev-parse HEAD)
+file -x root/typelisp.pkg
+(package
+  (name "gc_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "a/b" (rev "{{rev}}")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.remote-answer))
+end-file
+file -x gitconfig
+[url "{{dir}}/remote"]
+    insteadOf = https://github.com/a/b.git
+end-file
+sh CCV_gitconfig=$(cc_native_path "{{dir}}/gitconfig")
+step selfhost-cli-package-graph-github-cache-first
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+stdout contains Built {{native-dir}}/root/target/release/gc_root{{exe}}
+sh CCV_entry=$(find "{{dir}}/root/target/typelisp/cache/packages/v1/git" -name typelisp.pkg -print | head -n 1)
+test -n "{{entry}}"
+sh CCV_entry=${CCV_entry%/typelisp.pkg}
+test -f "{{entry}}/.typelisp-cache-complete"
+in file {{entry}}/typelisp-cache-entry.txt
+contains url=https://github.com/a/b.git
+contains commit={{rev}}
+test -f "{{dir}}/root/typelisp.lock"
+in file {{dir}}/root/typelisp.lock
+contains (typelisp-lock
+contains (alias "remote")
+contains (url "https://github.com/a/b.git")
+contains (pin (rev "{{rev}}"))
+contains (commit "{{rev}}")
+sh mv "{{dir}}/remote" "{{dir}}/remote.offline"
+step selfhost-cli-package-graph-github-cache-hit
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+stdout contains Fresh {{native-dir}}/root/target/release/gc_root{{exe}}
+sh mv "{{entry}}" "{{entry}}.saved" && cp -R "{{entry}}.saved" "{{entry}}.manifest-outside"
+sh echo outside-manifest-sentinel-was-read > "{{entry}}.manifest-outside/typelisp.pkg"
+sh cc_dir_link "{{entry}}" "{{entry}}.manifest-outside"
+step selfhost-cli-package-graph-github-cache-root-confined
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
+exit 1
+stdout empty
+stderr contains build: fetched package `remote` field `manifest` path `typelisp.pkg` is not confined to locked checkout `
+stderr not-contains outside-manifest-sentinel-was-read
+sh cc_dir_unlink "{{entry}}" && mv "{{entry}}.saved" "{{entry}}" && rm -rf "{{entry}}.manifest-outside"
+sh mv "{{entry}}/src" "{{entry}}/src.saved" && mkdir -p "{{entry}}.outside"
+sh echo outside-sentinel-was-read > "{{entry}}.outside/lib.tl"
+sh cc_dir_link "{{entry}}/src" "{{entry}}.outside"
+step selfhost-cli-package-graph-github-cache-confined
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
+exit 1
+stdout empty
+stderr contains build: fetched package `gc_remote` field `entry` path `src/lib.tl` is not confined to locked checkout `
+stderr not-contains outside-sentinel-was-read
+sh cc_dir_unlink "{{entry}}/src" && mv "{{entry}}/src.saved" "{{entry}}/src" && rm -rf "{{entry}}.outside"
+sh mv "{{dir}}/remote.offline" "{{dir}}/remote"
+sh printf 'typelisp-package-cache-v1\nurl=%s\ncommit=stale\n' https://github.com/a/b.git > "{{entry}}/typelisp-cache-entry.txt"
+step selfhost-cli-package-graph-github-cache-refetch
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+stdout contains Fresh {{native-dir}}/root/target/release/gc_root{{exe}}
+test -d "{{entry}}.corrupt.1"
+in file {{entry}}/typelisp-cache-entry.txt
+contains commit={{rev}}
+step package-graph-github-cache-program
+exec "{{dir}}/root/target/release/gc_root{{exe}}"
+exit 47
+stdout empty
+stderr empty
+
+# typelisp.lock: --locked needs an entry, the first build writes it, an
+# equivalent build keeps it byte- and mtime-identical, --locked replays it
+# offline, a moved pin is stale under --locked, failed transactions keep the
+# old lock, --update-lock moves it, and concurrent writers serialize.
+case selfhost-cli-package-graph-github-lock
+sh . "{{root}}/scripts/lib-package-lock-test-wait.sh"
+file remote/typelisp.pkg
+(package
+  (name "gl_remote")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file remote/src/lib.tl
+(define (remote-answer) : i64 51)
+end-file
+sh git -C "{{dir}}/remote" init -q && git -C "{{dir}}/remote" add typelisp.pkg src/lib.tl
+sh git -C "{{dir}}/remote" -c user.email=typelisp@example.invalid -c user.name=typelisp commit -q -m "seed lock smoke remote"
+sh git -C "{{dir}}/remote" branch -M main && CCV_rev1=$(git -C "{{dir}}/remote" rev-parse HEAD)
+file root/typelisp.pkg
+(package
+  (name "gl_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "l/b" (branch "main")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.remote-answer))
+end-file
+file -x gitconfig
+[url "{{dir}}/remote"]
+    insteadOf = https://github.com/l/b.git
+end-file
+sh CCV_gitconfig=$(cc_native_path "{{dir}}/gitconfig")
+step selfhost-cli-package-graph-github-lock-missing
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
+exit 1
+stdout empty
+stderr contains build: --locked requires typelisp.lock entry for remote dependency `remote`
+test ! -f "{{dir}}/root/typelisp.lock"
+step selfhost-cli-package-graph-github-lock-first
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+in file {{dir}}/root/typelisp.lock
+contains (pin (branch "main"))
+contains (commit "{{rev1}}")
+step package-graph-github-lock-first-program
+exec "{{dir}}/root/target/release/gl_root{{exe}}"
+exit 51
+stdout empty
+stderr empty
+file remote/src/lib.tl
+(define (remote-answer) : i64 52)
+end-file
+sh git -C "{{dir}}/remote" add src/lib.tl
+sh git -C "{{dir}}/remote" -c user.email=typelisp@example.invalid -c user.name=typelisp commit -q -m "move branch after lock"
+sh CCV_rev2=$(git -C "{{dir}}/remote" rev-parse HEAD) && rm -rf "{{dir}}/root/target/typelisp/git-deps"
+sh touch -r "{{dir}}/root/typelisp.lock" "{{dir}}/lock-before-replay.mtime" && sleep 2
+step selfhost-cli-package-graph-github-lock-replay
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+in file {{dir}}/root/typelisp.lock
+contains (commit "{{rev1}}")
+test ! "{{dir}}/root/typelisp.lock" -nt "{{dir}}/lock-before-replay.mtime"
+test ! "{{dir}}/lock-before-replay.mtime" -nt "{{dir}}/root/typelisp.lock"
+step package-graph-github-lock-replay-program
+exec "{{dir}}/root/target/release/gl_root{{exe}}"
+exit 51
+stdout empty
+stderr empty
+sh cp "{{dir}}/root/typelisp.lock" "{{dir}}/lock-before-locked" && mv "{{dir}}/remote" "{{dir}}/remote.offline"
+step selfhost-cli-package-graph-github-lock-locked
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
+sh mv "{{dir}}/remote.offline" "{{dir}}/remote"
+stderr empty
+same "{{dir}}/lock-before-locked" "{{dir}}/root/typelisp.lock"
+step package-graph-github-lock-locked-program
+exec "{{dir}}/root/target/release/gl_root{{exe}}"
+exit 51
+stdout empty
+stderr empty
+sh git -C "{{dir}}/remote" branch next "{{rev2}}"
+file root/typelisp.pkg
+(package
+  (name "gl_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "l/b" (branch "next")))))
+end-file
+sh rm -rf "{{dir}}/root/target/typelisp/git-deps" && cp "{{dir}}/root/typelisp.lock" "{{dir}}/lock-before-stale"
+step selfhost-cli-package-graph-github-lock-stale
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
+exit 1
+stdout empty
+stderr contains build: package lock entry for remote dependency `remote` is stale
+same "{{dir}}/lock-before-stale" "{{dir}}/root/typelisp.lock"
+sh rm -rf "{{dir}}/root/target/typelisp/git-deps"
+step package-graph-github-lock-fault-before-stage
+exec env TYPELISP_PACKAGE_LOCK_TEST_FAULT=before-stage GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock
+exit 1
+stdout empty
+stderr contains package-lock transaction before-stage failed
+same "{{dir}}/lock-before-stale" "{{dir}}/root/typelisp.lock"
+test -z "$(find "{{dir}}/root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)"
+step package-graph-github-lock-fault-during-stage
+exec env TYPELISP_PACKAGE_LOCK_TEST_FAULT=during-stage GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock
+exit 1
+stdout empty
+stderr contains package-lock transaction during-stage failed
+same "{{dir}}/lock-before-stale" "{{dir}}/root/typelisp.lock"
+test -z "$(find "{{dir}}/root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)"
+step package-graph-github-lock-fault-before-replace
+exec env TYPELISP_PACKAGE_LOCK_TEST_FAULT=before-replace GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock
+exit 1
+stdout empty
+stderr contains package-lock transaction before-replace failed
+same "{{dir}}/lock-before-stale" "{{dir}}/root/typelisp.lock"
+test -z "$(find "{{dir}}/root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)"
+step selfhost-cli-package-graph-github-lock-update
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock
+stderr empty
+in file {{dir}}/root/typelisp.lock
+contains (pin (branch "next"))
+contains (commit "{{rev2}}")
+step package-graph-github-lock-update-program
+exec "{{dir}}/root/target/release/gl_root{{exe}}"
+exit 52
+stdout empty
+stderr empty
+# Two equivalent --update-lock writers, one paused before taking the lock: a
+# concurrent --locked reader sees the old lock whole, and one canonical lock
+# wins.
+sh cp "{{dir}}/root/typelisp.lock" "{{dir}}/lock-rev2" && cp "{{dir}}/lock-before-stale" "{{dir}}/root/typelisp.lock"
+sh : > "{{dir}}/identical.release" && CCV_release=$(cc_native_path "{{dir}}/identical.release")
+sh TYPELISP_PACKAGE_LOCK_TEST_PAUSE=before-lock TYPELISP_PACKAGE_LOCK_TEST_RELEASE_FILE="{{release}}" GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock > "{{dir}}/package-lock-identical-first.out" 2> "{{dir}}/package-lock-identical-first.err" & CCV_first=$!
+sh WORKDIR="{{dir}}" wait_for_package_lock_stage "{{dir}}/root" "{{first}}" package-lock-identical-first
+sh cp "{{dir}}/root/typelisp.lock" "{{dir}}/concurrent-locked.before"
+step package-lock-concurrent-locked
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
+exit 1
+stdout empty
+stderr contains build: package lock entry for remote dependency `remote` is stale
+same "{{dir}}/concurrent-locked.before" "{{dir}}/root/typelisp.lock"
+sh GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock > "{{dir}}/package-lock-identical-second.out" 2> "{{dir}}/package-lock-identical-second.err" & CCV_second=$!
+sh WORKDIR="{{dir}}" wait_for_package_lock_text "{{dir}}/root/typelisp.lock" "{{rev2}}" "{{second}}" package-lock-identical-second
+sh rm -f "{{dir}}/identical.release"
+sh CCV_first_status=0 CCV_second_status=0; wait "{{first}}" || CCV_first_status=$?; wait "{{second}}" || CCV_second_status=$?
+step package-lock-identical
+test {{first_status}} -eq 0
+test {{second_status}} -eq 0
+in file {{dir}}/package-lock-identical-first.err
+empty
+in file {{dir}}/package-lock-identical-second.err
+empty
+same "{{dir}}/lock-rev2" "{{dir}}/root/typelisp.lock"
+# Conflicting writers: the branch moves and the manifest renames the
+# dependency while the first writer is paused; the first fails, the second wins.
+sh cp "{{dir}}/lock-before-stale" "{{dir}}/root/typelisp.lock" && git -C "{{dir}}/remote" branch -f next "{{rev2}}"
+sh : > "{{dir}}/conflict.release" && CCV_release=$(cc_native_path "{{dir}}/conflict.release")
+sh TYPELISP_PACKAGE_LOCK_TEST_PAUSE=before-lock TYPELISP_PACKAGE_LOCK_TEST_RELEASE_FILE="{{release}}" GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock > "{{dir}}/package-lock-conflict-first.out" 2> "{{dir}}/package-lock-conflict-first.err" & CCV_first=$!
+sh WORKDIR="{{dir}}" wait_for_package_lock_stage "{{dir}}/root" "{{first}}" package-lock-conflict-first
+file remote/src/lib.tl
+(define (remote-answer) : i64 53)
+end-file
+sh git -C "{{dir}}/remote" add src/lib.tl
+sh git -C "{{dir}}/remote" -c user.email=typelisp@example.invalid -c user.name=typelisp commit -q -m "move branch during competing lock update"
+sh CCV_rev3=$(git -C "{{dir}}/remote" rev-parse HEAD) && git -C "{{dir}}/remote" branch -f next "$CCV_rev3"
+file root/typelisp.pkg
+(package
+  (name "gl_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (other (github "l/b" (branch "next")))))
+end-file
+file root/src/main.tl
+(import other.src.lib as other)
+(define (main) : i64 (other.remote-answer))
+end-file
+sh GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --update-lock > "{{dir}}/package-lock-conflict-second.out" 2> "{{dir}}/package-lock-conflict-second.err" & CCV_second=$!
+sh WORKDIR="{{dir}}" wait_for_package_lock_text "{{dir}}/root/typelisp.lock" "{{rev3}}" "{{second}}" package-lock-conflict-second
+sh rm -f "{{dir}}/conflict.release"
+sh CCV_first_status=0 CCV_second_status=0; wait "{{first}}" || CCV_first_status=$?; wait "{{second}}" || CCV_second_status=$?
+step package-lock-conflict
+test {{first_status}} -eq 1
+test {{second_status}} -eq 0
+in file {{dir}}/package-lock-conflict-first.out
+empty
+in file {{dir}}/package-lock-conflict-second.err
+empty
+in file {{dir}}/package-lock-conflict-first.err
+contains lock changed since resolution; rerun against the current lock
+in file {{dir}}/root/typelisp.lock
+contains (commit "{{rev3}}")
+test -z "$(find "{{dir}}/root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)"
+
+# A shared dependency of two dependencies is built once.
+case selfhost-cli-package-graph-shallow
+file root/typelisp.pkg
+(package
+  (name "shallow_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (left "../left")
+    (right "../right")
+    (shared "../shared")))
+end-file
+file root/src/main.tl
+(import left.src.lib as left)
+(import right.src.lib as right)
+(import shared.src.lib as shared)
+(define (main) : i64
+  (+ (left.left-answer) (right.right-answer) (shared.shared-answer)))
+end-file
+file left/typelisp.pkg
+(package
+  (name "shallow_left")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file left/src/lib.tl
+(define (left-answer) : i64 10)
+end-file
+file right/typelisp.pkg
+(package
+  (name "shallow_right")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file right/src/lib.tl
+(define (right-answer) : i64 11)
+end-file
+file shared/typelisp.pkg
+(package
+  (name "shallow_shared")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file shared/src/lib.tl
+(define (shared-answer) : i64 21)
+end-file
+run build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+in stdout
+count-fixed = 1 Built {{native-dir}}/shared/target/release/{{lib-prefix}}shallow_shared{{lib-suffix}}
+contains Built {{native-dir}}/left/target/release/{{lib-prefix}}shallow_left{{lib-suffix}}
+contains Built {{native-dir}}/right/target/release/{{lib-prefix}}shallow_right{{lib-suffix}}
+contains Built {{native-dir}}/root/target/release/shallow_root{{exe}}
+step package-graph-shallow-program
+exec "{{dir}}/root/target/release/shallow_root{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
+case selfhost-cli-package-graph-failure
+file root/typelisp.pkg
+(package
+  (name "fail_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (good "../good")
+    (bad "../bad")))
+end-file
+file root/src/main.tl
+(import good.src.lib as good)
+(define (main) : i64 (good.good-answer))
+end-file
+file good/typelisp.pkg
+(package
+  (name "fail_good")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file good/src/lib.tl
+(define (good-answer) : i64 42)
+end-file
+file bad/typelisp.pkg
+(package
+  (name "fail_bad")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file bad/src/lib.tl
+(define (bad-answer) : i64 "bad")
+end-file
+run build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stderr contains typecheck:
+stderr contains build: package dependency `fail_bad` failed with status 1
+
+# A fetched library's normal dependency is refused after acquisition, before
+# resolution; its private lock does not take part in root resolution.
+case selfhost-cli-package-library-dependency-remote
+file remote/typelisp.pkg
+(package
+  (name "remote_layer")
+  (version "0.1.0")
+  (kind staticlib)
+  (dependencies
+    (runtime (github "f/r" (rev "must-not-resolve")))))
+end-file
+file remote/src/lib.tl
+(define (layer-answer) : i64 42)
+end-file
+file remote/typelisp.lock
+not-a-valid-lock
+end-file
+sh git -C "{{dir}}/remote" init -q && git -C "{{dir}}/remote" add typelisp.pkg typelisp.lock src/lib.tl
+sh git -C "{{dir}}/remote" -c user.email=typelisp@example.invalid -c user.name=typelisp commit -q -m "seed forbidden library dependency remote"
+sh CCV_rev=$(git -C "{{dir}}/remote" rev-parse HEAD)
+file -x root/typelisp.pkg
+(package
+  (name "remote_library_dependency_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (layer (github "f/l" (rev "{{rev}}")))))
+end-file
+file root/src/main.tl
+(define (main) : i64 0)
+end-file
+file -x gitconfig
+[url "{{dir}}/remote"]
+    insteadOf = https://github.com/f/l.git
+end-file
+sh CCV_gitconfig=$(cc_native_path "{{dir}}/gitconfig")
+exec env GIT_CONFIG_GLOBAL="{{gitconfig}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}}
+exit 1
+stdout empty
+stderr contains library package `remote_layer` cannot declare normal dependency `runtime`
+stderr contains declare `runtime` directly in the consuming application
+stderr not-contains not-a-valid-lock
+stderr not-contains must-not-resolve
+sh CCV_entry=$(find "{{dir}}/root/target/typelisp/cache/packages/v1/git" -name typelisp.pkg -print | head -n 1)
+test -n "{{entry}}"
+sh CCV_entry=${CCV_entry%/typelisp.pkg}
+test ! -d "{{entry}}/target"
+
+case selfhost-cli-package-graph-bad-kind
+file root/typelisp.pkg
+(package
+  (name "bad_kind_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (dep "../dep_bin")))
+end-file
+file root/src/main.tl
+(define (main) : i64 0)
+end-file
+file dep_bin/typelisp.pkg
+(package
+  (name "dep_bin")
+  (version "0.1.0")
+  (kind bin))
+end-file
+file dep_bin/src/main.tl
+(define (main) : i64 0)
+end-file
+run build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}}
+exit 1
+stdout empty
+stderr contains build: dependency `dep`
+stderr contains must be a staticlib package
+
+case selfhost-cli-staticlib-package
+file pkg/typelisp.pkg
+(package
+  (name "cli_staticlib_smoke")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file pkg/src/lib.tl
+(define (static-answer) : i64 42)
+end-file
+file override/typelisp.pkg
+(package
+  (name "cli_staticlib_override")
+  (version "0.1.0")
+  (kind "staticlib")
+  (entry "custom/entry.tl"))
+end-file
+file override/custom/entry.tl
+(define (override-answer) : i64 77)
+end-file
+step selfhost-cli-staticlib-package-build
+cwd pkg
+run build --target {{host-target}}
+stderr empty
+stdout match Built[ ]
+test -s "{{dir}}/pkg/target/release/{{lib-prefix}}cli_staticlib_smoke{{lib-suffix}}"
+step selfhost-cli-staticlib-entry-override
+cwd override
+run build --target {{host-target}}
+stderr empty
+stdout match Built[ ]
+test -s "{{dir}}/override/target/release/{{lib-prefix}}cli_staticlib_override{{lib-suffix}}"
+
+case selfhost-cli-scaffold
+cwd .
+step selfhost-cli-scaffold-new-bin
+run new cli_new_bin
+stderr empty
+stdout contains scaffold: created bin package cli_new_bin
+test -f "{{dir}}/cli_new_bin/typelisp.pkg"
+test -f "{{dir}}/cli_new_bin/src/main.tl"
+test -f "{{dir}}/cli_new_bin/.gitignore"
+in file {{dir}}/cli_new_bin/typelisp.pkg
+contains (kind "bin")
+contains (entry "src/main.tl")
+in file {{dir}}/cli_new_bin/.gitignore
+contains /target/
+in file {{dir}}/cli_new_bin/src/main.tl
+contains (io.print-format "{}" "Hello, TypeLisp!\n")
+contains (cfg test (import stdlib.test))
+contains (test
+contains answer-is-42
+step selfhost-cli-scaffold-new-bin-build
+cwd cli_new_bin
+run build --target {{host-target}} --opt-level 0
+stderr empty
+stdout match Built[ ]
+test -f "{{dir}}/cli_new_bin/target/release/cli_new_bin{{exe}}"
+step scaffold-new-bin-program
+exec "{{dir}}/cli_new_bin/target/release/cli_new_bin{{exe}}"
+stdout contains Hello, TypeLisp!
+stderr empty
+step scaffold-new-bin-test
+run test --check --target {{host-target}}
+stderr empty
+stdout contains 1 test(s)
+cwd .
+step selfhost-cli-scaffold-new-lib
+run new --lib cli_new_lib
+stderr empty
+stdout contains scaffold: created staticlib package cli_new_lib
+test -f "{{dir}}/cli_new_lib/typelisp.pkg"
+test -f "{{dir}}/cli_new_lib/src/lib.tl"
+test -f "{{dir}}/cli_new_lib/.gitignore"
+in file {{dir}}/cli_new_lib/typelisp.pkg
+contains (kind "staticlib")
+contains (entry "src/lib.tl")
+in file {{dir}}/cli_new_lib/.gitignore
+contains /target/
+in file {{dir}}/cli_new_lib/src/lib.tl
+contains (cfg test (import stdlib.test))
+contains (test
+contains answer-is-42
+step selfhost-cli-scaffold-new-lib-build
+cwd cli_new_lib
+run build --target {{host-target}}
+stderr empty
+stdout match Built[ ]
+test -s "{{dir}}/cli_new_lib/target/release/{{lib-prefix}}cli_new_lib{{lib-suffix}}"
+file init-bin/.gitignore
+/custom-cache/
+end-file
+step selfhost-cli-scaffold-init-bin
+cwd init-bin
+run init cli_init_bin
+stderr empty
+stdout contains scaffold: created bin package cli_init_bin
+test -f "{{dir}}/init-bin/typelisp.pkg"
+test -f "{{dir}}/init-bin/src/main.tl"
+test -f "{{dir}}/init-bin/.gitignore"
+in file {{dir}}/init-bin/.gitignore
+contains /custom-cache/
+not-contains /target/
+in file {{dir}}/init-bin/src/main.tl
+contains (io.print-format "{}" "Hello, TypeLisp!\n")
+contains (cfg test (import stdlib.test))
+contains answer-is-42
+step selfhost-cli-scaffold-init-clobber
+run init cli_init_bin
+exit 1
+stdout empty
+stderr contains scaffold: refusing to overwrite existing file: ./typelisp.pkg
+sh mkdir -p "{{dir}}/init-lib"
+step selfhost-cli-scaffold-init-lib
+cwd init-lib
+run init --lib cli_init_lib
+stderr empty
+stdout contains scaffold: created staticlib package cli_init_lib
+test -f "{{dir}}/init-lib/typelisp.pkg"
+test -f "{{dir}}/init-lib/src/lib.tl"
+test -f "{{dir}}/init-lib/.gitignore"
+in file {{dir}}/init-lib/typelisp.pkg
+contains (kind "staticlib")
+contains (entry "src/lib.tl")
+in file {{dir}}/init-lib/.gitignore
+contains /target/
+in file {{dir}}/init-lib/src/lib.tl
+contains (cfg test (import stdlib.test))
+contains (test
+contains answer-is-42
+
+case selfhost-cli-run
+file main.tl
+(import stdlib.io)
+(import stdlib.byte_buf)
+
+(define (fixture-cstr-len [p : (Ptr u8)]) : i64
+  (let
+    [n : i64 0]
+    (begin
+      (while (not (= (unsafe (ptr-read (ptr-offset p n))) (cast 0 : u8)))
+        (set! n (+ n 1)))
+      n)))
+(define (fixture-stdout-write [text : String]) : unit
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
+(define (fixture-arg [index : i64]) : String
+  (let
+    [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
+    [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv index)))]
+    (unsafe (string-from-bytes raw (fixture-cstr-len raw)))))
+(define (main) : i64
+  (begin
+    (fixture-stdout-write (fixture-arg 1))
+    17))
+end-file
+run run "{{dir}}/main.tl" -- run-arg-ok
+exit 17
+stderr empty
+stdout contains run-arg-ok
+
+# Windows still cannot spawn a REPL scratch executable while the REPL owns
+# redirected stdin, so Linux alone evaluates an expression.
+case selfhost-cli-repl
+file repl.in
+.help
+.type true
+end-file
+if-host linux
+sh echo '(+ 1 2)' >> "{{dir}}/repl.in"
+end-if
+sh echo .exit >> "{{dir}}/repl.in"
+step selfhost-cli-repl-{{host}}
+run repl < "{{dir}}/repl.in"
+stderr empty
+stdout contains TypeLisp REPL commands:
+stdout contains .type <expr>
+stdout contains bool
+if-host linux
+stdout contains 3
+end-if
+step selfhost-cli-repl-crlf
+sh printf '.help\r\n.exit\r\n' > "{{dir}}/repl-crlf.in"
+run repl < "{{dir}}/repl-crlf.in"
+stderr empty
+stdout contains TypeLisp REPL commands:
+step selfhost-cli-repl-bom-crlf
+sh printf '\357\273\277.help\r\n.exit\r\n' > "{{dir}}/repl-bom-crlf.in"
+run repl < "{{dir}}/repl-bom-crlf.in"
+stderr empty
+stdout contains TypeLisp REPL commands:
+step selfhost-cli-repl-args
+run repl unexpected
+exit 1
+stdout empty
+stderr contains Error: repl does not accept arguments
+
+case selfhost-cli-work-queue-chooser
+file chooser.json
+{"prs":[],"issues":[{"number":7,"title":"Fallback issue","labels":[]}]}
+end-file
+file claimed.expected
+wait: review claims; review-claimed: 1; recheck when PR labels, checks, draft/base state, or issue readiness change
+end-file
+step selfhost-cli-work-queue-chooser
+run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{dir}}/chooser.json"
+stderr empty
+stdout contains research/triage issue #7: Fallback issue
+step selfhost-cli-work-queue-claimed
+run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{root}}/tools/work-queue-chooser/fixtures/claimed-wait.json"
+stderr empty
+same "{{dir}}/claimed.expected" "{{stdout}}"
+step selfhost-cli-work-queue-invalid-labels
+run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{root}}/tools/work-queue-chooser/fixtures/malformed-labels.json"
+exit 1
+stdout empty
+stderr contains Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots

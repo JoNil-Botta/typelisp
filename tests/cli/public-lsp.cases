@@ -1,0 +1,33 @@
+# Public LSP and REPL smokes (gate stage2-public-tool-surface). The LSP and
+# REPL corpora in tests/public-tools/ run through run-corpus.sh.
+do none
+target -
+opt -
+
+# A rename computes the module move once; the validated Found or Missing value
+# flows into the workspace-edit builder, so a second call could drop a changed
+# filesystem error after validation.
+case rename-module-move-once
+in file src/lsp_frame_core.tl
+count = 2 \(lsp-rename-module-move([[:space:]]|$)
+count = 1 ^[[:space:]]*\(define \(lsp-rename-module-move[[:space:]]*$
+
+case lsp-init-shutdown
+sh b='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" > "{{dir}}/lsp.in"
+sh b='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/lsp.in"
+run lsp < "{{dir}}/lsp.in"
+stderr empty
+stdout contains "id":1
+stdout contains "capabilities"
+stdout contains "id":2
+
+# Linux runs REPL expressions in the corpus; this keeps one on Windows.
+case selfhost-repl-scratch-smoke
+hosts windows
+file repl.in
+(+ 1 2) ; trailing comment must not swallow generated wrapper delimiters
+.exit
+end-file
+run repl < "{{dir}}/repl.in"
+stdout contains 3
+stderr empty

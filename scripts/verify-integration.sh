@@ -1430,15 +1430,6 @@ assert_contains() {
     fi
 }
 
-assert_matches() {
-    _file=$1
-    _regex=$2
-    _label=$3
-    if ! grep -E "$_regex" "$_file" >/dev/null 2>&1; then
-        echo "FAIL: $_label missing regex: $_regex" >&2
-        exit 1
-    fi
-}
 
 assert_not_contains() {
     _file=$1
@@ -1907,34 +1898,6 @@ if [ "$SELF_TEST_PATH_NORMALIZATION" -eq 1 ]; then
     exit 0
 fi
 
-build_linux_fixture_driver() {
-    _label=$1
-    _source=$2
-    _bin=$3
-    _asm="$_bin.s"
-    _obj="$_bin.o"
-    _build_stdout="$_bin.build.stdout"
-    _build_stderr="$_bin.build.stderr"
-
-    run_build "$COMPILER" compile "$_source" --stdlib-root src -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
-    if [ "$build_rc" -ne 0 ]; then
-        echo "FAIL: $_label compile failed" >&2
-        show_build_streams "$_build_stdout" "$_build_stderr"
-        exit 1
-    fi
-    if ! as "$_asm" -o "$_obj" >> "$_build_stdout" 2>> "$_build_stderr"; then
-        echo "FAIL: $_label assemble failed" >&2
-        show_build_streams "$_build_stdout" "$_build_stderr"
-        exit 1
-    fi
-    if ! ld -static -e _tl_start "$_obj" -o "$_bin" \
-        >> "$_build_stdout" 2>> "$_build_stderr"; then
-        echo "FAIL: $_label link failed" >&2
-        show_build_streams "$_build_stdout" "$_build_stderr"
-        exit 1
-    fi
-}
-
 assert_program_fixture_result() {
     _fixture_label=$1
     _fixture_want=$2
@@ -1972,537 +1935,6 @@ assert_program_fixture_result() {
         show_stream_if_nonempty stderr "$_fixture_stderr"
         exit 1
     fi
-}
-
-run_linux_program_fixture() {
-    _label=$1
-    _source=$2
-    _want=$3
-    _opt_level=$4
-    _stdout_spec=${5:--}
-    # Space-separated runtime arguments, so a fixture whose shape has to stay
-    # opaque to constant folding can take its sizes from argv and still be run
-    # at more than one optimization level.
-    _run_args=${6:-}
-    _dir="$WORKDIR/$_label"
-    mkdir -p "$_dir"
-    _asm="$_dir/$_label.s"
-    _obj="$_dir/$_label.o"
-    _bin="$_dir/$_label"
-    _stdout="$_dir/$_label.stdout"
-    _stderr="$_dir/$_label.stderr"
-    _build_stdout="$_dir/$_label.build.stdout"
-    _build_stderr="$_dir/$_label.build.stderr"
-
-    echo "[$_label] compile --opt-level $_opt_level -> run"
-    run_build "$COMPILER" compile "$ROOT/$_source" \
-        --stdlib-root "$ROOT/src" \
-        --opt-level "$_opt_level" -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
-    if [ "$build_rc" -ne 0 ]; then
-        echo "FAIL: $_label compile failed" >&2
-        show_build_streams "$_build_stdout" "$_build_stderr"
-        exit 1
-    fi
-    if ! as "$_asm" -o "$_obj" >> "$_build_stdout" 2>> "$_build_stderr"; then
-        echo "FAIL: $_label assemble failed" >&2
-        show_build_streams "$_build_stdout" "$_build_stderr"
-        exit 1
-    fi
-    if ! ld -static -e "$(linux_entry_symbol_for_asm "$_asm")" "$_obj" -o "$_bin" \
-        >> "$_build_stdout" 2>> "$_build_stderr"; then
-        echo "FAIL: $_label link failed" >&2
-        show_build_streams "$_build_stdout" "$_build_stderr"
-        exit 1
-    fi
-    set +e
-    # Deliberately unquoted: the runner's own space-separated argument list.
-    # shellcheck disable=SC2086
-    "$_bin" $_run_args > "$_stdout" 2> "$_stderr"
-    _got=$?
-    set -e
-    assert_program_fixture_result \
-        "$_label" "$_want" "$_got" "$_stdout" "$_stderr" \
-        "$_stdout_spec" "$_dir"
-}
-
-run_linux_backtrace_fatal_value_fixture() {
-    _label=$1
-    _source=$2
-    _want=$3
-    _diagnostic=$4
-    _arg=${5:-}
-    _dir="$WORKDIR/$_label"
-    mkdir -p "$_dir"
-    _asm="$_dir/$_label.s"
-    _obj="$_dir/$_label.o"
-    _bin="$_dir/$_label"
-    _stderr="$_dir/$_label.stderr"
-
-    echo "[$_label] compile --backtrace -> preserve fatal values"
-    run_build "$COMPILER" compile "$_source" \
-        --backtrace --stdlib-root "$ROOT/src" --opt-level 0 -o "$_asm"
-    [ "$build_rc" -eq 0 ] || {
-        echo "FAIL: $_label compile failed" >&2
-        exit 1
-    }
-    as "$_asm" -o "$_obj"
-    ld -static -e "$(linux_entry_symbol_for_asm "$_asm")" "$_obj" -o "$_bin"
-    set +e
-    if [ -n "$_arg" ]; then
-        TYPELISP_BACKTRACE=full "$_bin" "$_arg" > /dev/null 2> "$_stderr"
-    else
-        TYPELISP_BACKTRACE=full "$_bin" > /dev/null 2> "$_stderr"
-    fi
-    _got=$?
-    set -e
-    [ "$_got" -eq "$_want" ] || {
-        echo "FAIL: $_label expected exit $_want, got $_got" >&2
-        exit 1
-    }
-    assert_contains "$_stderr" "$_diagnostic" "$_label diagnostic"
-    assert_contains "$_stderr" 'stack backtrace:' "$_label backtrace"
-}
-
-run_linux_fatal_backtrace_fixture() {
-    _label=fatal-backtrace-debug
-    _source=tests/integration/fatal_backtrace.tl
-    _dir="$WORKDIR/$_label"
-    mkdir -p "$_dir"
-    _asm="$_dir/$_label.s"
-    _obj="$_dir/$_label.o"
-    _bin="$_dir/$_label"
-    _stdout="$_dir/$_label.stdout"
-    _stderr="$_dir/$_label.stderr"
-    _off_stderr="$_dir/$_label.off.stderr"
-    _short_stderr="$_dir/$_label.short.stderr"
-    _remap_asm="$_dir/$_label.remap.s"
-    _spoof_asm="$_dir/$_label.spoof.s"
-    _opt2_asm="$_dir/$_label.opt2.s"
-    _opt2_obj="$_dir/$_label.opt2.o"
-    _opt2_bin="$_dir/$_label.opt2"
-    _opt2_stderr="$_dir/$_label.opt2.stderr"
-    _stripped_bin="$_dir/$_label.stripped"
-    _stripped_stderr="$_dir/$_label.stripped.stderr"
-    _corrupt_asm="$_dir/$_label.corrupt.s"
-    _corrupt_obj="$_dir/$_label.corrupt.o"
-    _corrupt_bin="$_dir/$_label.corrupt"
-    _corrupt_stderr="$_dir/$_label.corrupt.stderr"
-    _thread_asm="$_dir/$_label.thread.s"
-    _thread_obj="$_dir/$_label.thread.o"
-    _thread_bin="$_dir/$_label.thread"
-    _thread_stderr="$_dir/$_label.thread.stderr"
-    _crt_bin="$_dir/$_label.crt"
-    _crt_stderr="$_dir/$_label.crt.stderr"
-
-    echo "[$_label] compile --backtrace -> run mode matrix"
-    run_build "$COMPILER" compile "$_source" \
-        --backtrace --stdlib-root "$ROOT/src" --opt-level 0 -o "$_asm"
-    [ "$build_rc" -eq 0 ] || {
-        echo "FAIL: $_label compile failed" >&2
-        exit 1
-    }
-    assert_contains "$_asm" '.section .typelisp_backtrace,"a",@progbits' "$_label"
-    assert_contains "$_asm" 'tl_backtrace_string_data_begin:' "$_label"
-    assert_contains "$_asm" 'fatal_backtrace.tl::backtrace-leaf' "$_label"
-    assert_contains "$_asm" 'tl_backtrace_frame_pointer:' "$_label"
-    as "$_asm" -o "$_obj"
-    ld -static -e "$(linux_entry_symbol_for_asm "$_asm")" "$_obj" -o "$_bin"
-
-    set +e
-    TYPELISP_BACKTRACE=full "$_bin" > "$_stdout" 2> "$_stderr"
-    _got=$?
-    set -e
-    [ "$_got" -eq 134 ] || {
-        echo "FAIL: $_label full expected exit 134, got $_got" >&2
-        exit 1
-    }
-    assert_empty_file "$_stdout" "$_label full stdout"
-    assert_contains "$_stderr" 'stack backtrace:' "$_label full"
-    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-leaf at tests/integration/fatal_backtrace.tl:7:3' "$_label full"
-    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-recurse at tests/integration/fatal_backtrace.tl:12:3' "$_label full"
-    assert_contains "$_stderr" '[repeated 3 frames]' "$_label full"
-    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-middle at tests/integration/fatal_backtrace.tl:17:3' "$_label full"
-    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-outer at tests/integration/fatal_backtrace.tl:20:3' "$_label full"
-    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-cleanup at tests/integration/fatal_backtrace.tl:23:3' "$_label full"
-    assert_contains "$_stderr" 'main at tests/integration/fatal_backtrace.tl:28:3' "$_label full"
-    assert_matches "$_stderr" '<unknown> \(0x[1-9a-f][0-9a-f]*\)' "$_label full"
-    assert_not_contains "$_stderr" 'stdlib/runtime.tl::' "$_label full"
-
-    set +e
-    TYPELISP_BACKTRACE=off "$_bin" > /dev/null 2> "$_off_stderr"
-    _off_got=$?
-    TYPELISP_BACKTRACE=short "$_bin" > /dev/null 2> "$_short_stderr"
-    _short_got=$?
-    set -e
-    [ "$_off_got" -eq 134 ] && [ "$_short_got" -eq 134 ] || {
-        echo "FAIL: $_label mode matrix exits full=$_got off=$_off_got short=$_short_got" >&2
-        exit 1
-    }
-    assert_not_contains "$_off_stderr" 'stack backtrace:' "$_label off"
-    assert_contains "$_short_stderr" 'stack backtrace:' "$_label short"
-    assert_contains "$_short_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label short"
-
-    run_build "$COMPILER" compile "$_source" --cfg compiler-backtrace \
-        --stdlib-root "$ROOT/src" --opt-level 0 -o "$_spoof_asm"
-    [ "$build_rc" -eq 0 ] || {
-        echo "FAIL: $_label private-cfg spoof compile failed" >&2
-        exit 1
-    }
-    assert_not_contains "$_spoof_asm" 'tl_backtrace_map_data_begin' "$_label private cfg"
-    assert_not_contains "$_spoof_asm" 'tl_backtrace_map_begin:' "$_label private cfg"
-
-    run_build env "TYPELISP_REMAP_PATH_PREFIX=$ROOT=WORKSPACE" \
-        "$COMPILER" compile "$ROOT/$_source" --backtrace \
-        --stdlib-root "$ROOT/src" --opt-level 0 -o "$_remap_asm"
-    [ "$build_rc" -eq 0 ] || {
-        echo "FAIL: $_label remapped compile failed" >&2
-        exit 1
-    }
-    assert_not_contains "$_remap_asm" "$ROOT" "$_label path remap"
-    assert_contains "$_remap_asm" 'WORKSPACE/tests/integration/fatal_backtrace.tl' "$_label path remap"
-
-    run_build "$COMPILER" compile "$_source" \
-        --backtrace --stdlib-root "$ROOT/src" --opt-level 2 -o "$_opt2_asm"
-    [ "$build_rc" -eq 0 ] || {
-        echo "FAIL: $_label optimized compile failed" >&2
-        exit 1
-    }
-    as "$_opt2_asm" -o "$_opt2_obj"
-    ld -static -e "$(linux_entry_symbol_for_asm "$_opt2_asm")" "$_opt2_obj" -o "$_opt2_bin"
-    set +e
-    TYPELISP_BACKTRACE=full "$_opt2_bin" > /dev/null 2> "$_opt2_stderr"
-    _opt2_got=$?
-    set -e
-    [ "$_opt2_got" -eq 134 ] || {
-        echo "FAIL: $_label optimized expected exit 134, got $_opt2_got" >&2
-        exit 1
-    }
-    assert_contains "$_opt2_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label optimized"
-    assert_contains "$_opt2_stderr" '[repeated 3 frames]' "$_label optimized"
-    assert_contains "$_opt2_stderr" 'main at tests/integration/fatal_backtrace.tl:28:3' "$_label optimized"
-    assert_not_contains "$_opt2_stderr" 'fatal_backtrace.tl::backtrace-middle' "$_label optimized inline"
-    assert_not_contains "$_opt2_stderr" 'fatal_backtrace.tl::backtrace-outer' "$_label optimized inline"
-
-    cp "$_bin" "$_stripped_bin"
-    strip --strip-all "$_stripped_bin"
-    set +e
-    TYPELISP_BACKTRACE=full "$_stripped_bin" > /dev/null 2> "$_stripped_stderr"
-    _stripped_got=$?
-    set -e
-    [ "$_stripped_got" -eq 134 ] || {
-        echo "FAIL: $_label stripped expected exit 134, got $_stripped_got" >&2
-        exit 1
-    }
-    assert_contains "$_stripped_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label stripped"
-
-    sed '/^    \.quad _tl_fatal_backtrace_backtrace_leaf$/ {
-        n
-        n
-        s/^    \.quad .*$/    .quad 1/
-    }' "$_asm" > "$_corrupt_asm"
-    as "$_corrupt_asm" -o "$_corrupt_obj"
-    ld -static -e "$(linux_entry_symbol_for_asm "$_corrupt_asm")" \
-        "$_corrupt_obj" -o "$_corrupt_bin"
-    set +e
-    TYPELISP_BACKTRACE=full "$_corrupt_bin" > /dev/null 2> "$_corrupt_stderr"
-    _corrupt_got=$?
-    set -e
-    [ "$_corrupt_got" -eq 134 ] || {
-        echo "FAIL: $_label corrupt map expected exit 134, got $_corrupt_got" >&2
-        exit 1
-    }
-    assert_matches "$_corrupt_stderr" '  0: <unknown> \(0x[1-9a-f][0-9a-f]*\)' "$_label corrupt map"
-    assert_contains "$_corrupt_stderr" 'fatal_backtrace.tl::backtrace-recurse' "$_label corrupt map recovery"
-
-    run_build "$COMPILER" compile tests/integration/fatal_backtrace_thread.tl \
-        --backtrace --stdlib-root "$ROOT/src" --opt-level 0 -o "$_thread_asm"
-    [ "$build_rc" -eq 0 ] || {
-        echo "FAIL: $_label worker compile failed" >&2
-        exit 1
-    }
-    as "$_thread_asm" -o "$_thread_obj"
-    ld -static -e "$(linux_entry_symbol_for_asm "$_thread_asm")" \
-        "$_thread_obj" -o "$_thread_bin"
-    set +e
-    TYPELISP_BACKTRACE=full "$_thread_bin" > /dev/null 2> "$_thread_stderr"
-    _thread_got=$?
-    set -e
-    [ "$_thread_got" -eq 134 ] || {
-        echo "FAIL: $_label worker expected exit 134, got $_thread_got" >&2
-        exit 1
-    }
-    assert_contains "$_thread_stderr" 'stack backtrace:' "$_label worker"
-    assert_contains "$_thread_stderr" 'fatal_backtrace_thread.tl::backtrace-worker-leaf' "$_label worker"
-    assert_contains "$_thread_stderr" 'fatal_backtrace_thread.tl::backtrace-worker' "$_label worker"
-
-    # Native link inputs select the hosted C-runtime `main` entry instead of
-    # `_tl_start`. That path has no backend-installed TLS stack bounds, so pin
-    # its allocation-free fallback against the captured initial ENVP vector.
-    run_build "$COMPILER" build "$_source" --backtrace --link-lib m \
-        --stdlib-root "$ROOT/src" --opt-level 0 -o "$_crt_bin"
-    [ "$build_rc" -eq 0 ] || {
-        echo "FAIL: $_label CRT-entry build failed" >&2
-        exit 1
-    }
-    set +e
-    TYPELISP_BACKTRACE=full "$_crt_bin" > /dev/null 2> "$_crt_stderr"
-    _crt_got=$?
-    set -e
-    [ "$_crt_got" -eq 134 ] || {
-        echo "FAIL: $_label CRT-entry expected exit 134, got $_crt_got" >&2
-        exit 1
-    }
-    assert_contains "$_crt_stderr" 'stack backtrace:' "$_label CRT entry"
-    assert_contains "$_crt_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label CRT entry"
-    assert_contains "$_crt_stderr" 'main at tests/integration/fatal_backtrace.tl:28:3' "$_label CRT entry"
-
-    run_linux_backtrace_fatal_value_fixture \
-        fatal-backtrace-bounds-values tests/integration/red_zone_abort_trap.tl 134 \
-        'array index out of bounds: index=4 length=4' trap
-    run_linux_backtrace_fatal_value_fixture \
-        fatal-backtrace-div-values tests/safety/division_by_zero_trap.tl 135 \
-        'integer division or remainder error: dividend=1 divisor=0'
-    run_linux_backtrace_fatal_value_fixture \
-        fatal-backtrace-shift-values tests/integration/shl_count_width_trap.tl 129 \
-        'shift count out of range: count=64 width=32'
-}
-
-run_linux_backend_fixtures() {
-    run_linux_fatal_backtrace_fixture
-
-    _runtime_dir="$WORKDIR/backend-runtime"
-    mkdir -p "$_runtime_dir"
-    _runtime_asm="$_runtime_dir/runtime_helpers.s"
-    _runtime_obj="$_runtime_dir/runtime_helpers.o"
-    _runtime_bin="$_runtime_dir/runtime_helpers"
-    _runtime_driver="$_runtime_dir/runtime_fixture_driver"
-
-    echo "[backend-runtime] emit -> assemble -> link -> run"
-    build_linux_fixture_driver backend-runtime-driver \
-        src/tests/compiler_backend_runtime_fixture.tl "$_runtime_driver"
-    "$_runtime_driver" "$_runtime_asm"
-    for _snippet in \
-        ".globl tl_alloc" \
-        "tl_alloc:" \
-        "call tl_substring" \
-        "call tl_string_concat" \
-        "rep movsb" \
-        "tl_current_arena:" \
-        "tl_thread_init:" \
-        "tl_current_arena@tpoff" \
-        ".L_tl_alloc_new_arena:" \
-        "call .L_tl_alloc8"
-    do
-        assert_contains "$_runtime_asm" "$_snippet" backend-runtime
-    done
-    _rep_movsb_count=$(grep -c -F "rep movsb" "$_runtime_asm" || true)
-    if [ "$_rep_movsb_count" -lt 1 ]; then
-        echo "FAIL: backend-runtime expected at least 1 rep movsb copy, got $_rep_movsb_count" >&2
-        exit 1
-    fi
-    for _snippet in \
-        ".extern tl_alloc" \
-        ".extern tl_oob_abort" \
-        ".globl tl_oob_abort" \
-        "tl_oob_abort:" \
-        ".globl tl_substring" \
-        "tl_substring:" \
-        ".extern tl_substring" \
-        ".globl tl_string_concat" \
-        "tl_string_concat:" \
-        ".extern tl_string_concat" \
-        ".extern tl_string_eq" \
-        ".globl tl_string_eq" \
-        "tl_string_eq:" \
-        ".globl tl_string_to_int" \
-        "tl_string_to_int:" \
-        ".globl tl_hash_string" \
-        "tl_hash_string:" \
-        ".extern tl_string_to_int" \
-        ".extern tl_hash_string" \
-        "tl_print_err:" \
-        ".L_tl_arg_count:" \
-        ".L_tl_arg:" \
-        ".L_tl_read_file:" \
-        ".L_tl_write_file:" \
-        ".L_tl_file_exists:" \
-        ".L_tl_file_open_status:" \
-        ".L_tl_file_close_status:" \
-        ".L_tl_file_read_chunk_status:" \
-        ".L_tl_file_write_status:" \
-        ".L_tl_file_flush_status:" \
-        ".L_tl_file_read_chunk_bytes:" \
-        ".L_tl_file_read_chunk_eof:" \
-        ".extern .L_tl_read_stdin_line" \
-        ".extern .L_tl_read_stdin_bytes" \
-        ".extern .L_tl_stdin_eof" \
-        ".extern .L_tl_flush_stdout" \
-        ".L_tl_read_stdin_line:" \
-        ".L_tl_read_stdin_bytes:" \
-        ".L_tl_stdin_eof:" \
-        ".L_tl_flush_stdout:" \
-        "tl_process_output:" \
-        "tl_process_start:" \
-        "tl_process_wait:" \
-        ".L_tl_process_read_all:" \
-        ".L_tl_process_exec_marker:" \
-        ".L_tl_substring_copy_loop:" \
-        ".L_tl_string_concat_copy_a:" \
-        ".L_tl_string_concat_copy_b:" \
-        "path_copy_loop:" \
-        "path_copy_done:"
-    do
-        assert_not_contains "$_runtime_asm" "$_snippet" backend-runtime
-    done
-    # The direct backend fixture does not lower TypeLisp runtime-prelude bodies.
-    # Provide freestanding link-only targets for tl_alloc's OOM path and the
-    # moved string construction helpers; the happy path must not execute them.
-    _runtime_abort_asm="$_runtime_dir/runtime_abort.s"
-    _runtime_abort_obj="$_runtime_dir/runtime_abort.o"
-    cat > "$_runtime_abort_asm" <<'EOF'
-    .text
-    .globl tl_oom_abort
-tl_oom_abort:
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
-    .globl tl_substring
-tl_substring:
-    xorl %eax, %eax
-    ret
-    .globl tl_string_concat
-tl_string_concat:
-    xorl %eax, %eax
-    ret
-EOF
-    as "$_runtime_asm" -o "$_runtime_obj"
-    as "$_runtime_abort_asm" -o "$_runtime_abort_obj"
-    ld "$_runtime_obj" "$_runtime_abort_obj" -o "$_runtime_bin" -e "$(linux_entry_symbol_for_asm "$_runtime_asm")"
-    set +e
-    "$_runtime_bin" < /dev/null > "$_runtime_dir/runtime.stdout" 2> "$_runtime_dir/runtime.stderr"
-    _got=$?
-    set -e
-    if [ "$_got" -ne 42 ] || [ -s "$_runtime_dir/runtime.stdout" ] || [ -s "$_runtime_dir/runtime.stderr" ]; then
-        echo "FAIL: backend runtime fixture expected exit 42 with no output, got $_got" >&2
-        exit 1
-    fi
-
-    _stack_dir="$WORKDIR/backend-stack-args"
-    mkdir -p "$_stack_dir"
-    _stack_asm="$_stack_dir/stack_args.s"
-    _stack_obj="$_stack_dir/stack_args.o"
-    _stack_bin="$_stack_dir/stack_args"
-    _stack_driver="$_stack_dir/stack_args_fixture_driver"
-
-    echo "[backend-stack-args] emit -> assemble -> link -> run"
-    build_linux_fixture_driver backend-stack-args-driver \
-        src/tests/compiler_backend_stack_args_fixture.tl "$_stack_driver"
-    "$_stack_driver" "$_stack_asm" linux-x86_64
-    for _snippet in \
-        "call _tl_add8" \
-        "call _tl_f10check" \
-        "call _tl_mixcheck"
-    do
-        assert_contains "$_stack_asm" "$_snippet" backend-stack-args
-    done
-    # The former per-call `subq $16 / addq $16` outgoing-arg dip was replaced by
-    # the frame-pointer-omission prologue, which folds the outgoing stack-arg
-    # reservation into the function frame (`subq $N,%rsp` released by a matching
-    # `addq $N,%rsp`; N is codegen-dependent, e.g. 104/200/232/344). Assert a
-    # frame is reserved and released rather than hardcoding the pre-campaign 16
-    # (the load-bearing stack-arg stores below are unchanged by the campaign).
-    assert_matches "$_stack_asm" '^[[:space:]]+subq \$[0-9]+, %rsp$' backend-stack-args
-    assert_matches "$_stack_asm" '^[[:space:]]+addq \$[0-9]+, %rsp$' backend-stack-args
-    assert_matches "$_stack_asm" '^[[:space:]]+movq .* 0\(%rsp\)$' backend-stack-args
-    assert_matches "$_stack_asm" '^[[:space:]]+movq .* 8\(%rsp\)$' backend-stack-args
-    assert_matches "$_stack_asm" '^[[:space:]]+movsd .* [0-9]+\(%rsp\)$' backend-stack-args
-    assert_not_contains "$_stack_asm" "backend: too many call args" backend-stack-args
-    as "$_stack_asm" -o "$_stack_obj"
-    ld "$_stack_obj" -o "$_stack_bin" -e "$(linux_entry_symbol_for_asm "$_stack_asm")"
-    set +e
-    "$_stack_bin" < /dev/null > "$_stack_dir/stack.stdout" 2> "$_stack_dir/stack.stderr"
-    _got=$?
-    set -e
-    if [ "$_got" -ne 96 ] || [ -s "$_stack_dir/stack.stdout" ] || [ -s "$_stack_dir/stack.stderr" ]; then
-        echo "FAIL: backend stack-args fixture expected exit 96 with no output, got $_got" >&2
-        exit 1
-    fi
-
-    _raw_ptr_dir="$WORKDIR/backend-raw-pointer"
-    mkdir -p "$_raw_ptr_dir"
-    _raw_ptr_asm="$_raw_ptr_dir/raw_pointer.s"
-    _raw_ptr_obj="$_raw_ptr_dir/raw_pointer.o"
-    _raw_ptr_abort_asm="$_raw_ptr_dir/raw_pointer_abort.s"
-    _raw_ptr_abort_obj="$_raw_ptr_dir/raw_pointer_abort.o"
-    _raw_ptr_bin="$_raw_ptr_dir/raw_pointer"
-    _raw_ptr_driver="$_raw_ptr_dir/raw_pointer_fixture_driver"
-
-    echo "[backend-raw-pointer] emit -> assemble -> link -> run"
-    build_linux_fixture_driver backend-raw-pointer-driver \
-        src/tests/compiler_backend_raw_pointer_fixture.tl "$_raw_ptr_driver"
-    "$_raw_ptr_driver" "$_raw_ptr_asm" linux-x86_64
-    for _snippet in \
-        "_tl_write_i64:" \
-        "_tl_read_i64:" \
-        "call _tl_write_i64" \
-        "call _tl_read_i64" \
-        "call tl_alloc" \
-        "tl_alloc:"
-    do
-        assert_contains "$_raw_ptr_asm" "$_snippet" backend-raw-pointer
-    done
-    assert_matches "$_raw_ptr_asm" '^[[:space:]]+movq \(%r(ax|bx|cx|dx|si|di|8|9|10|11|12|13|14|15)\), %r(ax|bx|cx|dx|si|di|8|9|10|11|12|13|14|15)$' backend-raw-pointer
-    assert_not_contains "$_raw_ptr_asm" "# TODO" backend-raw-pointer
-    # This direct backend fixture bypasses the driver-owned runtime prelude.
-    # Provide freestanding support for runtime calls this fixture can emit:
-    # bounds-check abort, tl_alloc's out-of-memory tail-jump (tl_oom_abort,
-    # #2221), and the non-zero array initialization helper. `tl_array_zero`
-    # is emitted by the backend runtime prelude itself.
-    cat > "$_raw_ptr_abort_asm" <<'EOF'
-    .text
-    .globl tl_oob_abort
-tl_oob_abort:
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
-
-    .globl tl_oob_abort_at
-tl_oob_abort_at:
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
-
-    .globl tl_oom_abort
-tl_oom_abort:
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
-
-    .globl tl_array_fill8
-tl_array_fill8:
-    testq %rsi, %rsi
-    jle .L_tl_array_fill8_done
-.L_tl_array_fill8_loop:
-    movq %rdx, (%rdi)
-    addq $8, %rdi
-    subq $1, %rsi
-    jg .L_tl_array_fill8_loop
-.L_tl_array_fill8_done:
-    ret
-EOF
-    as "$_raw_ptr_asm" -o "$_raw_ptr_obj"
-    as "$_raw_ptr_abort_asm" -o "$_raw_ptr_abort_obj"
-    ld "$_raw_ptr_obj" "$_raw_ptr_abort_obj" -o "$_raw_ptr_bin" -e "$(linux_entry_symbol_for_asm "$_raw_ptr_asm")"
-    set +e
-    "$_raw_ptr_bin" < /dev/null > "$_raw_ptr_dir/raw_pointer.stdout" 2> "$_raw_ptr_dir/raw_pointer.stderr"
-    _got=$?
-    set -e
-    if [ "$_got" -ne 42 ] || [ -s "$_raw_ptr_dir/raw_pointer.stdout" ] || [ -s "$_raw_ptr_dir/raw_pointer.stderr" ]; then
-        echo "FAIL: backend raw-pointer fixture expected exit 42 with no output, got $_got" >&2
-        exit 1
-    fi
-
-    echo "Backend runtime fixture checks passed."
 }
 
 assemble_link_windows() {
@@ -2606,7 +2038,7 @@ run_windows_backend_fixtures() {
     echo "[windows-backend-runtime] emit -> assemble -> link -> run"
     # The compile-only bootstrapped stage1 has no `run`, so build the fixture
     # driver (compile -> clang -> lld-link) and execute it to emit the runtime asm
-    # (mirrors build_linux_fixture_driver).
+    # (mirrors the Linux backend-runtime case in tests/codegen/integration-fixtures.cases).
     _driver_asm="$_runtime_dir/fixture_driver.s"
     _driver_obj="$_runtime_dir/fixture_driver.obj"
     _driver_bin="$_runtime_dir/fixture_driver.exe"
@@ -2866,39 +2298,23 @@ EOF
 }
 
 run_backend_cmp_mem_fold_parity_fixtures() {
-    _cmp_mem_source=src/tests/compiler_backend_cmp_mem_fold_smoke.tl
-    _cmp_mem_stdout='cmp-mem fold smoke: bytes=4547\ncmp-mem fold smoke: compares=35338 words=388 indirect=280 acc=1579\n'
-    _cmp_mem_levels=
-
-    # Keep this as a fixed matrix rather than two host-specific call sites: CI
-    # on either host must execute both the unfused opt0 reference and the opt2
-    # folded path. The postcondition makes deleting or skipping either level a
-    # hard failure instead of silently returning this source to dead coverage.
+    # Windows half of tests/codegen/integration-fixtures.cases
+    # backend-cmp-mem-fold-parity: both the unfused opt0 reference and the
+    # opt2 folded path run; the cross-mode differential reuses both binaries.
     for _cmp_mem_level in 0 2; do
-        _cmp_mem_label="backend-cmp-mem-fold-parity-opt$_cmp_mem_level"
-        if [ "$HOST_OS" = linux ]; then
-            run_linux_program_fixture \
-                "$_cmp_mem_label" \
-                "$_cmp_mem_source" \
-                0 \
-                "$_cmp_mem_level" \
-                "$_cmp_mem_stdout"
-        else
-            run_windows_program_fixture \
-                "$_cmp_mem_label" \
-                "$_cmp_mem_source" \
-                0 \
-                "$_cmp_mem_level" \
-                "$_cmp_mem_stdout"
-        fi
-        _cmp_mem_levels="${_cmp_mem_levels}${_cmp_mem_levels:+ }$_cmp_mem_level"
+        run_windows_program_fixture \
+            "backend-cmp-mem-fold-parity-opt$_cmp_mem_level" \
+            src/tests/compiler_backend_cmp_mem_fold_smoke.tl \
+            0 \
+            "$_cmp_mem_level" \
+            'cmp-mem fold smoke: bytes=4547\ncmp-mem fold smoke: compares=35338 words=388 indirect=280 acc=1579\n'
     done
-
-    if [ "$_cmp_mem_levels" != "0 2" ]; then
-        echo "FAIL: backend cmp-mem parity requires opt levels '0 2', ran '$_cmp_mem_levels'" >&2
-        exit 1
-    fi
     echo "Backend cmp-mem opt0/opt2 runtime parity checks passed."
+}
+
+# The fixtures of tests/codegen/integration-fixtures.cases (Linux).
+run_linux_fixture_cases() {
+    TYPELISP_BIN=$COMPILER scripts/verify-codegen-cases.sh "$@" tests/codegen/integration-fixtures.cases
 }
 
 assert_manifest_case() {
@@ -3482,7 +2898,11 @@ windows_print_manifest_summary() {
 }
 
 if [ "$BACKEND_CMP_MEM_FOLD_PARITY_ONLY" -eq 1 ]; then
-    run_backend_cmp_mem_fold_parity_fixtures
+    if [ "$HOST_OS" = linux ]; then
+        run_linux_fixture_cases --only backend-cmp-mem-fold-parity
+    else
+        run_backend_cmp_mem_fold_parity_fixtures
+    fi
     exit 0
 fi
 
@@ -4040,11 +3460,10 @@ assert_frontend_smoke_timing_rows() {
 
 assert_frontend_smoke_timing_rows
 
-run_backend_cmp_mem_fold_parity_fixtures
-
 if [ "$HOST_OS" = linux ]; then
-    run_linux_backend_fixtures
+    run_linux_fixture_cases
 else
+    run_backend_cmp_mem_fold_parity_fixtures
     run_windows_backend_fixtures
 fi
 

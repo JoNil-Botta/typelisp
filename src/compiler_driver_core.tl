@@ -9,7 +9,6 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (cfg compile-profile (import stdlib.profile))
-(cfg test (import stdlib.test))
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_profile_state as profile_state)
 (import compiler_backend)
@@ -888,47 +887,6 @@
   (cis.intern-structural-session-handle-from-source-names
     (compiler-driver-state-source-name-session state)))
 
-(cfg
-  test
-  (test
-    compiler-driver-source-name-session-retained-owner
-    (let
-      [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
-      [return-arena : i64 (arena.tl_arena_current)]
-      [transient-arena : i64 (arena.tl_arena_make)]
-      [source-names : ci.InternSourceNameSessionHandle
-        (begin
-          (unsafe
-            (arena.tl_arena_set transient-arena))
-          (let
-            [session : ci.InternSourceNameSessionHandle
-              (compiler-driver-state-source-name-session
-                (owned_view.compiler-owned-shared-view state))]
-            (begin
-              (unsafe
-                (arena.tl_arena_set return-arena))
-              session)))]
-      [intern-state : ci.InternCompatState
-        (compiler-driver-state-owned-interns
-          (owned_view.compiler-owned-shared-view state))]
-      (begin
-        (unsafe
-          (arena.tl_arena_destroy transient-arena))
-        (test.assert-i64-eq
-          (ci.intern-source-name-session-handle-table-id source-names)
-          (ci.intern-compat-state-table-id (& intern-state))
-          "source-name capability survives retirement of the caller arena")
-        (test.assert-i64-eq
-          (cast
-            (ci.intern-compat-state-profile-metrics-address-ref
-              (& intern-state))
-            : i64)
-          (cast
-            (profile_state.compiler-profile-state-metrics-address
-              (compiler-driver-state-profile state))
-            : i64)
-          "intern owner shares the driver profile metric array")))))
-
 (define (compiler-driver-state-capture-active-builtins!
   [state : (& state CompilerDriverState)]) : unit
   (cbi.state-capture-from-globals! (&mut (array-ref state.builtin-ids 0))))
@@ -1436,240 +1394,6 @@
       compiler-driver-profile-prelude-hydrations-metric
       1)
     unit))
-
-(cfg
-  test
-  (test
-    compiler-driver-profile-prelude-job-isolation
-    (let
-      [left : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      [right : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      (begin
-        (compiler-driver-profile-reset-prelude!
-          (profile_state.compiler-profile-state-shared-view left))
-        (compiler-driver-profile-reset-prelude!
-          (profile_state.compiler-profile-state-shared-view right))
-        (compiler-driver-profile-note-prelude-source-pipeline!
-          (profile_state.compiler-profile-state-shared-view left))
-        (compiler-driver-profile-note-prelude-hydration!
-          (profile_state.compiler-profile-state-shared-view right))
-        (compiler-driver-profile-note-prelude-source-pipeline!
-          (profile_state.compiler-profile-state-shared-view left))
-        (compiler-driver-profile-note-prelude-hydration!
-          (profile_state.compiler-profile-state-shared-view left))
-        (compiler-driver-profile-reset-prelude!
-          (profile_state.compiler-profile-state-shared-view right))
-        (test.assert-i64-eq
-          (compiler-driver-profile-value
-            (profile_state.compiler-profile-state-shared-view left)
-            compiler-driver-profile-prelude-source-pipeline-entries-metric)
-          2
-          "left job keeps interleaved source-pipeline count")
-        (test.assert-i64-eq
-          (compiler-driver-profile-value
-            left
-            compiler-driver-profile-prelude-hydrations-metric)
-          1
-          "right reset does not erase left hydration count")
-        (test.assert-i64-eq
-          (compiler-driver-profile-value
-            (profile_state.compiler-profile-state-shared-view right)
-            compiler-driver-profile-prelude-source-pipeline-entries-metric)
-          0
-          "right source-pipeline count resets independently")
-        (test.assert-i64-eq
-          (compiler-driver-profile-value
-            right
-            compiler-driver-profile-prelude-hydrations-metric)
-          0
-          "right hydration count resets independently")))))
-
-(cfg
-  test
-  (test
-    compiler-driver-profile-intern-job-isolation
-    (let
-      [left : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      [right : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      [left-address : u64
-        (profile_state.compiler-profile-state-metrics-address left)]
-      [right-address : u64
-        (profile_state.compiler-profile-state-metrics-address right)]
-      (begin
-        (ci.intern-profile-reset! left-address)
-        (ci.intern-profile-reset! right-address)
-        (ci.intern-profile-note-intern left-address)
-        (ci.intern-profile-note-slice left-address 7)
-        (ci.intern-profile-note-lookup right-address)
-        (ci.intern-profile-note-generated right-address)
-        (ci.intern-profile-note-generated-role-create
-          left-address
-          (ci.intern-generated-symbol-role-lambda))
-        (ci.intern-profile-reset! right-address)
-        (test.assert-i64-eq
-          (ci.intern-profile-value left-address ci.intern-profile-intern-metric)
-          1
-          "left job keeps interleaved intern count")
-        (test.assert-i64-eq
-          (ci.intern-profile-value
-            left-address
-            ci.intern-profile-slice-bytes-metric)
-          7
-          "right reset does not erase left slice bytes")
-        (test.assert-i64-eq
-          (ci.intern-profile-value
-            left-address
-            (+
-              ci.intern-profile-generated-role-create-start-metric
-              (ci.intern-generated-symbol-role-index
-                (ci.intern-generated-symbol-role-lambda))))
-          1
-          "role counters use the same slot in the left owner")
-        (test.assert-i64-eq
-          (ci.intern-profile-value
-            right-address
-            ci.intern-profile-lookup-metric)
-          0
-          "right reset clears its lookup count")
-        (test.assert-i64-eq
-          (ci.intern-profile-value
-            right-address
-            ci.intern-profile-generated-metric)
-          0
-          "right reset clears its generated count")))))
-
-(cfg
-  test
-  (test
-    compiler-driver-profile-intern-storage-job-isolation
-    (let
-      [left : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      [right : profile_state.CompilerProfileState
-        (profile_state.compiler-profile-state-new)]
-      [left-address : u64
-        (profile_state.compiler-profile-state-metrics-address left)]
-      [right-address : u64
-        (profile_state.compiler-profile-state-metrics-address right)]
-      [left-intern : ci.InternCompatState
-        (ci.intern-compat-state-new-with-profile-metrics-address left-address)]
-      [right-intern : ci.InternCompatState
-        (ci.intern-compat-state-new-with-profile-metrics-address right-address)]
-      (begin
-        (ci.intern-profile-reset! left-address)
-        (ci.intern-profile-reset! right-address)
-        (ci.intern-compat-state-reset! (&mut left-intern))
-        (ci.intern-compat-state-reset! (&mut right-intern))
-        (let
-          [left-source : i64
-            (ci.intern-compat-state-intern
-              (&mut left-intern)
-              "left-profile-source")]
-          [right-source : i64
-            (ci.intern-compat-state-intern
-              (&mut right-intern)
-              "right-profile-source")]
-          [left-canonical : i64
-            (ci.intern-compat-state-generated-canonical-name
-              (&mut left-intern)
-              "left-profile-canonical")]
-          [left-canonical-again : i64
-            (ci.intern-compat-state-generated-canonical-name
-              (&mut left-intern)
-              "left-profile-canonical")]
-          [right-generated : i64
-            (ci.intern-compat-state-generated-name
-              (&mut right-intern)
-              "right-profile-generated")]
-          (begin
-            ;; A known larger observation proves max and total use the same
-            ;; numeric slots in one owner without touching the other owner.
-            (ci.intern-profile-note-source-map-probe! left-address 4)
-            (test.assert-i64-eq
-              left-source
-              right-source
-              "independent owners may assign the same source record id")
-            (test.assert-i64-eq
-              left-canonical
-              right-generated
-              "independent owners may assign the same generated record id")
-            (test.assert-i64-eq
-              left-canonical
-              left-canonical-again
-              "canonical generated insertion is counted once")
-            (ci.intern-profile-reset! right-address)
-            (ci.intern-compat-state-reset! (&mut right-intern))
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-source-record-live-metric)
-              1
-              "right reset preserves left source record live count")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-generated-record-live-metric)
-              1
-              "right reset preserves left generated record live count")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-source-map-live-metric)
-              1
-              "left source map owns its occupancy")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-canonical-map-live-metric)
-              1
-              "left canonical map counts only the new record")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-source-map-probe-total-metric)
-              5
-              "source probe total accumulates per owner")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-source-map-probe-max-metric)
-              4
-              "source probe maximum is per owner")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-canonical-map-probe-total-metric)
-              2
-              "canonical insert and reuse each record one probe")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                right-address
-                ci.intern-profile-source-record-live-metric)
-              0
-              "right reset clears only right live observations")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                right-address
-                ci.intern-profile-source-record-capacity-metric)
-              (ci.intern-capacity)
-              "right reset restores fixed source record capacity")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                right-address
-                ci.intern-profile-source-map-resize-metric)
-              0
-              "fixed source map reports zero resizes")
-            (test.assert-true
-              (>
-                (ci.intern-profile-value
-                  right-address
-                  ci.intern-profile-record-reserved-bytes-metric)
-                0)
-              "right owner restores fixed record reserved bytes")))))))
 
 (cfg
   compile-profile
@@ -4157,14 +3881,6 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
         (compiler_load.ResultCompilerLoadWithPaths.Err diag)])))
 
-(define (compiler-driver-load-runtime-prelude-cold
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
-  (compiler-driver-load-runtime-prelude-cold-and-profile-state
-    stdlib-roots
-    cfgs
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-driver-load-runtime-prelude-cache-miss-and-profile-state
   [key : compiler_load.CompilerLoadPreludeCacheKey]
   [stdlib-roots : svec.Vec]
@@ -4195,16 +3911,6 @@
               seen)]
           [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
         cold))))
-
-(define (compiler-driver-load-runtime-prelude-cache-miss
-  [key : compiler_load.CompilerLoadPreludeCacheKey]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
-  (compiler-driver-load-runtime-prelude-cache-miss-and-profile-state
-    key
-    stdlib-roots
-    cfgs
-    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-driver-load-runtime-prelude-and-profile-state
   [stdlib-roots : svec.Vec]
@@ -5632,35 +5338,6 @@
         opt-level
         true
         crt-entry))))
-
-(define (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
-  [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
-  (let
-    [profile-state : profile_state.CompilerProfileState
-      (profile_state.compiler-profile-state-new)]
-    (begin
-      (cfg compile-profile (compiler-driver-profile-start-total profile-state))
-      (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
-        (owned_view.compiler-owned-shared-view input-path)
-        (compiler-driver-load-and-lower-pic-image-and-profile-state
-          input-path
-          target
-          stdlib-roots
-          mode
-          (compiler-driver-target-cfgs target cfgs)
-          profile-state)
-        target
-        has-target
-        mode
-        opt-level
-        false
-        false))))
 
 (define (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]

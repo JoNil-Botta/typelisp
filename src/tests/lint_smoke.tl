@@ -43,7 +43,7 @@
       1)
       unit
       (io.panic "lint: string-append call should be flagged"))
-    (match (lint_core.lint-findings-get
+    (match (lint_core_tests.lint-findings-get
       (lint_core.lint-deprecated-string-concat-scan
         (lint-smoke-string-concat-source)
         (lint_core.lint-findings-empty))
@@ -74,7 +74,7 @@
       2)
       unit
       (io.panic "lint: nested string append should produce two findings"))
-    (match (lint_core.lint-findings-get
+    (match (lint_core_tests.lint-findings-get
       (lint_core.lint-deprecated-string-concat-scan
         (lint-smoke-nested-string-append-source)
         (lint_core.lint-findings-empty))
@@ -85,7 +85,7 @@
           (io.panic "lint: nested string append should carry chain depth"))]
       [(lint_core.LintMaybeFinding.No)
         (io.panic "lint: nested string append should produce a chain finding")])
-    (match (lint_core.lint-findings-get
+    (match (lint_core_tests.lint-findings-get
       (lint_core.lint-deprecated-string-concat-scan
         (lint-smoke-loop-string-append-source)
         (lint_core.lint-findings-empty))
@@ -130,7 +130,7 @@
         1)
         unit
         (io.panic "lint: nested str-cat should be flagged once"))
-      (match (lint_core.lint-findings-get
+      (match (lint_core_tests.lint-findings-get
         (lint_core_tests.lint-test-walk
           spanned-str-cat
           (lint_core.lint-default-ladder-threshold)

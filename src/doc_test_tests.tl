@@ -10,6 +10,7 @@
 (import compiler_load)
 (import compiler_load_tests as load_tests)
 (import build_run_core)
+(import build_run_core_tests as build_run_tests)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.option)
@@ -1140,29 +1141,29 @@ typecheck: return type mismatch"))]
       (= (doc-test-smoke) 42)
       (return (io.panic "doc-test: extraction smoke regressed")))
     (unless
-      (build_run_core.source-tool-link-inputs-dedupe-smoke-ok?)
+      (build_run_tests.source-tool-link-inputs-dedupe-smoke-ok?)
       (return (io.panic "source-tool: link input dedupe smoke regressed")))
     (unless
-      (build_run_core.source-tool-windows-stack-reserve-smoke-ok?)
+      (build_run_tests.source-tool-windows-stack-reserve-smoke-ok?)
       (return (io.panic "source-tool: windows stack reserve smoke regressed")))
     (unless
-      (build_run_core.source-tool-windows-system-libs-smoke-ok?)
+      (build_run_tests.source-tool-windows-system-libs-smoke-ok?)
       (return (io.panic "source-tool: windows system libs smoke regressed")))
     (unless
-      (build_run_core.source-tool-windows-debug-linker-smoke-ok?)
+      (build_run_tests.source-tool-windows-debug-linker-smoke-ok?)
       (return (io.panic "source-tool: windows debug linker smoke regressed")))
     (unless
-      (build_run_core.source-tool-linux-direct-object-linkability-smoke-ok?)
+      (build_run_tests.source-tool-linux-direct-object-linkability-smoke-ok?)
       (return (io.panic "source-tool: linux direct object smoke regressed")))
     (unless
-      (build_run_core.source-tool-windows-direct-object-linkability-smoke-ok?)
+      (build_run_tests.source-tool-windows-direct-object-linkability-smoke-ok?)
       (return (io.panic "source-tool: windows direct object smoke regressed")))
     (unless
-      (build_run_core.source-tool-windows-direct-object-runtime-fallback-smoke-ok?)
+      (build_run_tests.source-tool-windows-direct-object-runtime-fallback-smoke-ok?)
       (return
         (io.panic "source-tool: windows direct object fallback smoke regressed")))
     (unless
-      (build_run_core.source-tool-windows-direct-object-relocation-gate-smoke-ok?)
+      (build_run_tests.source-tool-windows-direct-object-relocation-gate-smoke-ok?)
       (return
         (io.panic
           "source-tool: windows direct object relocation gate smoke regressed")))

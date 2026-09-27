@@ -18,6 +18,7 @@
 (import compiler_owned_view as owned_view)
 (import format_rules)
 (import lint_core)
+(import lint_core_tests)
 (import lsp_frame_core)
 (import lsp_frame_core_tests as lsp_tests)
 (import lsp_vector_families)
@@ -2211,14 +2212,14 @@
         (cdiag.CompilerDiagnosticSpan "" 1 1 1 2)
         "X")]
     [machine : lint_core.LintFinding
-      (lint_core.lint-finding-with-fix
+      (lint_core_tests.lint-finding-with-fix
         (clone base)
         (cdiag.compiler-diagnostic-fix-new
           "Replace lint token"
           cdiag.CompilerDiagnosticMachineApplicable
           (cdiag.compiler-diagnostic-text-edit-single (clone edit))))]
     [uncertain : lint_core.LintFinding
-      (lint_core.lint-finding-with-fix
+      (lint_core_tests.lint-finding-with-fix
         base
         (cdiag.compiler-diagnostic-fix-new
           "Uncertain lint token"

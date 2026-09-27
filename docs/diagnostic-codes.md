@@ -3,8 +3,9 @@
 Published diagnostic codes are append-only. Never change the meaning of an
 existing number or reuse a retired number. The executable registry lives in
 `src/compiler_diagnostic.tl`; `src/explain_cli_core.tl` must provide a detailed
-entry for every row. Its registry test rejects missing prose, while
-`src/compiler_diagnostic_tests.tl` rejects empty and duplicate rows.
+entry for every row. Its registry test in `src/cli_core_tests.tl` rejects
+missing prose, while `src/compiler_diagnostic_tests.tl` rejects empty and
+duplicate rows.
 
 | Code | Category | Kind | Owner | Public construction site | Explain |
 | --- | --- | --- | --- | --- | --- |

@@ -1,5 +1,5 @@
 ;; Self-hosted formatter token/CST smoke test.
-(import format_cst)
+(import format_tests)
 
 (define (main) : i64
-  (format_cst.format-cst-self-test))
+  (format_tests.format-cst-self-test))

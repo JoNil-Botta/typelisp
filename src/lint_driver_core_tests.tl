@@ -8,6 +8,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import lint_driver_core)
 (import lint_core)
+(import lint_core_tests)
 (import stdlib.io)
 (import stdlib.byte_buf)
 (import stdlib.string)
@@ -758,7 +759,7 @@ end
 ;; suppression filtering), via the public source-lint path.
 (define (selfhost-lint-source-finding-count [source : String]) : i64
   (lint_core.lint-findings-count
-    (lint_driver_core.selfhost-lint-source-with-roots
+    (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
       (lint_svec.new))))
@@ -773,7 +774,7 @@ end
     (lint_core.lint-findings-count
       (owned_view.compiler-owned-shared-view findings)))
     count
-    (match (lint_core.lint-findings-get
+    (match (lint_core_tests.lint-findings-get
       (owned_view.compiler-owned-shared-view findings)
       index)
       [(lint_core.LintMaybeFinding.Some finding)
@@ -798,7 +799,7 @@ end
 
 (define (selfhost-lint-source-rule-count [source : String] [rule-id : String]) : i64
   (selfhost-lint-findings-rule-count
-    (lint_driver_core.selfhost-lint-source-with-roots
+    (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
       (lint_svec.new))
@@ -811,7 +812,7 @@ end
 
 (define (selfhost-lint-unused-import-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get
+  (match (lint_core_tests.lint-findings-get
     (owned_view.compiler-owned-shared-view findings)
     0)
     [(lint_core.LintMaybeFinding.Some finding)
@@ -826,12 +827,12 @@ end
 (define (selfhost-lint-unused-imports-self-test) : i64
   (let
     [unused : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unused-dotted-import-source)
         (lint_svec.new))]
     [unused-explicit-alias : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unused-explicit-import-alias-source)
         (lint_svec.new))]
@@ -1282,7 +1283,7 @@ end
                     (owned_view.compiler-owned-shared-view roots)
                     source-set.manifest.kind)]
                 [core-count : i64
-                  (lint_driver_core.selfhost-lint-package-dead-count-for-source
+                  (selfhost-lint-package-dead-count-for-source
                     (compiler_load.compiler-load-normalize-path core-path)
                     (byte_buf.to-string (io.read-file core-path))
                     dead-decls)]
@@ -1308,29 +1309,29 @@ end
         (owned_view.compiler-owned-shared-view source-b)
         CompilerPkgKindLib)]
     [bin-count-a : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/a.tl"
         (owned_view.compiler-owned-shared-view source-a)
         (owned_view.compiler-owned-shared-view bin-decls))]
     [bin-count-b : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/b.tl"
         (owned_view.compiler-owned-shared-view source-b)
         bin-decls)]
     [lib-count-a : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/a.tl"
         source-a
         (owned_view.compiler-owned-shared-view lib-decls))]
     [lib-count-b : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/b.tl"
         source-b
         lib-decls)]
     [test-root-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-test-root-fixture-decls)]
     [test-root-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/src/main.tl"
         (selfhost-lint-package-dead-entry-source)
         test-root-decls)]
@@ -1339,7 +1340,7 @@ end
     [manifest-root-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-manifest-root-fixture-decls)]
     [manifest-root-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         (compiler_load.compiler-load-normalize-path
           (compiler_load.compiler-load-join-root-path
             "pkg"
@@ -1351,14 +1352,14 @@ end
     [explicit-root-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-explicit-root-fixture-decls)]
     [explicit-root-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/explicit_api.tl"
         explicit-root-source
         explicit-root-decls)]
     [cfg-bin-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-cfg-fixture-decls)]
     [cfg-bin-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/cfg.tl"
         cfg-source
         (owned_view.compiler-owned-shared-view cfg-bin-decls))]
@@ -1375,12 +1376,12 @@ end
       (selfhost-lint-package-dead-code-platform-cfg-fixture-decls
         target_cfg.CompilerTargetCfg.Windows)]
     [platform-linux-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/platform_cfg.tl"
         (owned_view.compiler-owned-string-place-shared-view platform-cfg-source)
         platform-linux-decls)]
     [platform-windows-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/platform_cfg.tl"
         platform-cfg-source
         (owned_view.compiler-owned-shared-view platform-windows-decls))]
@@ -1391,24 +1392,24 @@ end
     [qualified-import-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-qualified-import-fixture-decls)]
     [qualified-left-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/left.tl"
         (selfhost-lint-package-dead-qualified-left-source)
         (owned_view.compiler-owned-shared-view qualified-import-decls))]
     [qualified-right-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/right.tl"
         (selfhost-lint-package-dead-qualified-right-source)
         qualified-import-decls)]
     [moduleless-import-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-moduleless-import-fixture-decls)]
     [moduleless-left-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/left.tl"
         (selfhost-lint-package-dead-moduleless-left-source)
         (owned_view.compiler-owned-shared-view moduleless-import-decls))]
     [moduleless-right-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/right.tl"
         (selfhost-lint-package-dead-moduleless-right-source)
         moduleless-import-decls)]
@@ -1705,7 +1706,7 @@ end
   [findings : lint_core.LintFindings]
   [depth : i64]
   [message : String]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1718,7 +1719,7 @@ end
 
 (define (selfhost-lint-nested-let-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1729,7 +1730,7 @@ end
 
 (define (selfhost-lint-return-path-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1740,7 +1741,7 @@ end
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unit-if-finding-ok? [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1753,7 +1754,7 @@ end
 (define (selfhost-lint-cascading-and-or-finding-ok?
   [findings : lint_core.LintFindings]
   [message : String]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1766,7 +1767,7 @@ end
 
 (define (selfhost-lint-transitional-core-macro-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get
+  (match (lint_core_tests.lint-findings-get
     (owned_view.compiler-owned-shared-view findings)
     0)
     [(lint_core.LintMaybeFinding.Some finding)
@@ -1783,57 +1784,57 @@ end
 (define (compiler-lint-driver-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
         (lint_svec.new))]
     [guard-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-guard-ladder-source)
         (lint_svec.new))]
     [return-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-return-path-chain-source)
         (lint_svec.new))]
     [all-exit-ladder-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-all-exit-ladder-source)
         (lint_svec.new))]
     [unit-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-if-source)
         (lint_svec.new))]
     [unit-set-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-set-source)
         (lint_svec.new))]
     [two-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-two-findings-source)
         (lint_svec.new))]
     [cascading-and-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-and-source)
         (lint_svec.new))]
     [cascading-or-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-or-source)
         (lint_svec.new))]
     [cascading-core-and-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-core-and-source)
         (lint_svec.new))]
     [transitional-core-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-transitional-core-macro-source)
         (lint_svec.new))]
@@ -2029,7 +2030,7 @@ end
         5]
       [(not
           (selfhost-lint-nested-let-finding-ok?
-            (lint_driver_core.selfhost-lint-source-with-roots
+            (selfhost-lint-source-with-roots
               "lint_driver_self_test.tl"
               (selfhost-lint-nested-let-source)
               (lint_svec.new))))
@@ -2083,3 +2084,115 @@ end
       [(not (= (lint_driver_core.selfhost-lint-enforce-exit true 0) 0)) 7]
       [(not (= (lint_driver_core.selfhost-lint-enforce-exit false 1) 0)) 8]
       [else 42])))
+
+(define (selfhost-lint-typed-unused-unsafe-error-shared-view) : String
+  (unsafe
+    (ptr-read
+      (ptr-addr-of lint_driver_core.selfhost-lint-typed-unused-unsafe-error))))
+
+(define (selfhost-lint-unsafe-surface-cache-parse-count) : i64
+  lint_driver_core.selfhost-lint-unsafe-surface-parse-count)
+
+(define (selfhost-lint-unsafe-surface-cache-hit-count) : i64
+  lint_driver_core.selfhost-lint-unsafe-surface-hit-count)
+
+(define (selfhost-lint-unused-unsafe-fallback-count) : i64
+  lint_driver_core.selfhost-lint-unused-unsafe-fallback-file-count)
+
+(define (selfhost-lint-unused-unsafe-surface-required-total) : i64
+  lint_driver_core.selfhost-lint-unused-unsafe-surface-required-count)
+
+(define (selfhost-lint-unused-unsafe-surface-classified-total) : i64
+  (+
+    lint_driver_core.selfhost-lint-unused-unsafe-surface-required-count
+    lint_driver_core.selfhost-lint-unused-unsafe-surface-unused-count))
+
+(define (selfhost-lint-source-with-roots-and-all-options
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : lint_core.LintFindings
+  (lint_driver_core.selfhost-lint-source-with-roots-and-all-options-with-cfg
+    path
+    source
+    stdlib-roots
+    (lint_driver_core.selfhost-lint-language-cfgs)
+    deprecated-string-concat
+    redundant-function-name
+    prefer-dotted-field
+    name-case))
+
+(define (selfhost-lint-source-with-roots-and-staged-options
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : lint_core.LintFindings
+  (selfhost-lint-source-with-roots-and-all-options
+    path
+    source
+    stdlib-roots
+    deprecated-string-concat
+    redundant-function-name
+    prefer-dotted-field
+    false))
+
+(define (selfhost-lint-source-with-roots-and-options
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [deprecated-string-concat : bool]) : lint_core.LintFindings
+  (selfhost-lint-source-with-roots-and-staged-options
+    path
+    source
+    stdlib-roots
+    deprecated-string-concat
+    false
+    false))
+
+;; Parse `source` (attributed to `path`) and run the lint rules over this source
+;; unit only. Imports are linted when their own files are selected by the repo
+;; lint gate, so a public driver does not duplicate every imported finding.
+(define (selfhost-lint-source-with-roots
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]) : lint_core.LintFindings
+  (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
+
+(define (selfhost-lint-package-dead-count-for-source-from
+  [path : String]
+  [source : (& source str)]
+  [items : lint_driver_core.SelfhostLintDeadDecls]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (lint_driver_core.selfhost-lint-dead-decls-count items))
+    count
+    (let
+      [decl : lint_driver_core.SelfhostLintDeadDecl
+        (lint_driver_core.selfhost-lint-dead-decls-ref
+          (owned_view.compiler-owned-shared-view items)
+          index)]
+      [next-count : i64
+        (if (and
+          (string.eq decl.path path)
+          (lint_driver_core.selfhost-lint-package-dead-finding-active?
+            source
+            decl))
+          (+ count 1)
+          count)]
+      (selfhost-lint-package-dead-count-for-source-from
+        path
+        source
+        items
+        (+ index 1)
+        next-count))))
+
+(define (selfhost-lint-package-dead-count-for-source
+  [path : String]
+  [source : String]
+  [items : lint_driver_core.SelfhostLintDeadDecls]) : i64
+  (selfhost-lint-package-dead-count-for-source-from path source items 0 0))

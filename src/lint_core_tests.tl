@@ -12,6 +12,7 @@
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import compiler_owned_view as owned_view)
+(import compiler_diagnostic as cdiag)
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 ;: Flat-AST test helpers: the self-test builds exprs with i64-returning
@@ -324,7 +325,7 @@
         1)
         unit
         (io.panic "lint: discarded literal should be flagged"))
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk-tail
           spanned-no-effect-var
           (lint_core.lint-default-ladder-threshold)
@@ -480,7 +481,7 @@
         unit
         (io.panic
           "lint: return should flag following unreachable expression once"))
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk-tail
           unreachable-return-begin
           (lint_core.lint-default-ladder-threshold)
@@ -527,7 +528,7 @@
         2)
         unit
         (io.panic "lint: qualified panic padding should flag with unreachable"))
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk-tail
           redundant-padding-begin
           (lint_core.lint-default-ladder-threshold)
@@ -647,7 +648,7 @@
         1)
         unit
         (io.panic "lint: one maximal and cascade should produce one finding"))
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           spanned-and-cascade
           (lint_core.lint-default-ladder-threshold)
@@ -669,7 +670,7 @@
               (io.panic "lint: cascading-and-or finding metadata mismatch")))]
         [(lint_core.LintMaybeFinding.No)
           (io.panic "lint: spanned and cascade should produce a finding")])
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           core-and-cascade
           (lint_core.lint-default-ladder-threshold)
@@ -686,7 +687,7 @@
             (io.panic "lint: core/and cascade should preserve callee spelling"))]
         [(lint_core.LintMaybeFinding.No)
           (io.panic "lint: core/and cascade should produce a finding")])
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           spanned-core-cond-dotted-call
           (lint_core.lint-default-ladder-threshold)
@@ -869,7 +870,7 @@
         1)
         unit
         (io.panic "lint: 3-deep ladder should be flagged once"))
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           ladder3
           (lint_core.lint-default-ladder-threshold)
@@ -888,7 +889,7 @@
             (io.panic "lint: 3-deep value ladder finding metadata mismatch"))]
         [(lint_core.LintMaybeFinding.No)
           (io.panic "lint: 3-deep ladder should produce a finding")])
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           guard-ladder3
           (lint_core.lint-default-ladder-threshold)
@@ -907,7 +908,7 @@
             (io.panic "lint: guard ladder finding metadata mismatch"))]
         [(lint_core.LintMaybeFinding.No)
           (io.panic "lint: guard ladder should produce a finding")])
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           ambiguous-ladder3
           (lint_core.lint-default-ladder-threshold)
@@ -981,7 +982,7 @@
         1)
         unit
         (io.panic "lint: return-path chain should be flagged once"))
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk-tail
           return-chain3
           (lint_core.lint-default-ladder-threshold)
@@ -1004,7 +1005,7 @@
         1)
         unit
         (io.panic "lint: unit then-branch should be flagged once"))
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           unit-else-guard
           (lint_core.lint-default-ladder-threshold)
@@ -1070,7 +1071,7 @@
         0)
         unit
         (io.panic "lint: empty begin should not be flagged as single begin"))
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           spanned-single-begin
           (lint_core.lint-default-ladder-threshold)
@@ -1108,7 +1109,7 @@
         unit
         (io.panic "lint: 4-deep ladder should be flagged once"))
       ;; A spanned ladder carries its head wrapper span on the finding.
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           spanned
           (lint_core.lint-default-ladder-threshold)
@@ -1154,7 +1155,7 @@
         0)
         unit
         (io.panic "lint: let with nontrivial begin body should not be flagged"))
-      (match (lint_core.lint-findings-get
+      (match (lint-findings-get
         (lint-test-walk
           spanned-nested-let
           (lint_core.lint-default-ladder-threshold)
@@ -1176,3 +1177,36 @@
       (lint-reachability-smoke vx vy one unit-expr return-one)
       (lint-rule-registry-smoke)
       42)))
+
+;: Attach a rule-proved fix without inventing a second edit coordinate type.
+(define (lint-finding-with-fix
+  [finding : lint_core.LintFinding]
+  [fix : cdiag.CompilerDiagnosticFix]) : lint_core.LintFinding
+  (lint_core.LintFinding
+    finding.message
+    finding.rule-id
+    finding.depth
+    finding.span
+    (lint_core.LintFixDecision.LintFixAvailable fix)))
+
+(define (lint-level-eq?
+  [left : (& left lint_core.LintLevel)]
+  [right : (& right lint_core.LintLevel)]) : bool
+  (= (lint_core.lint-level-rank left) (lint_core.lint-level-rank right)))
+
+;: Registry default for one rule. Unknown ids fail closed to `allow`; callers
+;: that accept user policy must also report the unknown id structurally.
+(define (lint-rule-default-level [rule-id : String]) : lint_core.LintLevel
+  (match (lint_core.lint-rule-find rule-id)
+    [(lint_core.LintMaybeRule.Found rule) rule.default-level]
+    [(lint_core.LintMaybeRule.NotFound) lint_core.LintLevel.Allow]))
+
+(define (lint-findings-get [items : lint_core.LintFindings] [index : i64]) : lint_core.LintMaybeFinding
+  (if (if (>= index 0)
+    (<
+      index
+      (lint_core.lint-findings-count
+        (owned_view.compiler-owned-shared-view items)))
+    false)
+    (lint_core.LintMaybeFinding.Some (lint_core.lint-findings-ref items index))
+    (lint_core.LintMaybeFinding.No)))

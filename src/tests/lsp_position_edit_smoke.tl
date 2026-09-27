@@ -8,7 +8,7 @@
 (import stdlib.vector)
 (import lsp_frame_core)
 (import lsp_frame_core_tests as lsp_tests)
-(import format_rules)
+(import format_tests)
 (import compiler_owned_view as owned_view)
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 
@@ -138,7 +138,7 @@
             baz-idx
             (lsp_frame_core.lsp-decl-entry-fallback))]
         [moved : String
-          (format_rules.format-rules-render-source-width
+          (format_tests.format-rules-render-source-width
             (lsp_frame_core.lsp-move-form-after text foo-entry baz-entry)
             80)]
         [expected : String

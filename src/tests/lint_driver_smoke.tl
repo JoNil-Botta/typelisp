@@ -12,6 +12,7 @@
 (import lint_driver_core)
 (import lint_driver_core_tests)
 (import lint_core)
+(import lint_core_tests)
 (import compiler_owned_view as owned_view)
 
 (define (lint-driver-smoke-write-text [path : String] [contents : String]) : unit
@@ -40,7 +41,7 @@
 (define (lint-driver-smoke-bare-self-named-import-macro-unused-test) : i64
   (let
     [findings : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (lint_driver_core_tests.selfhost-lint-source-with-roots
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-bare-self-named-import-macro-source)
         (lint_svec.new))]
@@ -591,7 +592,7 @@
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
   (lint_core.lint-findings-count
-    (lint_driver_core.selfhost-lint-source-with-roots-and-options
+    (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
       "lint_driver_smoke_test.tl"
       source
       (lint_svec.new)
@@ -599,7 +600,7 @@
 
 (define (lint-driver-smoke-source-findings-with-redundant-function-name
   [source : String]) : lint_core.LintFindings
-  (lint_driver_core.selfhost-lint-source-with-roots-and-staged-options
+  (lint_driver_core_tests.selfhost-lint-source-with-roots-and-staged-options
     "lint_driver_smoke_test.tl"
     source
     (lint_svec.new)
@@ -609,7 +610,7 @@
 
 (define (lint-driver-smoke-source-findings-with-prefer-dotted-field-compat
   [source : String]) : lint_core.LintFindings
-  (lint_driver_core.selfhost-lint-source-with-roots-and-staged-options
+  (lint_driver_core_tests.selfhost-lint-source-with-roots-and-staged-options
     "lint_driver_smoke_test.tl"
     source
     (lint_svec.new)
@@ -618,7 +619,7 @@
     true))
 
 (define (lint-driver-smoke-source-findings-with-name-case [source : String]) : lint_core.LintFindings
-  (lint_driver_core.selfhost-lint-source-with-roots-and-all-options
+  (lint_driver_core_tests.selfhost-lint-source-with-roots-and-all-options
     "lint_driver_smoke_test.tl"
     source
     (lint_svec.new)
@@ -719,7 +720,7 @@
   [findings : lint_core.LintFindings]
   [index : i64]
   [depth : i64]) : bool
-  (match (lint_core.lint-findings-get findings index)
+  (match (lint_core_tests.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -735,7 +736,7 @@
   [findings : lint_core.LintFindings]
   [index : i64]
   [rule-id : String]) : bool
-  (match (lint_core.lint-findings-get findings index)
+  (match (lint_core_tests.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -749,7 +750,7 @@
   [index : i64]
   [rule-id : String]
   [line : i64]) : bool
-  (match (lint_core.lint-findings-get findings index)
+  (match (lint_core_tests.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -764,7 +765,7 @@
   [rule-id : String]
   [depth : i64]
   [line : i64]) : bool
-  (match (lint_core.lint-findings-get findings index)
+  (match (lint_core_tests.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -777,19 +778,19 @@
 (define (lint-driver-smoke-deprecated-string-concat-self-test) : i64
   (let
     [string-concat-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-string-concat-source)
         (lint_svec.new)
         true)]
     [loop-string-concat-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-loop-string-concat-source)
         (lint_svec.new)
         true)]
     [nested-string-concat-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-nested-string-concat-source)
         (lint_svec.new)
@@ -844,19 +845,19 @@
 (define (lint-driver-smoke-no-effect-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_no_effect.tl"
         (lint-driver-smoke-no-effect-source)
         (lint_svec.new)
         true)]
     [clean : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_no_effect_clean.tl"
         (lint-driver-smoke-clean-no-effect-source)
         (lint_svec.new)
         true)]
     [suppressed : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_no_effect_suppressed.tl"
         (lint-driver-smoke-suppressed-no-effect-source)
         (lint_svec.new)
@@ -881,19 +882,19 @@
 (define (lint-driver-smoke-unreachable-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unreachable.tl"
         (lint-driver-smoke-unreachable-source)
         (lint_svec.new)
         true)]
     [clean : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unreachable_clean.tl"
         (lint-driver-smoke-clean-unreachable-source)
         (lint_svec.new)
         true)]
     [suppressed : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unreachable_suppressed.tl"
         (lint-driver-smoke-suppressed-unreachable-source)
         (lint_svec.new)
@@ -926,13 +927,13 @@
 (define (lint-driver-smoke-divergence-padding-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_divergence_padding.tl"
         (lint-driver-smoke-divergence-padding-source)
         (lint_svec.new)
         true)]
     [clean : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_divergence_padding_clean.tl"
         (lint-driver-smoke-clean-divergence-source)
         (lint_svec.new)
@@ -964,31 +965,31 @@
 (define (lint-driver-smoke-unused-variable-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable.tl"
         (lint-driver-smoke-unused-variable-source)
         (lint_svec.new)
         false)]
     [clean : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_clean.tl"
         (lint-driver-smoke-clean-unused-variable-source)
         (lint_svec.new)
         false)]
     [shadow : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_shadow.tl"
         (lint-driver-smoke-shadow-unused-variable-source)
         (lint_svec.new)
         false)]
     [suppressed : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_suppressed.tl"
         (lint-driver-smoke-suppressed-unused-variable-source)
         (lint_svec.new)
         false)]
     [prefix : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_prefix.tl"
         (lint-driver-smoke-prefix-unused-variable-source)
         (lint_svec.new)
@@ -1066,67 +1067,67 @@
 (define (lint-driver-smoke-unused-unsafe-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_unsafe.tl"
         (lint-driver-smoke-unused-unsafe-source)
         (lint_svec.new)
         false)]
     [required : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_required_unsafe.tl"
         (lint-driver-smoke-required-unsafe-source)
         (lint_svec.new)
         false)]
     [safe-call : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_unsafe_call.tl"
         (lint-driver-smoke-unused-unsafe-call-source)
         (lint_svec.new)
         false)]
     [required-call : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_required_unsafe_call.tl"
         (lint-driver-smoke-required-unsafe-call-source)
         (lint_svec.new)
         false)]
     [nested : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_nested_unsafe.tl"
         (lint-driver-smoke-nested-unsafe-source)
         (lint_svec.new)
         false)]
     [suppressed : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_suppressed_unused_unsafe.tl"
         (lint-driver-smoke-suppressed-unused-unsafe-source)
         (lint_svec.new)
         false)]
     [parameter-shadow : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_parameter_shadow.tl"
         (lint-driver-smoke-unsafe-parameter-shadow-source)
         (lint_svec.new)
         false)]
     [local-shadow : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_local_shadow.tl"
         (lint-driver-smoke-unsafe-local-shadow-source)
         (lint_svec.new)
         false)]
     [let-shadow : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_let_shadow.tl"
         (lint-driver-smoke-unsafe-let-shadow-source)
         (lint_svec.new)
         false)]
     [top-level-shadow : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_top_level_shadow.tl"
         (lint-driver-smoke-unsafe-top-level-shadow-source)
         (lint_svec.new)
         false)]
     [tls-shadow : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_tls_shadow.tl"
         (lint-driver-smoke-unsafe-tls-shadow-source)
         (lint_svec.new)
@@ -1243,7 +1244,7 @@
 
 (define (lint-driver-smoke-raw-arena-op-count [path : String] [source : String]) : i64
   (lint_driver_core_tests.selfhost-lint-findings-rule-count
-    (lint_driver_core.selfhost-lint-source-with-roots
+    (lint_driver_core_tests.selfhost-lint-source-with-roots
       path
       source
       (lint_svec.new))
@@ -1327,7 +1328,7 @@
     request
     (let
       [findings : lint_core.LintFindings
-        (lint_driver_core.selfhost-lint-source-with-roots-and-options
+        (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
           "target/lint_unsafe_surface/direct_safe.tl"
           source
           stdlib-roots
@@ -1378,13 +1379,13 @@
           (lint-driver-smoke-unsafe-surface-safe-source)
           (lint_svec.new))]
       [direct-fallbacks : i64
-        (lint_driver_core.selfhost-lint-unused-unsafe-fallback-count)]
+        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [second-direct-count : i64
         (lint-driver-smoke-unsafe-surface-request-count
           (lint-driver-smoke-unsafe-surface-safe-source)
           (lint_svec.new))]
       [second-direct-fallbacks : i64
-        (lint_driver_core.selfhost-lint-unused-unsafe-fallback-count)]
+        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-safe : unit
         (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
       [safe-status : i64
@@ -1397,9 +1398,9 @@
           false
           false)]
       [safe-parses : i64
-        (lint_driver_core.selfhost-lint-unsafe-surface-cache-parse-count)]
+        (lint_driver_core_tests.selfhost-lint-unsafe-surface-cache-parse-count)]
       [safe-fallbacks : i64
-        (lint_driver_core.selfhost-lint-unused-unsafe-fallback-count)]
+        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-shadow : unit
         (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
       [_shadow-status : i64
@@ -1412,7 +1413,7 @@
           false
           false)]
       [shadow-fallbacks : i64
-        (lint_driver_core.selfhost-lint-unused-unsafe-fallback-count)]
+        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-macro : unit
         (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
       [macro-status : i64
@@ -1425,7 +1426,7 @@
           false
           false)]
       [macro-fallbacks : i64
-        (lint_driver_core.selfhost-lint-unused-unsafe-fallback-count)]
+        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-local-value : unit
         (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
       [local-value-status : i64
@@ -1438,7 +1439,7 @@
           false
           false)]
       [local-value-fallbacks : i64
-        (lint_driver_core.selfhost-lint-unused-unsafe-fallback-count)]
+        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-callable-value : unit
         (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
       [_callable-value-status : i64
@@ -1451,7 +1452,7 @@
           false
           false)]
       [callable-value-fallbacks : i64
-        (lint_driver_core.selfhost-lint-unused-unsafe-fallback-count)]
+        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-dotted : unit
         (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
       [_dotted-status : i64
@@ -1464,7 +1465,7 @@
           false
           false)]
       [dotted-fallbacks : i64
-        (lint_driver_core.selfhost-lint-unused-unsafe-fallback-count)]
+        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_direct-error-findings : lint_core.LintFindings
         (lint_driver_core.selfhost-lint-typed-unused-unsafe-findings
           "target/lint_unsafe_surface/direct_type_error.tl"
@@ -1472,7 +1473,7 @@
           (lint_svec.new)
           (lint_driver_core.selfhost-lint-language-cfgs))]
       [direct-error : String
-        (lint_driver_core.selfhost-lint-typed-unused-unsafe-error-shared-view)]
+        (lint_driver_core_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
       [_direct-parse-error-findings : lint_core.LintFindings
         (lint_driver_core.selfhost-lint-typed-unused-unsafe-findings
           "target/lint_unsafe_surface/direct_parse_error.tl"
@@ -1480,7 +1481,7 @@
           (lint_svec.new)
           (lint_driver_core.selfhost-lint-language-cfgs))]
       [direct-parse-error : String
-        (lint_driver_core.selfhost-lint-typed-unused-unsafe-error-shared-view)]
+        (lint_driver_core_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
       [file-error-status : i64
         (lint_driver_core.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/type_error.tl"
@@ -1572,25 +1573,27 @@
         [(not (= batch-status 0)) 106]
         [(not
             (=
-              (lint_driver_core.selfhost-lint-unsafe-surface-cache-parse-count)
+              (lint_driver_core_tests.selfhost-lint-unsafe-surface-cache-parse-count)
               1))
           107]
         [(not
             (=
-              (lint_driver_core.selfhost-lint-unsafe-surface-cache-hit-count)
+              (lint_driver_core_tests.selfhost-lint-unsafe-surface-cache-hit-count)
               1))
           108]
         [(not
-            (= (lint_driver_core.selfhost-lint-unused-unsafe-fallback-count) 0))
+            (=
+              (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)
+              0))
           109]
         [(not
             (=
-              (lint_driver_core.selfhost-lint-unused-unsafe-surface-required-total)
+              (lint_driver_core_tests.selfhost-lint-unused-unsafe-surface-required-total)
               2))
           110]
         [(not
             (=
-              (lint_driver_core.selfhost-lint-unused-unsafe-surface-classified-total)
+              (lint_driver_core_tests.selfhost-lint-unused-unsafe-surface-classified-total)
               2))
           114]
         [(not (= local-value-status 1)) 111]
@@ -1621,7 +1624,7 @@
   (let
     [rule : String (lint_core.lint-rule-copy-on-update-struct-id)]
     [reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_copy_on_update_struct.tl"
         (lint-driver-smoke-copy-on-update-struct-source)
         (lint_svec.new)
@@ -1694,7 +1697,7 @@
   (let
     [source : String (lint-driver-smoke-prefer-dotted-field-compat-source)]
     [ordinary : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots-and-staged-options
+      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-staged-options
         "lint_driver_smoke_test.tl"
         (owned_view.compiler-owned-shared-view source)
         (lint_svec.new)
@@ -1817,7 +1820,7 @@
       (lint-driver-smoke-source-findings-with-name-case
         (lint-driver-smoke-name-case-module-source))]
     [default-findings : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (lint_driver_core_tests.selfhost-lint-source-with-roots
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-name-case-source)
         (lint_svec.new))]

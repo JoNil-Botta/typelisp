@@ -1,5 +1,5 @@
 ;; Self-hosted formatter special-form rule smoke test.
-(import format_rules as rules)
+(import format_tests)
 
 (define (main) : i64
-  (rules.format-rules-self-test))
+  (format_tests.format-rules-self-test))

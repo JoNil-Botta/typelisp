@@ -245,9 +245,7 @@
             (match result
               [(backend.CompilerBackendMaybeAsm.Some text)
                 (and
-                  (backend.compiler-backend-string-contains?
-                    (view.compiler-owned-shared-view text)
-                    "    leaq (")
+                  (backend.compiler-backend-string-contains? text "    leaq (")
                   (not (backend.compiler-backend-string-contains? text "imul")))]
               [(backend.CompilerBackendMaybeAsm.No) false])
             "factoring admission")

@@ -43,17 +43,13 @@
 (define (compiler-tlci-native-section-instrs
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectX64InstrList
-  (match (cobj.compiler-object-section-list-find
-    (owned_view.compiler-owned-shared-view image.sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ _ instrs) instrs]))
 
 (define (compiler-tlci-native-section-data
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectDataRecordList
-  (match (cobj.compiler-object-section-list-find
-    (owned_view.compiler-owned-shared-view image.sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data _) data]))
 
 ;; Every absolute SymbolAddress data record becomes exactly one load-base
@@ -63,17 +59,13 @@
 (define (compiler-tlci-native-data-fixup-count
   [records : cobj.CompilerObjectDataRecordList]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [fixups : i64 0]
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-data-record-list-ref
-            (owned_view.compiler-owned-shared-view records)
-            index)
+          (match (cobj.compiler-object-data-record-list-ref records index)
             [(cobj.CompilerObjectDataRecord.SymbolAddress _)
               (set! fixups (+ fixups 1))]
             [_ unit])
@@ -110,17 +102,13 @@
   [records : cobj.CompilerObjectDataRecordList]
   [base : i64]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [offset : i64 base]
     (while (< index count)
       (let
         [record : cobj.CompilerObjectDataRecord
-          (cobj.compiler-object-data-record-list-ref
-            (owned_view.compiler-owned-shared-view records)
-            index)]
+          (cobj.compiler-object-data-record-list-ref records index)]
         (begin
           (match (owned_view.compiler-owned-shared-view record)
             [(cobj.CompilerObjectDataRecord.Label name)
@@ -146,18 +134,14 @@
       (compiler-tlci-native-section-instrs
         (owned_view.compiler-owned-shared-view image)
         (cobj.CompilerObjectSectionKind.Text))]
-    [instr-count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [instr-count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [offsets : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ instr-count 16))]
     [instr-index : i64 0]
     [offset : i64 bases.text]
     [symbols : cobj.CompilerObjectSymbolList
       (owned_view.compiler-owned-shared-view image.symbols)]
-    [symbol-count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [symbol-count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [externs : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ symbol-count 1))]
     [symbol-index : i64 0]
@@ -165,9 +149,7 @@
       (while (< instr-index instr-count)
         (let
           [instr : cobj.CompilerObjectX64Instr
-            (cobj.compiler-object-instr-list-ref
-              (owned_view.compiler-owned-shared-view instrs)
-              instr-index)]
+            (cobj.compiler-object-instr-list-ref instrs instr-index)]
           (begin
             (match (owned_view.compiler-owned-shared-view instr)
               [(cobj.CompilerObjectX64Instr.Label name)
@@ -204,9 +186,7 @@
         bases.bss)
       (while (< symbol-index symbol-count)
         (begin
-          (match (cobj.compiler-object-symbol-list-ref
-            (owned_view.compiler-owned-shared-view symbols)
-            symbol-index)
+          (match (cobj.compiler-object-symbol-list-ref symbols symbol-index)
             [(cobj.CompilerObjectSymbol.Symbol name binding _ _)
               (match binding
                 [(cobj.CompilerObjectSymbolBinding.Extern)
@@ -381,9 +361,7 @@
       (compiler-tlci-native-section-instrs
         image
         (cobj.CompilerObjectSectionKind.Text))]
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [offset : i64 bases.text]
     [ok : bool true]
@@ -391,9 +369,7 @@
       (while (and ok (< index count))
         (let
           [instr : cobj.CompilerObjectX64Instr
-            (cobj.compiler-object-instr-list-ref
-              (owned_view.compiler-owned-shared-view instrs)
-              index)]
+            (cobj.compiler-object-instr-list-ref instrs index)]
           (begin
             (match (owned_view.compiler-owned-shared-view instr)
               [(cobj.CompilerObjectX64Instr.Call target)
@@ -663,9 +639,7 @@
   (let
     [records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data image kind)]
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [offset : i64 region-base]
     [ok : bool true]
@@ -673,9 +647,7 @@
       (while (and ok (< index count))
         (let
           [record : cobj.CompilerObjectDataRecord
-            (cobj.compiler-object-data-record-list-ref
-              (owned_view.compiler-owned-shared-view records)
-              index)]
+            (cobj.compiler-object-data-record-list-ref records index)]
           (begin
             (match (owned_view.compiler-owned-shared-view record)
               [(cobj.CompilerObjectDataRecord.SymbolAddress target)

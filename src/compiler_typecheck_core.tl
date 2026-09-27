@@ -6051,7 +6051,7 @@
 
 ;; Packed job-owned view (CompilerProfileState slots 242-373): four reinference
 ;; columns followed by the body-fact hit/miss columns, one slot per profiled
-;; site. Relative slots 108-119 and 126-127 map to the driver/loader lifetime
+;; site. Relative slots 108-118 and 126-127 map to the driver/loader lifetime
 ;; ledger; relative slots 120-125 and 128-131 retain macro lifetime boundary
 ;; starts. Keeping the six equal-width families contiguous makes reset/render
 ;; order deterministic without reintroducing array owners in this leaf module.
@@ -105699,18 +105699,12 @@
 
 (cfg
   compile-profile
-  (define (macro-profile-surface-prefix-hit [count : i64]) : unit
+  (define (macro-profile-surface-prefix-hit) : unit
     (cfg
       compile-profile-summary
       unit
-      (begin
-        (io.print-error
-          "compile-profile-detail|prelude.macro_walk_decl_visits|0\n")
-        (io.print-error
-          (str_cat.str-cat
-            "compile-profile-detail|prelude.macro_walk_skipped_decls|"
-            (string.int->string count)
-            "\n"))))))
+      (io.print-error
+        "compile-profile-detail|prelude.macro_walk_decl_visits|0\n"))))
 
 ;; Package imports are flattened at their source import sites, between
 ;; entry-owned module/alias markers. Provenance is the stable discriminator:
@@ -105802,7 +105796,7 @@
                 load-state
                 count)
               unit)
-            (cfg compile-profile (macro-profile-surface-prefix-hit count))
+            (cfg compile-profile (macro-profile-surface-prefix-hit))
             (MacroSurfacePrefixPlan.Hydrated
               (tc-decl-list-drop (tc-global-shared-view decls) count)
               (tc-decl-path-list-drop (tc-global-shared-view paths) count)
@@ -108303,18 +108297,12 @@
 
 (cfg
   compile-profile
-  (define (tc-profile-surface-prefix-hit [count : i64]) : unit
+  (define (tc-profile-surface-prefix-hit) : unit
     (cfg
       compile-profile-summary
       unit
-      (begin
-        (io.print-error
-          "compile-profile-detail|prelude.typecheck_decl_checks|0\n")
-        (io.print-error
-          (str_cat.str-cat
-            "compile-profile-detail|prelude.typecheck_skipped_decls|"
-            (string.int->string count)
-            "\n"))))))
+      (io.print-error
+        "compile-profile-detail|prelude.typecheck_decl_checks|0\n"))))
 
 (define (tc-check-decls-with-surface-prefix-hit
   [ctx : TcContext]
@@ -108327,7 +108315,7 @@
   [facts : surface_facts.SurfaceTypecheckFacts]) : ResultCompilerTypecheck
   (begin
     (tc-clone-root-collection-apply-surface-facts! ctx)
-    (cfg compile-profile (tc-profile-surface-prefix-hit count))
+    (cfg compile-profile (tc-profile-surface-prefix-hit))
     (cfg
       compile-profile
       (compiler-tc-decl-profile-reset (tc-context-job-state ctx)))

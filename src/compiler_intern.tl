@@ -2274,10 +2274,9 @@
 ;; Deterministic per (compiler, input) counters that drive the redundant-
 ;; interning elimination work: hash-words counts every string hash (the real
 ;; cost), and the entry counters attribute those hashes to intern/intern-slice/
-;; intern-lookup. The render counter records each successful intern-str call;
-;; invalid IDs stay separate so diagnostics cannot hide semantic render work.
-;; `compiler_intern` has no formatting dependency, so it only exposes reset and
-;; value accessors; the driver (which owns `io`) prints them at compile end.
+;; intern-lookup. The render counter records each successful intern-str call,
+;; so an invalid ID in a diagnostic does not count as semantic render work. The
+;; driver writes the rows at compile end.
 (cfg
   (any compile-profile test)
   (counters.defslots
@@ -2294,9 +2293,7 @@
     (intern-profile-source-symbol-bytes-metric "intern.source_symbol_bytes")
     (intern-profile-slice-bytes-metric "intern.slice_bytes")
     (intern-profile-slice-hit-metric "intern.slice_hits")
-    (intern-profile-slice-miss-metric "intern.slice_misses")
-    (intern-profile-invalid-str-metric)
-    (intern-profile-invalid-str-last-id-metric)))
+    (intern-profile-slice-miss-metric "intern.slice_misses")))
 
 ;; Slots 140-222 belong to the backend and register-allocation census cfgs.
 ;; Keep fixed-storage observations after that entire range so one compiler may
@@ -2550,33 +2547,8 @@
 
 (cfg
   compile-profile
-  (define (intern-profile-intern-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-intern-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-slice-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-slice-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-lookup-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-lookup-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-generated-metric)))
-
-(cfg
-  compile-profile
   (define (intern-profile-render-value [metrics-address : u64]) : i64
     (intern-profile-value metrics-address intern-profile-render-metric)))
-
-(cfg
-  compile-profile
-  (define (intern-profile-invalid-str-value [metrics-address : u64]) : i64
-    (intern-profile-value metrics-address intern-profile-invalid-str-metric)))
 
 (cfg
   (any compile-profile test)
@@ -4866,16 +4838,7 @@
   (cfg
     compile-profile
     (if (or (< id 0) (>= id (intern-capacity)))
-      (begin
-        (intern-profile-add!
-          intern-active-profile-metrics-address
-          intern-profile-invalid-str-metric
-          1)
-        (intern-profile-set!
-          intern-active-profile-metrics-address
-          intern-profile-invalid-str-last-id-metric
-          id)
-        "<invalid-intern-id>")
+      "<invalid-intern-id>"
       (begin
         (intern-profile-add!
           intern-active-profile-metrics-address

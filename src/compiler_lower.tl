@@ -2355,9 +2355,6 @@
     (compiler-lower-profile-start-ms-metric)
     (compiler-lower-profile-start-total-metric)
     (compiler-lower-profile-start-live-metric)
-    (compiler-lower-profile-start-intern-metric)
-    (compiler-lower-profile-start-intern-slice-metric)
-    (compiler-lower-profile-start-intern-generated-metric)
     (compiler-lower-profile-start-intern-render-metric)
     (compiler-lower-profile-detail-start-ms-metric)))
 
@@ -2556,21 +2553,6 @@
         (profile.alloc-live))
       (compiler-lower-profile-set!
         state
-        compiler-lower-profile-start-intern-metric
-        (ci.intern-profile-intern-value
-          (compiler-lower-profile-intern-metrics-address state)))
-      (compiler-lower-profile-set!
-        state
-        compiler-lower-profile-start-intern-slice-metric
-        (ci.intern-profile-slice-value
-          (compiler-lower-profile-intern-metrics-address state)))
-      (compiler-lower-profile-set!
-        state
-        compiler-lower-profile-start-intern-generated-metric
-        (ci.intern-profile-generated-value
-          (compiler-lower-profile-intern-metrics-address state)))
-      (compiler-lower-profile-set!
-        state
         compiler-lower-profile-start-intern-render-metric
         (ci.intern-profile-render-value
           (compiler-lower-profile-intern-metrics-address state)))
@@ -2621,38 +2603,6 @@
           unit
           (io.print-error
             (str_cat.str-cat
-              "compile-profile-detail|intern.lower_phase|"
-              (lower-global-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  (ci.intern-profile-intern-value
-                    (compiler-lower-profile-intern-metrics-address state))
-                  (compiler-lower-profile-value
-                    state
-                    compiler-lower-profile-start-intern-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.lower_phase.slice|"
-              (lower-global-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  (ci.intern-profile-slice-value
-                    (compiler-lower-profile-intern-metrics-address state))
-                  (compiler-lower-profile-value
-                    state
-                    compiler-lower-profile-start-intern-slice-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase.render|"
               (lower-global-shared-view phase)
               "|"
@@ -2663,22 +2613,6 @@
                   (compiler-lower-profile-value
                     state
                     compiler-lower-profile-start-intern-render-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.lower_phase.generated|"
-              phase
-              "|"
-              (string.int->string
-                (-
-                  (ci.intern-profile-generated-value
-                    (compiler-lower-profile-intern-metrics-address state))
-                  (compiler-lower-profile-value
-                    state
-                    compiler-lower-profile-start-intern-generated-metric)))
               "\n")))))))
 
 (cfg

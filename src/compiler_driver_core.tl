@@ -1204,12 +1204,7 @@
     (compiler-driver-profile-phase-start-ms-metric)
     (compiler-driver-profile-phase-start-total-metric)
     (compiler-driver-profile-phase-start-live-metric)
-    (compiler-driver-profile-phase-start-intern-metric)
-    (compiler-driver-profile-phase-start-intern-slice-metric)
-    (compiler-driver-profile-phase-start-intern-generated-metric)
     (compiler-driver-profile-phase-start-intern-render-metric)
-    (compiler-driver-profile-phase-start-intern-lookup-metric)
-    (compiler-driver-profile-phase-start-intern-pool-len-metric)
     (compiler-driver-profile-prelude-source-pipeline-entries-metric)
     (compiler-driver-profile-prelude-hydrations-metric)
     (compiler-driver-batch-profile-start-ms-metric)
@@ -1792,33 +1787,9 @@
         (profile.alloc-live))
       (compiler-driver-profile-set!
         state
-        compiler-driver-profile-phase-start-intern-metric
-        (ci.intern-profile-intern-value
-          (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-profile-phase-start-intern-slice-metric
-        (ci.intern-profile-slice-value
-          (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-profile-phase-start-intern-generated-metric
-        (ci.intern-profile-generated-value
-          (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
         compiler-driver-profile-phase-start-intern-render-metric
         (ci.intern-profile-render-value
           (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-profile-phase-start-intern-lookup-metric
-        (ci.intern-profile-lookup-value
-          (compiler-driver-profile-intern-metrics-address state)))
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-profile-phase-start-intern-pool-len-metric
-        (ci.intern-pool-len))
       (profile.alloc-reset-peak))))
 
 (cfg
@@ -1833,16 +1804,8 @@
       [end-peak : i64 (profile.alloc-peak)]
       [intern-metrics-address : u64
         (compiler-driver-profile-intern-metrics-address state)]
-      [end-intern : i64 (ci.intern-profile-intern-value intern-metrics-address)]
-      [end-intern-slice : i64
-        (ci.intern-profile-slice-value intern-metrics-address)]
-      [end-intern-generated : i64
-        (ci.intern-profile-generated-value intern-metrics-address)]
       [end-intern-render : i64
         (ci.intern-profile-render-value intern-metrics-address)]
-      [end-intern-lookup : i64
-        (ci.intern-profile-lookup-value intern-metrics-address)]
-      [end-intern-pool-len : i64 (ci.intern-pool-len)]
       [peak-delta : i64
         (compiler-driver-profile-nonnegative
           (-
@@ -1883,51 +1846,6 @@
           unit
           (io.print-error
             (str_cat.str-cat
-              "compile-profile-detail|intern.phase|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.slice|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern-slice
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-slice-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.generated|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern-generated
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-generated-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
               "compile-profile-detail|intern.phase.render|"
               (owned_view.compiler-owned-shared-view phase)
               "|"
@@ -1937,47 +1855,6 @@
                   (compiler-driver-profile-value
                     state
                     compiler-driver-profile-phase-start-intern-render-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.lookup|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern-lookup
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-lookup-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.pool|"
-              (owned_view.compiler-owned-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  end-intern-pool-len
-                  (compiler-driver-profile-value
-                    state
-                    compiler-driver-profile-phase-start-intern-pool-len-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.phase.invalid_str_ids|"
-              phase
-              "|"
-              (string.int->string
-                (ci.intern-profile-invalid-str-value intern-metrics-address))
               "\n")))))))
 
 (cfg

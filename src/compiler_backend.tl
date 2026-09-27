@@ -79140,7 +79140,7 @@
                             compile-profile
                             (compiler-backend-profile-finish
                               profile-state
-                              "(compiler-backend-global-shared-view globals)"))
+                              "globals"))
                           (cfg
                             compile-profile
                             (compiler-backend-profile-start profile-state))
@@ -79177,7 +79177,7 @@
                             compile-profile
                             (compiler-backend-profile-finish
                               profile-state
-                              "(compiler-backend-global-shared-view globals)"))
+                              "globals"))
                           (ResultCompilerBackendBuffer.Err message))])))])))]
       [(ResultBackendRuntimePlanWithIndex.Err message)
         (begin

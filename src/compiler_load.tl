@@ -1947,15 +1947,6 @@
   [state : (& state CompilerLoadSessionState)]) : bool
   (compiler-load-session-state-bool-cell-get state.cache-enabled))
 
-(define (compiler-load-session-state-cache-set-enabled!
-  [state : CompilerLoadSessionState]
-  [enabled : bool]) : unit
-  (compiler-load-session-state-bool-cell-set! state.cache-enabled enabled))
-
-(define (compiler-load-session-state-cache-enable!
-  [state : CompilerLoadSessionState]) : unit
-  (compiler-load-session-state-cache-set-enabled! state true))
-
 (define (compiler-load-session-state-program-cache-set-enabled-cell!
   [state : CompilerLoadSessionState]
   [enabled : bool]) : unit
@@ -5867,11 +5858,6 @@
 (define (compiler-load-session-state-lazy-import-skip-count
   [state : (& state CompilerLoadSessionState)]) : i64
   (array-ref state.lazy-import-skip-record-count 0))
-
-(define (compiler-load-lazy-import-skip-count) : i64
-  (let
-    [bound-5 (compiler-load-active-session-state-shared-view)]
-    (compiler-load-session-state-lazy-import-skip-count bound-5)))
 
 (define (compiler-load-session-state-lazy-import-record-skip!
   [state : CompilerLoadSessionState]) : unit
@@ -11104,11 +11090,6 @@
   [source : String]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths (compiler-load-source-with-paths path source seen)))
-
-(define (compiler-load-file-with-paths
-  [path : String]
-  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-file-with-paths-and-roots path seen (svec.new)))
 
 (define (compiler-load-file-with-paths-and-roots
   [path : String]

@@ -6,6 +6,7 @@
 (import compiler_typecheck_core as tc_core)
 (import compiler_typecheck_core_tests as core_tests)
 (import compiler_load as load)
+(import compiler_load_tests as load_tests)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
 (import compiler_diagnostic as cdiag)
@@ -9688,7 +9689,7 @@
       "(module tc.decl_origin_entry)
 (import tc_decl_origin_dep as dep)
 (define (main) : i64 0)")
-    (match (load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/tc_decl_origin_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)

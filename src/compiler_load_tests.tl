@@ -1301,7 +1301,7 @@
 (import compiler_load_dep as dep)
 (import compiler_load_dep)
 (define (main) : i64 (+ dep.dep compiler_load_dep.dep))")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/compiler_load_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ modules seen)
@@ -1322,7 +1322,7 @@
       "target/cl_restore_entry.tl"
       "(import cl_restore_dep as dep)
 (define (main) : i64 dep.dep-value)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_restore_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -1340,7 +1340,7 @@
       "(import cl_alias_dep as dep)
 (module alias.entry)
 (define (main) : i64 (dep.get))")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_alias_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -1376,7 +1376,7 @@
 (import cl_same_alias_dep as dep)
 (import cl_same_alias_dep as dep)
 (define (main) : i64 (+ cl_same_alias_dep.get dep.get))")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_same_alias_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Err _) false]
@@ -2098,7 +2098,7 @@
       "(module dotted.entry)
 (import nested.dep)
 (define (main) : i64 dep-val)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_dotted_src/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
@@ -2124,7 +2124,7 @@
       "(module moduleless.dotted.entry)
 (import nested.dep)
 (define (main) : i64 dep.dep-val)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_moduleless_dotted_src/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
@@ -2217,9 +2217,7 @@
         (string.copy entry)
         "(import provider)
 (define (main) : i64 provider.value)")
-      (match (load.compiler-load-file-with-paths
-        entry
-        (sym_i64_env.sym-i64-empty))
+      (match (compiler-load-file-with-paths entry (sym_i64_env.sym-i64-empty))
         [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
             (compiler-load-test-seen-contains? seen "provider")
@@ -2236,7 +2234,7 @@
       "target/cl_canonical_source_explicit_entry.tl"
       "(import cl_canonical_source_explicit as wrong)
 (define (main) : i64 wrong.value)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_canonical_source_explicit_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Err diag)
@@ -2552,7 +2550,7 @@
 (import cl_diamond_a as a)
 (import cl_diamond_b as b)
 (define (main) : i64 (+ a.a-val b.b-val))")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_diamond_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
@@ -2588,7 +2586,7 @@
       "(module cl_tr_entry)
 (import cl_tr_a as a)
 (define (main) : i64 a.a-val)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_tr_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
@@ -2623,7 +2621,7 @@
       "target/cl_include_entry.tl"
       "(include-str payload \"cl_include_payload.txt\")
 (define (main) : i64 0)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_include_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -2658,7 +2656,7 @@
       "target/cl_include_comptime_entry.tl"
       "(include-str-comptime payload \"cl_include_comptime_payload.txt\")
 (define (main) : i64 0)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_include_comptime_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -2676,7 +2674,7 @@
       "target/cl_include_lzss_entry.tl"
       "(include-str-lzss payload \"cl_include_lzss_payload.txt\")
 (define (main) : i64 0)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_include_lzss_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -2709,7 +2707,7 @@
         "target/cl_include_raw_entry.tl"
         "(include-str payload \"cl_include_raw_payload.txt\")
 (define (main) : i64 0)")
-      (match (load.compiler-load-file-with-paths
+      (match (compiler-load-file-with-paths
         "target/cl_include_raw_entry.tl"
         (sym_i64_env.sym-i64-empty))
         [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -2727,7 +2725,7 @@
       "target/cl_include_bin_entry.tl"
       "(include-bin payload \"cl_include_bin_payload.bin\")
 (define (main) : i64 0)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_include_bin_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -2786,7 +2784,7 @@
       "(module cl_ipe_entry)
 (import cl_ipe_dep as dep)
 (define (main) : i64 0)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_ipe_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Err diag)
@@ -2813,7 +2811,7 @@
       "(module idm.entry)
 (import cl_idm_dep as dep)
 (define (main) : i64 0)")
-    (match (load.compiler-load-file-with-paths
+    (match (compiler-load-file-with-paths
       "target/cl_idm_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Err diag)
@@ -4218,7 +4216,7 @@
     [state-b : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
     [_enable-a : unit
-      (load.compiler-load-session-state-cache-enable!
+      (compiler-load-session-state-cache-enable!
         (owned_view.compiler-owned-shared-view state-a))]
     [_select-b : unit
       (load.compiler-load-session-state-use!
@@ -5765,3 +5763,22 @@
       (compiler-load-pkg-dep-list-ok?)
       (return (io.panic "compiler-load: pkg-dep-list smoke mismatch")))
     42))
+
+(define (compiler-load-session-state-cache-set-enabled!
+  [state : load.CompilerLoadSessionState]
+  [enabled : bool]) : unit
+  (load.compiler-load-session-state-bool-cell-set! state.cache-enabled enabled))
+
+(define (compiler-load-session-state-cache-enable!
+  [state : load.CompilerLoadSessionState]) : unit
+  (compiler-load-session-state-cache-set-enabled! state true))
+
+(define (compiler-load-lazy-import-skip-count) : i64
+  (let
+    [bound-5 (load.compiler-load-active-session-state-shared-view)]
+    (load.compiler-load-session-state-lazy-import-skip-count bound-5)))
+
+(define (compiler-load-file-with-paths
+  [path : String]
+  [seen : sym_i64_env.SymI64Env]) : load.ResultCompilerLoadWithPaths
+  (load.compiler-load-file-with-paths-and-roots path seen (svec.new)))

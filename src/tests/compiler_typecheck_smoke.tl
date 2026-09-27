@@ -11,6 +11,7 @@
 (import compiler_typecheck_core_tests as core_tests)
 (import compiler_ast_types as ast)
 (import compiler_load as load)
+(import compiler_load_tests as load_tests)
 (import compiler_ctfe as ctfe)
 (import compiler_parse_core as parser)
 (import read as reader)
@@ -2696,10 +2697,10 @@
     [state-b : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
     [_enable-baseline : unit
-      (load.compiler-load-session-state-cache-enable!
+      (load_tests.compiler-load-session-state-cache-enable!
         (tc_core.tc-global-shared-view baseline-state))]
     [_enable-a : unit
-      (load.compiler-load-session-state-cache-enable!
+      (load_tests.compiler-load-session-state-cache-enable!
         (tc_core.tc-global-shared-view state-a))]
     [_seed-b : unit (set! (array-ref state-b.program-cache-hit-count 0) 17)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
@@ -2814,7 +2815,7 @@
       (tc_core.tc-prefix-snapshot-cache-state-new)]
     [job-state-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
     [_enable-a : unit
-      (load.compiler-load-session-state-cache-enable!
+      (load_tests.compiler-load-session-state-cache-enable!
         (tc_core.tc-global-shared-view state-a))]
     [_seed-b : unit
       (begin
@@ -4669,12 +4670,13 @@
 (import stdlib.result)
 (import (result.result i64 String) as result_i64_string)
 (define (main) : i64 42)")
-        (match (load.compiler-load-file-with-paths
+        (match (load_tests.compiler-load-file-with-paths
           "target/tc_lazy_stdlib_result/result.tl"
           (sym_i64_env.sym-i64-empty))
           [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
             (let
-              [skip-count : i64 (load.compiler-load-lazy-import-skip-count)]
+              [skip-count : i64
+                (load_tests.compiler-load-lazy-import-skip-count)]
               [result-materialized : bool
                 (compiler-typecheck-smoke-paths-contain?
                   (tc_core.tc-global-shared-view paths)
@@ -4718,7 +4720,7 @@
 (import (result.result i64 LocalError) as local_result_unused)
 
 (define (main) : i64 42)")
-        (match (load.compiler-load-file-with-paths
+        (match (load_tests.compiler-load-file-with-paths
           "target/tc_unused_result_local_type/main.tl"
           (sym_i64_env.sym-i64-empty))
           [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -4762,7 +4764,7 @@
 
 (define (main) : i64
   (+ (score (r_helper.ok 40)) (r_helper.value-or (r_helper.err \"bad\") 2)))")
-        (match (load.compiler-load-file-with-paths
+        (match (load_tests.compiler-load-file-with-paths
           "target/tc_result_enum_then_helper/main.tl"
           (sym_i64_env.sym-i64-empty))
           [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)

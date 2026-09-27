@@ -293,7 +293,7 @@
       (io.write-file
         "target/cl_decl_run_origin.tl"
         (byte_buf.str-as-bytes (& source)))
-      (match (compiler_load.compiler-load-file-with-paths
+      (match (load_tests.compiler-load-file-with-paths
         "target/cl_decl_run_origin.tl"
         (sym_i64_env.sym-i64-empty))
         [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)

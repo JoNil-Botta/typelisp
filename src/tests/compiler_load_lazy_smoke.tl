@@ -36,12 +36,12 @@
   (begin
     \"dep.get\"
     42))")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_dotted/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 1)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 1)
           (= (load_tests.compiler-load-decl-list-count decls) 3)
           (load_tests.compiler-load-decl-list-has-import-alias?
             decls
@@ -66,12 +66,12 @@
       "(module lazy.dotted.used.entry)
 (import nested.dep as dep)
 (define (main) : i64 (dep.get))")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_dotted_used/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.dotted.used.entry")
@@ -86,7 +86,7 @@
       (str_cat.str-cat
         "(module removed.array.entry)\n(import stdlib."
         "array)\n(define (main) : i64 42)"))
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_removed_array_module/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ _) false]
@@ -109,12 +109,12 @@
 (import stdlib.result)
 (import (result.result i64 String) as result_i64_string)
 (define (main) : i64 42)")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_stdlib_result/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-decl-list-has-import-alias?
             decls
             "stdlib.result"
@@ -134,12 +134,12 @@
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 (define (main) : i64 42)")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_module_macro/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.module.macro.entry")
@@ -155,12 +155,12 @@
       "(module lazy.unused.module.macro.entry)
 (import stdlib.option)
 (define (main) : i64 42)")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_unused_module_macro/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 1)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 1)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.unused.module.macro.entry")
@@ -186,12 +186,12 @@
 (import generic.macro.dep as api)
 (import (make i64) as made)
 (define (main) : i64 42)")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_aliased_module_macro/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.aliased.module.macro.entry")
@@ -218,12 +218,12 @@
 (import generic.macro.dep as api)
 (import (generic.macro.dep.make i64) as made)
 (define (main) : i64 42)")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_qualified_module_macro/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.qualified.module.macro.entry")
@@ -251,7 +251,7 @@
         cfgs)
         [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
-            (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+            (= (load_tests.compiler-load-lazy-import-skip-count) 0)
             (load_tests.compiler-load-test-seen-contains?
               seen
               "lazy.stdlib.vector.module.macro.entry")
@@ -279,7 +279,7 @@
       (compiler_load.compiler-pkg-deps-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 1)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 1)
           (= (load_tests.compiler-load-decl-list-count decls) 3)
           (load_tests.compiler-load-decl-list-has-import-alias?
             decls
@@ -313,7 +313,7 @@
       (compiler_load.compiler-pkg-deps-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "pkg.lazy.dotted.used.entry")
@@ -339,12 +339,12 @@
   (let
     [dep : i64 42]
     dep))")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_local_alias/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 1)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 1)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.local.entry")
@@ -376,12 +376,12 @@
     [(dep.Choice.Empty) 0]
     [(dep.Choice.Full n) (+ n (dep.get))]))
 (define (main) : i64 (dep.number))")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_generic_surface/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.surface.entry")
@@ -406,12 +406,12 @@
       "(module generic.direct.entry)
 (import generic.direct.dep as dep)
 (define (main) : i64 (get))")
-    (match (compiler_load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_generic_direct/entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+          (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.direct.entry")
@@ -446,7 +446,7 @@
         cfgs)
         [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
-            (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
+            (= (load_tests.compiler-load-lazy-import-skip-count) 0)
             (load_tests.compiler-load-test-seen-contains?
               seen
               "generic.cfg.entry")
@@ -691,7 +691,7 @@
         "(module cl_semantic_origin_entry)
 (import cl_semantic_origin_dep as dep)
 (defstruct Same (same-field Shared.Type))")
-      (match (compiler_load.compiler-load-file-with-paths
+      (match (load_tests.compiler-load-file-with-paths
         "target/cl_semantic_origin_entry.tl"
         (sym_i64_env.sym-i64-empty))
         [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)

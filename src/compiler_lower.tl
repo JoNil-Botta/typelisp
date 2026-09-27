@@ -48428,238 +48428,296 @@
               bindings
               (+ binding-index 1))))])))
 
-(define (lower-spmd-expr-list-has-out-of-line-call?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [exprs : ast.AstExprList]) : bool
-  (lower-spmd-expr-list-has-out-of-line-call-at?
-    ctx
-    function-state
-    env
-    type-env
-    (& exprs)
-    0))
+;; The calls an SPMD body's strategy depends on: a call to an SPMD helper that
+;; stays out of line (an imported callable, or a helper whose body needs its
+;; own frame), or a call that reaches an atomic.
+(defenum LowerSpmdCallProbe
+  (OutOfLine)
+  (Atomic))
 
-(define (lower-spmd-expr-list-has-out-of-line-call-at?
+;; Whether `expr` holds a call `probe` looks for. Both probes descend the same
+;; scalar, let, begin and array forms; an atomic call is also looked for in
+;; struct stores and inside the callee expression and the helper bodies it
+;; inlines.
+(define (lower-spmd-expr-has-call?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (lower-spmd-expr-has-out-of-line-call?
-        ctx
-        function-state
-        env
-        type-env
-        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-spmd-expr-list-has-out-of-line-call-at?
-        ctx
-        function-state
-        env
-        type-env
-        exprs
-        (+ index 1)))))
-
-(define (lower-spmd-let-has-out-of-line-call?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [bindings : ast.AstLetBindingList]) : bool
-  (lower-spmd-let-has-out-of-line-call-at?
-    ctx
-    function-state
-    env
-    type-env
-    (& bindings)
-    0))
-
-(define (lower-spmd-let-has-out-of-line-call-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    false
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ _ init-box)
-        (or
-          (lower-spmd-expr-has-out-of-line-call?
-            ctx
-            function-state
-            env
-            type-env
-            (lower-context-expr-get ctx init-box))
-          (lower-spmd-let-has-out-of-line-call-at?
-            ctx
-            function-state
-            env
-            type-env
-            bindings
-            (+ index 1)))])))
-
-(define (lower-spmd-expr-has-out-of-line-call?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
+  [probe : LowerSpmdCallProbe]
   [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
-      (lower-spmd-expr-has-out-of-line-call?
+      (lower-spmd-expr-has-call?
         ctx
         function-state
         env
         type-env
+        probe
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Ann inner-box _)
-      (lower-spmd-expr-has-out-of-line-call?
+      (lower-spmd-expr-has-call?
         ctx
         function-state
         env
         type-env
+        probe
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Cast inner-box _)
-      (lower-spmd-expr-has-out-of-line-call?
+      (lower-spmd-expr-has-call?
         ctx
         function-state
         env
         type-env
+        probe
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Unary _ inner-box)
-      (lower-spmd-expr-has-out-of-line-call?
+      (lower-spmd-expr-has-call?
         ctx
         function-state
         env
         type-env
+        probe
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Binary _ left-box right-box)
       (or
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx left-box))
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx right-box)))]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
         (or
-          (match (lower-spmd-inline-helper-lookup
+          (match probe
+            [(LowerSpmdCallProbe.OutOfLine)
+              (match (lower-spmd-inline-helper-lookup
+                ctx
+                function-state
+                env
+                type-env
+                (lower-id-set-empty)
+                func)
+                [(ResultLowerSpmdInlineHelper.Ok helper)
+                  (match helper
+                    [(LowerSpmdInlineHelper.Some _ _ _ body)
+                      (lower-spmd-helper-out-of-line? ctx body)]
+                    [(LowerSpmdInlineHelper.Imported _ _ _ _ _) true]
+                    [(LowerSpmdInlineHelper.No) false])]
+                [(ResultLowerSpmdInlineHelper.Err _) false])]
+            [(LowerSpmdCallProbe.Atomic)
+              (or
+                (>
+                  (string.string-length
+                    (lower-atomic-extern-symbol-for-func
+                      (compiler-lower-function-state-owner function-state)
+                      ctx
+                      type-env
+                      (lower-global-shared-view func)))
+                  0)
+                (lower-atomic-pointer-func?
+                  type-env
+                  (lower-global-shared-view func))
+                (lower-vector-call-target-has-atomic?
+                  ctx
+                  function-state
+                  env
+                  type-env
+                  (lower-global-shared-view func))
+                (lower-spmd-expr-has-call?
+                  ctx
+                  function-state
+                  env
+                  type-env
+                  probe
+                  func))])
+          (lower-spmd-expr-list-has-call-at?
             ctx
             function-state
             env
             type-env
-            (lower-id-set-empty)
-            func)
-            [(ResultLowerSpmdInlineHelper.Ok helper)
-              (match helper
-                [(LowerSpmdInlineHelper.Some _ _ _ body)
-                  (lower-spmd-helper-out-of-line? ctx body)]
-                [(LowerSpmdInlineHelper.Imported _ _ _ _ _) true]
-                [(LowerSpmdInlineHelper.No) false])]
-            [(ResultLowerSpmdInlineHelper.Err _) false])
-          (lower-spmd-expr-list-has-out-of-line-call?
-            ctx
-            function-state
-            env
-            type-env
-            args)))]
+            probe
+            (& args)
+            0)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (or
-            (lower-spmd-let-has-out-of-line-call?
+            (lower-spmd-let-bindings-have-call-at?
               ctx
               function-state
               env
               type-env
-              bindings)
-            (lower-spmd-expr-has-out-of-line-call?
+              probe
+              (& bindings)
+              0)
+            (lower-spmd-expr-has-call?
               ctx
               function-state
               env
               type-env
+              probe
               (lower-context-expr-get ctx body-box)))])]
     [(ast.AstExpr.If cond-box then-box else-box)
       (or
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx cond-box))
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx then-box))
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx else-box)))]
     [(ast.AstExpr.Begin exprs)
-      (lower-spmd-expr-list-has-out-of-line-call?
+      (lower-spmd-expr-list-has-call-at?
         ctx
         function-state
         env
         type-env
-        exprs)]
+        probe
+        (& exprs)
+        0)]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (or
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx array-box))
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx index-box)))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (or
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx array-box))
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx index-box))
-        (lower-spmd-expr-has-out-of-line-call?
+        (lower-spmd-expr-has-call?
           ctx
           function-state
           env
           type-env
+          probe
           (lower-context-expr-get ctx value-box)))]
+    [(ast.AstExpr.StructSet receiver-box _ value-box)
+      (match probe
+        [(LowerSpmdCallProbe.Atomic)
+          (or
+            (lower-spmd-expr-has-call?
+              ctx
+              function-state
+              env
+              type-env
+              probe
+              (lower-context-expr-get ctx receiver-box))
+            (lower-spmd-expr-has-call?
+              ctx
+              function-state
+              env
+              type-env
+              probe
+              (lower-context-expr-get ctx value-box)))]
+        [(LowerSpmdCallProbe.OutOfLine) false])]
     [_ false]))
+
+(define (lower-spmd-expr-list-has-call-at?
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [probe : LowerSpmdCallProbe]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]) : bool
+  (if (>= index exprs.len)
+    false
+    (or
+      (lower-spmd-expr-has-call?
+        ctx
+        function-state
+        env
+        type-env
+        probe
+        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
+      (lower-spmd-expr-list-has-call-at?
+        ctx
+        function-state
+        env
+        type-env
+        probe
+        exprs
+        (+ index 1)))))
+
+(define (lower-spmd-let-bindings-have-call-at?
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [probe : LowerSpmdCallProbe]
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
+    false
+    (match (ast.ast-let-binding-list-get
+      bindings
+      binding-index
+      (ast.ast-let-binding-fallback))
+      [(ast.AstLetBinding.Binding _ _ init-box)
+        (or
+          (lower-spmd-expr-has-call?
+            ctx
+            function-state
+            env
+            type-env
+            probe
+            (lower-context-expr-get ctx init-box))
+          (lower-spmd-let-bindings-have-call-at?
+            ctx
+            function-state
+            env
+            type-env
+            probe
+            bindings
+            (+ binding-index 1)))])))
 
 ;; What a foreach body holds that only the masked SPMD strategy lowers, computed
 ;; once per body: the masked strategy is chosen on these facts, and when it
@@ -48731,11 +48789,12 @@
       varying-match
       varying-enum-match
       bool-array-lane
-      (lower-spmd-expr-has-out-of-line-call?
+      (lower-spmd-expr-has-call?
         ctx
         function-state
         env
         type-env
+        (LowerSpmdCallProbe.OutOfLine)
         body))))
 
 (define (lower-masked-vector-map
@@ -49203,289 +49262,6 @@
             bindings
             (+ binding-index 1)))])))
 
-(define (lower-vector-body-has-atomic-call?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call?
-          ctx
-          function-state
-          env
-          type-env
-          inner))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call?
-          ctx
-          function-state
-          env
-          type-env
-          inner))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call?
-          ctx
-          function-state
-          env
-          type-env
-          inner))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call?
-          ctx
-          function-state
-          env
-          type-env
-          inner))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (or
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            left)
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            right)))]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
-        [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-        (or
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            cond)
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            then-branch)
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            else-branch)))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (or
-              (lower-vector-let-bindings-have-atomic-call?
-                ctx
-                function-state
-                env
-                type-env
-                bindings)
-              (lower-vector-body-has-atomic-call?
-                ctx
-                function-state
-                env
-                type-env
-                body)))])]
-    [(ast.AstExpr.Begin exprs)
-      (lower-vector-expr-list-has-atomic-call?
-        ctx
-        function-state
-        env
-        type-env
-        exprs)]
-    [(ast.AstExpr.Call func-box args)
-      (let
-        [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
-        (or
-          (>
-            (string.string-length
-              (lower-atomic-extern-symbol-for-func
-                (compiler-lower-function-state-owner function-state)
-                ctx
-                type-env
-                (lower-global-shared-view func)))
-            0)
-          (lower-atomic-pointer-func? type-env (lower-global-shared-view func))
-          (lower-vector-call-target-has-atomic?
-            ctx
-            function-state
-            env
-            type-env
-            (lower-global-shared-view func))
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            func)
-          (lower-vector-expr-list-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            args)))]
-    [(ast.AstExpr.ArrayRef arr-box idx-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        (or
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            arr)
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            idx)))]
-    [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (or
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            arr)
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            idx)
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            value)))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (or
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            receiver)
-          (lower-vector-body-has-atomic-call?
-            ctx
-            function-state
-            env
-            type-env
-            value)))]
-    [_ false]))
-
-(define (lower-vector-expr-list-has-atomic-call?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [exprs : ast.AstExprList]) : bool
-  (lower-vector-expr-list-has-atomic-call-at?
-    ctx
-    function-state
-    env
-    type-env
-    (& exprs)
-    0))
-
-(define (lower-vector-expr-list-has-atomic-call-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (lower-vector-body-has-atomic-call?
-        ctx
-        function-state
-        env
-        type-env
-        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-vector-expr-list-has-atomic-call-at?
-        ctx
-        function-state
-        env
-        type-env
-        exprs
-        (+ index 1)))))
-
-(define (lower-vector-let-bindings-have-atomic-call?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [bindings : ast.AstLetBindingList]) : bool
-  (lower-vector-let-bindings-have-atomic-call-at?
-    ctx
-    function-state
-    env
-    type-env
-    (& bindings)
-    0))
-
-(define (lower-vector-let-bindings-have-atomic-call-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (match (ast.ast-let-binding-list-get
-      bindings
-      binding-index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ _ init-box)
-        (let
-          [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-          (or
-            (lower-vector-body-has-atomic-call?
-              ctx
-              function-state
-              env
-              type-env
-              init)
-            (lower-vector-let-bindings-have-atomic-call-at?
-              ctx
-              function-state
-              env
-              type-env
-              bindings
-              (+ binding-index 1))))])))
-
 (define (lower-vector-call-target-has-atomic?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
@@ -49518,11 +49294,12 @@
                   (lower-id-set-insert (lower-global-shared-view previous) name))
                 (set!
                   result
-                  (lower-vector-body-has-atomic-call?
+                  (lower-spmd-expr-has-call?
                     ctx
                     function-state
                     env
                     type-env
+                    (LowerSpmdCallProbe.Atomic)
                     body))
                 (compiler-lower-function-state-inline-helper-stack-set!
                   function-state
@@ -63038,11 +62815,12 @@
           body
           (LowerMaybeVectorMap.Some stores elem-ty lanes))]
       [(LowerMaybeVectorMap.No)
-        (if (lower-vector-body-has-atomic-call?
+        (if (lower-spmd-expr-has-call?
           ctx
           (lower-state-function-state state)
           env
           type-env
+          (LowerSpmdCallProbe.Atomic)
           (lower-global-shared-view body))
           (lower-scalar-foreach-lowered
             ctx
@@ -63274,11 +63052,12 @@
   (if (and
     (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? (lower-global-shared-view index-ty))
-    (lower-spmd-expr-has-out-of-line-call?
+    (lower-spmd-expr-has-call?
       ctx
       (lower-state-function-state state)
       env
       type-env
+      (LowerSpmdCallProbe.OutOfLine)
       (lower-global-shared-view body)))
     (match (lower-spmd-numeric-failure
       ctx

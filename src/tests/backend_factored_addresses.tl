@@ -19,7 +19,7 @@
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [p
-      (backend.compiler-backend-program-index-build
+      (fixtures.compiler-backend-program-index-build
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
@@ -134,30 +134,30 @@
           8
           1))
       (set! (array-ref scales 1) 1)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-ready!
+      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-ready!
         b
         true)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
+      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
         b
         disps)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
+      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
         b
         kinds)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
+      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
         b
         scales)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-cursor! b 0)
+      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-cursor! b 0)
       (when
         (= mode 15)
         (begin
           (set! (array-ref fuse 3) 2)
-          (backend.compiler-backend-test-set-compiler-backend-fuse-need-ready!
+          (fixtures.compiler-backend-test-set-compiler-backend-fuse-need-ready!
             b
             true)
-          (backend.compiler-backend-test-set-compiler-backend-fuse-use-counts!
+          (fixtures.compiler-backend-test-set-compiler-backend-fuse-use-counts!
             b
             (view.compiler-owned-shared-view fuse))
-          (backend.compiler-backend-test-set-compiler-backend-fuse-free-counts!
+          (fixtures.compiler-backend-test-set-compiler-backend-fuse-free-counts!
             b
             fuse)))
       (let
@@ -202,7 +202,7 @@
             (ir.compiler-ir-extern-seq-empty)
             p
             (ir.compiler-source-spans-empty)
-            (backend.compiler-backend-source-span-index-build
+            (fixtures.compiler-backend-source-span-index-build
               (ir.compiler-source-spans-empty))
             (diagnostic.compiler-diagnostic-at-start "" "")
             uses
@@ -253,12 +253,12 @@
             (if accepted
               1
               0)
-            (backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor
+            (fixtures.compiler-backend-test-get-compiler-backend-gep-fold-cursor
               b)
             "probe cursor")
           (test.assert-bool-eq
             false
-            (backend.compiler-backend-test-get-compiler-backend-gep-fold-drift
+            (fixtures.compiler-backend-test-get-compiler-backend-gep-fold-drift
               b)
             "probe drift")
           (when
@@ -274,7 +274,7 @@
                 "following displacement")
               (test.assert-i64-eq
                 2
-                (backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor
+                (fixtures.compiler-backend-test-get-compiler-backend-gep-fold-cursor
                   b)
                 "following cursor"))))))))
 

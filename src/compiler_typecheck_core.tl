@@ -110873,8 +110873,7 @@
       ;; rebuilds it via macro-expand-ctfe-env-build-once!; it is then reused by
       ;; every in-pass splice rebuild and by the downstream typecheck/lower
       ;; comptime, never rebuilt per splice. This is the "build the CTFE-env
-      ;; once, after expansion" boundary. The typecheck entry wraps that boundary
-      ;; in macro-expand-then-build-envs-with-load-state.
+      ;; once, after expansion" boundary.
       (compiler-typecheck-ctfe-env-cache-clear!
         (tc-job-state-macro-state job-state))
       ;; Reset the live symbols/registries cache once per program (plan P2): the
@@ -111064,98 +111063,18 @@
     cfgs
     intern-state))
 
-(define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state
-  [load-state : cload.CompilerLoadSessionState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
-    load-state
-    program
-    paths
-    pools
-    (ci.intern-source-name-session-capture-active-handle)
-    job-state
-    stdlib-roots
-    cfgs))
-
-(define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
-  [load-state : cload.CompilerLoadSessionState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state
-    load-state
-    (tc-serial-job-state)
-    program
-    paths
-    pools
-    stdlib-roots
-    cfgs))
-
 ;; Serial/test compatibility adapter. Production macro-expansion jobs call the
 ;; explicit load-state, job-state, and intern-state entry above.
-(define (macro-expand-program-with-paths-and-pools-roots-cfg
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
+(define (macro-expand-program [program : ast.AstProgram]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
     (cload.compiler-load-serial-test-session-state)
     program
-    paths
-    pools
-    stdlib-roots
-    cfgs))
-
-(define (macro-expand-then-build-envs-with-load-state-and-job-state-and-intern-state
-  [load-state : cload.CompilerLoadSessionState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [intern-state : ci.InternCompatState]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
-    load-state
-    job-state
-    program
-    paths
-    pools
-    stdlib-roots
-    cfgs
-    intern-state))
-
-;; Serial/test compatibility adapter. Production typecheck jobs call the
-;; explicit load-state, job-state, and intern-state entry above.
-(define (macro-expand-program-with-paths-and-pools
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg
-    program
-    paths
-    pools
+    (ast.ast-decl-path-list-new)
+    (ast.ast-node-pool-context-capture-active)
+    (ci.intern-source-name-session-capture-active-handle)
+    (tc-serial-job-state)
     (svec.new)
     (parser.compiler-cfg-empty)))
-
-(define (macro-expand-program-with-paths
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools
-    program
-    paths
-    (ast.ast-node-pool-context-capture-active)))
-
-(define (macro-expand-program [program : ast.AstProgram]) : ResultMacroExpand
-  (macro-expand-program-with-paths program (ast.ast-decl-path-list-new)))
 
 (define (tc-cleanup-owning-struct-type? [ctx : TcContext] [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -113435,7 +113354,7 @@
                               (set! cur-paths rest-paths))]))))]))]))
       result)))
 
-(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
+(define (tc-typecheck-specialized-program-checked-inner
   [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
   [program : ast.AstProgram]
@@ -113579,7 +113498,7 @@
     [checked : ResultCompilerTypecheckChecked
       (tc-typecheck-checked-result-with-pool-check
         job-state
-        (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
+        (tc-typecheck-specialized-program-checked-inner
           load-state
           prefix-cache
           program
@@ -113616,30 +113535,6 @@
           (begin
             (tc-body-early-exit-facts-abort! body-state)
             (ResultCompilerTypecheckChecked.Err diag))]))))
-
-(define (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state-and-intern-state
-  [load-state : cload.CompilerLoadSessionState]
-  [prefix-cache : TcPrefixSnapshotCacheState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state : ci.InternCompatState]) : ResultCompilerTypecheck
-  (tc-typecheck-checked-result-summary
-    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
-      load-state
-      prefix-cache
-      job-state
-      program
-      paths
-      stdlib-roots
-      cache-scope
-      pools
-      source-names
-      intern-state)))
 
 (define (compiler-typecheck-clear-macro-expanded-source-caches-for-job!
   [job-state : TcJobState]) : unit

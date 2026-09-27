@@ -1156,9 +1156,6 @@
   64)
 (define ast-expr-span-slot-bytes : i64
   4)
-(define ast-expr-span-record-bytes : i64
-  ;; Two i32 node ids plus four i32 source coordinates.
-  24)
 (define ast-expr-semantic-wrapper-fuel-limit : i64
   ;; Public corpus measurement found at most 18 nested source views. Keep a
   ;; generous fixed guard so malformed/cyclic in-place rewrites fail closed
@@ -4204,46 +4201,6 @@
   `(*
     (ast-node-pool-context-expr-segment-count ,pools)
     ast-expr-node-pool-segment-bytes))
-
-(define (ast-node-pool-context-expr-span-slot-bytes
-  [pools : AstNodePoolContext]) : i64
-  (*
-    (ast-node-pool-context-expr-segment-count pools)
-    ast-expr-span-slot-segment-bytes))
-
-(define (ast-node-pool-context-expr-canonical-span-capacity
-  [pools : AstNodePoolContext]) : i64
-  (array-length
-    (__tl-project-field
-      (ast-expr-pool-cell-read pools.expr-pool)
-      canonical-span-records)))
-
-(define (ast-node-pool-context-expr-canonical-span-bytes
-  [pools : AstNodePoolContext]) : i64
-  (*
-    (ast-node-pool-context-expr-canonical-span-capacity pools)
-    ast-expr-span-record-bytes))
-
-(define (ast-node-pool-context-expr-respan-capacity
-  [pools : AstNodePoolContext]) : i64
-  (array-length
-    (__tl-project-field
-      (ast-expr-pool-cell-read pools.expr-pool)
-      respan-records)))
-
-(define (ast-node-pool-context-expr-respan-bytes [pools : AstNodePoolContext]) : i64
-  (*
-    (ast-node-pool-context-expr-respan-capacity pools)
-    ast-expr-span-record-bytes))
-
-(define (ast-node-pool-context-expr-total-bytes [pools : AstNodePoolContext]) : i64
-  (+
-    (ast-node-pool-context-expr-segment-bytes pools)
-    (+
-      (ast-node-pool-context-expr-span-slot-bytes pools)
-      (+
-        (ast-node-pool-context-expr-canonical-span-bytes pools)
-        (ast-node-pool-context-expr-respan-bytes pools)))))
 
 (defmacro (ast-node-pool-context-type-len [pools : Expr]) : i64
   `(__tl-project-field

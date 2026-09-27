@@ -2,6 +2,7 @@
 (import stdlib.io)
 (import stdlib.env)
 (cfg compile-profile (import stdlib.profile))
+(cfg compile-profile (import compiler_profile_counters as counters))
 (cfg compile-profile-summary (import compiler_profile_summary as cps))
 (import sym_i64_env)
 (import compiler_lower)
@@ -87,20 +88,13 @@
 
 (cfg
   compile-profile
-  (define compiler-backend-profile-start-ms-metric : i64
-    28))
-(cfg
-  compile-profile
-  (define compiler-backend-profile-start-total-metric : i64
-    29))
-(cfg
-  compile-profile
-  (define compiler-backend-profile-start-live-metric : i64
-    30))
-(cfg
-  compile-profile
-  (define compiler-backend-profile-detail-start-ms-metric : i64
-    31))
+  (counters.defslots
+    compiler-backend-profile-starts
+    28
+    (compiler-backend-profile-start-ms-metric)
+    (compiler-backend-profile-start-total-metric)
+    (compiler-backend-profile-start-live-metric)
+    (compiler-backend-profile-detail-start-ms-metric)))
 
 (cfg
   compile-profile-summary

@@ -21,6 +21,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_profile_state as profile_state)
+(cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_spmd_numeric_policy as spmd_numeric)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -2348,165 +2349,124 @@
 
 (cfg
   (any compile-profile test)
-  (define compiler-lower-profile-start-ms-metric : i64
-    45))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-start-total-metric : i64
-    46))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-start-live-metric : i64
-    47))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-start-intern-metric : i64
-    48))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-start-intern-slice-metric : i64
-    49))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-start-intern-generated-metric : i64
-    50))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-start-intern-render-metric : i64
-    51))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-detail-start-ms-metric : i64
-    52))
+  (counters.defslots
+    compiler-lower-profile-starts
+    45
+    (compiler-lower-profile-start-ms-metric)
+    (compiler-lower-profile-start-total-metric)
+    (compiler-lower-profile-start-live-metric)
+    (compiler-lower-profile-start-intern-render-metric)
+    (compiler-lower-profile-detail-start-ms-metric)))
 
 ;; Deep string concat lowering has a deliberately bounded fan-in. Keep these
 ;; counters in the compile-profile build so the regression fixture can prove
 ;; that a wide tree is flattened once and emitted as a small number of runtime
-;; calls.
+;; calls. Rows report a counter in the live-delta field of the phase schema.
 (cfg
   (any compile-profile test)
-  (define compiler-lower-profile-string-concat-trees-metric : i64
-    53))
+  (counters.defslots
+    compiler-lower-string-concat-profile
+    53
+    (compiler-lower-profile-string-concat-trees-metric
+      "lower.string_concat.trees"
+      live)
+    (compiler-lower-profile-string-concat-leaves-metric
+      "lower.string_concat.leaves"
+      live)
+    (compiler-lower-profile-string-concat-runtime-calls-metric
+      "lower.string_concat.runtime_calls"
+      live)))
+
 (cfg
   (any compile-profile test)
-  (define compiler-lower-profile-string-concat-leaves-metric : i64
-    54))
+  (counters.defslots
+    compiler-lower-spmd-profile
+    56
+    (compiler-lower-profile-spmd-identity-serializations-metric)
+    (compiler-lower-profile-spmd-stable-hash-computations-metric)
+    (compiler-lower-profile-spmd-render-cache-hits-metric)
+    (compiler-lower-profile-spmd-render-cache-misses-metric)))
+
 (cfg
   (any compile-profile test)
-  (define compiler-lower-profile-string-concat-runtime-calls-metric : i64
-    55))
+  (counters.defslots
+    compiler-lower-name-env-profile
+    60
+    (compiler-lower-profile-name-env-binds-metric "lower.name_env.binds" live)
+    (compiler-lower-profile-name-env-lookups-metric
+      "lower.name_env.lookups"
+      live)
+    (compiler-lower-profile-name-env-lookup-steps-metric
+      "lower.name_env.lookup_steps"
+      live)
+    (compiler-lower-profile-name-env-stores-metric "lower.name_env.stores" live)
+    (compiler-lower-profile-name-env-store-grows-metric
+      "lower.name_env.store_grows"
+      live)
+    (compiler-lower-profile-name-env-materializations-metric
+      "lower.name_env.materializations"
+      live)
+    (compiler-lower-profile-name-env-materialized-entries-metric
+      "lower.name_env.materialized_entries"
+      live)
+    (compiler-lower-profile-name-cache-builds-metric
+      "lower.name_cache.builds"
+      live)
+    (compiler-lower-profile-name-cache-entries-metric
+      "lower.name_cache.entries"
+      live)))
+
 (cfg
   (any compile-profile test)
-  (define compiler-lower-profile-spmd-identity-serializations-metric : i64
-    56))
+  (counters.defslots
+    compiler-lower-name-cache-profile
+    69
+    (compiler-lower-profile-name-cache-lookups-metric
+      "lower.name_cache.lookups"
+      live)
+    (compiler-lower-profile-name-cache-local-hits-metric
+      "lower.name_cache.local_hits"
+      live)
+    (compiler-lower-profile-name-cache-local-misses-metric
+      "lower.name_cache.local_misses"
+      live)
+    (compiler-lower-profile-module-name-cache-lookups-metric
+      "lower.module_name_cache.lookups"
+      live)
+    (compiler-lower-profile-module-name-cache-hits-metric
+      "lower.module_name_cache.hits"
+      live)
+    (compiler-lower-profile-module-name-cache-entries-metric
+      "lower.module_name_cache.entries"
+      live)
+    (compiler-lower-profile-module-local-view-lookups-metric
+      "lower.module_local_view.lookups"
+      live)
+    (compiler-lower-profile-module-local-view-hits-metric
+      "lower.module_local_view.hits"
+      live)
+    (compiler-lower-profile-module-local-view-entries-metric
+      "lower.module_local_view.entries"
+      live)))
+
+;; Retained name-cache storage lives in slots 374-377, after the typecheck view.
 (cfg
   (any compile-profile test)
-  (define compiler-lower-profile-spmd-stable-hash-computations-metric : i64
-    57))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-spmd-render-cache-hits-metric : i64
-    58))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-spmd-render-cache-misses-metric : i64
-    59))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-env-binds-metric : i64
-    60))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-env-lookups-metric : i64
-    61))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-env-lookup-steps-metric : i64
-    62))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-env-stores-metric : i64
-    63))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-env-store-grows-metric : i64
-    64))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-env-materializations-metric : i64
-    65))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-env-materialized-entries-metric : i64
-    66))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-cache-builds-metric : i64
-    67))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-cache-entries-metric : i64
-    68))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-cache-lookups-metric : i64
-    69))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-cache-local-hits-metric : i64
-    70))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-cache-local-misses-metric : i64
-    71))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-module-name-cache-lookups-metric : i64
-    72))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-module-name-cache-hits-metric : i64
-    73))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-module-name-cache-entries-metric : i64
-    74))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-module-local-view-lookups-metric : i64
-    75))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-module-local-view-hits-metric : i64
-    76))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-module-local-view-entries-metric : i64
-    77))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-cache-id-growth-views-metric : i64
-    374))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-name-cache-logical-growth-views-metric : i64
-    375))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-alias-overlay-growth-slots-metric : i64
-    376))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-alias-overlay-resets-metric : i64
-    377))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-metric-end : i64
-    78))
-(cfg
-  (any compile-profile test)
-  (define compiler-lower-profile-storage-metric-end : i64
-    378))
+  (counters.defslots
+    compiler-lower-name-storage-profile
+    374
+    (compiler-lower-profile-name-cache-id-growth-views-metric
+      "lower.name_cache.id_growth_views"
+      live)
+    (compiler-lower-profile-name-cache-logical-growth-views-metric
+      "lower.name_cache.logical_growth_views"
+      live)
+    (compiler-lower-profile-alias-overlay-growth-slots-metric
+      "lower.alias_overlay.growth_slots"
+      live)
+    (compiler-lower-profile-alias-overlay-resets-metric
+      "lower.alias_overlay.resets"
+      live)))
 
 ;; Non-resetting stage snapshots inside lower.typecheck: the checked-program
 ;; build's retention decomposes across the walk / clone augmentation / context
@@ -2521,11 +2481,11 @@
       (profile_state.compiler-profile-state-metric-reset-range!
         (compiler-lower-state-profile _state)
         compiler-lower-profile-start-ms-metric
-        compiler-lower-profile-metric-end)
+        compiler-lower-name-cache-profile-end)
       (profile_state.compiler-profile-state-metric-reset-range!
         (compiler-lower-state-profile _state)
         compiler-lower-profile-name-cache-id-growth-views-metric
-        compiler-lower-profile-storage-metric-end))
+        compiler-lower-name-storage-profile-end))
     unit))
 
 (define (compiler-lower-profile-value
@@ -2593,21 +2553,6 @@
         (profile.alloc-live))
       (compiler-lower-profile-set!
         state
-        compiler-lower-profile-start-intern-metric
-        (ci.intern-profile-intern-value
-          (compiler-lower-profile-intern-metrics-address state)))
-      (compiler-lower-profile-set!
-        state
-        compiler-lower-profile-start-intern-slice-metric
-        (ci.intern-profile-slice-value
-          (compiler-lower-profile-intern-metrics-address state)))
-      (compiler-lower-profile-set!
-        state
-        compiler-lower-profile-start-intern-generated-metric
-        (ci.intern-profile-generated-value
-          (compiler-lower-profile-intern-metrics-address state)))
-      (compiler-lower-profile-set!
-        state
         compiler-lower-profile-start-intern-render-metric
         (ci.intern-profile-render-value
           (compiler-lower-profile-intern-metrics-address state)))
@@ -2658,38 +2603,6 @@
           unit
           (io.print-error
             (str_cat.str-cat
-              "compile-profile-detail|intern.lower_phase|"
-              (lower-global-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  (ci.intern-profile-intern-value
-                    (compiler-lower-profile-intern-metrics-address state))
-                  (compiler-lower-profile-value
-                    state
-                    compiler-lower-profile-start-intern-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.lower_phase.slice|"
-              (lower-global-shared-view phase)
-              "|"
-              (string.int->string
-                (-
-                  (ci.intern-profile-slice-value
-                    (compiler-lower-profile-intern-metrics-address state))
-                  (compiler-lower-profile-value
-                    state
-                    compiler-lower-profile-start-intern-slice-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase.render|"
               (lower-global-shared-view phase)
               "|"
@@ -2700,22 +2613,6 @@
                   (compiler-lower-profile-value
                     state
                     compiler-lower-profile-start-intern-render-metric)))
-              "\n")))
-        (cfg
-          compile-profile-summary
-          unit
-          (io.print-error
-            (str_cat.str-cat
-              "compile-profile-detail|intern.lower_phase.generated|"
-              phase
-              "|"
-              (string.int->string
-                (-
-                  (ci.intern-profile-generated-value
-                    (compiler-lower-profile-intern-metrics-address state))
-                  (compiler-lower-profile-value
-                    state
-                    compiler-lower-profile-start-intern-generated-metric)))
               "\n")))))))
 
 (cfg
@@ -2769,152 +2666,10 @@
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-generated-role-counters
-    [state : CompilerLowerState]
-    [name : String]
-    [role : i64]) : unit
-    (begin
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "generated_role."
-          (lower-global-shared-view name)
-          ".created")
-        (ci.intern-profile-generated-role-create-value
-          (compiler-lower-profile-intern-metrics-address state)
-          role))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "generated_role."
-          (lower-global-shared-view name)
-          ".reused")
-        (ci.intern-profile-generated-role-reuse-value
-          (compiler-lower-profile-intern-metrics-address state)
-          role))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat "generated_role." name ".rendered")
-        (ci.intern-profile-generated-role-render-value
-          (compiler-lower-profile-intern-metrics-address state)
-          role)))))
-
-(cfg
-  compile-profile
   (define (compiler-lower-profile-specialization-counters
     [state : profile_state.CompilerProfileState]) : unit
-    (begin
-      (compiler-lower-profile-counter
-        "specialization.structural_keys.created"
-        (spec.spec-profile-structural-key-created-value state))
-      (compiler-lower-profile-counter
-        "specialization.structural_keys.reused"
-        (spec.spec-profile-structural-key-reused-value state))
-      (compiler-lower-profile-counter
-        "specialization.generated_text.materialized"
-        (spec.spec-profile-generated-text-materialized-value state))
-      (compiler-lower-profile-counter
-        "specialization.render.calls"
-        (spec.spec-profile-name-render-calls-value state))
-      (compiler-lower-profile-counter
-        "specialization.render.cache_hits"
-        (spec.spec-profile-name-render-cache-hits-value state))
-      (compiler-lower-profile-counter
-        "specialization.render.cache_misses"
-        (spec.spec-profile-name-render-cache-misses-value state)))))
-
-(cfg
-  compile-profile
-  (define (compiler-lower-profile-generated-role-counters-all
-    [state : CompilerLowerState]) : unit
-    (begin
-      (compiler-lower-profile-generated-role-counters
-        state
-        "clone_helper"
-        (ci.intern-generated-symbol-role-clone-helper))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "lambda"
-        (ci.intern-generated-symbol-role-lambda))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "global_initializer"
-        (ci.intern-generated-symbol-role-global-initializer))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "cleanup_helper"
-        (ci.intern-generated-symbol-role-cleanup-helper))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "cleanup_parameter"
-        (ci.intern-generated-symbol-role-cleanup-parameter))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "cleanup_payload"
-        (ci.intern-generated-symbol-role-cleanup-payload))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "dispatch_cache"
-        (ci.intern-generated-symbol-role-dispatch-cache))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "dispatch_variant"
-        (ci.intern-generated-symbol-role-dispatch-variant))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "nullary_enum_object"
-        (ci.intern-generated-symbol-role-nullary-enum-object))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "spmd_identity"
-        (ci.intern-generated-symbol-role-spmd-identity))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "spmd_package_symbol"
-        (ci.intern-generated-symbol-role-spmd-package-symbol))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "spmd_result_uniform"
-        (ci.intern-generated-symbol-role-spmd-result-uniform))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "spmd_result_varying"
-        (ci.intern-generated-symbol-role-spmd-result-varying))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "spmd_result_mask"
-        (ci.intern-generated-symbol-role-spmd-result-mask))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "spmd_private_helper"
-        (ci.intern-generated-symbol-role-spmd-private-helper))
-      (compiler-lower-profile-generated-role-counters
-        state
-        "spmd_private_parameter"
-        (ci.intern-generated-symbol-role-spmd-private-parameter)))))
-
-(cfg
-  compile-profile
-  (define (compiler-lower-profile-spmd-symbol-counters
-    [state : CompilerLowerState]) : unit
-    (begin
-      (compiler-lower-profile-counter
-        "spmd.identity.serializations"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-spmd-identity-serializations-metric))
-      (compiler-lower-profile-counter
-        "spmd.stable_hash.computations"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-spmd-stable-hash-computations-metric))
-      (compiler-lower-profile-counter
-        "spmd.render_cache.hits"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-spmd-render-cache-hits-metric))
-      (compiler-lower-profile-counter
-        "spmd.render_cache.misses"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-spmd-render-cache-misses-metric)))))
+    (spec.spec-profile-emit!
+      (profile_state.compiler-profile-state-metrics-address state))))
 
 (define (compiler-lower-profile-string-concat-reset
   [_state : CompilerLowerState]) : unit
@@ -2965,22 +2720,8 @@
   compile-profile
   (define (compiler-lower-profile-string-concat-finish
     [state : CompilerLowerState]) : unit
-    (begin
-      (compiler-lower-profile-counter
-        "string_concat.trees"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-string-concat-trees-metric))
-      (compiler-lower-profile-counter
-        "string_concat.leaves"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-string-concat-leaves-metric))
-      (compiler-lower-profile-counter
-        "string_concat.runtime_calls"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-string-concat-runtime-calls-metric)))))
+    (compiler-lower-string-concat-profile-emit!
+      (compiler-lower-profile-intern-metrics-address state))))
 
 (cfg
   (any compile-profile test)
@@ -2989,7 +2730,7 @@
       (profile_state.compiler-profile-state-metric-reset-range!
         (compiler-lower-state-profile state)
         compiler-lower-profile-name-env-binds-metric
-        compiler-lower-profile-metric-end)
+        compiler-lower-name-cache-profile-end)
       (profile_state.compiler-profile-state-metric-reset-range!
         (compiler-lower-state-profile state)
         compiler-lower-profile-name-cache-id-growth-views-metric
@@ -2998,126 +2739,20 @@
 (cfg
   compile-profile
   (define (compiler-lower-profile-name-finish [state : CompilerLowerState]) : unit
-    (begin
-      (compiler-lower-profile-counter
-        "name_env.binds"
-        (compiler-lower-profile-value
+    (let
+      [address : u64 (compiler-lower-profile-intern-metrics-address state)]
+      [ids : lower_i64_i64_map.Map
+        (compiler-lower-state-read
           state
-          compiler-lower-profile-name-env-binds-metric))
-      (compiler-lower-profile-counter
-        "name_env.lookups"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-env-lookups-metric))
-      (compiler-lower-profile-counter
-        "name_env.lookup_steps"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-env-lookup-steps-metric))
-      (compiler-lower-profile-counter
-        "name_env.stores"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-env-stores-metric))
-      (compiler-lower-profile-counter
-        "name_env.store_grows"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-env-store-grows-metric))
-      (compiler-lower-profile-counter
-        "name_env.materializations"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-env-materializations-metric))
-      (compiler-lower-profile-counter
-        "name_env.materialized_entries"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-env-materialized-entries-metric))
-      (compiler-lower-profile-counter
-        "name_cache.builds"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-cache-builds-metric))
-      (compiler-lower-profile-counter
-        "name_cache.entries"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-cache-entries-metric))
-      (compiler-lower-profile-counter
-        "name_cache.id_growth_views"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-cache-id-growth-views-metric))
-      (compiler-lower-profile-counter
-        "name_cache.logical_growth_views"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-cache-logical-growth-views-metric))
-      (compiler-lower-profile-counter
-        "alias_overlay.growth_slots"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-alias-overlay-growth-slots-metric))
-      (compiler-lower-profile-counter
-        "alias_overlay.resets"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-alias-overlay-resets-metric))
-      (let
-        [ids : lower_i64_i64_map.Map
-          (compiler-lower-state-read
-            state
-            lower_i64_i64_map.Map
-            alias-overlay-ids)]
-        (compiler-lower-profile-counter
-          "alias_overlay.capacity_slots"
-          (lower_i64_i64_map.capacity (& ids))))
-      (compiler-lower-profile-counter
-        "name_cache.lookups"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-cache-lookups-metric))
-      (compiler-lower-profile-counter
-        "name_cache.local_hits"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-cache-local-hits-metric))
-      (compiler-lower-profile-counter
-        "name_cache.local_misses"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-name-cache-local-misses-metric))
-      (compiler-lower-profile-counter
-        "module_name_cache.lookups"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-module-name-cache-lookups-metric))
-      (compiler-lower-profile-counter
-        "module_name_cache.hits"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-module-name-cache-hits-metric))
-      (compiler-lower-profile-counter
-        "module_name_cache.entries"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-module-name-cache-entries-metric))
-      (compiler-lower-profile-counter
-        "module_local_view.lookups"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-module-local-view-lookups-metric))
-      (compiler-lower-profile-counter
-        "module_local_view.hits"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-module-local-view-hits-metric))
-      (compiler-lower-profile-counter
-        "module_local_view.entries"
-        (compiler-lower-profile-value
-          state
-          compiler-lower-profile-module-local-view-entries-metric)))))
+          lower_i64_i64_map.Map
+          alias-overlay-ids)]
+      (begin
+        (compiler-lower-name-env-profile-emit! address)
+        (compiler-lower-name-storage-profile-emit! address)
+        (counters.profile-counter-live-row!
+          "lower.alias_overlay.capacity_slots"
+          (lower_i64_i64_map.capacity (& ids)))
+        (compiler-lower-name-cache-profile-emit! address)))))
 
 (cfg
   (any compile-profile test)
@@ -3169,54 +2804,6 @@
           (lower-global-shared-view point)
           ".segment_bytes")
         (ast.ast-node-pool-context-expr-segment-bytes pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".span_slot_bytes")
-        (ast.ast-node-pool-context-expr-span-slot-bytes pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".canonical_span_count")
-        (ast.ast-node-pool-context-expr-canonical-span-count pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".canonical_span_capacity")
-        (ast.ast-node-pool-context-expr-canonical-span-capacity pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".canonical_span_bytes")
-        (ast.ast-node-pool-context-expr-canonical-span-bytes pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".respan_count")
-        (ast.ast-node-pool-context-expr-respan-count pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".respan_capacity")
-        (ast.ast-node-pool-context-expr-respan-capacity pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".respan_bytes")
-        (ast.ast-node-pool-context-expr-respan-bytes pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".total_bytes")
-        (ast.ast-node-pool-context-expr-total-bytes pools))
       (compiler-lower-profile-counter
         (str_cat.str-cat
           "ast_type_pool."
@@ -70516,12 +70103,6 @@
                   ;; diagnostics, optimizers, and backend emitters may inspect
                   ;; symbol spellings, while construction above uses handles.
                   (lower-materialize-generated-role-symbols! lower-state)
-                  (cfg
-                    compile-profile
-                    (begin
-                      (compiler-lower-profile-generated-role-counters-all
-                        lower-state)
-                      (compiler-lower-profile-spmd-symbol-counters lower-state)))
                   (ResultCompilerLower.Ok
                     (ir.CompilerIrProgram.Program
                       success.globals

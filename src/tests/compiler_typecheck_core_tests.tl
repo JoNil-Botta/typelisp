@@ -1220,13 +1220,9 @@
         [slot : tc_core.TcTypeEnvScopedSlot
           (tc_core.tc-global-array-element-shared-view stack.slots index)]
         (tc_core.ResultTcType.Ok slot.ty))
-      (begin
-        (cfg
-          compile-profile
-          (tc_core.compiler-tc-env-profile-note-scoped-tail-fallback))
-        (tc_core.tc-lookup-persistent-id
-          (tc_core.tc-type-env-scoped-sidecar-persistent sidecar)
-          name-id)))))
+      (tc_core.tc-lookup-persistent-id
+        (tc_core.tc-type-env-scoped-sidecar-persistent sidecar)
+        name-id))))
 
 (define (tc-type-env-scoped-carrier-name-bound-id?
   [carrier : tc_core.TcTypeEnvScopedCarrier]
@@ -1237,13 +1233,9 @@
       (tc_core.tc-global-shared-view sidecar.stack)]
     (if (>= (tc_core.tc-type-env-scoped-stack-lookup-index stack name-id) 0)
       true
-      (begin
-        (cfg
-          compile-profile
-          (tc_core.compiler-tc-env-profile-note-scoped-tail-fallback))
-        (tc-name-bound-persistent-id?
-          (tc_core.tc-type-env-scoped-sidecar-persistent sidecar)
-          name-id)))))
+      (tc-name-bound-persistent-id?
+        (tc_core.tc-type-env-scoped-sidecar-persistent sidecar)
+        name-id))))
 
 (define (tc-type-env-scoped-carrier-bind-alias-id-if-free
   [carrier : tc_core.TcTypeEnvScopedCarrier]
@@ -1272,13 +1264,9 @@
           (tc_core.tc-type-env-scoped-flag?
             slot.flags
             tc_core.tc-type-env-scoped-flag-unsafe)))
-      (begin
-        (cfg
-          compile-profile
-          (tc_core.compiler-tc-env-profile-note-scoped-tail-fallback))
-        (tc-lookup-unsafe-persistent-id
-          (tc_core.tc-type-env-scoped-sidecar-persistent sidecar)
-          name-id)))))
+      (tc-lookup-unsafe-persistent-id
+        (tc_core.tc-type-env-scoped-sidecar-persistent sidecar)
+        name-id))))
 
 (define (tc-type-env-scoped-carrier-binding-unsafe-id?
   [carrier : tc_core.TcTypeEnvScopedCarrier]
@@ -5840,13 +5828,11 @@
     (let
       [field : tc_core.TcReprCFieldLayout
         (tc_core.tc-repr-c-field-layout-list-ref fields index)]
-      (begin
-        (cfg compile-profile (tc_core.tc-lp-note 1))
-        (if (string.eq
-          (tc-repr-c-field-layout-name (tc_core.tc-global-shared-view field))
-          name)
-          (tc-repr-c-field-layout-offset field)
-          (tc-repr-c-layout-field-offset-at fields name (+ index 1)))))))
+      (if (string.eq
+        (tc-repr-c-field-layout-name (tc_core.tc-global-shared-view field))
+        name)
+        (tc-repr-c-field-layout-offset field)
+        (tc-repr-c-layout-field-offset-at fields name (+ index 1))))))
 
 (define (tc-inline-variant-layout-size
   [variant : tc_core.TcInlineVariantLayout]) : i64
@@ -5867,17 +5853,15 @@
     (let
       [variant : tc_core.TcInlineVariantLayout
         (tc_core.tc-inline-variant-layout-list-ref variants index)]
-      (begin
-        (cfg compile-profile (tc_core.tc-lp-note 7))
-        (if (=
-          (tc_core.tc-inline-variant-layout-name-id
-            (tc_core.tc-global-shared-view variant))
-          name-id)
-          (tc-inline-variant-layout-size variant)
-          (tc-inline-variant-layout-list-size-exact-id-at
-            variants
-            name-id
-            (+ index 1)))))))
+      (if (=
+        (tc_core.tc-inline-variant-layout-name-id
+          (tc_core.tc-global-shared-view variant))
+        name-id)
+        (tc-inline-variant-layout-size variant)
+        (tc-inline-variant-layout-list-size-exact-id-at
+          variants
+          name-id
+          (+ index 1))))))
 
 (define (tc-inline-variant-layout-list-size-fallback-id
   [variants : tc_core.TcInlineVariantLayoutList]
@@ -5893,17 +5877,15 @@
     (let
       [variant : tc_core.TcInlineVariantLayout
         (tc_core.tc-inline-variant-layout-list-ref variants index)]
-      (begin
-        (cfg compile-profile (tc_core.tc-lp-note 7))
-        (if (tc_core.tc-inline-variant-layout-name-matches-id?
-          (tc_core.tc-inline-variant-layout-name-id
-            (tc_core.tc-global-shared-view variant))
-          name-id)
-          (tc-inline-variant-layout-size variant)
-          (tc-inline-variant-layout-list-size-fallback-id-at
-            variants
-            name-id
-            (+ index 1)))))))
+      (if (tc_core.tc-inline-variant-layout-name-matches-id?
+        (tc_core.tc-inline-variant-layout-name-id
+          (tc_core.tc-global-shared-view variant))
+        name-id)
+        (tc-inline-variant-layout-size variant)
+        (tc-inline-variant-layout-list-size-fallback-id-at
+          variants
+          name-id
+          (+ index 1))))))
 
 (define (tc-inline-aggregate-layout-variant-size-id
   [layout : tc_core.TcInlineAggregateLayout]

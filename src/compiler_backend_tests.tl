@@ -368,8 +368,8 @@
   [exclude-n : i64]
   [fallback : String]) : String
   (compiler_backend.compiler-backend-scavenge-pick-with-mask
-    backend-state
     (compiler_backend.compiler-backend-state-function-state backend-state)
+    true
     (compiler-backend-scavenge-occupied-mask-for-instr
       starts
       ends
@@ -45574,8 +45574,8 @@ g:
         (compiler-backend-scavenge-segment-pick-busy-mask))]
     [hull-pick : String
       (compiler_backend.compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        true
         busy
         busy
         (owned_view.compiler-owned-shared-view exclude)
@@ -45596,8 +45596,8 @@ g:
         false)]
     [narrow-pick : String
       (compiler_backend.compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        true
         busy
         narrow
         (owned_view.compiler-owned-shared-view exclude)
@@ -45609,8 +45609,8 @@ g:
         compiler_backend.compiler-backend-scratch-bool-emergency-pending)]
     [segment-pick : String
       (compiler_backend.compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        true
         narrow
         narrow
         exclude
@@ -45762,9 +45762,9 @@ g:
             (not
               (string.eq
                 (compiler_backend.compiler-backend-scavenge-pick-with-mask
-                  backend-state
                   (compiler_backend.compiler-backend-state-function-state
                     backend-state)
+                  true
                   mask
                   mask
                   (compiler_backend.compiler-backend-one-exclude "%rax")

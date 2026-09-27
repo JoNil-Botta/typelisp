@@ -226,9 +226,9 @@ The standalone prelude producer is owned beside
 result carriers and payload encoder must not be duplicated in the root compiler
 package. `compiler_prelude_surface_producer.tl` shares only deterministic
 module-set construction with the package producer: deduplicate paths and sort
-by surface identity order. The compile manifest records this ownership; exact
-package-root lint detects uncalled producer declarations, while embedded-stdlib
-and package-surface parity gates exercise the real producer entries.
+by surface identity order. Exact package-root lint detects uncalled producer
+declarations, while embedded-stdlib and package-surface parity gates exercise
+the real producer entries.
 
 The runtime lifetime tests cover repeated checked errors, macro errors, failed
 imports after a successful import, parent restoration, bounded direct-object

@@ -7,8 +7,8 @@
 # Both compilers compile the same fixed inputs, taken from <base-tree>:
 #   - benchmarks/*/bench.tl, examples/*.tl, tests/integration/*.tl,
 #     tests/inline/*.tl and tests/spmd/*.tl (`compile`, assembly compared);
-#   - tests/safety/*.tl and tests/diagnostics/**/*.tl (`check`, exit code and
-#     output compared);
+#   - tests/safety/*.tl, plus tests/diagnostics/**/*.tl in base trees that still
+#     have it (`check`, exit code and output compared);
 #   - the compiler itself: <base-tree>/src/main.tl (unless --no-self).
 # Each compiler resolves the stdlib from its own tree: the base compiler runs in
 # <base-tree> with its stdlib, and the head compiler runs in a copy of the same

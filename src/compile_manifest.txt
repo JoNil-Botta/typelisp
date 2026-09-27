@@ -152,8 +152,6 @@ case|selfhost_compiler_optimize|src/compiler_optimize.tl|assembly|skip|direct
 end
 
 case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|skip|direct
-lint-root|parse-ast-program
-lint-root|parse-ast-program-with-cfg
 count-at-least|call _tl_parse_ast_program_dispatch|1
 end
 

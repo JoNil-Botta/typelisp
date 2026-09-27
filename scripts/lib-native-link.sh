@@ -277,7 +277,7 @@ assemble_and_link() {
         # The runtime is pure syscalls and the backend emits its own libc-ABI
         # shims (write/read/open/getenv/...), so the compiler links static with
         # no `-lc` and no dynamic loader -- the produced binary depends on no
-        # shared library. See compiler-backend-runtime-linux-libc-shim-functions.
+        # shared library.
         _entry=$(linux_entry_symbol_for_asm "$asm")
         ld -static -e "$_entry" "$obj" -o "$bin"
     fi

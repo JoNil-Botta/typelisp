@@ -371,7 +371,7 @@
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-origin-take!
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [kind : parse_core.CompilerParseSemanticOriginKind]) : CompilerSemanticMaybeOrigin
   (match state.semantic-origin-run
     [(parse_core.CompilerParseMaybeSemanticOriginRun.None)
@@ -922,11 +922,7 @@
   [child : CompilerSemanticBindingSnapshot]
   [node-id : i64]) : unit
   (let
-    [start-byte : i64
-      (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
-        node-id
-        -1)]
+    [start-byte : i64 (compiler-semantic-expr-start-offset state node-id -1)]
     [raw-end : i64
       (compiler-semantic-expr-visibility-end-offset
         (owned_view.compiler-owned-shared-view state)
@@ -1939,27 +1935,36 @@
             (ast.ast-source-span-start-col end-position)))))))
 
 (define (compiler-semantic-exact-span-from-origin
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [origin : parse_core.CompilerParseSemanticOrigin]) : CompilerSemanticSpan
-  (if (string.eq state.source "")
-    (CompilerSemanticSpan (string.copy (& state.path)) -1 -1 origin.span -1 -1)
-    (let
-      [start : i64
-        (compiler-semantic-source-offset
+  (let
+    [state : CompilerSemanticWalkState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (if (string.eq state.source "")
+      (CompilerSemanticSpan
+        (string.copy (& state.path))
+        -1
+        -1
+        origin.span
+        -1
+        -1)
+      (let
+        [start : i64
+          (compiler-semantic-source-offset
+            state.source
+            (ast.ast-source-span-start-line origin.span)
+            (ast.ast-source-span-start-col origin.span))]
+        [end : i64
+          (compiler-semantic-source-offset
+            state.source
+            (ast.ast-source-span-end-line origin.span)
+            (ast.ast-source-span-end-col origin.span))]
+        (compiler-semantic-span-from-byte-range
+          state.path
           state.source
-          (ast.ast-source-span-start-line origin.span)
-          (ast.ast-source-span-start-col origin.span))]
-      [end : i64
-        (compiler-semantic-source-offset
-          state.source
-          (ast.ast-source-span-end-line origin.span)
-          (ast.ast-source-span-end-col origin.span))]
-      (compiler-semantic-span-from-byte-range
-        state.path
-        state.source
-        start
-        end
-        origin.span))))
+          start
+          end
+          origin.span)))))
 
 (define (compiler-semantic-name-span-in-range
   [path : (& path str)]
@@ -2751,12 +2756,10 @@
             (if (>= span.start-byte 0)
               span
               (match (compiler-semantic-origin-take!
-                (owned_view.compiler-owned-shared-view state)
+                state
                 parse_core.CompilerParseSemanticOriginKind.ValueQualifier)
                 [(CompilerSemanticMaybeOrigin.Some origin)
-                  (compiler-semantic-exact-span-from-origin
-                    (owned_view.compiler-owned-shared-view state)
-                    origin)]
+                  (compiler-semantic-exact-span-from-origin state origin)]
                 [(CompilerSemanticMaybeOrigin.None) span]))]
           (compiler-semantic-record-use-with-binding!
             state
@@ -2825,9 +2828,7 @@
         (tc.tc-context-structural-session state.ctx)
         origin.written-name)]
     [span : CompilerSemanticSpan
-      (compiler-semantic-exact-span-from-origin
-        (owned_view.compiler-owned-shared-view state)
-        origin)]
+      (compiler-semantic-exact-span-from-origin state origin)]
     (compiler-semantic-record-vec-push!
       (&mut (__tl-box-place state.records))
       (CompilerSemanticRecord
@@ -2928,15 +2929,13 @@
       (< (ci.intern-first-dot written-id) 0))
       fallback
       (match (compiler-semantic-origin-take!
-        (owned_view.compiler-owned-shared-view state)
+        state
         parse_core.CompilerParseSemanticOriginKind.ValueName)
         [(CompilerSemanticMaybeOrigin.None) fallback]
         [(CompilerSemanticMaybeOrigin.Some origin)
           (let
             [final-span : CompilerSemanticSpan
-              (compiler-semantic-exact-span-from-origin
-                (owned_view.compiler-owned-shared-view state)
-                origin)]
+              (compiler-semantic-exact-span-from-origin state origin)]
             [first-qualifier : CompilerSemanticMaybeOrigin
               (compiler-semantic-record-value-qualifiers-before!
                 (owned_view.compiler-owned-shared-view state)
@@ -2989,7 +2988,7 @@
   [state : CompilerSemanticWalkState]
   [name-id : i64]) : unit
   (match (compiler-semantic-origin-take!
-    (owned_view.compiler-owned-shared-view state)
+    state
     parse_core.CompilerParseSemanticOriginKind.TypeName)
     [(CompilerSemanticMaybeOrigin.None) unit]
     [(CompilerSemanticMaybeOrigin.Some origin)
@@ -3048,9 +3047,7 @@
         (tc.tc-context-structural-session ctx)
         decl-name-id)]
     [span : CompilerSemanticSpan
-      (compiler-semantic-exact-span-from-origin
-        (owned_view.compiler-owned-shared-view state)
-        origin)]
+      (compiler-semantic-exact-span-from-origin state origin)]
     (begin
       (compiler-semantic-record-module-origins-before!
         (owned_view.compiler-owned-shared-view state)
@@ -3082,43 +3079,49 @@
           (owned_view.compiler-owned-shared-view state.provenance))))))
 
 (define (compiler-semantic-walk-type!
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [ty : ast.AstType]) : unit
-  (match (owned_view.compiler-owned-shared-view ty)
-    [(ast.AstType.Struct name-id)
-      (compiler-semantic-record-type-name-use! state name-id)]
-    [(ast.AstType.StructArgs name-id _)
-      (compiler-semantic-record-type-name-use! state name-id)]
-    [(ast.AstType.Enum name-id)
-      (compiler-semantic-record-type-name-use! state name-id)]
-    [(ast.AstType.EnumArgs name-id _)
-      (compiler-semantic-record-type-name-use! state name-id)]
-    [(ast.AstType.Var name-id)
-      (match (tc.tc-resolve-type state.ctx ty)
-        [(ast.AstType.Struct resolved-name-id)
-          (compiler-semantic-record-type-name-use! state resolved-name-id)]
-        [(ast.AstType.Enum resolved-name-id)
-          (compiler-semantic-record-type-name-use! state resolved-name-id)]
-        [_ (compiler-semantic-record-type-name-use! state name-id)])]
-    [(ast.AstType.VarArgs name-id _)
-      (match (tc.tc-resolve-type state.ctx ty)
-        [(ast.AstType.StructArgs resolved-name-id _)
-          (compiler-semantic-record-type-name-use! state resolved-name-id)]
-        [(ast.AstType.EnumArgs resolved-name-id _)
-          (compiler-semantic-record-type-name-use! state resolved-name-id)]
-        [_ (compiler-semantic-record-type-name-use! state name-id)])]
-    [_
-      (ast.ast-type-for-each-child
-        (owned_view.compiler-owned-shared-view ty)
-        compiler-semantic-walk-type-child!
-        (owned_view.compiler-owned-shared-view state))]))
+  (let
+    [state : CompilerSemanticWalkState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (match (owned_view.compiler-owned-shared-view ty)
+      [(ast.AstType.Struct name-id)
+        (compiler-semantic-record-type-name-use! state name-id)]
+      [(ast.AstType.StructArgs name-id _)
+        (compiler-semantic-record-type-name-use! state name-id)]
+      [(ast.AstType.Enum name-id)
+        (compiler-semantic-record-type-name-use! state name-id)]
+      [(ast.AstType.EnumArgs name-id _)
+        (compiler-semantic-record-type-name-use! state name-id)]
+      [(ast.AstType.Var name-id)
+        (match (tc.tc-resolve-type state.ctx ty)
+          [(ast.AstType.Struct resolved-name-id)
+            (compiler-semantic-record-type-name-use! state resolved-name-id)]
+          [(ast.AstType.Enum resolved-name-id)
+            (compiler-semantic-record-type-name-use! state resolved-name-id)]
+          [_ (compiler-semantic-record-type-name-use! state name-id)])]
+      [(ast.AstType.VarArgs name-id _)
+        (match (tc.tc-resolve-type state.ctx ty)
+          [(ast.AstType.StructArgs resolved-name-id _)
+            (compiler-semantic-record-type-name-use! state resolved-name-id)]
+          [(ast.AstType.EnumArgs resolved-name-id _)
+            (compiler-semantic-record-type-name-use! state resolved-name-id)]
+          [_ (compiler-semantic-record-type-name-use! state name-id)])]
+      [_
+        (ast.ast-type-for-each-child
+          (owned_view.compiler-owned-shared-view ty)
+          compiler-semantic-walk-type-child!
+          state)])))
 
 (define (compiler-semantic-walk-type-child!
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [ty-id : i64]) : unit
-  (compiler-semantic-walk-type!
-    (owned_view.compiler-owned-shared-view state)
-    (tc.tc-context-type-get state.ctx ty-id)))
+  (let
+    [state : CompilerSemanticWalkState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (compiler-semantic-walk-type!
+      state
+      (tc.tc-context-type-get state.ctx ty-id))))
 
 (define (compiler-semantic-walk-type-list!
   [state : CompilerSemanticWalkState]
@@ -3128,14 +3131,14 @@
     (while (< index (ast.ast-type-list-len (& types)))
       (begin
         (compiler-semantic-walk-type!
-          (owned_view.compiler-owned-shared-view state)
+          state
           (tc.tc-context-type-get
             state.ctx
             (ast.ast-type-list-get (& types) index -1)))
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-bind-local!
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
   [name-id : i64]
@@ -3144,6 +3147,8 @@
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
+    [state : CompilerSemanticWalkState
+      (owned_view.compiler-owned-reference-shared-view state)]
     [name : String
       (tc.tc-env-key-name-text-for-session
         (tc.tc-type-env-structural-session env)
@@ -3255,7 +3260,7 @@
                 (owned_view.compiler-owned-shared-view binding-ty)))]
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-local!
-              (owned_view.compiler-owned-shared-view state)
+              state
               scope
               env
               name-id
@@ -3294,16 +3299,19 @@
           (CompilerSemanticBindResult scope env search-start))])))
 
 (define (compiler-semantic-expr-start-offset
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [expr-id : i64]
   [fallback : i64]) : i64
-  (match (tc.tc-expr-id-maybe-span-installed expr-id)
-    [(tc.TcMaybeAstSourceSpan.Some span)
-      (compiler-semantic-state-source-offset
-        state
-        (ast.ast-source-span-start-line span)
-        (ast.ast-source-span-start-col span))]
-    [(tc.TcMaybeAstSourceSpan.No) fallback]))
+  (let
+    [state : CompilerSemanticWalkState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (match (tc.tc-expr-id-maybe-span-installed expr-id)
+      [(tc.TcMaybeAstSourceSpan.Some span)
+        (compiler-semantic-state-source-offset
+          state
+          (ast.ast-source-span-start-line span)
+          (ast.ast-source-span-start-col span))]
+      [(tc.TcMaybeAstSourceSpan.No) fallback])))
 
 (define (compiler-semantic-expr-end-offset
   [state : CompilerSemanticWalkState]
@@ -3322,11 +3330,7 @@
   [expr-id : i64]
   [fallback : i64]) : i64
   (let
-    [start : i64
-      (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
-        expr-id
-        fallback)]
+    [start : i64 (compiler-semantic-expr-start-offset state expr-id fallback)]
     [raw-end : i64
       (compiler-semantic-expr-end-offset
         (owned_view.compiler-owned-shared-view state)
@@ -3399,7 +3403,7 @@
               (let
                 [bound : CompilerSemanticBindResult
                   (compiler-semantic-bind-local!
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     next-scope
                     next-env
                     name
@@ -3411,9 +3415,7 @@
                     cursor
                     search-limit)]
                 (begin
-                  (compiler-semantic-walk-type!
-                    (owned_view.compiler-owned-shared-view state)
-                    ty)
+                  (compiler-semantic-walk-type! state ty)
                   (set! next-scope bound.scope)
                   (set! next-env bound.env)
                   (set!
@@ -3448,7 +3450,7 @@
               (let
                 [bound : CompilerSemanticBindResult
                   (compiler-semantic-bind-local!
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     next-scope
                     next-env
                     name
@@ -3460,9 +3462,7 @@
                     cursor
                     search-limit)]
                 (begin
-                  (compiler-semantic-walk-type!
-                    (owned_view.compiler-owned-shared-view state)
-                    ty)
+                  (compiler-semantic-walk-type! state ty)
                   (set! next-scope bound.scope)
                   (set! next-env bound.env)
                   (set!
@@ -3484,14 +3484,14 @@
     (while (< index (ast.ast-expr-list-len (& items)))
       (begin
         (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
+          state
           scope
           env
           (ast.ast-expr-list-get (& items) index 0))
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-walk-quasiquote-node!
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
   [node-id : i64]) : unit
@@ -3515,7 +3515,7 @@
         ast.ast-child-unit
         ast.ast-child-unit
         ast.ast-child-unit
-        (owned_view.compiler-owned-shared-view state)
+        state
         scope
         env)]))
 
@@ -3537,7 +3537,7 @@
     [cursor : i64 (compiler-semantic-form-head-end state.source form-start)]
     [body-start : i64
       (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
+        state
         body-id
         (string.string-length state.source))]
     [form-end : i64
@@ -3559,13 +3559,10 @@
             [(ast.AstLetBinding.Binding name maybe-ty init-id)
               (let
                 [init-start : i64
-                  (compiler-semantic-expr-start-offset
-                    (owned_view.compiler-owned-shared-view state)
-                    init-id
-                    body-start)]
+                  (compiler-semantic-expr-start-offset state init-id body-start)]
                 (begin
                   (compiler-semantic-walk-node!
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     next-scope
                     next-env
                     init-id)
@@ -3620,7 +3617,7 @@
         0)]
     [body-start : i64
       (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
+        state
         body-id
         (string.string-length state.source))]
     [bound : CompilerSemanticBindResult
@@ -3633,10 +3630,7 @@
         body-start)]
     (begin
       (match maybe-ret
-        [(ast.AstMaybeType.Some ret)
-          (compiler-semantic-walk-type!
-            (owned_view.compiler-owned-shared-view state)
-            ret)]
+        [(ast.AstMaybeType.Some ret) (compiler-semantic-walk-type! state ret)]
         [(ast.AstMaybeType.No) unit])
       (compiler-semantic-scope-node-region-add!
         (owned_view.compiler-owned-shared-view state)
@@ -3657,18 +3651,10 @@
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (begin
     (compiler-semantic-walk-type!
-      (owned_view.compiler-owned-shared-view state)
+      state
       (owned_view.compiler-owned-shared-view index-ty))
-    (compiler-semantic-walk-node!
-      (owned_view.compiler-owned-shared-view state)
-      scope
-      env
-      start-id)
-    (compiler-semantic-walk-node!
-      (owned_view.compiler-owned-shared-view state)
-      scope
-      env
-      end-id)
+    (compiler-semantic-walk-node! state scope env start-id)
+    (compiler-semantic-walk-node! state scope env end-id)
     (let
       [form-start : i64
         (compiler-semantic-maybe-span-start
@@ -3677,15 +3663,15 @@
           0)]
       [first-expr-start : i64
         (compiler-semantic-expr-start-offset
-          (owned_view.compiler-owned-shared-view state)
+          state
           start-id
           (compiler-semantic-expr-start-offset
-            (owned_view.compiler-owned-shared-view state)
+            state
             body-id
             (string.string-length state.source)))]
       [bound : CompilerSemanticBindResult
         (compiler-semantic-bind-local!
-          (owned_view.compiler-owned-shared-view state)
+          state
           scope
           env
           name
@@ -3720,12 +3706,12 @@
         0)]
     [first-expr-start : i64
       (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
+        state
         start-id
         (string.string-length state.source))]
     [bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
-        (owned_view.compiler-owned-shared-view state)
+        state
         scope
         env
         index-name
@@ -3737,24 +3723,10 @@
         (compiler-semantic-form-head-end state.source form-start)
         first-expr-start)]
     (begin
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        index-ty)
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        start-id)
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        end-id)
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        init-id)
+      (compiler-semantic-walk-type! state index-ty)
+      (compiler-semantic-walk-node! state scope env start-id)
+      (compiler-semantic-walk-node! state scope env end-id)
+      (compiler-semantic-walk-node! state scope env init-id)
       (compiler-semantic-scope-node-region-add!
         (owned_view.compiler-owned-shared-view state)
         scope
@@ -3784,12 +3756,12 @@
         0)]
     [start-offset : i64
       (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
+        state
         start-id
         (string.string-length state.source))]
     [index-bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
-        (owned_view.compiler-owned-shared-view state)
+        state
         scope
         env
         index-name
@@ -3802,12 +3774,12 @@
         start-offset)]
     [init-offset : i64
       (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
+        state
         init-id
         (string.string-length state.source))]
     [state-bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
-        (owned_view.compiler-owned-shared-view state)
+        state
         index-bound.scope
         index-bound.env
         state-name
@@ -3822,27 +3794,11 @@
           index-bound.next-search)
         init-offset)]
     (begin
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        index-ty)
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        state-ty)
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        start-id)
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        end-id)
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        init-id)
+      (compiler-semantic-walk-type! state index-ty)
+      (compiler-semantic-walk-type! state state-ty)
+      (compiler-semantic-walk-node! state scope env start-id)
+      (compiler-semantic-walk-node! state scope env end-id)
+      (compiler-semantic-walk-node! state scope env init-id)
       ;; The index remains active through both the element and body. The
       ;; state is a nested body-only extension, so its exit restores the
       ;; index before the enclosing index region restores the outer scope.
@@ -3850,16 +3806,13 @@
         state
         scope
         index-bound.scope
-        (compiler-semantic-expr-start-offset
-          (owned_view.compiler-owned-shared-view state)
-          element-id
-          -1)
+        (compiler-semantic-expr-start-offset state element-id -1)
         (compiler-semantic-expr-end-offset
           (owned_view.compiler-owned-shared-view state)
           body-id
           (string.string-length state.source)))
       (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
+        state
         index-bound.scope
         index-bound.env
         element-id)
@@ -3947,7 +3900,7 @@
         0)]
     [value-start : i64
       (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
+        state
         value-id
         (string.string-length state.source))]
     [name : String
@@ -4047,9 +4000,7 @@
             [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
             [(tc.ResultTcType.Err _) ""])]
         [span : CompilerSemanticSpan
-          (compiler-semantic-exact-span-from-origin
-            (owned_view.compiler-owned-shared-view state)
-            origin)]
+          (compiler-semantic-exact-span-from-origin state origin)]
         (begin
           (compiler-semantic-record-module-origins-before!
             (owned_view.compiler-owned-shared-view state)
@@ -4127,7 +4078,7 @@
   (if (ast.ast-tuple-set-field-id? field-name-id)
     unit
     (match (compiler-semantic-origin-take!
-      (owned_view.compiler-owned-shared-view state)
+      state
       parse_core.CompilerParseSemanticOriginKind.StructFieldUse)
       [(CompilerSemanticMaybeOrigin.None) unit]
       [(CompilerSemanticMaybeOrigin.Some origin)
@@ -4146,7 +4097,7 @@
   [scrutinee-maybe-ty : ast.AstMaybeType]
   [variant-name-id : i64]) : unit
   (match (compiler-semantic-origin-take!
-    (owned_view.compiler-owned-shared-view state)
+    state
     parse_core.CompilerParseSemanticOriginKind.EnumVariantPattern)
     [(CompilerSemanticMaybeOrigin.None) unit]
     [(CompilerSemanticMaybeOrigin.Some origin)
@@ -4189,9 +4140,7 @@
                         (tc.tc-context-structural-session state.ctx)
                         enum-name-id)]
                     [span : CompilerSemanticSpan
-                      (compiler-semantic-exact-span-from-origin
-                        (owned_view.compiler-owned-shared-view state)
-                        origin)]
+                      (compiler-semantic-exact-span-from-origin state origin)]
                     (begin
                       (compiler-semantic-record-module-origins-before!
                         (owned_view.compiler-owned-shared-view state)
@@ -4240,7 +4189,7 @@
           (compiler-semantic-discard-variant-pattern-origin!
             (owned_view.compiler-owned-shared-view state))
           (compiler-semantic-bind-local!
-            (owned_view.compiler-owned-shared-view state)
+            state
             scope
             env
             name
@@ -4271,7 +4220,7 @@
           (compiler-semantic-discard-variant-pattern-origin!
             (owned_view.compiler-owned-shared-view state))
           (compiler-semantic-bind-local!
-            (owned_view.compiler-owned-shared-view state)
+            state
             scope
             env
             name
@@ -4413,7 +4362,7 @@
             (let
               [body-start : i64
                 (compiler-semantic-expr-start-offset
-                  (owned_view.compiler-owned-shared-view state)
+                  state
                   (compiler-semantic-match-body-source-expr-id body)
                   (string.string-length state.source))]
               [saved : tc.TcTypeEnvScopedRuntimeSave
@@ -4451,7 +4400,7 @@
                               bound.scope
                               (compiler-semantic-match-body-source-expr-id body))
                             (compiler-semantic-walk-node!
-                              (owned_view.compiler-owned-shared-view state)
+                              state
                               bound.scope
                               fact-env
                               body)))]
@@ -4479,7 +4428,7 @@
                               bound.scope
                               (compiler-semantic-match-body-source-expr-id body))
                             (compiler-semantic-walk-node!
-                              (owned_view.compiler-owned-shared-view state)
+                              state
                               bound.scope
                               bound.env
                               body)))])]
@@ -4506,7 +4455,7 @@
                           bound.scope
                           (compiler-semantic-match-body-source-expr-id body))
                         (compiler-semantic-walk-node!
-                          (owned_view.compiler-owned-shared-view state)
+                          state
                           bound.scope
                           bound.env
                           body)))])
@@ -4552,20 +4501,16 @@
               (let
                 [init-start : i64
                   (compiler-semantic-expr-start-offset
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     init
                     (string.string-length state.source))]
                 (begin
                   (compiler-semantic-walk-node!
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     next-scope
                     next-env
                     cleanup)
-                  (compiler-semantic-walk-node!
-                    (owned_view.compiler-owned-shared-view state)
-                    next-scope
-                    next-env
-                    init)
+                  (compiler-semantic-walk-node! state next-scope next-env init)
                   (let
                     [bound : CompilerSemanticBindResult
                       (let
@@ -4589,8 +4534,7 @@
                                     (tc.tc-type-without-regions init-ty)]
                                   [recorded : CompilerSemanticBindResult
                                     (compiler-semantic-bind-local!
-                                      (owned_view.compiler-owned-shared-view
-                                        state)
+                                      state
                                       next-scope
                                       next-env
                                       name
@@ -4614,7 +4558,7 @@
                                     recorded.next-search))]
                               [(tc.ResultTcType.Err _)
                                 (compiler-semantic-bind-local!
-                                  (owned_view.compiler-owned-shared-view state)
+                                  state
                                   next-scope
                                   next-env
                                   name
@@ -4624,7 +4568,7 @@
                                   init-start)])]
                           [(tc.ResultTcType.Err _)
                             (compiler-semantic-bind-local!
-                              (owned_view.compiler-owned-shared-view state)
+                              state
                               next-scope
                               next-env
                               name
@@ -4917,16 +4861,19 @@
         (compiler-semantic-walk-expr! state scope env node-id maybe-span)))))
 
 (define (compiler-semantic-walk-node!
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
   [node-id : i64]) : unit
-  (compiler-semantic-walk-node-with-span!
-    state
-    scope
-    env
-    node-id
-    CompilerSemanticMaybeSpan.None))
+  (let
+    [state : CompilerSemanticWalkState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (compiler-semantic-walk-node-with-span!
+      state
+      scope
+      env
+      node-id
+      CompilerSemanticMaybeSpan.None)))
 
 (define (compiler-semantic-walk-expr!
   [state : CompilerSemanticWalkState]
@@ -4982,11 +4929,7 @@
       (match (__tl-box-place payload)
         [(ast.AstMatch.Match scrutinee arms)
           (begin
-            (compiler-semantic-walk-node!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              scrutinee)
+            (compiler-semantic-walk-node! state scope env scrutinee)
             (compiler-semantic-walk-match-arms!
               (owned_view.compiler-owned-shared-view state)
               scope
@@ -5081,11 +5024,7 @@
             maybe-span)])]
     [(ast.AstExpr.StructGet target field)
       (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
+        (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-record-struct-field-use!
           state
           env
@@ -5094,11 +5033,7 @@
           CompilerSemanticAccess.Read))]
     [(ast.AstExpr.StructSet target field value)
       (begin
-        (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
-          scope
-          env
-          target)
+        (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-record-struct-field-use!
           (owned_view.compiler-owned-shared-view state)
           env
@@ -5129,21 +5064,24 @@
         compiler-semantic-walk-type-id!
         compiler-semantic-walk-child-type!
         ast.ast-child-unit
-        (owned_view.compiler-owned-shared-view state)
+        state
         scope
         env)]))
 
 (define (compiler-semantic-walk-type-id!
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [_scope : CompilerSemanticBindingSnapshot]
   [_env : tc.TcTypeEnv]
   [ty-id : i64]) : unit
-  (compiler-semantic-walk-type!
-    (owned_view.compiler-owned-shared-view state)
-    (tc.tc-context-type-get state.ctx ty-id)))
+  (let
+    [state : CompilerSemanticWalkState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (compiler-semantic-walk-type!
+      state
+      (tc.tc-context-type-get state.ctx ty-id))))
 
 (define (compiler-semantic-walk-child-type!
-  [state : CompilerSemanticWalkState]
+  [state : (& state CompilerSemanticWalkState)]
   [_scope : CompilerSemanticBindingSnapshot]
   [_env : tc.TcTypeEnv]
   [ty : ast.AstType]) : unit
@@ -5156,7 +5094,7 @@
   (let
     [body-start : i64
       (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
+        state
         body-id
         (string.string-length state.source))]
     [form-start : i64
@@ -5183,7 +5121,7 @@
   [field-index : i64]
   [ty : ast.AstType]) : unit
   (match (compiler-semantic-origin-take!
-    (owned_view.compiler-owned-shared-view state)
+    state
     parse_core.CompilerParseSemanticOriginKind.StructFieldDefinition)
     [(CompilerSemanticMaybeOrigin.None) unit]
     [(CompilerSemanticMaybeOrigin.Some origin)
@@ -5207,9 +5145,7 @@
                 (tc.tc-context-structural-session state.ctx)
                 field-name-id)]
             [span : CompilerSemanticSpan
-              (compiler-semantic-exact-span-from-origin
-                (owned_view.compiler-owned-shared-view state)
-                origin)]
+              (compiler-semantic-exact-span-from-origin state origin)]
             (begin
               (compiler-semantic-record-module-origins-before!
                 (owned_view.compiler-owned-shared-view state)
@@ -5251,9 +5187,7 @@
                 (ci.intern-syntax-id-value field-name-id)
                 index
                 (owned_view.compiler-owned-shared-view ty))
-              (compiler-semantic-walk-type!
-                (owned_view.compiler-owned-shared-view state)
-                ty))])
+              (compiler-semantic-walk-type! state ty))])
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-record-variant-definition!
@@ -5262,7 +5196,7 @@
   [variant-name-id : i64]
   [variant-index : i64]) : unit
   (match (compiler-semantic-origin-take!
-    (owned_view.compiler-owned-shared-view state)
+    state
     parse_core.CompilerParseSemanticOriginKind.EnumVariantDefinition)
     [(CompilerSemanticMaybeOrigin.None) unit]
     [(CompilerSemanticMaybeOrigin.Some origin)
@@ -5290,9 +5224,7 @@
                 (tc.tc-context-structural-session state.ctx)
                 enum-name-id)]
             [span : CompilerSemanticSpan
-              (compiler-semantic-exact-span-from-origin
-                (owned_view.compiler-owned-shared-view state)
-                origin)]
+              (compiler-semantic-exact-span-from-origin state origin)]
             (begin
               (compiler-semantic-record-module-origins-before!
                 (owned_view.compiler-owned-shared-view state)
@@ -5351,15 +5283,13 @@
           (ast.ast-dispatch-variant-fallback))
           [(ast.AstDispatchVariant.Variant _ function-name-id)
             (match (compiler-semantic-origin-take!
-              (owned_view.compiler-owned-shared-view state)
+              state
               parse_core.CompilerParseSemanticOriginKind.DispatchFunction)
               [(CompilerSemanticMaybeOrigin.None) unit]
               [(CompilerSemanticMaybeOrigin.Some origin)
                 (let
                   [span : CompilerSemanticSpan
-                    (compiler-semantic-exact-span-from-origin
-                      (owned_view.compiler-owned-shared-view state)
-                      origin)]
+                    (compiler-semantic-exact-span-from-origin state origin)]
                   (compiler-semantic-record-top-use!
                     (owned_view.compiler-owned-shared-view state)
                     function-name-id
@@ -5373,7 +5303,7 @@
     [done : bool false]
     (while (not done)
       (match (compiler-semantic-origin-take!
-        (owned_view.compiler-owned-shared-view state)
+        state
         parse_core.CompilerParseSemanticOriginKind.ModuleDefinition)
         [(CompilerSemanticMaybeOrigin.Some origin)
           (compiler-semantic-record-module-origin!
@@ -5395,9 +5325,7 @@
           (__tl-project-field (__tl-box-place state.records) items)
           record-index)]
       [span : CompilerSemanticSpan
-        (compiler-semantic-exact-span-from-origin
-          (owned_view.compiler-owned-shared-view state)
-          origin)]
+        (compiler-semantic-exact-span-from-origin state origin)]
       (compiler-semantic-record-vec-push!
         (&mut (__tl-box-place state.records))
         (CompilerSemanticRecord
@@ -5453,9 +5381,7 @@
       (compiler-semantic-selected-import-handle state target-module-id item-id)]
     [before : i64 (__tl-project-field (__tl-box-place state.records) len)]
     [span : CompilerSemanticSpan
-      (compiler-semantic-exact-span-from-origin
-        (owned_view.compiler-owned-shared-view state)
-        origin)]
+      (compiler-semantic-exact-span-from-origin state origin)]
     (if (not (csym.compiler-symbols-handle-found? handle))
       -1
       (begin
@@ -5541,7 +5467,7 @@
                 ;; one receives the checked declaration identity.
                 (while (not done)
                   (match (compiler-semantic-origin-take!
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     parse_core.CompilerParseSemanticOriginKind.ModulePath)
                     [(CompilerSemanticMaybeOrigin.Some origin)
                       (begin
@@ -5566,7 +5492,7 @@
                         item-origin))]
                   [(CompilerSemanticMaybeOrigin.None) unit])
                 (match (compiler-semantic-origin-take!
-                  (owned_view.compiler-owned-shared-view state)
+                  state
                   parse_core.CompilerParseSemanticOriginKind.ImportAlias)
                   [(CompilerSemanticMaybeOrigin.Some origin)
                     (compiler-semantic-record-import-alias-from-record!
@@ -5580,7 +5506,7 @@
               (begin
                 (while (not done)
                   (match (compiler-semantic-origin-take!
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     parse_core.CompilerParseSemanticOriginKind.ModulePath)
                     [(CompilerSemanticMaybeOrigin.Some origin)
                       (compiler-semantic-record-module-origin!
@@ -5590,7 +5516,7 @@
                         CompilerSemanticRecordRole.Use)]
                     [(CompilerSemanticMaybeOrigin.None) (set! done true)]))
                 (match (compiler-semantic-origin-take!
-                  (owned_view.compiler-owned-shared-view state)
+                  state
                   parse_core.CompilerParseSemanticOriginKind.ImportAlias)
                   [(CompilerSemanticMaybeOrigin.Some origin)
                     ;; Module alias definitions share the target module's
@@ -5609,13 +5535,10 @@
     [(ast.AstDecl.Def _ _ maybe-ty value)
       (begin
         (match maybe-ty
-          [(ast.AstMaybeType.Some ty)
-            (compiler-semantic-walk-type!
-              (owned_view.compiler-owned-shared-view state)
-              ty)]
+          [(ast.AstMaybeType.Some ty) (compiler-semantic-walk-type! state ty)]
           [(ast.AstMaybeType.No) unit])
         (compiler-semantic-walk-node!
-          (owned_view.compiler-owned-shared-view state)
+          state
           (compiler-semantic-binding-snapshot-empty)
           state.top-env
           value))]
@@ -5623,7 +5546,7 @@
       (let
         [body-start : i64
           (compiler-semantic-expr-start-offset
-            (owned_view.compiler-owned-shared-view state)
+            state
             body
             (string.string-length state.source))]
         [bound : CompilerSemanticBindResult
@@ -5638,9 +5561,7 @@
               body)
             body-start)]
         (begin
-          (compiler-semantic-walk-type!
-            (owned_view.compiler-owned-shared-view state)
-            ret)
+          (compiler-semantic-walk-type! state ret)
           (compiler-semantic-scope-node-region-add!
             (owned_view.compiler-owned-shared-view state)
             (compiler-semantic-binding-snapshot-empty)
@@ -5651,7 +5572,7 @@
       (let
         [body-start : i64
           (compiler-semantic-expr-start-offset
-            (owned_view.compiler-owned-shared-view state)
+            state
             body
             (string.string-length state.source))]
         [bound : CompilerSemanticBindResult
@@ -5666,9 +5587,7 @@
               body)
             body-start)]
         (begin
-          (compiler-semantic-walk-type!
-            (owned_view.compiler-owned-shared-view state)
-            ret)
+          (compiler-semantic-walk-type! state ret)
           (compiler-semantic-scope-node-region-add!
             (owned_view.compiler-owned-shared-view state)
             (compiler-semantic-binding-snapshot-empty)
@@ -5677,7 +5596,7 @@
           (compiler-semantic-walk-node! state bound.scope bound.env body)))]
     [(ast.AstDecl.Test _ body _ _)
       (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
+        state
         (compiler-semantic-binding-snapshot-empty)
         state.top-env
         body)]
@@ -6801,8 +6720,7 @@
                       (tc.macro-decl-module-display module-id)
                       module-id))]
                 [generated : bool
-                  (match (ast.ast-decl-generated-meta
-                    (owned_view.compiler-owned-shared-view decl))
+                  (match (ast.ast-decl-generated-meta decl)
                     [(ast.AstGeneratedDeclMeta.No) false]
                     [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true])]
                 [provenance : CompilerSemanticProvenance
@@ -6921,13 +6839,11 @@
                           (match kind
                             [(CompilerSemanticSymbolKind.Struct)
                               (compiler-semantic-origin-take!
-                                (owned_view.compiler-owned-shared-view
-                                  walk-state)
+                                walk-state
                                 parse_core.CompilerParseSemanticOriginKind.TypeDefinition)]
                             [(CompilerSemanticSymbolKind.Enum)
                               (compiler-semantic-origin-take!
-                                (owned_view.compiler-owned-shared-view
-                                  walk-state)
+                                walk-state
                                 parse_core.CompilerParseSemanticOriginKind.TypeDefinition)]
                             [_ CompilerSemanticMaybeOrigin.None])]
                         [form-start : i64
@@ -6963,8 +6879,7 @@
                           (match semantic-origin
                             [(CompilerSemanticMaybeOrigin.Some origin)
                               (compiler-semantic-exact-span-from-origin
-                                (owned_view.compiler-owned-shared-view
-                                  walk-state)
+                                walk-state
                                 origin)]
                             [(CompilerSemanticMaybeOrigin.None)
                               (match maybe-origin
@@ -7361,15 +7276,10 @@
 (define (compiler-semantic-index-result-with-parse-diagnostics
   [parse-diagnostics : cdiag.CompilerDiagnosticList]
   [result : ResultCompilerCheckWithSemanticIndex]) : ResultCompilerCheckWithSemanticIndex
-  (if (=
-    (cdiag.compiler-diagnostic-list-count
-      (owned_view.compiler-owned-shared-view parse-diagnostics))
-    0)
+  (if (= (cdiag.compiler-diagnostic-list-count parse-diagnostics) 0)
     result
     (let
-      [count : i64
-        (cdiag.compiler-diagnostic-list-count
-          (owned_view.compiler-owned-shared-view parse-diagnostics))]
+      [count : i64 (cdiag.compiler-diagnostic-list-count parse-diagnostics)]
       [index : i64 0]
       [owned-parse : cdiag.CompilerDiagnosticList
         (cdiag.compiler-diagnostic-list-with-capacity count)]
@@ -7378,9 +7288,7 @@
           (begin
             (cdiag.compiler-diagnostic-list-push!
               (&mut owned-parse)
-              (cdiag.compiler-diagnostic-list-get
-                (owned_view.compiler-owned-shared-view parse-diagnostics)
-                index))
+              (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
             (set! index (+ index 1))))
         (match result
           [(ResultCompilerCheckWithSemanticIndex.Ok _ source-index)

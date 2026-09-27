@@ -2643,15 +2643,13 @@
       [arena-a : i64 -1]
       [arena-b : i64 -1]
       (begin
-        (ci.intern-compat-state-install!
-          (ci.intern-global-shared-view intern-a))
+        (ci.intern-compat-state-install! intern-a)
         (compiler-builtin-reset!)
         (compiler-builtin-initialize-for-parse!)
         (set! arena-a compiler-builtin-id-arena-module)
         (state-capture-from-globals! (&mut builtins-a))
         (ci.intern-compat-state-capture-from-globals! (&mut intern-a))
-        (ci.intern-compat-state-install!
-          (ci.intern-global-shared-view intern-b))
+        (ci.intern-compat-state-install! intern-b)
         (compiler-builtin-reset!)
         (compiler-builtin-initialize-for-parse!)
         (set! arena-b compiler-builtin-id-arena-module)

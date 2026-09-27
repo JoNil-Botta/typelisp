@@ -1405,26 +1405,6 @@
         unit)
       content)))
 
-(define (compiler-incremental-range-eq?
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [left-start : i64]
-  [left-length : i64]
-  [right-start : i64]
-  [right-length : i64]) : bool
-  (let
-    [equal? : bool (= left-length right-length)]
-    [index : i64 0]
-    (begin
-      (while (and equal? (< index left-length))
-        (begin
-          (if (=
-            (array-ref bytes (+ left-start index))
-            (array-ref bytes (+ right-start index)))
-            unit
-            (set! equal? false))
-          (set! index (+ index 1))))
-      equal?)))
-
 (define (compiler-incremental-range-less?
   [bytes : (& bytes (__tl_dyn-array u8))]
   [left-start : i64]

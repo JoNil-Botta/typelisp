@@ -3,6 +3,8 @@
 ;; side may occupy up to two resources so register-pair/group moves can block on
 ;; either half without teaching this helper about registers, stack slots, or IR
 ;; values. Resource id 0 means "no resource".
+(import compiler_owned_view as owned_view)
+
 (defmacro (compiler-parallel-move-shared-view [place : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
@@ -157,15 +159,20 @@
       CompilerParallelMoveDone)))
 
 (define (compiler-parallel-move-decision
-  [remaining : CompilerParallelMoveEdgeSeq]
-  [blockers : CompilerParallelMoveEdgeSeq]) : CompilerParallelMoveDecision
-  (if (= remaining.len 0)
-    CompilerParallelMoveDone
-    (match (compiler-parallel-move-find-unblocked
-      (compiler-parallel-move-shared-view remaining)
-      blockers)
-      [(CompilerParallelMoveUnblocked id) (CompilerParallelMoveUnblocked id)]
-      [(CompilerParallelMoveCycle id) (CompilerParallelMoveCycle id)]
-      [(CompilerParallelMoveDone)
-        (CompilerParallelMoveCycle
-          (compiler-parallel-move-edge-id (array-ref remaining.slots 0)))])))
+  [remaining : (& remaining CompilerParallelMoveEdgeSeq)]
+  [blockers : (& blockers CompilerParallelMoveEdgeSeq)]) : CompilerParallelMoveDecision
+  (let
+    [remaining : CompilerParallelMoveEdgeSeq
+      (owned_view.compiler-owned-reference-shared-view remaining)]
+    [blockers : CompilerParallelMoveEdgeSeq
+      (owned_view.compiler-owned-reference-shared-view blockers)]
+    (if (= remaining.len 0)
+      CompilerParallelMoveDone
+      (match (compiler-parallel-move-find-unblocked
+        (compiler-parallel-move-shared-view remaining)
+        blockers)
+        [(CompilerParallelMoveUnblocked id) (CompilerParallelMoveUnblocked id)]
+        [(CompilerParallelMoveCycle id) (CompilerParallelMoveCycle id)]
+        [(CompilerParallelMoveDone)
+          (CompilerParallelMoveCycle
+            (compiler-parallel-move-edge-id (array-ref remaining.slots 0)))]))))

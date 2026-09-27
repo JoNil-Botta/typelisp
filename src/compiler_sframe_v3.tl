@@ -302,12 +302,6 @@
     (CompilerSframeV3Rule.Unavailable)
     (CompilerSframeV3Rule.Fixed fixed)))
 
-(define (compiler-sframe-v3-rule-is-register?
-  [rule : (& rule CompilerSframeV3Rule)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(CompilerSframeV3Rule.Register _ _ _) true]
-    [_ false]))
-
 (define (compiler-sframe-v3-decode-flex-rule
   [control : i64]
   [offset : i64]
@@ -358,12 +352,6 @@
 
 (define (compiler-sframe-v3-width-for-type [fre-type : i64]) : i64
   (cond [(= fre-type 0) 1] [(= fre-type 1) 2] [else 4]))
-
-(define (compiler-sframe-v3-data-width [min-value : i64] [max-value : i64]) : i64
-  (cond
-    [(and (>= min-value -128) (<= max-value 127)) 1]
-    [(and (>= min-value -32768) (<= max-value 32767)) 2]
-    [else 4]))
 
 (define (compiler-sframe-v3-byte [value : i64]) : u8
   (cast (bit-and value 255) : u8))

@@ -19,7 +19,5 @@
           0)]
       [(compiler_backend.ResultCompilerBackend.Err diag)
         (begin
-          (io.print-error
-            (diagnostic.compiler-diagnostic-render
-              (diagnostic.compiler-diagnostic-box-shared-view diag)))
+          (io.print-error (diagnostic.compiler-diagnostic-render (deref diag)))
           1)])))

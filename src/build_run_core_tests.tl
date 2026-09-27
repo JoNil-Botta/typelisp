@@ -33,15 +33,11 @@
   [right : build_run.SourceToolLinkInputs]) : bool
   (and
     (source-tool-string-list-eq?
-      (build_run.source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view left))
-      (build_run.source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view right)))
+      (build_run.source-tool-link-inputs-libs left)
+      (build_run.source-tool-link-inputs-libs right))
     (source-tool-string-list-eq?
-      (build_run.source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view left))
-      (build_run.source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view right)))
+      (build_run.source-tool-link-inputs-search-dirs left)
+      (build_run.source-tool-link-inputs-search-dirs right))
     (source-tool-string-list-eq?
       (build_run.source-tool-link-inputs-raw-args left)
       (build_run.source-tool-link-inputs-raw-args right))))
@@ -104,11 +100,14 @@
     [(build_run.SourceToolLinuxDirectObjectEligibility.Fallback _) false]))
 
 (define (source-tool-windows-direct-object-relocations-linkable?
-  [symbols : cobj.CompilerObjectSymbolList]
+  [symbols : (& symbols cobj.CompilerObjectSymbolList)]
   [relocs : cobj.CompilerObjectRelocationList]) : bool
-  (compiler_windows_coff_core.compiler-windows-coff-relocations-linkable?
-    symbols
-    relocs))
+  (let
+    [symbols : cobj.CompilerObjectSymbolList
+      (owned_view.compiler-owned-reference-shared-view symbols)]
+    (compiler_windows_coff_core.compiler-windows-coff-relocations-linkable?
+      symbols
+      relocs)))
 
 (define (source-tool-windows-system-libs-smoke-ok?) : bool
   (let
@@ -267,14 +266,14 @@
             "NtOpenFile")))]
     (and
       (source-tool-windows-direct-object-relocations-linkable?
-        (owned_view.compiler-owned-shared-view symbols)
+        symbols
         empty-relocs)
       (source-tool-windows-direct-object-relocations-linkable?
-        (owned_view.compiler-owned-shared-view symbols)
+        symbols
         allowed-relocs)
       (not
         (source-tool-windows-direct-object-relocations-linkable?
-          (owned_view.compiler-owned-shared-view symbols)
+          symbols
           blocked-win32-relocs))
       (not
         (source-tool-windows-direct-object-relocations-linkable?

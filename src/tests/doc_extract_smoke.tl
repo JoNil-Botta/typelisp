@@ -1,6 +1,5 @@
 ;; doc_extract_smoke.tl - Runnable structural smoke for doc_extract.tl.
 (import doc_extract)
-(import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -25,17 +24,10 @@
 
 (define (doc-extract-smoke-items-ok? [items : doc_item_vec.Vec]) : bool
   (begin
-    (unless
-      (=
-        (doc_extract.doc-item-list-count
-          (owned_view.compiler-owned-shared-view items))
-        6)
-      (return false))
+    (unless (= (doc_extract.doc-item-list-count items) 6) (return false))
     (unless
       (doc-item-ok?
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          0)
+        (doc_extract.doc-item-list-ref items 0)
         1
         "answer"
         "answer doc\nstill answer"
@@ -43,9 +35,7 @@
       (return false))
     (unless
       (doc-item-ok?
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          1)
+        (doc_extract.doc-item-list-ref items 1)
         2
         "main"
         "function doc"
@@ -53,9 +43,7 @@
       (return false))
     (unless
       (doc-item-ok?
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          2)
+        (doc_extract.doc-item-list-ref items 2)
         4
         "Maybe"
         "enum doc"
@@ -63,9 +51,7 @@
       (return false))
     (unless
       (doc-item-ok?
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          3)
+        (doc_extract.doc-item-list-ref items 3)
         3
         "io.emit"
         "external doc"
@@ -73,9 +59,7 @@
       (return false))
     (unless
       (doc-item-ok?
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          4)
+        (doc_extract.doc-item-list-ref items 4)
         5
         "Point"
         "struct doc"
@@ -99,14 +83,9 @@
   value.value)")
     [(doc_extract.DocExtraction.Extraction _ items)
       (and
-        (=
-          (doc_extract.doc-item-list-count
-            (owned_view.compiler-owned-shared-view items))
-          2)
+        (= (doc_extract.doc-item-list-count items) 2)
         (doc-item-ok?
-          (doc_extract.doc-item-list-ref
-            (owned_view.compiler-owned-shared-view items)
-            0)
+          (doc_extract.doc-item-list-ref items 0)
           5
           "Box_String"
           "box doc"
@@ -122,10 +101,7 @@
   (match (doc_extract.doc-extract-source ";: docs\n(define answer : i64 42)\n")
     [(doc_extract.DocExtraction.Extraction _ items)
       (and
-        (=
-          (doc_extract.doc-item-list-count
-            (owned_view.compiler-owned-shared-view items))
-          1)
+        (= (doc_extract.doc-item-list-count items) 1)
         (=
           (doc_extract.doc-item-source-line
             (doc_extract.doc-item-list-ref items 0))
@@ -170,10 +146,7 @@
             "Module title\nsecond module line\nlater module")
           (return (io.panic "doc-extract: module doc smoke mismatch")))
         (unless
-          (=
-            (doc_extract.doc-item-list-count
-              (owned_view.compiler-owned-shared-view items))
-            6)
+          (= (doc_extract.doc-item-list-count items) 6)
           (return (io.panic "doc-extract: item count smoke mismatch")))
         (unless
           (doc-extract-smoke-items-ok? items)
@@ -194,10 +167,7 @@
                 (string.eq legacy-module "Legacy module")
                 (return (io.panic "doc-extract: legacy module doc mismatch")))
               (unless
-                (=
-                  (doc_extract.doc-item-list-count
-                    (owned_view.compiler-owned-shared-view legacy-items))
-                  1)
+                (= (doc_extract.doc-item-list-count legacy-items) 1)
                 (return (io.panic "doc-extract: legacy item count mismatch")))
               (unless
                 (doc-item-ok?

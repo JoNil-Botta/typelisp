@@ -499,13 +499,6 @@
                         (ptr-cast (__tl_array-data rights) : (Ptr i64))
                         index))))))))))))
 
-(define (intern-structural-session-record
-  [handle : InternStructuralSessionHandle]
-  [key : InternStructuralKey]) : InternMaybeStructuralRecord
-  (intern-structural-session-record-for-raw
-    handle
-    (intern-structural-key-raw key)))
-
 ;; The caller has just decoded `raw` through the explicit session and checked
 ;; that its record is a pair or triple. These cache projections deliberately do
 ;; not repeat ownership/kind validation; keeping that proof adjacent in the

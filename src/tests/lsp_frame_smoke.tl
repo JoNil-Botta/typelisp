@@ -151,9 +151,7 @@
   [version : i64]) : lvf.LspServerState
   (let
     [normalized : String (lsp.lsp-normalized-absolute-path path)]
-    [uri : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view normalized))]
+    [uri : String (lsp.lsp-resolved-path-to-file-uri normalized)]
     [docs : lsp_document_vec.Vec
       (lsp.lsp-documents-set-versioned
         (owned_view.compiler-owned-shared-view state.documents)
@@ -589,12 +587,8 @@
     [dep-a-path : String "target/lsp_multi_dep_a.tl"]
     [dep-b-path : String "target/lsp_multi_dep_b.tl"]
     [root-uri : String (lsp.lsp-resolved-path-to-file-uri root-path)]
-    [dep-a-uri : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view dep-a-path))]
-    [dep-b-uri : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view dep-b-path))]
+    [dep-a-uri : String (lsp.lsp-resolved-path-to-file-uri dep-a-path)]
+    [dep-b-uri : String (lsp.lsp-resolved-path-to-file-uri dep-b-path)]
     [source : String
       "(import lsp_multi_dep_a)\\n(import lsp_multi_dep_b)\\n(define (main) : i64 0)"]
     [valid-source : String "(define (main) : i64 0)"]
@@ -904,9 +898,7 @@
   (let
     [dir : String "target"]
     [path : String "target/lsp_disk_resync_smoke.tl"]
-    [uri : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view path))]
+    [uri : String (lsp.lsp-resolved-path-to-file-uri path)]
     [stale-text : String "(define stale : i64 0)"]
     [disk-text : String "(define fresh : i64 1)"]
     [overlay-text : String "(define overlay : i64 2)"]
@@ -948,9 +940,7 @@
             (string.contains (& cached-doc.text) (& fresh-name))
             (not cached-doc.decls-valid))]
         [decls-ok : bool
-          (match (lsp.lsp-get-document-decls
-            (owned_view.compiler-owned-shared-view params)
-            (owned_view.compiler-owned-shared-view docs))
+          (match (lsp.lsp-get-document-decls params docs)
             [(lsp.LspDocumentDeclsLookup.Found _ text _ decls)
               (let
                 [entry : lvf.LspDeclEntry
@@ -978,9 +968,7 @@
               (string.contains (& text) (& overlay-name))]
             [(lsp.LspDocumentLookup.Missing) false])]
         [versioned-decls-ok : bool
-          (match (lsp.lsp-get-document-decls
-            params
-            (owned_view.compiler-owned-shared-view versioned-docs))
+          (match (lsp.lsp-get-document-decls params versioned-docs)
             [(lsp.LspDocumentDeclsLookup.Found _ text _ decls)
               (let
                 [entry : lvf.LspDeclEntry
@@ -1010,9 +998,7 @@
   (let
     [dir : String "target"]
     [path : String "target/lsp_edit_save_doc_smoke.tl"]
-    [uri : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view path))]
+    [uri : String (lsp.lsp-resolved-path-to-file-uri path)]
     [initial : String "(define (main) : i64 1)"]
     [updated : String "(define (main) : i64 42)"]
     [docs : lsp_document_vec.Vec
@@ -1218,16 +1204,21 @@
   (type-mask i64)
   (modifier-mask i64))
 
-(define (lsp-semantic-token-json-i64 [items : json.JsonSeq] [index : i64]) : i64
-  (match (json.list-get-index items index)
-    [(json.JsonMissing) -1]
-    [(json.JsonFound value)
-      (match value
-        [(json.JsonNumber text)
-          (match (json.number->i64 (& text))
-            [(json.OkJsonNumberI64 number) number]
-            [(json.ErrJsonNumberI64 _) -1])]
-        [_ -1])]))
+(define (lsp-semantic-token-json-i64
+  [items : (& items json.JsonSeq)]
+  [index : i64]) : i64
+  (let
+    [items : json.JsonSeq
+      (owned_view.compiler-owned-reference-shared-view items)]
+    (match (json.list-get-index items index)
+      [(json.JsonMissing) -1]
+      [(json.JsonFound value)
+        (match value
+          [(json.JsonNumber text)
+            (match (json.number->i64 (& text))
+              [(json.OkJsonNumberI64 number) number]
+              [(json.ErrJsonNumberI64 _) -1])]
+          [_ -1])])))
 
 ;; Decode the relative stream and validate the protocol invariants against the
 ;; negotiated source positions, instead of accepting a substring-shaped array.
@@ -1257,26 +1248,15 @@
               (begin
                 (while (<= (+ index 4) (- length 1))
                   (let
-                    [delta-line : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        index)]
+                    [delta-line : i64 (lsp-semantic-token-json-i64 items index)]
                     [delta-start : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        (+ index 1))]
+                      (lsp-semantic-token-json-i64 items (+ index 1))]
                     [token-length : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        (+ index 2))]
+                      (lsp-semantic-token-json-i64 items (+ index 2))]
                     [token-type : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        (+ index 3))]
+                      (lsp-semantic-token-json-i64 items (+ index 3))]
                     [modifiers : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        (+ index 4))]
+                      (lsp-semantic-token-json-i64 items (+ index 4))]
                     (begin
                       (if (or
                         (< delta-line 0)
@@ -1906,12 +1886,8 @@
   (let
     [path-a : String "target/code_action_a.tl"]
     [path-b : String "target/code_action_b.tl"]
-    [uri-a : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view path-a))]
-    [uri-b : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view path-b))]
+    [uri-a : String (lsp.lsp-resolved-path-to-file-uri path-a)]
+    [uri-b : String (lsp.lsp-resolved-path-to-file-uri path-b)]
     [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     [edits : cdiag.CompilerDiagnosticTextEditSeq
       (lsp-code-action-edit-seq
@@ -2136,7 +2112,7 @@
 (define (lsp-code-action-lint-structured-fix-ok?) : bool
   (let
     [path : String "target/lint_fix.tl"]
-    [uri : String (lsp.lsp-resolved-path-to-file-uri (clone path))]
+    [uri : String (lsp.lsp-resolved-path-to-file-uri path)]
     [text : String "abc"]
     [version : i64 5]
     [span : ast.AstSourceSpan (ast.AstSourceSpan 1 1 1 2)]
@@ -2371,15 +2347,9 @@
     [create-path : String "target/lsp_workspace_index/b/create.tl"]
     [refresh-path : String "target/lsp_workspace_index/b/refresh.tl"]
     [single-path : String "target/lsp_workspace_index/single.tl"]
-    [root-a-uri : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view root-a))]
-    [root-a-src-uri : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view root-a-src))]
-    [root-b-uri : String
-      (lsp.lsp-resolved-path-to-file-uri
-        (owned_view.compiler-owned-shared-view root-b))]
+    [root-a-uri : String (lsp.lsp-resolved-path-to-file-uri root-a)]
+    [root-a-src-uri : String (lsp.lsp-resolved-path-to-file-uri root-a-src)]
+    [root-b-uri : String (lsp.lsp-resolved-path-to-file-uri root-b)]
     [workspace-capabilities : String
       (json.stringify (lsp.lsp-initialize-result))]
     [workspace-capability : String

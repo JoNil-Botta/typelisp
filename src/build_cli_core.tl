@@ -2065,9 +2065,12 @@
   (build-package-graph-node-vec-with-capacity 4))
 
 (define (build-package-graph-node-vec-at
-  [v : BuildPackageGraphNodeVec]
+  [v : (& v BuildPackageGraphNodeVec)]
   [index : i64]) : BuildPackageGraphNode
-  (array-ref v.slots index))
+  (let
+    [v : BuildPackageGraphNodeVec
+      (owned_view.compiler-owned-reference-shared-view v)]
+    (array-ref v.slots index)))
 
 (define (build-package-graph-node-vec-copy-range!
   [dst : (&mut dst (__tl_dyn-array BuildPackageGraphNode))]
@@ -2791,9 +2794,7 @@
   (if (>= index (build-package-graph-node-vec-len nodes))
     (ResultBuildString.Ok "")
     (match (build-package-validate-graph-node-checkout
-      (build-package-graph-node-vec-at
-        (owned_view.compiler-owned-shared-view nodes)
-        index))
+      (build-package-graph-node-vec-at nodes index))
       [(ResultBuildString.Err message) (ResultBuildString.Err message)]
       [(ResultBuildString.Ok _)
         (build-package-validate-graph-checkouts-from nodes (+ index 1))])))
@@ -2818,9 +2819,7 @@
               libs
               (process.args-single
                 (build-package-graph-node-artifact-path
-                  (build-package-graph-node-vec-at
-                    (owned_view.compiler-owned-shared-view nodes)
-                    index)
+                  (build-package-graph-node-vec-at nodes index)
                   profile
                   target))))
           (set! index (- index 1))))
@@ -2868,9 +2867,7 @@
       (while (< index count)
         (let
           [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at
-              (owned_view.compiler-owned-shared-view nodes)
-              index)]
+            (build-package-graph-node-vec-at nodes index)]
           [root : String
             (load.compiler-load-canonical-path
               (load.compiler-load-dirname node.manifest-path))]
@@ -3308,14 +3305,12 @@
     [module : String initial-module]
     [done : bool false]
     (while (not done)
-      (match (ast.ast-decl-list-step
-        (owned_view.compiler-owned-shared-view decl-cursor))
+      (match (ast.ast-decl-list-step decl-cursor)
         [(ast.AstDeclListStep.Nil) (set! done true)]
         [(ast.AstDeclListStep.Cons decl rest)
           (let
             [decl-path : String
-              (match (ast.ast-decl-path-list-step
-                (owned_view.compiler-owned-shared-view path-cursor))
+              (match (ast.ast-decl-path-list-step path-cursor)
                 [(ast.AstDeclPathListStep.Nil) fallback-path]
                 [(ast.AstDeclPathListStep.Cons path _) path])]
             [owned-path : String
@@ -3335,8 +3330,7 @@
                     out
                     captures)])
               (set! decl-cursor rest)
-              (match (ast.ast-decl-path-list-step
-                (owned_view.compiler-owned-shared-view path-cursor))
+              (match (ast.ast-decl-path-list-step path-cursor)
                 [(ast.AstDeclPathListStep.Nil) unit]
                 [(ast.AstDeclPathListStep.Cons _ path-rest)
                   (set! path-cursor path-rest)])))]))))
@@ -3381,14 +3375,12 @@
     [current : BuildPackageTlciCallableCollector collector]
     (begin
       (while (and (not done) (= (string.string-length current.error) 0))
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view decl-cursor))
+        (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (let
               [decl-path : String
-                (match (ast.ast-decl-path-list-step
-                  (owned_view.compiler-owned-shared-view path-cursor))
+                (match (ast.ast-decl-path-list-step path-cursor)
                   [(ast.AstDeclPathListStep.Nil) fallback-path]
                   [(ast.AstDeclPathListStep.Cons path _) path])]
               [owned-path : String
@@ -3421,8 +3413,7 @@
                         mode
                         current))])
                 (set! decl-cursor rest)
-                (match (ast.ast-decl-path-list-step
-                  (owned_view.compiler-owned-shared-view path-cursor))
+                (match (ast.ast-decl-path-list-step path-cursor)
                   [(ast.AstDeclPathListStep.Nil) unit]
                   [(ast.AstDeclPathListStep.Cons _ path-rest)
                     (set! path-cursor path-rest)])))]))
@@ -3977,8 +3968,7 @@
   [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
   (let
     [libraries : process.ProcessStringList
-      (build_run_core.source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view inputs))]
+      (build_run_core.source-tool-link-inputs-libs inputs)]
     [dirs : process.ProcessStringList
       (build_run_core.source-tool-link-inputs-search-dirs inputs)]
     [library-index : i64 0]
@@ -4405,24 +4395,29 @@
     unit))
 
 (define (build-package-clean-stage-after-rollback
-  [paths : BuildPackageStagePaths]
+  [paths : (& paths BuildPackageStagePaths)]
   [rollback : BuildPackageRollbackDisposition]) : unit
   ;; Always discard new staged data. Delete only superseded `.previous` files;
   ;; a retained entry also keeps the containing stage directory recoverable.
-  (begin
-    (build-package-remove-staged-file-after-rollback paths.asm rollback)
-    (build-package-remove-staged-file-after-rollback paths.obj rollback)
-    (build-package-remove-staged-file-after-rollback paths.artifact rollback)
-    (build-package-remove-staged-file-after-rollback paths.fingerprint rollback)
-    (build-package-remove-staged-file-after-rollback paths.tlci rollback)
-    (let
-      [dir : String paths.dir]
-      (if (build-package-rollback-recovery-required? rollback)
-        unit
-        (let
-          [_ : io.ResultIoUnit (fs.try-remove-dir-if-exists (& dir))]
-          unit)))
-    unit))
+  (let
+    [paths : BuildPackageStagePaths
+      (owned_view.compiler-owned-reference-shared-view paths)]
+    (begin
+      (build-package-remove-staged-file-after-rollback paths.asm rollback)
+      (build-package-remove-staged-file-after-rollback paths.obj rollback)
+      (build-package-remove-staged-file-after-rollback paths.artifact rollback)
+      (build-package-remove-staged-file-after-rollback
+        paths.fingerprint
+        rollback)
+      (build-package-remove-staged-file-after-rollback paths.tlci rollback)
+      (let
+        [dir : String paths.dir]
+        (if (build-package-rollback-recovery-required? rollback)
+          unit
+          (let
+            [_ : io.ResultIoUnit (fs.try-remove-dir-if-exists (& dir))]
+            unit)))
+      unit)))
 
 (define (build-package-commit-plan-new) : BuildPackageCommitPlan
   (BuildPackageCommitPlan
@@ -4885,7 +4880,7 @@
           [(ResultBuildPackageCommit.Err message rollback)
             (begin
               (build-package-clean-stage-after-rollback
-                (owned_view.compiler-owned-shared-view stage)
+                stage
                 (owned_view.compiler-owned-shared-view rollback))
               (io.print-error
                 (build-package-commit-error-message message rollback stage.dir))
@@ -6307,9 +6302,7 @@
         (build-package-graph-worker-list-reverse workers)))
     (let
       [node : BuildPackageGraphNode
-        (build-package-graph-node-vec-at
-          (owned_view.compiler-owned-shared-view nodes)
-          index)]
+        (build-package-graph-node-vec-at nodes index)]
       [manifest-path : String
         (owned_view.compiler-owned-shared-view node.manifest-path)]
       (if (or
@@ -6397,9 +6390,7 @@
       (while (and all-built (< index count))
         (let
           [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at
-              (owned_view.compiler-owned-shared-view nodes)
-              index)]
+            (build-package-graph-node-vec-at nodes index)]
           [manifest-path : String node.manifest-path]
           (begin
             (match (build_string_i64_map.get (& built) manifest-path)
@@ -6609,9 +6600,7 @@
       (while (and (= status 0) (< index count))
         (let
           [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at
-              (owned_view.compiler-owned-shared-view nodes)
-              index)]
+            (build-package-graph-node-vec-at nodes index)]
           [validation : ResultBuildString
             (build-package-validate-graph-node-checkout
               (owned_view.compiler-owned-shared-view node))]

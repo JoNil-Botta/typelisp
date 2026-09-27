@@ -14,7 +14,7 @@
 (import compiler_owned_view as owned_view)
 
 (define (compiler-specialize-decl-list-defines?
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [name : String]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
@@ -184,14 +184,16 @@
 
 (define (spec-owner-context-new
   [pools : ast.AstNodePoolContext]
-  [intern-state : spec_ci.InternCompatState]) : SpecOwnerContext
+  [intern-state : (& intern-state spec_ci.InternCompatState)]) : SpecOwnerContext
   (cfg
     (any compile-profile test)
     (spec-owner-context-new-with-profile-state
       pools
-      intern-state
+      (owned_view.compiler-owned-reference-shared-view intern-state)
       (profile_state.compiler-profile-state-new))
     (let
+      [intern-state : spec_ci.InternCompatState
+        (owned_view.compiler-owned-reference-shared-view intern-state)]
       [expr-segment-bases : i64
         (ast.ast-node-pool-context-expr-segment-bases (& pools))]
       [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
@@ -1194,7 +1196,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
@@ -3497,7 +3499,7 @@
   ;; Strip generation provenance, not the aggregate's semantic marker flags.
   (ast.ast-decl-with-meta
     (ast.ast-decl-meta-runtime-with-aggregate-markers
-      (ast.ast-decl-aggregate-markers (ast.ast-place-shared-view decl)))
+      (ast.ast-decl-aggregate-markers decl))
     decl))
 
 (define (gen-rewrite-generated-decl-with-owner
@@ -3584,7 +3586,7 @@
     [(ast.AstDecl.Module name)
       (ResultGenDecl.Ok (gen-single-decl-list decl) registry name)]
     [_
-      (match (ast.ast-decl-generated-meta (ast.ast-place-shared-view decl))
+      (match (ast.ast-decl-generated-meta decl)
         [(ast.AstGeneratedDeclMeta.No)
           (ResultGenDecl.Ok (gen-single-decl-list decl) registry module-id)]
         [(ast.AstGeneratedDeclMeta.Some generator item args meta-key)
@@ -3690,7 +3692,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil)
             (begin
               (parser.compiler-parse-decl-origin-alias-vec-register!
@@ -3767,7 +3769,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view decl-cursor))
+        (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil)
             (begin
               (parser.compiler-parse-decl-origin-alias-vec-register!
@@ -3907,13 +3909,9 @@
       (spec_ci.intern-compat-state-capture-active)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
-        [owner : SpecOwnerContext
-          (spec-owner-context-new
-            pools
-            (spec_ci.intern-global-shared-view intern-state))]
+        [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
         [result : ResultGenProgram
           (gen-normalize-program-with-pools-and-intern-state program owner)]
         (begin
@@ -3933,13 +3931,9 @@
       (spec_ci.intern-compat-state-capture-active)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
-        [owner : SpecOwnerContext
-          (spec-owner-context-new
-            pools
-            (spec_ci.intern-global-shared-view intern-state))]
+        [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
         [result : ResultGenProgramWithPaths
           (gen-normalize-program-with-paths-and-pools-and-intern-state
             program
@@ -3972,7 +3966,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (if (gen-decl-needs-normalize? decl)
@@ -7041,7 +7035,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view cursor))
+        (match (ast.ast-decl-list-step cursor)
           [(ast.AstDeclListStep.Nil)
             (begin
               (parser.compiler-parse-decl-origin-alias-vec-register!
@@ -7110,7 +7104,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step (ast.ast-place-shared-view decl-cursor))
+        (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil)
             (begin
               (parser.compiler-parse-decl-origin-alias-vec-register!
@@ -7326,8 +7320,7 @@
       (spec_ci.intern-compat-state-capture-active)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [result : ResultSpecProgram
           (compiler-specialize-program-with-pools-and-intern-state
@@ -7351,8 +7344,7 @@
       (spec_ci.intern-compat-state-capture-active)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [result : ResultSpecProgramWithPaths
           (compiler-specialize-program-with-paths-and-pools-and-intern-state

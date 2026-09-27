@@ -219,16 +219,12 @@
     (str_cat.str-cat
       (doc-render-module-item
         (owned_view.compiler-owned-shared-view path)
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          index))
+        (doc_extract.doc-item-list-ref items index))
       (doc-render-module-item-list-from path items (+ index 1) count))))
 
 (define (doc-render-module-items [path : String] [items : doc_item_vec.Vec]) : String
   (let
-    [count : i64
-      (doc_extract.doc-item-list-count
-        (owned_view.compiler-owned-shared-view items))]
+    [count : i64 (doc_extract.doc-item-list-count items)]
     (if (= count 0)
       "_No documented declarations._\n"
       (doc-render-module-item-list-from path items 0 count))))
@@ -240,10 +236,7 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-render-item
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          index))
+      (doc-render-item (doc_extract.doc-item-list-ref items index))
       (doc-render-item-list-from items (+ index 1) count))))
 
 (define (doc-render-item-list [items : doc_item_vec.Vec]) : String
@@ -253,10 +246,7 @@
     (doc_extract.doc-item-list-count items)))
 
 (define (doc-render-items [items : doc_item_vec.Vec]) : String
-  (if (=
-    (doc_extract.doc-item-list-count
-      (owned_view.compiler-owned-shared-view items))
-    0)
+  (if (= (doc_extract.doc-item-list-count items) 0)
     "_No documented declarations._\n"
     (doc-render-item-list items)))
 

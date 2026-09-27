@@ -16,7 +16,7 @@
       (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
       (ir.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
-        (ir.compiler-ir-global-shared-view rest)
+        rest
         0
         rest.len)
       (ir.compiler-ir-instr-builder-to-seq builder))))
@@ -135,9 +135,7 @@
 (define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool
   (let
     [func : ir.CompilerIrFunction (compiler-reg-smoke-descriptor-pair-function)]
-    [types : reg.CompilerRegVarTypes
-      (reg.compiler-reg-function-var-types
-        (reg.compiler-reg-global-shared-view func))]
+    [types : reg.CompilerRegVarTypes (reg.compiler-reg-function-var-types func)]
     [representations : ir.CompilerIrRepresentationIndex
       (ir.compiler-ir-representation-index-empty)]
     [groups : live.CompilerLiveI64Set

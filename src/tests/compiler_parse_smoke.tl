@@ -36,12 +36,8 @@
         [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
-            [tail1 : ast.AstDeclList
-              (ast_tests.ast-decl-list-tail
-                (owned_view.compiler-owned-shared-view decls))]
-            [tail2 : ast.AstDeclList
-              (ast_tests.ast-decl-list-tail
-                (owned_view.compiler-owned-shared-view tail1))]
+            [tail1 : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
+            [tail2 : ast.AstDeclList (ast_tests.ast-decl-list-tail tail1)]
             [replacement : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias1 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias2 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
@@ -646,9 +642,7 @@
         [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
-            [tail : ast.AstDeclList
-              (ast_tests.ast-decl-list-tail
-                (owned_view.compiler-owned-shared-view decls))]
+            [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
             [alias : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
             [generated : ast.AstDeclList (ast.ast-decl-list-with-capacity 2)]
             (begin
@@ -1015,8 +1009,7 @@
       ;; The temporary driver bridge seeds builtins through the installed
       ;; globals. Explicit lexing must capture that scalar advance, then publish
       ;; each file's new count so the next file cannot rewind the same owner.
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-state))
+      (ci.intern-compat-state-install! intern-state)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (set!
@@ -1056,13 +1049,11 @@
     (begin
       ;; Seed fixed builtin IDs identically in both inactive owners, then leave
       ;; the active table as a decoy while lexing and parsing through A and B.
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view state-a))
+      (ci.intern-compat-state-install! state-a)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (ci.intern-compat-state-capture-from-globals! (&mut state-a))
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view state-b))
+      (ci.intern-compat-state-install! state-b)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (ci.intern-compat-state-capture-from-globals! (&mut state-b))

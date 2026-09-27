@@ -101,18 +101,16 @@
           (set! index (+ index 1))))
       (unless
         (and
-          (= (doc_extract.doc-item-list-count (clone items)) 6)
+          (= (doc_extract.doc-item-list-count items) 6)
           (= (doc_import_form_vec.len (& forms)) 6)
           (= (doc_macro_import_example_vec.len (& macro-examples)) 6)
           (= (doc_generated_target_example_vec.len (& targets)) 6)
           (= (doc_render.doc-module-list-count (clone modules)) 6)
           (string.eq
-            (doc_extract.doc-item-name
-              (doc_extract.doc-item-list-ref (clone items) 0))
+            (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 0))
             "0")
           (string.eq
-            (doc_extract.doc-item-name
-              (doc_extract.doc-item-list-ref (clone items) 5))
+            (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 5))
             "5")
           (string.eq (doc_import_form_vec.get (& forms) 0 "") "0")
           (string.eq (doc_import_form_vec.get (& forms) 5 "") "5")
@@ -159,20 +157,16 @@
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 2)]
     [type-a : i64
-      (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools-a)
-        (ast.AstType.Struct name-a))]
+      (ast.ast-node-pool-context-type-push pools-a (ast.AstType.Struct name-a))]
     [type-b : i64
-      (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools-b)
-        (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push pools-b (ast.AstType.I64))]
     [expr-a : i64
       (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-a)
+        pools-a
         (ast.AstExpr.TypeLiteral type-a))]
     [expr-b : i64
       (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-b)
+        pools-b
         (ast.AstExpr.Literal (ast.ast-lit-int 99)))]
     [ctx-a : doc_expand.DocExpandContext
       (doc_expand.doc-expand-context-from-pools-and-intern-state
@@ -183,10 +177,8 @@
     [decoy-types-before : i64 (ast.ast-node-pool-context-type-len pools-b)]
     [ok : bool false]
     (begin
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-b))
-      (ast.ast-node-pool-context-install!
-        (owned_view.compiler-owned-shared-view pools-b))
+      (ci.intern-compat-state-install! intern-b)
+      (ast.ast-node-pool-context-install! pools-b)
       (set!
         ok
         (and
@@ -276,8 +268,7 @@
         (io.panic
           (doc_expand.doc-cat2
             "doc-expand: load failed: "
-            (cdiag.compiler-diagnostic-render
-              (cdiag.compiler-diagnostic-box-shared-view diag))))])))
+            (cdiag.compiler-diagnostic-render (deref diag))))])))
 
 (define (doc-expand-ignore-fence-smoke) : i64
   (let

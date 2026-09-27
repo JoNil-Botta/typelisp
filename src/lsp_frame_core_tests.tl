@@ -215,7 +215,7 @@
           [use-index : i64
             (sem_tests.compiler-semantic-source-index-find-record
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "imported-value"
               sem.CompilerSemanticRecordRole.Use
               -1)]
@@ -624,12 +624,16 @@
 (define (lsp-compiler-diagnostic-code-ok?
   [diag : cdiag.CompilerDiagnostic]
   [want : String]) : bool
-  (match (lsp.lsp-json-string-field (lsp-compiler-diagnostic "" "" diag) "code")
+  (match (let
+    [value (lsp-compiler-diagnostic "" "" diag)]
+    (lsp.lsp-json-string-field value "code"))
     [(lsp.LspJsonText.Ok code) (string.eq code want)]
     [(lsp.LspJsonText.Missing) false]))
 
 (define (lsp-compiler-diagnostic-uncoded-ok? [diag : cdiag.CompilerDiagnostic]) : bool
-  (match (lsp.lsp-json-string-field (lsp-compiler-diagnostic "" "" diag) "code")
+  (match (let
+    [value (lsp-compiler-diagnostic "" "" diag)]
+    (lsp.lsp-json-string-field value "code"))
     [(lsp.LspJsonText.Ok _) false]
     [(lsp.LspJsonText.Missing) true]))
 

@@ -252,11 +252,18 @@
             (begin
               (test.assert-i64-eq
                 32
-                (backend.compiler-backend-gep-fold-next!
-                  (backend.compiler-backend-state-function-state b)
-                  (ast.ast-node-pool-reader-type-segment-bases)
-                  (ir.CompilerIrValue.Var 0)
-                  (ast.AstType.U8))
+                (let
+                  [function-state
+                    (backend.compiler-backend-state-function-state b)]
+                  [type-segment-bases
+                    (ast.ast-node-pool-reader-type-segment-bases)]
+                  [offset (ir.CompilerIrValue.Var 0)]
+                  [elem-ty (ast.AstType.U8)]
+                  (backend.compiler-backend-gep-fold-next!
+                    function-state
+                    type-segment-bases
+                    offset
+                    elem-ty))
                 "following displacement")
               (test.assert-i64-eq
                 2

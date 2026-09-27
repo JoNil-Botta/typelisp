@@ -566,8 +566,9 @@
         [pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         [_select-b : unit
-          (load.compiler-load-session-state-use!
-            (load.compiler-load-session-state-shared-view (& state-b)))]
+          (let
+            [state (load.compiler-load-session-state-shared-view (& state-b))]
+            (load.compiler-load-session-state-use! state))]
         [_begin-a : unit
           (load_tests.compiler-load-session-state-lazy-qualified-observer-begin-pair!
             (& state-a)
@@ -651,7 +652,7 @@
 (define (lazy-semantic-origin-same-count
   [decls : ast.AstDeclList]
   [count : i64]) : i64
-  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) count]
     [(ast.AstDeclListStep.Cons decl rest)
       (let

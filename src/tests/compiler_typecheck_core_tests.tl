@@ -2,7 +2,6 @@
 ;; state isolation between jobs, environment and cache smokes, and inline tests.
 (import stdlib.io)
 (import stdlib.arena)
-(import compiler_owned_view as owned_view)
 (import stdlib.hashmap)
 (import compiler_symbols as csym)
 (import compiler_load as cload)
@@ -24,6 +23,7 @@
 (cfg test (import stdlib.test))
 (import sym_i64_env)
 (import compiler_typecheck_core as tc_core)
+(import compiler_owned_view as owned_view)
 
 ;; Layout queries need the struct names unqualified. Lint does not count a use
 ;; inside `(type ...)`.
@@ -483,13 +483,9 @@
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [root-a : i64
-      (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-a)
-        (ast.AstExpr.Var 101))]
+      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 101))]
     [root-b : i64
-      (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-b)
-        (ast.AstExpr.Var 202))]
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 202))]
     [ctx-a : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -497,7 +493,7 @@
         (csym.compiler-registries-empty)
         ""
         cbi.compiler-builtin-id-fix-empty
-        (owned_view.compiler-owned-shared-view pools-a))]
+        pools-a)]
     [ctx-b : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -505,15 +501,11 @@
         (csym.compiler-registries-empty)
         ""
         cbi.compiler-builtin-id-fix-empty
-        (owned_view.compiler-owned-shared-view pools-b))]
+        pools-b)]
     [next-a : i64
-      (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-a)
-        (ast.AstExpr.Var 303))]
+      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 303))]
     [next-b : i64
-      (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-b)
-        (ast.AstExpr.Var 404))]
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 404))]
     [a-root-ok? : bool
       (match (tc_core.tc-context-expr-get ctx-a root-a)
         [(ast.AstExpr.Var name) (= name 101)]
@@ -532,8 +524,7 @@
         [_ false])]
     [compat-ok? : bool
       (begin
-        (ast.ast-node-pool-compat-context-use!
-          (owned_view.compiler-owned-shared-view pools-a))
+        (ast.ast-node-pool-compat-context-use! pools-a)
         (let
           [ok?
             : bool
@@ -1066,9 +1057,11 @@
           (- index 1))))))
 
 (define (tc-type-env-scoped-stack-marker-lookup
-  [stack : tc_core.TcTypeEnvScopedStack]
+  [stack : (& stack tc_core.TcTypeEnvScopedStack)]
   [marker-kind : tc_core.TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedMarkerLookup
   (let
+    [stack : tc_core.TcTypeEnvScopedStack
+      (owned_view.compiler-owned-reference-shared-view stack)]
     [index : i64 (- stack.slot-count 1)]
     (tc-type-env-scoped-stack-marker-lookup-from stack marker-kind index)))
 
@@ -1208,9 +1201,11 @@
     (tc-type-env-scoped-sidecar-bind-unsafe-id carrier.sidecar name-id ty)))
 
 (define (tc-type-env-scoped-carrier-lookup-id
-  [carrier : tc_core.TcTypeEnvScopedCarrier]
+  [carrier : (& carrier tc_core.TcTypeEnvScopedCarrier)]
   [name-id : i64]) : tc_core.ResultTcType
   (let
+    [carrier : tc_core.TcTypeEnvScopedCarrier
+      (owned_view.compiler-owned-reference-shared-view carrier)]
     [sidecar : tc_core.TcTypeEnvScopedSidecar carrier.sidecar]
     [stack : tc_core.TcTypeEnvScopedStack
       (tc_core.tc-global-shared-view sidecar.stack)]
@@ -2622,9 +2617,7 @@
   [name-id : i64]) : bool
   (let
     [index : i64
-      (tc_core.tc-type-env-scoped-carrier-lookup-index
-        (tc_core.tc-global-shared-view carrier)
-        name-id)]
+      (tc_core.tc-type-env-scoped-carrier-lookup-index carrier name-id)]
     (if (>= index 0)
       (match (tc_core.tc-type-env-scoped-stack-lookup-id-at
         carrier.sidecar.stack
@@ -2680,9 +2673,7 @@
     [prefix-id : i64]
     [expected : bool]) : bool
     (let
-      [env : tc_core.TcTypeEnv
-        (tc_core.tc-type-env-scoped-carrier-env
-          (tc_core.tc-global-shared-view carrier))]
+      [env : tc_core.TcTypeEnv (tc_core.tc-type-env-scoped-carrier-env carrier)]
       [runtime-save : tc_core.TcTypeEnvScopedRuntimeSave
         (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
       [actual : bool
@@ -3280,7 +3271,7 @@
                     (and unsafe (= depth 1) (= generation generation-before))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (tc_core.tc-global-shared-view sidecar.stack)
+                  sidecar.stack
                   tc_core.TcTypeEnvScopedMarkerKind.UnsafeDecl)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -3477,8 +3468,7 @@
                 (+ (* (tc_core.tc-local-cache-threshold) 2) 8))]
             [snapshot : tc_core.TcTypeEnvScopedCarrier
               (tc_core.tc-type-env-scoped-carrier-from-marker-visible-env
-                (tc_core.tc-type-env-scoped-carrier-env
-                  (tc_core.tc-global-shared-view deep)))]
+                (tc_core.tc-type-env-scoped-carrier-env deep))]
             [deep-sidecar : tc_core.TcTypeEnvScopedSidecar
               (tc-type-env-scoped-carrier-sidecar
                 (tc_core.tc-global-shared-view deep))]
@@ -3491,23 +3481,19 @@
                 (tc_core.tc-type-env-scoped-carrier-in-unsafe?
                   (tc_core.tc-global-shared-view deep))
                 (tc_core.tc-in-unsafe?
-                  (tc_core.tc-type-env-scoped-carrier-env
-                    (tc_core.tc-global-shared-view deep)))
+                  (tc_core.tc-type-env-scoped-carrier-env deep))
                 (match (tc_core.tc-type-env-scoped-carrier-active-region
                   (tc_core.tc-global-shared-view deep))
                   [(tc_core.TcMaybeNameId.Some region) (= region _inner-id)]
                   [_ false])
                 (tc_core.tc-cleanup-owner-active-id?
-                  (tc_core.tc-type-env-scoped-carrier-env
-                    (tc_core.tc-global-shared-view deep))
+                  (tc_core.tc-type-env-scoped-carrier-env deep)
                   _resource-id)
                 (tc_core.tc-ordinary-arena-owner-active-id?
-                  (tc_core.tc-type-env-scoped-carrier-env
-                    (tc_core.tc-global-shared-view deep))
+                  (tc_core.tc-type-env-scoped-carrier-env deep)
                   _arena-id)
                 (tc_core.tc-atomic-arena-owner-active-id?
-                  (tc_core.tc-type-env-scoped-carrier-env
-                    (tc_core.tc-global-shared-view deep))
+                  (tc_core.tc-type-env-scoped-carrier-env deep)
                   _atomic-id)
                 (tc_core.tc-type-env-scoped-carrier-in-unsafe?
                   (tc_core.tc-global-shared-view snapshot))
@@ -3567,7 +3553,7 @@
                     (and unsafe)]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (tc_core.tc-global-shared-view deep-sidecar.stack)
+                  deep-sidecar.stack
                   tc_core.TcTypeEnvScopedMarkerKind.DefaultBoundary)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -3577,7 +3563,7 @@
                     (= marker-id (tc_core.tc-default-boundary-id))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (tc_core.tc-global-shared-view deep-sidecar.stack)
+                  deep-sidecar.stack
                   tc_core.TcTypeEnvScopedMarkerKind.CleanupOwner)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -3589,7 +3575,7 @@
                       (string.eq (ci.intern-str owner) "resource"))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (tc_core.tc-global-shared-view deep-sidecar.stack)
+                  deep-sidecar.stack
                   tc_core.TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -3889,8 +3875,7 @@
           (tc_core.tc-fn0 (ast.AstType.I64))))
       (let
         [snapshot : tc_core.TcTypeEnv
-          (tc_core.tc-type-env-scoped-carrier-env
-            (tc_core.tc-global-shared-view carrier))]
+          (tc_core.tc-type-env-scoped-carrier-env carrier)]
         [default-carrier : tc_core.TcTypeEnvScopedCarrier
           (tc_core.tc-type-env-scoped-carrier-bind-id
             (tc_core.tc-type-env-scoped-carrier-from-env
@@ -3919,19 +3904,13 @@
         [mirrored-snapshot : tc_core.TcTypeEnv
           (tc_core.tc-type-env-scoped-carrier-env mirrored-carrier)]
         (and
-          (match (tc-type-env-scoped-carrier-lookup-id
-            (tc_core.tc-global-shared-view carrier)
-            tail-only-id)
+          (match (tc-type-env-scoped-carrier-lookup-id carrier tail-only-id)
             [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
             [_ false])
-          (match (tc-type-env-scoped-carrier-lookup-id
-            (tc_core.tc-global-shared-view carrier)
-            shadow-id)
+          (match (tc-type-env-scoped-carrier-lookup-id carrier shadow-id)
             [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
             [_ false])
-          (match (tc-type-env-scoped-carrier-lookup-id
-            (tc_core.tc-global-shared-view carrier)
-            alias-id)
+          (match (tc-type-env-scoped-carrier-lookup-id carrier alias-id)
             [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
             [_ false])
           (tc-type-env-scoped-carrier-binding-unsafe-id? carrier fn-id)
@@ -4348,8 +4327,9 @@
         (unsafe
           (ptr-read (ptr-offset (__tl_array-data summary.decls) b-slot)))]
       [generated-meta-ok : bool
-        (match (ast.ast-decl-generated-meta
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view a-decls) 0))
+        (match (let
+          [decl (ast.ast-decl-list-ref a-decls 0)]
+          (ast.ast-decl-generated-meta decl))
           [(ast.AstGeneratedDeclMeta.Some _ _ _ key)
             (string.eq key "summary-key")]
           [(ast.AstGeneratedDeclMeta.No) false])]
@@ -4379,7 +4359,7 @@
           generated-name
           21)
         generated-meta-ok
-        (match (ast.ast-decl-list-ref (tc_core.tc-global-shared-view a-decls) 1)
+        (match (ast.ast-decl-list-ref a-decls 1)
           [(ast.AstDecl.Test name body _ span)
             (and
               (= name test-name)
@@ -4387,11 +4367,11 @@
               (= (ast.ast-source-span-start-line span) 1)
               (= (ast.ast-source-span-end-line span) 3))]
           [_ false])
-        (match (ast.ast-decl-list-ref (tc_core.tc-global-shared-view a-decls) 2)
+        (match (ast.ast-decl-list-ref a-decls 2)
           [(ast.AstDecl.IncludeBin name path)
             (and (= name bin-name) (string.eq path "summary.bin"))]
           [_ false])
-        (match (ast.ast-decl-list-ref (tc_core.tc-global-shared-view a-decls) 3)
+        (match (ast.ast-decl-list-ref a-decls 3)
           [(ast.AstDecl.IncludeStr name path)
             (and (= name str-name) (string.eq path "summary.txt"))]
           [_ false])
@@ -5888,19 +5868,22 @@
           (+ index 1))))))
 
 (define (tc-inline-aggregate-layout-variant-size-id
-  [layout : tc_core.TcInlineAggregateLayout]
+  [layout : (& layout tc_core.TcInlineAggregateLayout)]
   [name-id : i64]) : i64
-  (match layout
-    [(tc_core.TcInlineAggregateLayout.Struct _ _ _) -1]
-    [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
-      (let
-        [exact : i64
-          (tc-inline-variant-layout-list-size-exact-id
-            (tc_core.tc-global-shared-view variants)
-            name-id)]
-        (if (>= exact 0)
-          exact
-          (tc-inline-variant-layout-list-size-fallback-id variants name-id)))]))
+  (let
+    [layout : tc_core.TcInlineAggregateLayout
+      (owned_view.compiler-owned-reference-shared-view layout)]
+    (match layout
+      [(tc_core.TcInlineAggregateLayout.Struct _ _ _) -1]
+      [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
+        (let
+          [exact : i64
+            (tc-inline-variant-layout-list-size-exact-id
+              (tc_core.tc-global-shared-view variants)
+              name-id)]
+          (if (>= exact 0)
+            exact
+            (tc-inline-variant-layout-list-size-fallback-id variants name-id)))])))
 
 ;; Serial/test compatibility adapter. Production batch prewarming supplies the
 ;; CompilerDriverState-owned job explicitly.
@@ -6614,24 +6597,16 @@
           right-address)
         (= reused.offset 1)
         (= (ast.ast-decl-list-len (& reused)) 3)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view reused) 0)
-          left-id)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view reused) 1)
-          right-a-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref reused 0) left-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref reused 1) right-a-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref reused 2) right-b-id)
         (not
           (=
             (macro-decl-list-slots-address
               (tc_core.tc-global-shared-view copied))
             right-address))
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view copied) 0)
-          alias-id)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view copied) 1)
-          right-a-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref copied 0) alias-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref copied 1) right-a-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref copied 2) right-b-id)
         (= reserved.offset 8)
         (=
@@ -6639,15 +6614,9 @@
             (tc_core.tc-global-shared-view prefixed))
           reserved-address)
         (= prefixed.offset 6)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view prefixed) 0)
-          prefix-a-id)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view prefixed) 1)
-          prefix-b-id)
-        (macro-decl-module-eq?
-          (ast.ast-decl-list-ref (tc_core.tc-global-shared-view prefixed) 2)
-          right-a-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 0) prefix-a-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 1) prefix-b-id)
+        (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 2) right-a-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 3) right-b-id)))))
 
 (cfg
@@ -6778,8 +6747,7 @@
         [done : bool false]
         (begin
           (while (not done)
-            (match (ast.ast-decl-list-step
-              (tc_core.tc-global-shared-view cursor))
+            (match (ast.ast-decl-list-step cursor)
               [(ast.AstDeclListStep.Nil) (set! done true)]
               [(ast.AstDeclListStep.Cons decl rest)
                 (begin
@@ -6819,8 +6787,7 @@
                   (& cursor)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
-              (match (ast.ast-decl-path-list-step
-                (tc_core.tc-global-shared-view cursor))
+              (match (ast.ast-decl-path-list-step cursor)
                 [(ast.AstDeclPathListStep.Nil) (set! done true)]
                 [(ast.AstDeclPathListStep.Cons path rest)
                   (begin
@@ -7200,9 +7167,7 @@
                         (set! iter-ok false)
                         (let
                           [expected-id : i64
-                            (match (ast.ast-decl-list-ref
-                              (tc_core.tc-global-shared-view flat-decls)
-                              iter-index)
+                            (match (ast.ast-decl-list-ref flat-decls iter-index)
                               [(ast.AstDecl.Module name) name]
                               [_ -1])]
                           [actual-id : i64
@@ -9284,7 +9249,7 @@
 ;; Compatibility entry point for focused callers that construct generated
 ;; declarations without a distinct physical provenance lane.
 (define (macro-materialize-generated-import
-  [load-state : cload.CompilerLoadSessionState]
+  [load-state : (& load-state cload.CompilerLoadSessionState)]
   [decl : ast.AstDecl]
   [decl-path : String]
   [decl-owner-id : i64]
@@ -9294,18 +9259,21 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : tc_core.ResultMacroMaterializeImport
-  (tc_core.macro-materialize-generated-import-with-provenance
-    load-state
-    decl
-    decl-path
-    decl-owner-id
-    decl-owner-id
-    module
-    module-id
-    seen
-    stdlib-roots
-    cfgs
-    pools))
+  (let
+    [load-state : cload.CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view load-state)]
+    (tc_core.macro-materialize-generated-import-with-provenance
+      load-state
+      decl
+      decl-path
+      decl-owner-id
+      decl-owner-id
+      module
+      module-id
+      seen
+      stdlib-roots
+      cfgs
+      pools)))
 
 (define (tc-scratch-arena-state-isolation-self-test) : bool
   (let

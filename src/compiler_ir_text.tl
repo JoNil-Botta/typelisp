@@ -1339,13 +1339,6 @@
     (ast.ast-node-pool-reader-type-segment-bases)
     list))
 
-;: The text `func` reads back.
-(define (func-text [function : ir.CompilerIrFunction]) : String
-  (ir.compiler-ir-function-render
-    (ir-text-session)
-    (ast.ast-node-pool-reader-type-segment-bases)
-    function))
-
 ;: The text `program` reads back.
 (define (program-text [whole : ir.CompilerIrProgram]) : String
   (ir.compiler-ir-program-render

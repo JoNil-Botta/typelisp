@@ -123,12 +123,11 @@
   (format-rules-bracket-binding-items? items false))
 
 (define (format-rules-let-rest [rest : cst.FormatCstList]) : cst.FormatCstList
-  (match (cst.fmt-cst-list-step (owned_view.compiler-owned-shared-view rest))
+  (match (cst.fmt-cst-list-step rest)
     [(cst.FormatCstListStep.Item first tail)
       (match first
         [(cst.FormatCst.List bindings)
-          (match (cst.fmt-cst-list-step
-            (owned_view.compiler-owned-box-shared-view bindings))
+          (match (cst.fmt-cst-list-step (deref bindings))
             [(cst.FormatCstListStep.Empty)
               (cst.fmt-cst-list-cons
                 (cst.FormatCst.BracketList (box (cst.fmt-cst-list-nil)))
@@ -1046,7 +1045,7 @@
   [flat : bool]
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
-  (match (cst.fmt-cst-list-step (owned_view.compiler-owned-shared-view rest))
+  (match (cst.fmt-cst-list-step rest)
     [(cst.FormatCstListStep.Empty)
       (format-rules-layout-inline-form
         head
@@ -1290,7 +1289,7 @@
   [flat : bool]
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
-  (match (cst.fmt-cst-list-step (owned_view.compiler-owned-shared-view items))
+  (match (cst.fmt-cst-list-step items)
     [(cst.FormatCstListStep.Item name after-name)
       (match (cst.fmt-cst-list-step after-name)
         [(cst.FormatCstListStep.Item second after-second)
@@ -1708,10 +1707,9 @@
   [flat : bool]
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
-  (match (cst.fmt-cst-list-step (owned_view.compiler-owned-shared-view rest))
+  (match (cst.fmt-cst-list-step rest)
     [(cst.FormatCstListStep.Item target after-target)
-      (match (cst.fmt-cst-list-step
-        (owned_view.compiler-owned-shared-view after-target))
+      (match (cst.fmt-cst-list-step after-target)
         [(cst.FormatCstListStep.Item second after-second)
           (if (format-rules-node-colon?
             (owned_view.compiler-owned-shared-view second))
@@ -1858,7 +1856,7 @@
   [flat : bool]
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
-  (match (cst.fmt-cst-list-step (owned_view.compiler-owned-shared-view rest))
+  (match (cst.fmt-cst-list-step rest)
     [(cst.FormatCstListStep.Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
         [(cst.FormatCstListStep.Item colon after-colon)
@@ -1943,7 +1941,7 @@
   [flat : bool]
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
-  (match (cst.fmt-cst-list-step (owned_view.compiler-owned-shared-view rest))
+  (match (cst.fmt-cst-list-step rest)
     [(cst.FormatCstListStep.Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
         [(cst.FormatCstListStep.Item colon after-colon)
@@ -2244,7 +2242,7 @@
   [flat : bool]
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
-  (match (cst.fmt-cst-list-step (owned_view.compiler-owned-shared-view items))
+  (match (cst.fmt-cst-list-step items)
     [(cst.FormatCstListStep.Empty)
       (format-rules-layout-delimited
         "("

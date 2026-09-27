@@ -1248,9 +1248,7 @@
               (ast.ast-decl-module-list-prepend-builder-id module-id modules))
             (set! i (- i 1)))))
       (let
-        [tail : ast.AstDeclList
-          (ast_tests.ast-decl-list-tail
-            (owned_view.compiler-owned-shared-view decls))]
+        [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
         (and
           (= (ast.ast-decl-list-len (& decls)) 16)
           (= (ast.ast-decl-path-list-len (& paths)) 16)

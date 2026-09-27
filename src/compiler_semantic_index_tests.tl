@@ -283,7 +283,7 @@
 
 (define (compiler-semantic-source-index-find-definition
   [index : (& index sem.CompilerSemanticSourceIndex)]
-  [path : String]
+  [path : (& path str)]
   [name : String]) : i64
   (let
     [record-index : i64 0]
@@ -359,7 +359,7 @@
 
 (define (compiler-semantic-source-index-find-record
   [index : (& index sem.CompilerSemanticSourceIndex)]
-  [path : String]
+  [path : (& path str)]
   [name : String]
   [role : sem.CompilerSemanticRecordRole]
   [local-ordinal : i64]) : i64
@@ -395,7 +395,7 @@
 
 (define (compiler-semantic-source-index-find-name-occurrence
   [index : (& index sem.CompilerSemanticSourceIndex)]
-  [path : String]
+  [path : (& path str)]
   [name : String]
   [role : sem.CompilerSemanticRecordRole]
   [occurrence : i64]) : i64
@@ -432,7 +432,7 @@
 
 (define (compiler-semantic-source-index-name-symbol-match?
   [index : (& index sem.CompilerSemanticSourceIndex)]
-  [path : String]
+  [path : (& path str)]
   [name : String]
   [definition-occurrence : i64]
   [use-occurrence : i64]) : bool
@@ -440,7 +440,7 @@
     [definition-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        (owned_view.compiler-owned-shared-view path)
+        path
         (owned_view.compiler-owned-shared-view name)
         sem.CompilerSemanticRecordRole.Definition
         definition-occurrence)]
@@ -688,21 +688,21 @@
     [top-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        (owned_view.compiler-owned-shared-view path)
+        path
         "answer"
         sem.CompilerSemanticRecordRole.Definition
         0)]
     [parameter-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        (owned_view.compiler-owned-shared-view path)
+        path
         "answer"
         sem.CompilerSemanticRecordRole.Definition
         1)]
     [local-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        (owned_view.compiler-owned-shared-view path)
+        path
         "answer"
         sem.CompilerSemanticRecordRole.Definition
         2)]
@@ -914,57 +914,57 @@
           [answer-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "answer")]
           [use-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "use")]
           [pair-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "Pair")]
           [param-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "answer"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [param-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "answer"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [local-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "answer"
               sem.CompilerSemanticRecordRole.Definition
               1)]
           [local-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "answer"
               sem.CompilerSemanticRecordRole.Use
               1)]
           [macro-param-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "value"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [macro-param-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "value"
               sem.CompilerSemanticRecordRole.Use
               0)]
@@ -978,21 +978,21 @@
           [import-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "imported-value"
               sem.CompilerSemanticRecordRole.Use
               -1)]
           [answer-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "answer"
               sem.CompilerSemanticRecordRole.Use
               -1)]
           [function-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "use"
               sem.CompilerSemanticRecordRole.Use
               -1)]
@@ -1006,28 +1006,28 @@
           [pattern-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "bound"
               sem.CompilerSemanticRecordRole.Definition
               1)]
           [pattern-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "bound"
               sem.CompilerSemanticRecordRole.Use
               1)]
           [nested-param-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "hidden"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [nested-param-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "hidden"
               sem.CompilerSemanticRecordRole.Use
               0)]
@@ -1124,7 +1124,7 @@
                     [second-answer-index : i64
                       (compiler-semantic-source-index-find-definition
                         (& second)
-                        (owned_view.compiler-owned-shared-view path)
+                        path
                         "answer")]
                     [second-answer : sem.CompilerSemanticRecord
                       (sem.compiler-semantic-source-index-get
@@ -1133,7 +1133,7 @@
                     [second-param-index : i64
                       (compiler-semantic-source-index-find-record
                         (& second)
-                        (owned_view.compiler-owned-shared-view path)
+                        path
                         "answer"
                         sem.CompilerSemanticRecordRole.Definition
                         0)]
@@ -1182,7 +1182,7 @@
                                 (>=
                                   (compiler-semantic-source-index-find-definition
                                     (& replacement)
-                                    (owned_view.compiler-owned-shared-view path)
+                                    path
                                     "broken")
                                   0))]
                             (begin
@@ -1385,15 +1385,9 @@
   [source : (& source str)]) : bool
   (let
     [local-definition-index : i64
-      (compiler-semantic-source-index-find-definition
-        index
-        (owned_view.compiler-owned-shared-view path)
-        "local-wrap")]
+      (compiler-semantic-source-index-find-definition index path "local-wrap")]
     [outer-definition-index : i64
-      (compiler-semantic-source-index-find-definition
-        index
-        (owned_view.compiler-owned-shared-view path)
-        "outer-wrap")]
+      (compiler-semantic-source-index-find-definition index path "outer-wrap")]
     [import-definition-index : i64
       (compiler-semantic-source-index-find-definition
         index
@@ -1753,14 +1747,14 @@
     [outer-callback-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        (owned_view.compiler-owned-shared-view path)
+        path
         "callback"
         sem.CompilerSemanticRecordRole.Definition
         0)]
     [inner-callback-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        (owned_view.compiler-owned-shared-view path)
+        path
         "callback"
         sem.CompilerSemanticRecordRole.Definition
         1)]
@@ -1897,56 +1891,56 @@
           [scalar-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "scalar"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [closure-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "closure"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [alias-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "alias"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [outer-callback-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "callback"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [inner-callback-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "callback"
               sem.CompilerSemanticRecordRole.Definition
               1)]
           [resource-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "resource"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [enum-variant-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "SemanticEmpty"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [enum-item-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "item"
               sem.CompilerSemanticRecordRole.Definition
               0)]
@@ -2054,7 +2048,7 @@
                     [second-alias-index : i64
                       (compiler-semantic-source-index-find-name-occurrence
                         (& second)
-                        (owned_view.compiler-owned-shared-view path)
+                        path
                         "alias"
                         sem.CompilerSemanticRecordRole.Definition
                         0)]
@@ -2175,49 +2169,49 @@
           [ref-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "ref"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [ref-closure-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "ref-closure"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [move-closure-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "move-closure"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [consume-closure-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "consume-closure"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [owner-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "owner"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [phase-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "phase"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [raw-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "raw-copy"
               sem.CompilerSemanticRecordRole.Definition
               0)]
@@ -2282,7 +2276,7 @@
     [shadow-definition-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        (owned_view.compiler-owned-shared-view path)
+        path
         "shadow"
         sem.CompilerSemanticRecordRole.Definition
         10)]
@@ -2470,49 +2464,49 @@
             (and
               (compiler-semantic-source-index-name-symbol-match?
                 (& index)
-                (owned_view.compiler-owned-shared-view path)
+                path
                 "i"
                 0
                 0)
               (compiler-semantic-source-index-name-symbol-match?
                 (& index)
-                (owned_view.compiler-owned-shared-view path)
+                path
                 "i"
                 0
                 1)
               (compiler-semantic-source-index-name-symbol-match?
                 (& index)
-                (owned_view.compiler-owned-shared-view path)
+                path
                 "i"
                 1
                 2)
               (compiler-semantic-source-index-name-symbol-match?
                 (& index)
-                (owned_view.compiler-owned-shared-view path)
+                path
                 "i"
                 1
                 3)
               (compiler-semantic-source-index-name-symbol-match?
                 (& index)
-                (owned_view.compiler-owned-shared-view path)
+                path
                 "i"
                 0
                 4)
               (compiler-semantic-source-index-name-symbol-match?
                 (& index)
-                (owned_view.compiler-owned-shared-view path)
+                path
                 "state"
                 0
                 0)
               (compiler-semantic-source-index-name-symbol-match?
                 (& index)
-                (owned_view.compiler-owned-shared-view path)
+                path
                 "state"
                 0
                 1)
               (compiler-semantic-source-index-name-symbol-match?
                 (& index)
-                (owned_view.compiler-owned-shared-view path)
+                path
                 "state"
                 1
                 2)
@@ -2615,7 +2609,7 @@
               (begin
                 (if (compiler-semantic-source-index-name-symbol-match?
                   (& index)
-                  (owned_view.compiler-owned-shared-view path)
+                  path
                   "shadow"
                   shadow-occurrence
                   shadow-occurrence)
@@ -2631,19 +2625,19 @@
                   ;; both siblings have completed.
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "shadow"
                     0
                     11)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "shadow"
                     11
                     12)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "shadow"
                     0
                     13)
@@ -2651,20 +2645,20 @@
                   ;; stable local identities.
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "value"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "value"
                     1
                     1)
                   (>=
                     (compiler-semantic-source-index-find-name-occurrence
                       (& index)
-                      (owned_view.compiler-owned-shared-view path)
+                      path
                       "macro-local"
                       sem.CompilerSemanticRecordRole.Definition
                       0)
@@ -2673,37 +2667,37 @@
                   ;; indices all extend only their lexical child snapshots.
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "item"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "resource"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "i"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "j"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "k"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "prefix"
                     0
                     0)
@@ -2743,17 +2737,17 @@
           [partial-good-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "good")]
           [partial-broken-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "broken")]
           [partial-later-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "later")]
           [partial-good : sem.CompilerSemanticRecord
             (sem.compiler-semantic-source-index-get
@@ -2770,14 +2764,14 @@
           [partial-same-param-index : i64
             (compiler-semantic-source-index-find-record
               (& partial)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "same"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [partial-same-local-index : i64
             (compiler-semantic-source-index-find-record
               (& partial)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "same"
               sem.CompilerSemanticRecordRole.Definition
               1)]
@@ -2798,17 +2792,17 @@
                 [complete-good-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& complete)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "good")]
                 [complete-broken-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& complete)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "broken")]
                 [complete-later-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& complete)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "later")]
                 [complete-good : sem.CompilerSemanticRecord
                   (sem.compiler-semantic-source-index-get
@@ -2865,7 +2859,7 @@
                         partial-same-local.symbol))
                     (compiler-semantic-source-index-name-symbol-match?
                       (& partial)
-                      (owned_view.compiler-owned-shared-view path)
+                      path
                       "same"
                       0
                       0)
@@ -2927,19 +2921,19 @@
           [partial-first-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "partial-anchor")]
           [partial-use-index : i64
             (compiler-semantic-source-index-find-record
               (& partial)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "partial-anchor"
               sem.CompilerSemanticRecordRole.Use
               -1)]
           [partial-unfinished-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "unfinished")]
           [partial-first : sem.CompilerSemanticRecord
             (sem.compiler-semantic-source-index-get
@@ -3022,7 +3016,7 @@
           [later-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "later")]
           [missing-index : i64
             (compiler-semantic-source-index-find-record
@@ -3183,12 +3177,12 @@
           [first-shared-definition-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              (owned_view.compiler-owned-shared-view shared-path)
+              shared-path
               "shared-value")]
           [first-shared-use-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              (owned_view.compiler-owned-shared-view first-path)
+              first-path
               "shared-value"
               sem.CompilerSemanticRecordRole.Use
               1)]
@@ -3200,26 +3194,26 @@
           [first-local-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view first-path)
+              first-path
               "local"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [first-function-definition-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              (owned_view.compiler-owned-shared-view shared-path)
+              shared-path
               "function")]
           [first-function-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              (owned_view.compiler-owned-shared-view first-path)
+              first-path
               "function"
               sem.CompilerSemanticRecordRole.Use
               -1)]
           [first-macro-definition-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              (owned_view.compiler-owned-shared-view shared-path)
+              shared-path
               "macro")]
           [first-macro-use-index : i64
             (compiler-semantic-source-index-find-record
@@ -3231,7 +3225,7 @@
           [first-type-definition-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              (owned_view.compiler-owned-shared-view shared-path)
+              shared-path
               "SharedPair")]
           (match (compiler-check-source-index-with-roots
             (owned_view.compiler-owned-shared-view second-path)
@@ -3242,52 +3236,52 @@
                 [second-shared-definition-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& second)
-                    (owned_view.compiler-owned-shared-view shared-path)
+                    shared-path
                     "shared-value")]
                 [second-shared-use-index : i64
                   (compiler-semantic-source-index-find-name-occurrence
                     (& second)
-                    (owned_view.compiler-owned-shared-view second-path)
+                    second-path
                     "shared-value"
                     sem.CompilerSemanticRecordRole.Use
                     0)]
                 [second-shared-alias-definition-index : i64
                   (compiler-semantic-source-index-find-name-occurrence
                     (& second)
-                    (owned_view.compiler-owned-shared-view second-path)
+                    second-path
                     "shared-value"
                     sem.CompilerSemanticRecordRole.Definition
                     0)]
                 [second-shared-alias-use-index : i64
                   (compiler-semantic-source-index-find-name-occurrence
                     (& second)
-                    (owned_view.compiler-owned-shared-view second-path)
+                    second-path
                     "shared-value"
                     sem.CompilerSemanticRecordRole.Use
                     1)]
                 [second-local-index : i64
                   (compiler-semantic-source-index-find-record
                     (& second)
-                    (owned_view.compiler-owned-shared-view second-path)
+                    second-path
                     "local"
                     sem.CompilerSemanticRecordRole.Definition
                     0)]
                 [second-function-definition-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& second)
-                    (owned_view.compiler-owned-shared-view shared-path)
+                    shared-path
                     "function")]
                 [second-function-use-index : i64
                   (compiler-semantic-source-index-find-record
                     (& second)
-                    (owned_view.compiler-owned-shared-view second-path)
+                    second-path
                     "function"
                     sem.CompilerSemanticRecordRole.Use
                     -1)]
                 [second-macro-definition-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& second)
-                    (owned_view.compiler-owned-shared-view shared-path)
+                    shared-path
                     "macro")]
                 [second-macro-use-index : i64
                   (compiler-semantic-source-index-find-record
@@ -3558,7 +3552,7 @@
                   (& first)
                   (compiler-semantic-source-index-find-definition
                     (& first)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "steady"))]
               [second-record : sem.CompilerSemanticRecord
                 (sem.compiler-semantic-source-index-get
@@ -3614,21 +3608,21 @@
           [value-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "Same"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [type-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "Same"
               sem.CompilerSemanticRecordRole.Definition
               1)]
           [left-local-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "local"
               sem.CompilerSemanticRecordRole.Definition
               0)]
@@ -3693,7 +3687,7 @@
                   (& first)
                   (compiler-semantic-source-index-find-definition
                     (& first)
-                    (owned_view.compiler-owned-shared-view path)
+                    path
                     "before"))]
               [second-record : sem.CompilerSemanticRecord
                 (sem.compiler-semantic-source-index-get
@@ -3786,168 +3780,168 @@
           [left-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "left"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [other-left-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "left"
               sem.CompilerSemanticRecordRole.Definition
               1)]
           [right-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "right"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [full-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "SemanticFull"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [other-full-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "SemanticFull"
               sem.CompilerSemanticRecordRole.Definition
               1)]
           [left-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "left"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [right-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "right"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [full-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "SemanticFull"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [other-full-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "SemanticFull"
               sem.CompilerSemanticRecordRole.Use
               2)]
           [pair-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "SemanticPair"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [left-write-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "left"
               sem.CompilerSemanticRecordRole.Use
               2)]
           [dispatch-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "dispatch-scalar"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [dispatch-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "dispatch-scalar"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [alias-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "nd"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [alias-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "nd"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [imported-box-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view imported-path)
+              imported-path
               "ImportedBox"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [imported-box-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "ImportedBox"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [imported-choice-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view imported-path)
+              imported-path
               "ImportedChoice"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [imported-choice-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "ImportedChoice"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [imported-some-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view imported-path)
+              imported-path
               "ImportedSome"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [imported-some-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "ImportedSome"
               sem.CompilerSemanticRecordRole.Use
               0)]
           [imported-some-pattern-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "ImportedSome"
               sem.CompilerSemanticRecordRole.Use
               1)]
           [imported-none-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view imported-path)
+              imported-path
               "ImportedNone"
               sem.CompilerSemanticRecordRole.Definition
               0)]
           [imported-none-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (owned_view.compiler-owned-shared-view path)
+              path
               "ImportedNone"
               sem.CompilerSemanticRecordRole.Use
               0)]

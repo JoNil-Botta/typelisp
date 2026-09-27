@@ -2509,7 +2509,7 @@
       decl)
       [(load.CompilerLoadMaybeDecl.CompilerLoadSomeDecl transformed)
         (and
-          (match (ast.ast-decl-generated-meta (clone transformed))
+          (match (ast.ast-decl-generated-meta transformed)
             [(ast.AstGeneratedDeclMeta.Some generator item arg-keys _)
               (and
                 (string.eq generator "gen")
@@ -3987,9 +3987,7 @@
       (load.compiler-load-session-state-new)]
     [state-b : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
-    [_select-b : unit
-      (load.compiler-load-session-state-use!
-        (owned_view.compiler-owned-shared-view state-b))]
+    [_select-b : unit (load.compiler-load-session-state-use! state-b)]
     [cfgs : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [program-key : load.CompilerLoadProgramCacheKey
       (load.CompilerLoadProgramCacheKey
@@ -4100,25 +4098,22 @@
       (ci.intern-compat-state-intern (&mut intern-decoy) "stdlib.decoy")]
     [_bind-a : unit
       (load.compiler-load-session-state-use-with-intern-state!
-        (owned_view.compiler-owned-shared-view state-a)
+        state-a
         (owned_view.compiler-owned-shared-view intern-a))]
     [_bind-b : unit
-      (load.compiler-load-session-state-use-with-intern-state!
-        (owned_view.compiler-owned-shared-view state-b)
-        intern-b)]
+      (load.compiler-load-session-state-use-with-intern-state! state-b intern-b)]
     [decoy-pool-before : i64 (ci.intern-compat-state-pool-len (& intern-decoy))]
     [ok : bool false]
     (begin
       ;; Keep an unrelated same-shaped table installed while every explicit
       ;; operation below targets A or B. Any ambient interning would mutate the
       ;; decoy and make the colliding ids appear to belong to the wrong job.
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-decoy))
+      (ci.intern-compat-state-install! intern-decoy)
       (load.compiler-load-session-state-note-embedded-module!
-        (owned_view.compiler-owned-shared-view state-a)
+        state-a
         "stdlib/state_a.tl")
       (load.compiler-load-session-state-note-embedded-module!
-        (owned_view.compiler-owned-shared-view state-b)
+        state-b
         "stdlib/state_b.tl")
       (set! (array-ref state-a.embedded-stdlib-provenance.noted 0) true)
       (set! (array-ref state-b.embedded-stdlib-provenance.noted 0) true)
@@ -4128,18 +4123,18 @@
             (= id-a id-b)
             (= id-b id-decoy)
             (compiler-load-session-state-embedded-stdlib-module-id?
-              (owned_view.compiler-owned-shared-view state-a)
+              state-a
               (string.copy module-a))
             (not
               (compiler-load-session-state-embedded-stdlib-module-id?
-                (owned_view.compiler-owned-shared-view state-a)
+                state-a
                 (string.copy module-b)))
             (compiler-load-session-state-embedded-stdlib-module-id?
-              (owned_view.compiler-owned-shared-view state-b)
+              state-b
               (string.copy module-b))
             (not
               (compiler-load-session-state-embedded-stdlib-module-id?
-                (owned_view.compiler-owned-shared-view state-b)
+                state-b
                 (string.copy module-a)))
             (load.compiler-load-session-state-embedded-provenance-noted?
               (owned_view.compiler-owned-shared-view state-a))
@@ -4159,13 +4154,13 @@
               (and
                 before
                 (compiler-load-session-state-embedded-stdlib-module-id?
-                  (owned_view.compiler-owned-shared-view state-a)
+                  state-a
                   (string.copy module-a))
                 (load.compiler-load-session-state-embedded-provenance-noted?
                   (owned_view.compiler-owned-shared-view state-a))
                 (not
                   (compiler-load-session-state-embedded-stdlib-module-id?
-                    (owned_view.compiler-owned-shared-view state-b)
+                    state-b
                     (string.copy module-b)))
                 (not
                   (load.compiler-load-session-state-embedded-provenance-noted?
@@ -4179,13 +4174,12 @@
           ;; The inverse transition matters during today's compatibility
           ;; migration: when A is installed, inserting through A must publish
           ;; and then recapture the active scalar count for later explicit use.
-          (ci.intern-compat-state-install!
-            (owned_view.compiler-owned-shared-view intern-a))
+          (ci.intern-compat-state-install! intern-a)
           (load.compiler-load-session-state-use-with-intern-state!
-            (owned_view.compiler-owned-shared-view state-a)
+            state-a
             intern-a)
           (load.compiler-load-session-state-note-embedded-module!
-            (owned_view.compiler-owned-shared-view state-a)
+            state-a
             "stdlib/state_active.tl")
           (set!
             ok
@@ -4212,12 +4206,8 @@
       (load.compiler-load-session-state-new)]
     [state-b : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
-    [_enable-a : unit
-      (compiler-load-session-state-cache-enable!
-        (owned_view.compiler-owned-shared-view state-a))]
-    [_select-b : unit
-      (load.compiler-load-session-state-use!
-        (owned_view.compiler-owned-shared-view state-b))]
+    [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]
+    [_select-b : unit (load.compiler-load-session-state-use! state-b)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [cfgs : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [ok-path : String "explicit-state-a.tl"]
@@ -4480,11 +4470,11 @@
     [name-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "beta.right")]
     [_bind-a : unit
       (load.compiler-load-session-state-use-with-intern-state!
-        (owned_view.compiler-owned-shared-view state-a)
+        state-a
         (owned_view.compiler-owned-shared-view intern-a))]
     [_bind-b : unit
       (load.compiler-load-session-state-use-with-intern-state!
-        (owned_view.compiler-owned-shared-view state-b)
+        state-b
         (owned_view.compiler-owned-shared-view intern-b))]
     [decoy-index : i64 0]
     [ok : bool false]
@@ -4498,8 +4488,7 @@
       (let
         [decoy-len : i64 (ci.intern-compat-state-pool-len (& decoy))]
         (begin
-          (ci.intern-compat-state-install!
-            (owned_view.compiler-owned-shared-view decoy))
+          (ci.intern-compat-state-install! decoy)
           (let
             [member-a : i64
               (load.compiler-load-session-state-lazy-qualified-member-id
@@ -4989,19 +4978,13 @@
           (load.compiler-load-session-state-surface-summaries state-a)]
         [before-ok : bool
           (and
-            (=
-              (load.compiler-load-surface-summary-list-count
-                (ast.ast-place-shared-view before))
-              2)
+            (= (load.compiler-load-surface-summary-list-count before) 2)
             (>=
               (array-length before.slots)
-              (load.compiler-load-surface-summary-list-count
-                (ast.ast-place-shared-view before)))
+              (load.compiler-load-surface-summary-list-count before))
             (=
               (__tl-project-field
-                (load.compiler-load-surface-summary-list-at
-                  (ast.ast-place-shared-view before)
-                  0)
+                (load.compiler-load-surface-summary-list-at before 0)
                 source-path-id)
               source-b)
             (=
@@ -5030,8 +5013,10 @@
         [after-remove-ok : bool
           (and
             (=
-              (load.compiler-load-surface-summary-list-count
-                (load.compiler-load-session-state-surface-summaries state-a))
+              (let
+                [summaries
+                  (load.compiler-load-session-state-surface-summaries state-a)]
+                (load.compiler-load-surface-summary-list-count summaries))
               1)
             (match (load.compiler-load-session-state-surface-summary-find-module
               state-a
@@ -5047,8 +5032,10 @@
         [reload-ok : bool
           (and
             (=
-              (load.compiler-load-surface-summary-list-count
-                (load.compiler-load-session-state-surface-summaries state-a))
+              (let
+                [summaries
+                  (load.compiler-load-session-state-surface-summaries state-a)]
+                (load.compiler-load-surface-summary-list-count summaries))
               2)
             (match (load.compiler-load-session-state-surface-summary-find-source
               state-a
@@ -5063,12 +5050,16 @@
         [isolation-ok : bool
           (and
             (=
-              (load.compiler-load-surface-summary-list-count
-                (load.compiler-load-session-state-surface-summaries state-a))
+              (let
+                [summaries
+                  (load.compiler-load-session-state-surface-summaries state-a)]
+                (load.compiler-load-surface-summary-list-count summaries))
               0)
             (=
-              (load.compiler-load-surface-summary-list-count
-                (load.compiler-load-session-state-surface-summaries state-b))
+              (let
+                [summaries
+                  (load.compiler-load-session-state-surface-summaries state-b)]
+                (load.compiler-load-surface-summary-list-count summaries))
               1)
             (match (load.compiler-load-session-state-surface-summary-find-source
               state-b
@@ -5192,8 +5183,10 @@
             (& state))
           0)
         (=
-          (load.compiler-load-surface-summary-list-count
-            (load.compiler-load-session-state-surface-summaries state))
+          (let
+            [summaries
+              (load.compiler-load-session-state-surface-summaries state)]
+            (load.compiler-load-surface-summary-list-count summaries))
           0)))))
 
 (define (compiler-load-dependency-catalog-registry-ok?) : bool
@@ -5335,8 +5328,7 @@
               (load.compiler-load-global-shared-view state)
               nested-entry)]
           [observation : load.CompilerLoadDependencyCatalogObservation
-            (load.compiler-load-dependency-catalog-observe
-              (load.compiler-load-global-shared-view state))]
+            (load.compiler-load-dependency-catalog-observe state)]
           (set!
             (array-ref checks 0)
             (and
@@ -5381,7 +5373,7 @@
                 [(load.CompilerLoadDependencyCatalogLookup.MetadataOnly) true]
                 [_ false])
               (match (load.compiler-load-dependency-catalog-admitted-image
-                (load.compiler-load-global-shared-view state)
+                state
                 metadata-slot)
                 [(load.CompilerLoadDependencyCatalogAdmittedImage.TrustedMetadataOnly
                     image)
@@ -5767,8 +5759,11 @@
   (load.compiler-load-session-state-bool-cell-set! state.cache-enabled enabled))
 
 (define (compiler-load-session-state-cache-enable!
-  [state : load.CompilerLoadSessionState]) : unit
-  (compiler-load-session-state-cache-set-enabled! state true))
+  [state : (& state load.CompilerLoadSessionState)]) : unit
+  (let
+    [state : load.CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (compiler-load-session-state-cache-set-enabled! state true)))
 
 (define (compiler-load-lazy-import-skip-count) : i64
   (let
@@ -5781,9 +5776,11 @@
   (load.compiler-load-file-with-paths-and-roots path seen (svec.new)))
 
 (define (compiler-load-session-state-embedded-stdlib-module-id?
-  [state : load.CompilerLoadSessionState]
+  [state : (& state load.CompilerLoadSessionState)]
   [module : String]) : bool
   (let
+    [state : load.CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
     [ids : sym_i64_env.SymI64Env
       (load.compiler-load-session-state-embedded-module-ids-shared-view
         (owned_view.compiler-owned-shared-view state))]

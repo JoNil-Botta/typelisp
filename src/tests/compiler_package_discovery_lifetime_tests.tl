@@ -117,7 +117,7 @@
             (load.compiler-load-active-session-state-shared-view)]
           [_bind-owner : unit
             (load.compiler-load-session-state-use-with-intern-state!
-              (owned_view.compiler-owned-shared-view session)
+              session
               (ci.intern-compat-state-capture-active))]
           (match (discovery-test-load
             "target/exp/package-discovery-lifetime/src/main.tl"
@@ -363,9 +363,7 @@
         (load.compiler-load-session-state-dependency-surfaces-release!
           (owned_view.compiler-owned-shared-view state))
         (discovery-test-reuse-storage!)
-        (match (load.compiler-load-dependency-catalog-admitted-image
-          (owned_view.compiler-owned-shared-view state)
-          0)
+        (match (load.compiler-load-dependency-catalog-admitted-image state 0)
           [(load.CompilerLoadDependencyCatalogAdmittedImage.TrustedCode
               _
               loaded)

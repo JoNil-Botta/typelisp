@@ -14,7 +14,6 @@
 (import stdlib.time)
 (import stdlib.vector)
 (import compiler_intern as ci)
-(import lex as lexer)
 (import read as reader)
 (import package_cache_core)
 
@@ -230,7 +229,7 @@
         (ResultPackageLockEntryList.Ok next)))))
 
 (define (package-lock-field-string-value
-  [ftail : reader.Sexpr]
+  [ftail : reader.SpannedSexpr]
   [fname : String]) : ResultPackageLockString
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons vhead vrest)
@@ -275,7 +274,7 @@
   (ResultPackageLockPin.Err
     "package-lock: pin must be `(rev|tag|branch \"value\")`"))
 
-(define (package-lock-pin-form [form : reader.Sexpr]) : ResultPackageLockPin
+(define (package-lock-pin-form [form : reader.SpannedSexpr]) : ResultPackageLockPin
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons kind-node kind-tail)
       (match (reader.sexpr-view kind-node)
@@ -304,7 +303,7 @@
         [_ (package-lock-pin-shape-error)])]
     [_ (package-lock-pin-shape-error)]))
 
-(define (package-lock-field-pin-value [ftail : reader.Sexpr]) : ResultPackageLockPin
+(define (package-lock-field-pin-value [ftail : reader.SpannedSexpr]) : ResultPackageLockPin
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons pin-form after-pin)
       (match (reader.sexpr-view after-pin)
@@ -314,7 +313,7 @@
     [_ (ResultPackageLockPin.Err "package-lock: field `pin` takes one value")]))
 
 (define (package-lock-entry-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [alias : String]
   [has-alias : bool]
   [url : String]
@@ -458,7 +457,7 @@
       (ResultPackageLockEntry.Err
         "package-lock: dependency fields must be lists")]))
 
-(define (package-lock-entry-from-form [form : reader.Sexpr]) : ResultPackageLockEntry
+(define (package-lock-entry-from-form [form : reader.SpannedSexpr]) : ResultPackageLockEntry
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view head)
@@ -485,7 +484,7 @@
         "package-lock: dependency entries must be lists")]))
 
 (define (package-lock-dependencies-entries
-  [entries : reader.Sexpr]
+  [entries : reader.SpannedSexpr]
   [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
   (match (reader.sexpr-view entries)
     [(reader.SexprView.Nil) (ResultPackageLockEntryList.Ok acc)]
@@ -504,7 +503,7 @@
         "package-lock: `dependencies` must contain dependency lists")]))
 
 (define (package-lock-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [version : String]
   [has-version : bool]
   [entries : package_lock_entry_vec.Vec]
@@ -565,7 +564,7 @@
         [_ (ResultPackageLockFile.Err "package-lock: fields must be lists")])]
     [_ (ResultPackageLockFile.Err "package-lock: fields must be lists")]))
 
-(define (package-lock-from-form [form : reader.Sexpr]) : ResultPackageLockFile
+(define (package-lock-from-form [form : reader.SpannedSexpr]) : ResultPackageLockFile
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view head)
@@ -590,10 +589,16 @@
         "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
 
 (define (package-lock-parse [source : String]) : ResultPackageLockFile
-  (match (reader.result (lexer.lex source))
-    [(reader.ResultSexpr.Err message)
-      (ResultPackageLockFile.Err (str_cat.str-cat "package-lock: " message))]
-    [(reader.ResultSexpr.Ok form) (package-lock-from-form form)]))
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [result : ResultPackageLockFile
+      (match (reader.data-result source)
+        [(reader.ResultSexpr.Err message)
+          (ResultPackageLockFile.Err (str_cat.str-cat "package-lock: " message))]
+        [(reader.ResultSexpr.Ok form) (package-lock-from-form form)])]
+    (begin
+      (reader.sp-node-pool-truncate! mark)
+      result)))
 
 (define (package-lock-quote-text) : String
   "\"")

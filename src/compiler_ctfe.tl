@@ -5537,7 +5537,7 @@
           expr
           (str_cat.str-cat name " expects exactly one type argument"))))))
 
-(define (ctfe-struct-field-arity-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
+(define (ctfe-type-index-arity-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
   (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
@@ -5631,16 +5631,7 @@
                 expr
                 env
                 index-arg-value.fuel)])]))
-    (ctfe-struct-field-arity-error name expr)))
-
-(define (ctfe-enum-variant-arity-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
-  (ResultCtfe.Err
-    (box
-      (ctfe-diagnostic-at-expr
-        expr
-        (str_cat.str-cat
-          name
-          " expects exactly one type argument and one index")))))
+    (ctfe-type-index-arity-error name expr)))
 
 (define (ctfe-enum-variant-kind-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
   (ResultCtfe.Err
@@ -5725,7 +5716,7 @@
                 expr
                 env
                 index-arg-value.fuel)])]))
-    (ctfe-enum-variant-arity-error name expr)))
+    (ctfe-type-index-arity-error name expr)))
 
 (define (ctfe-enum-payload-type-arity-error [expr : ast.AstExpr]) : ResultCtfe
   (ResultCtfe.Err
@@ -12671,7 +12662,9 @@
     [(ast.AstPattern.Variant name args-box)
       (let
         [args : ast.AstPatternList (deref args-box)]
-        (ast.ast-pat-variant-id name (ctfe-quote-pattern-list args env)))]
+        (ast.ast-pat-variant-id
+          (ctfe-quote-name-id env name)
+          (ctfe-quote-pattern-list args env)))]
     [(ast.AstPattern.Literal lit) (ast.AstPattern.Literal lit)]))
 
 (define (ctfe-quote-let-binding-list

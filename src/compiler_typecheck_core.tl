@@ -30494,11 +30494,6 @@
     (tc-integer-literal-fits-type? text ty)
     (tc-integer-literal-value-fits-type? value ty)))
 
-(define (tc-integer-literal-render [value : i64] [text : String]) : String
-  (if (> (string.string-length text) 0)
-    text
-    (string.int->string value)))
-
 (define (tc-integer-literal-range-message
   [ctx : TcContext]
   [value : i64]
@@ -30506,7 +30501,7 @@
   [expected : ast.AstType]) : String
   (str_cat.str-cat
     "typecheck: integer literal "
-    (tc-integer-literal-render value text)
+    (ast.ast-lit-int-text (ast.AstLiteral.Int value text))
     " does not fit expected type "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx expected)))))
 
@@ -91084,28 +91079,7 @@
         span
         origin)]
     [(ast.AstExpr.Literal lit)
-      (match lit
-        [(ast.AstLiteral.Int n text)
-          (ResultMacroSexpr.Ok (reader.SpannedSexpr.Int n text span))]
-        [(ast.AstLiteral.Float text)
-          (ResultMacroSexpr.Ok (reader.SpannedSexpr.Float text span))]
-        [(ast.AstLiteral.Bool value)
-          (ResultMacroSexpr.Ok
-            (macro-spanned-symbol-id
-              (if value
-                (cbi.compiler-builtin-ctfe "true")
-                (cbi.compiler-builtin-ctfe "false"))
-              span))]
-        [(ast.AstLiteral.Char c)
-          (ResultMacroSexpr.Ok (reader.SpannedSexpr.Char c span))]
-        [(ast.AstLiteral.String string-id)
-          (ResultMacroSexpr.Ok
-            (reader.SpannedSexpr.Str
-              (ci.intern-id-from-renderable string-id)
-              span))]
-        [(ast.AstLiteral.Unit)
-          (ResultMacroSexpr.Ok
-            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "unit") span))])]
+      (ResultMacroSexpr.Ok (macro-literal-to-spanned-sexpr lit span))]
     [(ast.AstExpr.Var name)
       (ResultMacroSexpr.Ok
         (macro-spanned-symbol-id
@@ -91859,7 +91833,6 @@
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
   (let
     [mark : i64 (reader.sp-node-pool-len)]
-    [sexpr-mark : i64 (reader.sexpr-node-pool-len)]
     (match (macro-expr-to-spanned-sexpr
       session
       expr
@@ -91869,17 +91842,14 @@
           [(ResultMacroParsedDecls.Ok decls)
             (begin
               (reader.sp-node-pool-truncate! mark)
-              (reader.sexpr-node-pool-truncate! sexpr-mark)
               (ResultMacroParsedDecls.Ok decls))]
           [(ResultMacroParsedDecls.Err diag)
             (begin
               (reader.sp-node-pool-truncate! mark)
-              (reader.sexpr-node-pool-truncate! sexpr-mark)
               (ResultMacroParsedDecls.Err diag))])]
       [(ResultMacroSexpr.Err diag)
         (begin
           (reader.sp-node-pool-truncate! mark)
-          (reader.sexpr-node-pool-truncate! sexpr-mark)
           (ResultMacroParsedDecls.Err diag))])))
 
 (define (macro-parse-decls-from-exprs

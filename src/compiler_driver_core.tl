@@ -2151,7 +2151,6 @@
       [intern-metrics-address : u64
         (compiler-driver-profile-intern-metrics-address state)]
       (begin
-        (compiler_typecheck_core.compiler-tc-resolution-profile-finish "total")
         (io.print-error
           (compiler-driver-profile-line
             "total"

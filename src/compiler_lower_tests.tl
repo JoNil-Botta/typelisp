@@ -12208,18 +12208,16 @@
       [session : cis.InternStructuralSessionHandle
         (cis.intern-structural-session-handle-from-source-names
           (ci.intern-source-name-session-handle-from-state intern-state))]
+      ;; Local ids never read the expanding context's symbols, so the hygiene
+      ;; context carries no shared block.
       [hygiene-ctx : tc_core.MacroHygieneContext
         (tc_core.MacroHygieneContext
           (ci.intern "test-macro")
           (ci.intern "test-module")
           1360
-          (csym.compiler-symbols-empty))]
+          0)]
       [hyg-when-id : i64
-        (tc_core.macro-hygiene-local-id
-          session
-          (owned_view.compiler-owned-shared-view hygiene-ctx)
-          1
-          when-id)]
+        (tc_core.macro-hygiene-local-id session hygiene-ctx 1 when-id)]
       [hyg-x-id : i64
         (tc_core.macro-hygiene-local-id session hygiene-ctx 1 x-id)]
       [struct-when-id : i64

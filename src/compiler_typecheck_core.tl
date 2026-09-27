@@ -80218,7 +80218,16 @@
   (macro-name-id i64)
   (definition-module-id i64)
   (declaration-id i64)
-  (symbols csym.CompilerSymbols))
+  ;; The expanding context's shared block, whose first word addresses its
+  ;; symbols; keeping the address instead of the symbols makes this Copy.
+  (context-shared u64))
+
+(define (macro-hygiene-symbols [hygiene : (& hygiene MacroHygieneContext)]) : (&
+    hygiene
+    csym.CompilerSymbols)
+  (unsafe
+    (ptr-read
+      (int->ptr hygiene.context-shared : (Ptr (& hygiene csym.CompilerSymbols))))))
 
 (defenum ResultMacroCallDecl
   (Ok MacroMaybeDecl)
@@ -89725,19 +89734,19 @@
         module-id)]
     [value-handle : i64
       (csym.compiler-symbols-lookup-value-in-module-id-or
-        hygiene.symbols
+        (macro-hygiene-symbols hygiene)
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
     [type-handle : i64
       (csym.compiler-symbols-lookup-type-in-module-id-or
-        hygiene.symbols
+        (macro-hygiene-symbols hygiene)
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
     [macro-handle : i64
       (csym.compiler-symbols-lookup-macro-in-module-id-or
-        hygiene.symbols
+        (macro-hygiene-symbols hygiene)
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
@@ -89755,7 +89764,7 @@
       (let
         [owner-module-id : i64
           (csym.compiler-symbols-owner-module-id-at-index-or
-            hygiene.symbols
+            (macro-hygiene-symbols hygiene)
             declaration-id
             fallback)]
         ;; A prior expansion can add a flat unqualified alias after a root
@@ -89809,7 +89818,7 @@
           (if (or (< full-module-id 0) (< final-id 0))
             -2
             (macro-hygiene-binding-owner-module-id-or
-              (tc-global-shared-view hygiene)
+              hygiene
               full-module-id
               final-id
               -2))]
@@ -89851,7 +89860,7 @@
                   [enum-owner-module-id : i64
                     (if (csym.compiler-symbols-handle-found?
                       (csym.compiler-symbols-lookup-type-in-module-id-or
-                        hygiene.symbols
+                        (macro-hygiene-symbols hygiene)
                         lookup-module-id
                         alias-id
                         (csym.compiler-symbols-missing-handle)))
@@ -89943,12 +89952,10 @@
 
 (define (macro-hygiene-bind-name-id
   [env : MacroHygieneEnv]
-  [macro-name : (& macro-name MacroHygieneContext)]
+  [macro-name : MacroHygieneContext]
   [depth : i64]
   [name-id : i64]) : MacroHygieneName
   (let
-    [macro-name : MacroHygieneContext
-      (owned_view.compiler-owned-reference-shared-view macro-name)]
     [session : cis.InternStructuralSessionHandle
       (macro-hygiene-env-structural-session env)]
     [source-name-id : i64 (tc-hygiene-template-source-id-or session name-id -1)]
@@ -91073,7 +91080,7 @@
             (&mut out)
             (macro-hygiene-rename-lifetime-id
               env
-              (tc-global-shared-view macro-name)
+              macro-name
               (ast.ast-lifetime-list-get
                 (& lifetimes)
                 index
@@ -91130,86 +91137,74 @@
 (define (macro-hygiene-type
   [ty : ast.AstType]
   [env : MacroHygieneEnv]
-  [macro-name : (& macro-name MacroHygieneContext)]) : ast.AstType
-  (let
-    [macro-name : MacroHygieneContext
-      (owned_view.compiler-owned-reference-shared-view macro-name)]
-    (match (tc-global-shared-view ty)
-      [(ast.AstType.Func args ret)
-        (ast.ast-ty-func
-          (macro-hygiene-type-list
-            (ast.ast-type-list-box-shared-view args)
-            env
-            (tc-global-shared-view macro-name))
-          (macro-hygiene-type (macro-hygiene-type-get env ret) env macro-name))]
-      [(ast.AstType.Tuple elems)
-        (ast.ast-ty-tuple
-          (macro-hygiene-type-list
-            (ast.ast-type-list-box-shared-view elems)
-            env
-            macro-name))]
-      [(ast.AstType.Array elem count)
-        (ast.ast-ty-array
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)
-          count)]
-      [(ast.AstType.DynArray elem)
-        (ast.ast-ty-dyn-array
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.Slice elem)
-        (ast.ast-ty-slice
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.Box elem)
-        (ast.ast-ty-box
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.Ptr elem)
-        (ast.ast-ty-ptr
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.MutPtr elem)
-        (ast.ast-ty-mut-ptr
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.Ref region inner)
-        (ast.ast-ty-ref
-          (macro-hygiene-rename-lifetime-id
-            env
-            (tc-global-shared-view macro-name)
-            region)
-          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
-      [(ast.AstType.MutRef region inner)
-        (ast.ast-ty-mut-ref
-          (macro-hygiene-rename-lifetime-id
-            env
-            (tc-global-shared-view macro-name)
-            region)
-          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
-      [(ast.AstType.Region region inner)
-        (ast.ast-ty-region
-          (macro-hygiene-rename-lifetime-id
-            env
-            (tc-global-shared-view macro-name)
-            region)
-          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
-      [(ast.AstType.EnumArgs name lifetimes)
-        (ast.ast-ty-enum-args
-          name
-          (macro-hygiene-lifetime-list
-            (ast.ast-lifetime-list-box-shared-view lifetimes)
-            env
-            macro-name))]
-      [(ast.AstType.StructArgs name lifetimes)
-        (ast.ast-ty-struct-args
-          name
-          (macro-hygiene-lifetime-list
-            (ast.ast-lifetime-list-box-shared-view lifetimes)
-            env
-            macro-name))]
-      [(ast.AstType.VarArgs name lifetimes)
-        (ast.ast-ty-var-args
-          name
-          (macro-hygiene-lifetime-list
-            (ast.ast-lifetime-list-box-shared-view lifetimes)
-            env
-            macro-name))]
-      [_ ty])))
+  [macro-name : MacroHygieneContext]) : ast.AstType
+  (match (tc-global-shared-view ty)
+    [(ast.AstType.Func args ret)
+      (ast.ast-ty-func
+        (macro-hygiene-type-list
+          (ast.ast-type-list-box-shared-view args)
+          env
+          macro-name)
+        (macro-hygiene-type (macro-hygiene-type-get env ret) env macro-name))]
+    [(ast.AstType.Tuple elems)
+      (ast.ast-ty-tuple
+        (macro-hygiene-type-list
+          (ast.ast-type-list-box-shared-view elems)
+          env
+          macro-name))]
+    [(ast.AstType.Array elem count)
+      (ast.ast-ty-array
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)
+        count)]
+    [(ast.AstType.DynArray elem)
+      (ast.ast-ty-dyn-array
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.Slice elem)
+      (ast.ast-ty-slice
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.Box elem)
+      (ast.ast-ty-box
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.Ptr elem)
+      (ast.ast-ty-ptr
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.MutPtr elem)
+      (ast.ast-ty-mut-ptr
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.Ref region inner)
+      (ast.ast-ty-ref
+        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+    [(ast.AstType.MutRef region inner)
+      (ast.ast-ty-mut-ref
+        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+    [(ast.AstType.Region region inner)
+      (ast.ast-ty-region
+        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+    [(ast.AstType.EnumArgs name lifetimes)
+      (ast.ast-ty-enum-args
+        name
+        (macro-hygiene-lifetime-list
+          (ast.ast-lifetime-list-box-shared-view lifetimes)
+          env
+          macro-name))]
+    [(ast.AstType.StructArgs name lifetimes)
+      (ast.ast-ty-struct-args
+        name
+        (macro-hygiene-lifetime-list
+          (ast.ast-lifetime-list-box-shared-view lifetimes)
+          env
+          macro-name))]
+    [(ast.AstType.VarArgs name lifetimes)
+      (ast.ast-ty-var-args
+        name
+        (macro-hygiene-lifetime-list
+          (ast.ast-lifetime-list-box-shared-view lifetimes)
+          env
+          macro-name))]
+    [_ ty]))
 
 (define (macro-hygiene-maybe-type
   [maybe-ty : ast.AstMaybeType]
@@ -91293,7 +91288,7 @@
     (match (macro-hygiene-pattern
       (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
       env
-      (tc-global-shared-view macro-name)
+      macro-name
       depth)
       [(MacroHygienePattern.Pattern npattern next-env)
         (begin
@@ -91315,10 +91310,7 @@
     [(ast.AstPattern.Var name maybe-ty)
       (let
         [nmaybe-ty : ast.AstMaybeType
-          (macro-hygiene-maybe-type
-            maybe-ty
-            env
-            (tc-global-shared-view macro-name))]
+          (macro-hygiene-maybe-type maybe-ty env macro-name)]
         (match (macro-hygiene-bind-name-id env macro-name depth name)
           [(MacroHygieneName.Name renamed-id next-env)
             (MacroHygienePattern.Pattern
@@ -91371,11 +91363,7 @@
       (let
         [args : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view args-box)]
-        (match (macro-hygiene-pattern-list
-          args
-          env
-          (tc-global-shared-view macro-name)
-          depth)
+        (match (macro-hygiene-pattern-list args env macro-name depth)
           [(MacroHygienePatternList.PatternList nargs next-env)
             (MacroHygienePattern.Pattern
               (ast.ast-pat-variant-id
@@ -91425,10 +91413,7 @@
           [ninit : i64
             (macro-hygiene-expr expr-bases init-box env macro-name depth)]
           [nmaybe-ty : ast.AstMaybeType
-            (macro-hygiene-maybe-type
-              maybe-ty
-              env
-              (tc-global-shared-view macro-name))]
+            (macro-hygiene-maybe-type maybe-ty env macro-name)]
           (match (macro-hygiene-bind-name-id env macro-name depth name)
             [(MacroHygieneName.Name renamed-id next-env)
               (begin
@@ -91535,11 +91520,7 @@
     unit
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
-        (match (macro-hygiene-pattern
-          pattern
-          env
-          (tc-global-shared-view macro-name)
-          depth)
+        (match (macro-hygiene-pattern pattern env macro-name depth)
           [(MacroHygienePattern.Pattern npattern arm-env)
             (begin
               (ast.ast-match-arm-list-push
@@ -91569,11 +91550,9 @@
   [expr-bases : i64]
   [expr-id : i64]
   [env : MacroHygieneEnv]
-  [macro-name : (& macro-name MacroHygieneContext)]
+  [macro-name : MacroHygieneContext]
   [depth : i64]) : i64
   (let
-    [macro-name : MacroHygieneContext
-      (owned_view.compiler-owned-reference-shared-view macro-name)]
     [_profile-start : unit
       (cfg compile-profile (compiler-tc-walk-hygiene-start!))]
     [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
@@ -91730,7 +91709,7 @@
               expr-bases
               bindings
               env
-              (tc-global-shared-view macro-name)
+              macro-name
               depth)
               [(MacroHygieneLetBindings.LetBindings nbindings body-env)
                 (ast.ast-expr-let-with-pools
@@ -91742,11 +91721,7 @@
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : i64 body-box]
-            (match (macro-hygiene-param-list
-              params
-              env
-              (tc-global-shared-view macro-name)
-              depth)
+            (match (macro-hygiene-param-list params env macro-name depth)
               [(MacroHygieneParams.Params nparams body-env)
                 (ast.ast-expr-lambda-with-pools
                   env.pools
@@ -91754,7 +91729,7 @@
                   (macro-hygiene-maybe-type
                     maybe-ret
                     (tc-global-shared-view body-env)
-                    (tc-global-shared-view macro-name))
+                    macro-name)
                   (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(ast.AstExpr.Tuple exprs)
       (ast.ast-node-pool-context-expr-push
@@ -91949,10 +91924,7 @@
         [rhs : i64 rhs-box]
         (ast.ast-expr-set-id-with-pools
           env.pools
-          (macro-hygiene-rename-var-id
-            env
-            (tc-global-shared-view macro-name)
-            name)
+          (macro-hygiene-rename-var-id env macro-name name)
           (macro-hygiene-expr expr-bases rhs env macro-name depth)))]
     [(ast.AstExpr.Ann inner-box ty-id)
       (let
@@ -91977,7 +91949,7 @@
           (macro-hygiene-borrow-lifetime
             (ast.ast-borrow-lifetime-from-id lifetime-id)
             env
-            (tc-global-shared-view macro-name))
+            macro-name)
           (macro-hygiene-expr expr-bases place env macro-name depth)))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
@@ -92207,7 +92179,7 @@
             expr-bases
             bindings
             env
-            (tc-global-shared-view macro-name)
+            macro-name
             depth)
             [(MacroHygieneResourceBindings.ResourceBindings nbindings body-env)
               (ast.ast-node-pool-context-expr-push
@@ -99012,8 +98984,7 @@
                                     macro-name-id
                                     definition-module-id
                                     declaration-id
-                                    (csym.compiler-symbols-shared-view
-                                      (tc-context-symbols ctx)))
+                                    ctx.shared)
                                   (+ depth 1))]
                               (begin
                                 (macro-hygiene-env-root-finish!
@@ -99068,8 +99039,7 @@
                                     macro-name-id
                                     definition-module-id
                                     declaration-id
-                                    (csym.compiler-symbols-shared-view
-                                      (tc-context-symbols ctx)))
+                                    ctx.shared)
                                   (+ depth 1))]
                               (begin
                                 (macro-hygiene-env-root-finish!
@@ -101337,8 +101307,7 @@
                                               macro-name
                                               definition-module
                                               declaration-id
-                                              (csym.compiler-symbols-shared-view
-                                                (tc-context-symbols call-ctx)))
+                                              call-ctx.shared)
                                             params
                                             1)
                                           (tc-global-shared-view call-expr)
@@ -101617,9 +101586,7 @@
                                                     macro-name
                                                     definition-module
                                                     declaration-id
-                                                    (csym.compiler-symbols-shared-view
-                                                      (tc-context-symbols
-                                                        call-ctx)))
+                                                    call-ctx.shared)
                                                   params
                                                   1)
                                                 (tc-global-shared-view

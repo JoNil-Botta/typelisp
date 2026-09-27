@@ -40,7 +40,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
 
-(define (tltest-write-text [path : String] [contents : String]) : unit
+(define (tltest-write-text [path : (& path str)] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (defenum TestMode
@@ -373,7 +373,7 @@
   (str_cat.str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
 
 (define (tltest-batch-paths-from-text-from
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [n : i64]
   [paths : cli_svec.Vec]) : cli_svec.Vec
@@ -385,7 +385,7 @@
       (if (= start line-end)
         (tltest-batch-paths-from-text-from text next-start n paths)
         (tltest-batch-paths-from-text-from
-          (owned_view.compiler-owned-shared-view text)
+          text
           next-start
           n
           (let
@@ -398,7 +398,7 @@
 
 (define (tltest-batch-paths-from-text [text : String]) : cli_svec.Vec
   (tltest-batch-paths-from-text-from
-    (owned_view.compiler-owned-shared-view text)
+    text
     0
     (string.string-length text)
     (cli_svec.new)))
@@ -736,7 +736,9 @@
       module-id
       private-id)))
 
-(define (tltest-owned-test-path? [target-path : String] [decl-path : String]) : bool
+(define (tltest-owned-test-path?
+  [target-path : (& target-path str)]
+  [decl-path : (& decl-path str)]) : bool
   (string.eq target-path (compiler_load.compiler-load-normalize-path decl-path)))
 
 (define (tltest-test-name-selected? [name : String]) : bool
@@ -750,8 +752,7 @@
   [metadata : ast.AstTestMetadata]
   [include-ignored : bool]
   [include-slow : bool]) : InlineTestSelection
-  (match (ast.ast-test-metadata-ignore-reason
-    (owned_view.compiler-owned-shared-view metadata))
+  (match (ast.ast-test-metadata-ignore-reason metadata)
     [(ast.AstTestIgnoreReason.Some reason)
       (if include-ignored
         (if (and (ast.ast-test-metadata-slow? metadata) (not include-slow))
@@ -905,7 +906,7 @@
     unit))
 
 (define (tltest-collect-in
-  [target-path : String]
+  [target-path : (& target-path str)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [runtime-decls : ast.AstDeclList]
@@ -946,9 +947,7 @@
                 (match (owned_view.compiler-owned-shared-view decl)
                   [(ast.AstDecl.Test name body-box metadata span)
                     (if (and
-                      (tltest-owned-test-path?
-                        (owned_view.compiler-owned-shared-view target-path)
-                        (owned_view.compiler-owned-shared-view decl-path))
+                      (tltest-owned-test-path? target-path decl-path)
                       (tltest-test-name-selected? (ci.intern-str name)))
                       (let
                         [body : i64 body-box]
@@ -1004,7 +1003,7 @@
       (InlineCollect.Collect runtime-decls-out runtime-paths-out test-items))))
 
 (define (tltest-collect
-  [source : String]
+  [source : (& source str)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : InlineCollect
   (let
@@ -2170,10 +2169,7 @@
                         (owned_view.compiler-owned-shared-view decl)
                         names)
                       (and
-                        (not
-                          (tltest-owned-test-path?
-                            (owned_view.compiler-owned-shared-view target-path)
-                            (owned_view.compiler-owned-shared-view decl-path)))
+                        (not (tltest-owned-test-path? target-path decl-path))
                         (tltest-generated-comptime-decl?
                           (owned_view.compiler-owned-shared-view decl))))
                       (begin
@@ -2189,7 +2185,7 @@
 
 (define (tltest-prune-runtime-decls
   [session : cis.InternStructuralSessionHandle]
-  [source : String]
+  [source : (& source str)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [tests : (__tl_dyn-array InlineTest)]) : InlineRuntimeDecls
@@ -2207,14 +2203,11 @@
   [source : String]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : InlineHarness
-  (match (tltest-collect
-    (owned_view.compiler-owned-shared-view source)
-    decls
-    paths)
+  (match (tltest-collect source decls paths)
     [(InlineCollect.Collect runtime-decls runtime-paths tests)
       (match (tltest-prune-runtime-decls
         session
-        (owned_view.compiler-owned-shared-view source)
+        source
         runtime-decls
         runtime-paths
         (owned_view.compiler-owned-shared-view tests))
@@ -2274,10 +2267,7 @@
   [roots : cli_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
-  (match (tltest-collect
-    (owned_view.compiler-owned-shared-view source)
-    decls
-    paths)
+  (match (tltest-collect source decls paths)
     [(InlineCollect.Collect runtime-decls runtime-paths tests)
       (let
         [count : i64 (array-length tests)]
@@ -2285,7 +2275,7 @@
           0
           (match (tltest-prune-runtime-decls
             (tltest-active-structural-session)
-            (owned_view.compiler-owned-shared-view source)
+            source
             runtime-decls
             runtime-paths
             (owned_view.compiler-owned-shared-view tests))
@@ -2313,7 +2303,9 @@
                             (cdiag.compiler-diagnostic-list-first (deref diag)))))
                       1)]))])))]))
 
-(define (tltest-inline-stdlib-source? [source : String] [roots : cli_svec.Vec]) : bool
+(define (tltest-inline-stdlib-source?
+  [source : (& source str)]
+  [roots : cli_svec.Vec]) : bool
   (let
     [normalized : String (compiler_load.compiler-load-normalize-path source)]
     [stdlib-path : String
@@ -2352,9 +2344,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (if (or
-    (tltest-inline-stdlib-source?
-      (owned_view.compiler-owned-shared-view source)
-      (clone roots))
+    (tltest-inline-stdlib-source? source (clone roots))
     (not (io.file-exists? (owned_view.compiler-owned-shared-view source)))
     (not
       (tltest-source-has-inline-tests?
@@ -3899,9 +3889,7 @@
         [target : compiler_backend.CompilerBackendTarget
           (compiler_backend.CompilerBackendTarget.Linux)]
         (begin
-          (tltest-write-text
-            (owned_view.compiler-owned-shared-view source)
-            (tltest-nested-module-macro-vector-source))
+          (tltest-write-text source (tltest-nested-module-macro-vector-source))
           (match (driver.compiler-driver-load-file-with-runtime
             (owned_view.compiler-owned-shared-view source)
             (owned_view.compiler-owned-shared-view roots)
@@ -3982,7 +3970,7 @@
           (compiler_backend.CompilerBackendTarget.Linux)]
         (begin
           (tltest-write-text
-            (owned_view.compiler-owned-shared-view source)
+            source
             (tltest-nested-generated-result-helper-source))
           (match (driver.compiler-driver-load-file-with-runtime
             (owned_view.compiler-owned-shared-view source)
@@ -4043,7 +4031,7 @@
         [roots : cli_svec.Vec (tltest-roots-for-self-test)]
         (begin
           (tltest-write-text
-            (owned_view.compiler-owned-shared-view source)
+            source
             "(cfg test (test package-cfg-inline unit))\n")
           (let
             [legacy-roots : cli_svec.Vec (clone roots)]
@@ -4086,7 +4074,7 @@
         (begin
           (tltest-inline-reset-load-state!)
           (tltest-write-text
-            (owned_view.compiler-owned-shared-view source)
+            source
             "(import stdlib.io)
 (import stdlib.byte_buf)
 
@@ -4319,10 +4307,7 @@
   [temp-dir : String]) : i64
   (let
     [files : build_run_core.SourceToolTempFiles
-      (build_run_core.source-tool-temp-files
-        temp-dir
-        (owned_view.compiler-owned-shared-view source)
-        target)]
+      (build_run_core.source-tool-temp-files temp-dir source target)]
     [legacy-roots : cli_svec.Vec (clone roots)]
     ;; Generated inline harnesses reserve status 1 for recoverable assertion
     ;; failures, so a harness that cannot be built, cannot start, or aborts or
@@ -4370,8 +4355,7 @@
               [status : i64 (process.output-status output)]
               (begin
                 (driver.compiler-driver-reset-analysis-state!)
-                (build_run_core.source-tool-forward-output
-                  (owned_view.compiler-owned-shared-view output))
+                (build_run_core.source-tool-forward-output output)
                 (if (or (= status 0) (and inline-harness (= status 1)))
                   unit
                   (tltest-report-child-status output))
@@ -4529,7 +4513,10 @@
 (define (tltest-source-line-break? [c : char]) : bool
   (or (= c '\n') (= c '\r')))
 
-(define (tltest-inline-marker-boundary? [source : String] [idx : i64] [n : i64]) : bool
+(define (tltest-inline-marker-boundary?
+  [source : (& source str)]
+  [idx : i64]
+  [n : i64]) : bool
   (if (>= idx n)
     true
     (let
@@ -4539,7 +4526,10 @@
         (tltest-source-line-break? c)
         (= c ')')))))
 
-(define (tltest-inline-marker-at? [source : String] [idx : i64] [n : i64]) : bool
+(define (tltest-inline-marker-at?
+  [source : (& source str)]
+  [idx : i64]
+  [n : i64]) : bool
   (and
     (<= (+ idx 5) n)
     (= (string.string-ref source idx) '(')
@@ -4550,7 +4540,7 @@
     (tltest-inline-marker-boundary? source (+ idx 5) n)))
 
 (define (tltest-source-has-inline-tests-from
-  [source : String]
+  [source : (& source str)]
   [idx : i64]
   [n : i64]
   [line-open : bool]) : bool
@@ -4571,13 +4561,7 @@
               (begin
                 (set! i (+ i 1))
                 (set! open true))]
-            [(and
-                open
-                (tltest-inline-marker-at?
-                  (owned_view.compiler-owned-shared-view source)
-                  i
-                  n))
-              (set! found true)]
+            [(and open (tltest-inline-marker-at? source i n)) (set! found true)]
             [(tltest-source-line-break? c)
               (begin
                 (set! i (+ i 1))
@@ -4593,7 +4577,7 @@
     (let
       [text : String (byte_buf.to-string (io.read-file source))]
       (tltest-source-has-inline-tests-from
-        (owned_view.compiler-owned-shared-view text)
+        text
         0
         (string.string-length text)
         true))))
@@ -4604,7 +4588,9 @@
       (package_source_core.package-source-root-join manifest-dir "tests"))
     "/"))
 
-(define (tltest-package-test-source? [source : String] [tests-prefix : String]) : bool
+(define (tltest-package-test-source?
+  [source : (& source str)]
+  [tests-prefix : (& tests-prefix str)]) : bool
   (source_text.starts-with?
     (compiler_load.compiler-load-normalize-path source)
     tests-prefix))
@@ -4621,7 +4607,7 @@
     (io.file-exists? (str_cat.str-cat integration-prefix "native.manifest"))))
 
 (define (tltest-package-manifest-managed-integration-source-with?
-  [normalized : String]
+  [normalized : (& normalized str)]
   [tests-prefix : String]
   [manifest-managed : bool]) : bool
   (and
@@ -4631,7 +4617,7 @@
       (tltest-package-tests-subdir-prefix tests-prefix "integration"))))
 
 (define (tltest-package-manifest-managed-integration-source?
-  [normalized : String]
+  [normalized : (& normalized str)]
   [tests-prefix : String]) : bool
   (tltest-package-manifest-managed-integration-source-with?
     normalized
@@ -4645,7 +4631,7 @@
     [normalized : String (compiler_load.compiler-load-normalize-path source)]
     (or
       (tltest-package-manifest-managed-integration-source?
-        (owned_view.compiler-owned-shared-view normalized)
+        normalized
         (owned_view.compiler-owned-shared-view tests-prefix))
       (source_text.starts-with?
         normalized
@@ -4704,7 +4690,7 @@
         "repo/tests/integration/hello.tl")]
     (and
       (tltest-package-manifest-managed-integration-source-with?
-        (owned_view.compiler-owned-shared-view integration-source)
+        integration-source
         (owned_view.compiler-owned-shared-view tests-prefix)
         true)
       (not
@@ -4882,11 +4868,11 @@
 (define (tltest-package-integration-line [source : String]) : String
   (str_cat.str-cat "TypeLisp integration test file: " source "\n"))
 
-(define (tltest-package-integration-selected? [source : String]) : bool
+(define (tltest-package-integration-selected? [source : (& source str)]) : bool
   (if tltest-name-exact-set
     (string.eq source tltest-name-exact)
     (if tltest-name-filter-set
-      (string.contains (& source) (& tltest-name-filter))
+      (string.contains source (& tltest-name-filter))
       true)))
 
 (define (tltest-package-selected-integration-sources
@@ -4904,8 +4890,7 @@
               (tltest-package-integration-source?
                 (owned_view.compiler-owned-shared-view source)
                 (owned_view.compiler-owned-shared-view tests-prefix))
-              (tltest-package-integration-selected?
-                (owned_view.compiler-owned-shared-view source)))
+              (tltest-package-integration-selected? source))
               (cli_svec.push-ref! (&mut selected) source)
               unit)
             (set! index (+ index 1)))))
@@ -4993,8 +4978,7 @@
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : ResultTestPackageTotals
-  (if (tltest-package-integration-selected?
-    (owned_view.compiler-owned-shared-view source))
+  (if (tltest-package-integration-selected? source)
     (if tltest-list-only
       (begin
         (io.print-format "{}" (str_cat.str-cat source "\n"))
@@ -5226,7 +5210,7 @@
 (define (tltest-package-run-sources-from
   [sources : cli_svec.Vec]
   [index : i64]
-  [tests-prefix : String]
+  [tests-prefix : (& tests-prefix str)]
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
@@ -5245,9 +5229,7 @@
       (ResultTestPackageTotals.Failed file-count test-count failed-file-count))
     (let
       [source : String (cli_svec.get (& sources) index "")]
-      (if (tltest-package-test-source?
-        (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view tests-prefix))
+      (if (tltest-package-test-source? source tests-prefix)
         (tltest-package-run-sources-from
           sources
           (+ index 1)
@@ -5320,7 +5302,7 @@
 
 (define (tltest-package-run-sources
   [sources : cli_svec.Vec]
-  [tests-prefix : String]
+  [tests-prefix : (& tests-prefix str)]
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
@@ -5603,7 +5585,7 @@
                   integration-sources)
                 (match (tltest-package-run-sources
                   source-set.sources
-                  (owned_view.compiler-owned-shared-view tests-prefix)
+                  tests-prefix
                   (owned_view.compiler-owned-shared-view target)
                   (owned_view.compiler-owned-shared-view roots)
                   opt-level

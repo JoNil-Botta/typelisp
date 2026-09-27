@@ -1919,8 +1919,8 @@
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-secondary-span
-  [primary-path : String]
-  [source : String]
+  [primary-path : (& primary-path str)]
+  [source : (& source str)]
   [entry : CompilerDiagnosticLabel]) : String
   (let
     [span : CompilerDiagnosticSpan entry.span]
@@ -1936,10 +1936,7 @@
     [label-only : String
       (compiler-diagnostic-render-secondary-label-only label)]
     [snippet : String
-      (compiler-diagnostic-render-source-snippet
-        span
-        (& source)
-        (& label-suffix))]
+      (compiler-diagnostic-render-source-snippet span source (& label-suffix))]
     (str_cat.str-cat
       (compiler-diagnostic-render-span-location-with-fallback
         (string.copy primary-path)
@@ -1955,7 +1952,7 @@
 
 (define (compiler-diagnostic-render-secondary-spans
   [primary-path : String]
-  [source : String]
+  [source : (& source str)]
   [labels : CompilerDiagnosticLabelList]) : String
   (let
     [count : i64 (compiler-diagnostic-label-list-count labels)]
@@ -1967,8 +1964,8 @@
           (text_buf.append!
             out
             (compiler-diagnostic-render-secondary-span
-              (compiler-diagnostic-place-shared-view primary-path)
-              (compiler-diagnostic-place-shared-view source)
+              primary-path
+              source
               (compiler-diagnostic-label-list-get labels index)))
           (set! index (+ index 1))))
       (text_buf.render out))))

@@ -22,10 +22,6 @@
 (import (hashmap.hashmap i64 i64) as clone_id_map)
 (import stdlib.string)
 
-(defmacro (clone-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
 (defstruct CloneNameSet
   (map clone_id_map.Map)
   (aliases clone_id_map.Map))
@@ -1170,14 +1166,14 @@
 
 (define (clone-decl-list-append
   [left : ast.AstDeclList]
-  [right : ast.AstDeclList]) : ast.AstDeclList
+  [right : (& right ast.AstDeclList)]) : ast.AstDeclList
   (let
     [out : ast.AstDeclList
       (ast.ast-decl-list-with-capacity
-        (+ (ast.ast-decl-list-len (& left)) (ast.ast-decl-list-len (& right))))]
+        (+ (ast.ast-decl-list-len (& left)) (ast.ast-decl-list-len right)))]
     (begin
       (ast.ast-decl-list-append-from (&mut out) (& left) 0)
-      (ast.ast-decl-list-append-from (&mut out) (& right) 0)
+      (ast.ast-decl-list-append-from (&mut out) right 0)
       out)))
 
 (define (clone-root-add-type-list

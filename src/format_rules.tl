@@ -1728,8 +1728,7 @@
             (owned_view.compiler-owned-shared-view second))
             (match (cst.fmt-cst-list-step after-second)
               [(cst.FormatCstListStep.Item typ body)
-                (if (cst.fmt-cst-list-empty?
-                  (owned_view.compiler-owned-shared-view body))
+                (if (cst.fmt-cst-list-empty? body)
                   (format-rules-layout-first-or-line-form
                     "define"
                     rest
@@ -1772,8 +1771,7 @@
                     (owned_view.compiler-owned-shared-view colon))
                     (match (cst.fmt-cst-list-step after-colon)
                       [(cst.FormatCstListStep.Item typ body)
-                        (if (cst.fmt-cst-list-empty?
-                          (owned_view.compiler-owned-shared-view body))
+                        (if (cst.fmt-cst-list-empty? body)
                           (format-rules-layout-first-or-line-form
                             "define"
                             rest
@@ -1879,8 +1877,7 @@
             (owned_view.compiler-owned-shared-view colon))
             (match (cst.fmt-cst-list-step after-colon)
               [(cst.FormatCstListStep.Item typ body)
-                (if (cst.fmt-cst-list-empty?
-                  (owned_view.compiler-owned-shared-view body))
+                (if (cst.fmt-cst-list-empty? body)
                   (format-rules-layout-first-or-line-form
                     "defmacro"
                     rest
@@ -1965,8 +1962,7 @@
             (owned_view.compiler-owned-shared-view colon))
             (match (cst.fmt-cst-list-step after-colon)
               [(cst.FormatCstListStep.Item typ body)
-                (if (cst.fmt-cst-list-empty?
-                  (owned_view.compiler-owned-shared-view body))
+                (if (cst.fmt-cst-list-empty? body)
                   (format-rules-layout-first-or-line-form
                     "lambda"
                     rest
@@ -2299,7 +2295,7 @@
 
 (define (format-rules-layout-forms-separator-state
   [previous-comment : bool]
-  [previous-family : String]
+  [previous-family : (& previous-family str)]
   [node : cst.FormatCst]
   [emit : bool]
   [width : i64]
@@ -2372,7 +2368,7 @@
                   indent
                   (format-rules-layout-forms-separator-state
                     previous-comment
-                    (owned_view.compiler-owned-shared-view previous-family)
+                    previous-family
                     (owned_view.compiler-owned-shared-view node)
                     emit
                     width
@@ -2429,7 +2425,7 @@
 
 (define (format-rules-render-forms-separator-state-into
   [previous-comment : bool]
-  [previous-family : String]
+  [previous-family : (& previous-family str)]
   [node : cst.FormatCst]
   [indent : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
@@ -2485,7 +2481,7 @@
             [after-separator : i64
               (format-rules-render-forms-separator-state-into
                 previous-comment
-                (owned_view.compiler-owned-shared-view previous-family)
+                previous-family
                 (owned_view.compiler-owned-shared-view node)
                 indent
                 buf)]

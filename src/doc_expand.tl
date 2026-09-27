@@ -165,7 +165,7 @@
 
 (define (doc-import-form-list-mut-contains-from?
   [forms : (&mut forms doc_import_form_vec.Vec)]
-  [form : String]
+  [form : (& form str)]
   [index : i64]) : bool
   (if (>= index (doc_import_form_vec.len forms))
     false
@@ -175,15 +175,13 @@
 
 (define (doc-import-form-list-mut-contains?
   [forms : (&mut forms doc_import_form_vec.Vec)]
-  [form : String]) : bool
+  [form : (& form str)]) : bool
   (doc-import-form-list-mut-contains-from? forms form 0))
 
 (define (doc-import-form-list-push-unique!
   [forms : (&mut forms doc_import_form_vec.Vec)]
   [form : String]) : unit
-  (if (doc-import-form-list-mut-contains?
-    forms
-    (owned_view.compiler-owned-shared-view form))
+  (if (doc-import-form-list-mut-contains? forms form)
     unit
     (doc_import_form_vec.push-ref! forms form)))
 
@@ -349,7 +347,7 @@
       (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]))
 
 (define (doc-expand-escape-string-loop
-  [text : String]
+  [text : (& text str)]
   [index : i64]
   [count : i64]
   [out : String]) : String
@@ -370,11 +368,7 @@
         (doc-cat2 out piece)))))
 
 (define (doc-expand-escape-string [text : String]) : String
-  (doc-expand-escape-string-loop
-    (owned_view.compiler-owned-shared-view text)
-    0
-    (string.string-length text)
-    ""))
+  (doc-expand-escape-string-loop text 0 (string.string-length text) ""))
 
 (define (doc-ast-literal-source [ctx : DocExpandContext] [lit : ast.AstLiteral]) : String
   (match (owned_view.compiler-owned-shared-view lit)
@@ -521,7 +515,7 @@
 
 (define (doc-generated-target-example-find-from
   [examples : (& examples doc_generated_target_example_vec.Vec)]
-  [target : String]
+  [target : (& target str)]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -542,7 +536,7 @@
 
 (define (doc-generated-target-example-find
   [examples : (& examples doc_generated_target_example_vec.Vec)]
-  [target : String]) : String
+  [target : (& target str)]) : String
   (doc-generated-target-example-find-from
     examples
     target
@@ -551,7 +545,7 @@
 
 (define (doc-generated-target-example-mut-find-from
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
-  [target : String]
+  [target : (& target str)]
   [index : i64]) : String
   (if (>= index examples.len)
     ""
@@ -566,7 +560,7 @@
 
 (define (doc-generated-target-example-mut-find
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
-  [target : String]) : String
+  [target : (& target str)]) : String
   (doc-generated-target-example-mut-find-from examples target 0))
 
 (define (doc-generated-target-example-add!
@@ -578,9 +572,7 @@
     (= (string.string-length form) 0)
     (>
       (string.string-length
-        (doc-generated-target-example-mut-find
-          examples
-          (owned_view.compiler-owned-shared-view target)))
+        (doc-generated-target-example-mut-find examples target))
       0))
     unit
     (doc_generated_target_example_vec.push-ref!
@@ -1054,10 +1046,7 @@
   [targets : (& targets doc_generated_target_example_vec.Vec)]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
   (let
-    [form : String
-      (doc-generated-target-example-find
-        (& targets)
-        (owned_view.compiler-owned-shared-view module-name))]
+    [form : String (doc-generated-target-example-find (& targets) module-name)]
     (if (and
       has-generated
       (> (string.string-length module-name) 0)
@@ -1174,7 +1163,10 @@
           (cdiag.compiler-diagnostic-render
             (cdiag.compiler-diagnostic-box-shared-view diag)))])))
 
-(define (doc-expand-find-prefix [text : String] [prefix : String] [from : i64]) : i64
+(define (doc-expand-find-prefix
+  [text : (& text str)]
+  [prefix : String]
+  [from : i64]) : i64
   (let
     [i : i64 from]
     [n : i64 (string.string-length text)]
@@ -1189,36 +1181,31 @@
       found)))
 
 (define (doc-expand-fence-line-start
-  [text : String]
+  [text : (& text str)]
   [line-start : i64]
   [line-end : i64]) : i64
   (let
-    [first : i64
-      (doc_extract.doc-first-nonspace
-        (owned_view.compiler-owned-shared-view text)
-        line-start
-        line-end)]
+    [first : i64 (doc_extract.doc-first-nonspace text line-start line-end)]
     (if (string.is-string-prefix-at text "```" first)
       first
       line-end)))
 
 (define (doc-expand-ignored-fence-line?
-  [text : String]
+  [text : (& text str)]
   [line-start : i64]
   [line-end : i64]) : bool
   (let
-    [fence : i64
-      (doc-expand-fence-line-start
-        (owned_view.compiler-owned-shared-view text)
-        line-start
-        line-end)]
+    [fence : i64 (doc-expand-fence-line-start text line-start line-end)]
     (if (< fence line-end)
       (string.contains
         (string.substring text fence (- line-end fence))
         "test=ignore")
       false)))
 
-(define (doc-expand-next-ignored-fence [text : String] [cursor : i64] [n : i64]) : i64
+(define (doc-expand-next-ignored-fence
+  [text : (& text str)]
+  [cursor : i64]
+  [n : i64]) : i64
   (let
     [pos : i64 cursor]
     [found : i64 n]
@@ -1227,16 +1214,13 @@
         (let
           [line-end : i64 (source_text.line-end text pos)]
           (begin
-            (if (doc-expand-ignored-fence-line?
-              (owned_view.compiler-owned-shared-view text)
-              pos
-              line-end)
+            (if (doc-expand-ignored-fence-line? text pos line-end)
               (set! found pos)
               unit)
             (set! pos (source_text.next-line-start text line-end)))))
       found)))
 
-(define (doc-expand-skip-fence [text : String] [cursor : i64] [n : i64]) : i64
+(define (doc-expand-skip-fence [text : (& text str)] [cursor : i64] [n : i64]) : i64
   (let
     [open-end : i64 (source_text.line-end text cursor)]
     [pos : i64 (source_text.next-line-start text open-end)]
@@ -1245,19 +1229,14 @@
       (while (and (< pos n) (not done))
         (let
           [line-end : i64 (source_text.line-end text pos)]
-          (if (<
-            (doc-expand-fence-line-start
-              (owned_view.compiler-owned-shared-view text)
-              pos
-              line-end)
-            line-end)
+          (if (< (doc-expand-fence-line-start text pos line-end) line-end)
             (begin
               (set! pos (source_text.next-line-start text line-end))
               (set! done true))
             (set! pos (source_text.next-line-start text line-end)))))
       pos)))
 
-(define (doc-import-forms-from-doc-text [doc-text : String]) : DocImportFormScan
+(define (doc-import-forms-from-doc-text [doc-text : (& doc-text str)]) : DocImportFormScan
   (let
     [cursor : i64 0]
     [n : i64 (string.string-length doc-text)]
@@ -1267,29 +1246,13 @@
       (while (< cursor n)
         (let
           [ignored-fence : i64
-            (doc-expand-next-ignored-fence
-              (owned_view.compiler-owned-shared-view doc-text)
-              cursor
-              n)]
-          [start : i64
-            (doc-expand-find-prefix
-              (owned_view.compiler-owned-shared-view doc-text)
-              "(import "
-              cursor)]
+            (doc-expand-next-ignored-fence doc-text cursor n)]
+          [start : i64 (doc-expand-find-prefix doc-text "(import " cursor)]
           (if (< ignored-fence start)
-            (set!
-              cursor
-              (doc-expand-skip-fence
-                (owned_view.compiler-owned-shared-view doc-text)
-                ignored-fence
-                n))
+            (set! cursor (doc-expand-skip-fence doc-text ignored-fence n))
             (if (< start n)
               (let
-                [end : i64
-                  (doc_extract.doc-scan-form-end
-                    (owned_view.compiler-owned-shared-view doc-text)
-                    start
-                    n)]
+                [end : i64 (doc_extract.doc-scan-form-end doc-text start n)]
                 [form : String (string.substring doc-text start (- end start))]
                 (begin
                   (doc-import-form-list-push-unique! (&mut forms) form)
@@ -1325,8 +1288,7 @@
               (compiler_load.compiler-load-session-state-use-with-intern-state!
                 (owned_view.compiler-owned-shared-view load-state)
                 (owned_view.compiler-owned-shared-view intern-state))
-              (ast.ast-node-pool-context-install!
-                (owned_view.compiler-owned-shared-view pools))
+              (ast.ast-node-pool-context-install! pools)
               (ci.intern-compat-state-install!
                 (owned_view.compiler-owned-shared-view intern-state))
               (let
@@ -1339,12 +1301,11 @@
                     (owned_view.compiler-owned-shared-view stdlib-roots)
                     ast.AstMaybeModuleName.No
                     (parser.compiler-cfg-empty)
-                    (owned_view.compiler-owned-shared-view pools))]
+                    pools)]
                 (begin
                   ;; Preserve segments appended through the explicit loader and
                   ;; publish that completed owner for legacy expansion readers.
-                  (ast.ast-node-pool-context-install!
-                    (owned_view.compiler-owned-shared-view pools))
+                  (ast.ast-node-pool-context-install! pools)
                   (ci.intern-compat-state-capture-from-globals!
                     (&mut intern-state))
                   (match loaded

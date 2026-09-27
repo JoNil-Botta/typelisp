@@ -19,7 +19,7 @@
 (import sym_i64_env)
 
 (define (compiler-check-fix-test-position-index
-  [source : String]
+  [source : (& source str)]
   [target-line : i64]
   [target-col : i64]) : i64
   (let
@@ -44,7 +44,7 @@
         found))))
 
 (define (compiler-check-fix-test-apply
-  [source : String]
+  [source : (& source str)]
   [edit : cdiag.CompilerDiagnosticTextEdit]) : cdiag.CompilerDiagnosticMaybeString
   (let
     [span : cdiag.CompilerDiagnosticSpan
@@ -52,12 +52,12 @@
         (cdiag.compiler-diagnostic-place-shared-view edit))]
     [start : i64
       (compiler-check-fix-test-position-index
-        (tc_core.tc-global-shared-view source)
+        source
         (cdiag.compiler-diagnostic-span-start-line span)
         (cdiag.compiler-diagnostic-span-start-col span))]
     [end : i64
       (compiler-check-fix-test-position-index
-        (tc_core.tc-global-shared-view source)
+        source
         (cdiag.compiler-diagnostic-span-end-line span)
         (cdiag.compiler-diagnostic-span-end-col span))]
     [source-len : i64 (string.string-length source)]

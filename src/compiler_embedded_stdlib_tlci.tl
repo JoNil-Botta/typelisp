@@ -1543,7 +1543,7 @@
           (cond
             [(= kind 0)
               (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                (owned_view.compiler-owned-shared-view pools)
+                pools
                 infos
                 ty)
                 [(ctfe_support.CtfeMaybeReflectInfo.Some
@@ -1565,7 +1565,7 @@
                 [_ tlci.tlci-host-callback-status-bad-request])]
             [(= kind 1)
               (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                (owned_view.compiler-owned-shared-view pools)
+                pools
                 infos
                 ty)
                 [(ctfe_support.CtfeMaybeReflectInfo.Some
@@ -1593,7 +1593,7 @@
                 [_ tlci.tlci-host-callback-status-bad-request])]
             [else
               (match (ctfe_support.ctfe-reflect-resolve-type-with-pools
-                (owned_view.compiler-owned-shared-view pools)
+                pools
                 infos
                 ty)
                 [(ast.AstType.Tuple elems)
@@ -2311,10 +2311,7 @@
                 (- compiler-comptime-host-stack-len 1))
               (compiler-comptime-host-push!
                 (ctfe_support.CompilerCtfeValue.CapturedExpr
-                  (ast.ast-expr-source-view-with-pools
-                    (owned_view.compiler-owned-shared-view pools)
-                    node
-                    span)
+                  (ast.ast-expr-source-view-with-pools pools node span)
                   ty
                   pools))))]
         [_ tlci.tlci-host-callback-status-ok]))))
@@ -2580,9 +2577,7 @@
                 compiler-comptime-host-pools
                 0)]
             [actual-ty : ast.AstType
-              (ctfe_support.ctfe-captured-expr-type-inner-with-pools
-                (owned_view.compiler-owned-shared-view pools)
-                ty)]
+              (ctfe_support.ctfe-captured-expr-type-inner-with-pools pools ty)]
             (if (ctfe_support.ctfe-untyped-expr-type? actual-ty)
               -3
               (if (string.eq
@@ -2592,7 +2587,7 @@
                       compiler-comptime-host-reflections
                       0)]
                   (ctfe_support.ctfe-type-kind-with-reflections-and-pools
-                    (owned_view.compiler-owned-shared-view pools)
+                    pools
                     host-reflections
                     (ctfe_support.ctfe-reflect-resolve-type-with-pools
                       pools
@@ -2665,9 +2660,7 @@
                 compiler-comptime-host-pools
                 0)]
             [actual-ty : ast.AstType
-              (ctfe_support.ctfe-captured-expr-type-inner-with-pools
-                (owned_view.compiler-owned-shared-view pools)
-                ty)]
+              (ctfe_support.ctfe-captured-expr-type-inner-with-pools pools ty)]
             (if (ctfe_support.ctfe-untyped-expr-type? actual-ty)
               (begin
                 (set!
@@ -3211,7 +3204,7 @@
                       0)]
                   (ctfe_support.CompilerCtfeValue.Expr
                     (ctfe_support.ctfe-caller-origin-expr-node-with-pools
-                      (owned_view.compiler-owned-shared-view pools)
+                      pools
                       (ctfe_support.ctfe-expr-binding-clause-init clause)
                       (owned_view.compiler-owned-shared-view produced))
                     (ctfe_support.ctfe-caller-origin-expr-type-inner-with-pools
@@ -5671,9 +5664,7 @@
                         [(ctfe_support.CompilerCtfeValue.Type ty)
                           (ast.ast-type-list-push
                             (&mut items)
-                            (ast.ast-node-pool-context-type-push
-                              (owned_view.compiler-owned-shared-view pools)
-                              ty))]
+                            (ast.ast-node-pool-context-type-push pools ty))]
                         [_ unit])
                       (set! item-index (+ item-index 1))))
                   (set! compiler-comptime-host-stack-len start)
@@ -6878,7 +6869,7 @@
                           (set!
                             out-node
                             (ast.ast-expr-if-with-pools
-                              (owned_view.compiler-owned-shared-view pools)
+                              pools
                               cond-node
                               (if continue-on-true
                                 out-node
@@ -6892,10 +6883,10 @@
                       (- compiler-comptime-host-stack-len 2))
                     (if (and
                       (ctfe_support.ctfe-hygiene-inert-literal-node?
-                        (owned_view.compiler-owned-shared-view pools)
+                        pools
                         when-true-node)
                       (ctfe_support.ctfe-hygiene-inert-literal-node?
-                        (owned_view.compiler-owned-shared-view pools)
+                        pools
                         when-false-node))
                       (ctfe_support.ctfe-result-hygiene-free-note-for-state!
                         (compiler-comptime-host-session-macro-state-value)
@@ -6979,7 +6970,7 @@
                               test-node)
                               else-not-final-node
                               (ast.ast-expr-if-with-pools
-                                (owned_view.compiler-owned-shared-view pools)
+                                pools
                                 test-node
                                 (ctfe_support.ctfe-expr-clause-second clause)
                                 out-node)))
@@ -6989,10 +6980,10 @@
                       (- compiler-comptime-host-stack-len 2))
                     (if (and
                       (ctfe_support.ctfe-hygiene-inert-literal-node?
-                        (owned_view.compiler-owned-shared-view pools)
+                        pools
                         missing-node)
                       (ctfe_support.ctfe-hygiene-inert-literal-node?
-                        (owned_view.compiler-owned-shared-view pools)
+                        pools
                         else-not-final-node))
                       (ctfe_support.ctfe-result-hygiene-free-note-for-state!
                         (compiler-comptime-host-session-macro-state-value)

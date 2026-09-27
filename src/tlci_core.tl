@@ -2131,7 +2131,7 @@
       [else ""])))
 
 (define (tlci-spmd-specialization-compare
-  [left : TlciSpmdSpecialization]
+  [left : (& left TlciSpmdSpecialization)]
   [right : TlciSpmdSpecialization]) : i64
   (let
     [backend : i64 (tlci-string-compare left.backend right.backend)]
@@ -2167,7 +2167,7 @@
                           0)))))))))))))
 
 (define (tlci-spmd-callable-compare
-  [left : TlciSpmdCallable]
+  [left : (& left TlciSpmdCallable)]
   [right : TlciSpmdCallable]) : i64
   (let
     [name : i64 (tlci-string-compare left.name right.name)]

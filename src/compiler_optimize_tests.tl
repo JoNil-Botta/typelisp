@@ -2522,7 +2522,7 @@
   [globals : ir.CompilerIrGlobalSeq]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
-  [capacity : i64]) : opt.OptGlobalObjModRef
+  [capacity : i64]) : opt.OptGlobalModRef
   (let
     [index : opt.OptProgramIndex (opt.opt-program-index-build functions)]
     [roots : opt.OptArgGlobalScan
@@ -59622,7 +59622,7 @@
 
 (define (opt-og-build
   [symbols : OptOgTestSymbols]
-  [functions : ir.CompilerIrFunctionSeq]) : opt.OptGlobalObjModRef
+  [functions : ir.CompilerIrFunctionSeq]) : opt.OptGlobalModRef
   (let
     [addr-taken (opt_i64_i64_map.with-capacity 1)]
     (opt-test-global-obj-build
@@ -59635,7 +59635,7 @@
 ;; summary applies it: the cell summary's own `addr-taken` set.
 (define (opt-og-build-with-addr-taken
   [symbols : OptOgTestSymbols]
-  [functions : ir.CompilerIrFunctionSeq]) : opt.OptGlobalObjModRef
+  [functions : ir.CompilerIrFunctionSeq]) : opt.OptGlobalModRef
   (let
     [cells : opt.OptGlobalCellSummary
       (opt.opt-global-cell-summary-build
@@ -59649,16 +59649,16 @@
       64)))
 
 (define (opt-og-writes?
-  [obj : (& obj opt.OptGlobalObjModRef)]
+  [obj : (& obj opt.OptGlobalModRef)]
   [name : i64]
   [global : i64]) : bool
-  (opt.opt-global-obj-mask-may-write?
+  (opt.opt-global-mod-ref-mask-may-write?
     obj.index
-    (opt.opt-global-obj-call-mask obj name)
+    (opt.opt-global-mod-ref-call-mask obj name)
     global))
 
-(define (opt-og-any? [obj : (& obj opt.OptGlobalObjModRef)] [name : i64]) : bool
-  (opt.opt-global-obj-any? (opt.opt-global-obj-call-mask obj name)))
+(define (opt-og-any? [obj : (& obj opt.OptGlobalModRef)] [name : i64]) : bool
+  (opt.opt-global-mod-ref-any? (opt.opt-global-mod-ref-call-mask obj name)))
 
 ;; --- IAG-2: the header hoist itself -------------------------------------------
 ;;
@@ -59728,11 +59728,11 @@
 (define (compiler-optimize-global-obj-mod-ref-self-test) : i64
   (let
     [symbols : OptOgTestSymbols (opt-og-test-symbols)]
-    [obj : opt.OptGlobalObjModRef
+    [obj : opt.OptGlobalModRef
       (opt-og-build symbols (opt-og-base-functions symbols))]
-    [escaped : opt.OptGlobalObjModRef
+    [escaped : opt.OptGlobalModRef
       (opt-og-build symbols (opt-og-escape-functions symbols))]
-    [addr : opt.OptGlobalObjModRef
+    [addr : opt.OptGlobalModRef
       (opt-og-build-with-addr-taken symbols (opt-og-addr-functions symbols))]
     (cond
       [(not obj.built?) 1]
@@ -59890,7 +59890,7 @@
 (define (opt-og-build-padded
   [symbols : OptOgTestSymbols]
   [functions : ir.CompilerIrFunctionSeq]
-  [pad : i64]) : opt.OptGlobalObjModRef
+  [pad : i64]) : opt.OptGlobalModRef
   (let
     [addr-taken (opt_i64_i64_map.with-capacity 1)]
     (opt-test-global-obj-build
@@ -59929,15 +59929,15 @@
   (let
     [symbols : OptOgTestSymbols (opt-og-test-symbols)]
     ;; 3 named + 59 padding = 62 non-scalar globals, exactly the row's capacity
-    [fits : opt.OptGlobalObjModRef
+    [fits : opt.OptGlobalModRef
       (opt-og-build-padded symbols (opt-og-base-functions symbols) 59)]
     ;; ...and 3 + 60 = 63, one past it: the overflow case
-    [over : opt.OptGlobalObjModRef
+    [over : opt.OptGlobalModRef
       (opt-og-build-padded symbols (opt-og-base-functions symbols) 60)]
     ;; the same over-capacity program with a writer of one SHARED-tail global.
     ;; `og_pad_58` is the 62nd non-scalar global and takes the last bit;
     ;; `og_pad_59` is the 63rd and shares it.
-    [tail : opt.OptGlobalObjModRef
+    [tail : opt.OptGlobalModRef
       (opt-og-build-padded symbols (opt-og-pad-writer-functions symbols 58) 60)]
     [pad-writer : i64 (opt-test-symbol "og_call_pad")]
     ;; and the hoist itself, in an over-capacity program
@@ -69401,7 +69401,7 @@
         empty.len-eq
         empty.len-eq-clean
         empty.arg-global
-        (opt.OptGlobalObjModRef true obj-index obj-writes)
+        (opt.OptGlobalModRef true obj-index obj-writes)
         empty.call-memory))))
 
 (define (opt-guard-sink-run

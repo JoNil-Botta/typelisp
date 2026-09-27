@@ -76452,11 +76452,9 @@
                 _
                 _)
               out-vars])]
-        ;; Pipeline order: caller-save -> loop-split -> REMAT. The remat output is
-        ;; the intermediate (`remat0-*`); the identity `splitkit-rewrite` stage
-        ;; below re-exports it under the downstream-facing `remat-*` names (final
-        ;; pipeline blocks/vars/plan), so nothing downstream changes.
-        [remat0-func : compiler_ir_types.CompilerIrFunction
+        ;; Pipeline order: caller-save -> loop-split -> REMAT. The remat output
+        ;; (`remat-*`) is the final pipeline blocks/vars/plan.
+        [remat-func : compiler_ir_types.CompilerIrFunction
           (compiler_ir_types.CompilerIrFunction.Function
             name
             (compiler-backend-global-shared-view params)
@@ -76464,15 +76462,15 @@
             rewritten-vars
             (compiler-backend-global-shared-view rewritten-blocks)
             (compiler-backend-global-shared-view function-abi))]
-        [remat0-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
+        [remat-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
           (if call-save-enabled
             (compiler_regalloc.compiler-reg-remat-rewrite-blocks
               type-segment-bases
-              (compiler-backend-global-shared-view remat0-func)
+              (compiler-backend-global-shared-view remat-func)
               (compiler-backend-global-shared-view rewritten-blocks)
               rewritten-vars
               (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-                remat0-func
+                remat-func
                 (compiler-backend-state-metrics program-index.backend-state))
               (compiler-backend-global-shared-view rewrite-reg-plan))
             (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
@@ -76481,14 +76479,14 @@
               rewritten-vars
               (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
-        [remat0-reg-plan : compiler_regalloc.CompilerRegPlan
+        [remat-reg-plan : compiler_regalloc.CompilerRegPlan
           (if call-save-enabled
             (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
               rewrite-reg-plan
-              (compiler-backend-global-shared-view remat0-rewrite))
+              (compiler-backend-global-shared-view remat-rewrite))
             rewrite-reg-plan)]
-        [remat0-blocks : compiler_ir_types.CompilerIrBlockList
-          (match (compiler-backend-global-shared-view remat0-rewrite)
+        [remat-blocks : compiler_ir_types.CompilerIrBlockList
+          (match (compiler-backend-global-shared-view remat-rewrite)
             [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
                 out-blocks
                 _
@@ -76496,8 +76494,8 @@
                 _
                 _)
               out-blocks])]
-        [remat0-vars : i64
-          (match remat0-rewrite
+        [remat-vars : i64
+          (match remat-rewrite
             [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
                 _
                 _
@@ -76514,45 +76512,9 @@
               function-state
               type-segment-bases
               rewritten-blocks
-              (compiler-backend-global-shared-view remat0-blocks)
+              (compiler-backend-global-shared-view remat-blocks)
               rewritten-vars)
             unit)]
-        ;; SplitKit removed: it was inert on the shipped path (the realization
-        ;; declined every recorded piece), replaced by M-G2b's per-call-region
-        ;; split + FPO. The final pipeline stage is the identity of the remat
-        ;; output.
-        [splitkit-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
-          (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-            remat0-blocks
-            remat0-vars
-            remat0-vars
-            (compiler_regalloc.compiler-reg-assignment-table-empty)
-            (compiler_regalloc.compiler-reg-var-types-empty))]
-        ;; Downstream-facing FINAL pipeline names (= identity of the remat output).
-        [remat-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if call-save-enabled
-            (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
-              remat0-reg-plan
-              (compiler-backend-global-shared-view splitkit-rewrite))
-            remat0-reg-plan)]
-        [remat-blocks : compiler_ir_types.CompilerIrBlockList
-          (match (compiler-backend-global-shared-view splitkit-rewrite)
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                out-blocks
-                _
-                _
-                _
-                _)
-              out-blocks])]
-        [remat-vars : i64
-          (match splitkit-rewrite
-            [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-                _
-                _
-                out-vars
-                _
-                _)
-              out-vars])]
         ;; Scratch pseudos are no longer published as ordinary assignments.
         ;; Keep storage coloring on the ordinary plan, then build the scratch
         ;; plan below from the FINAL remapped IR and assignment table. Planning

@@ -64,39 +64,37 @@
           (and
             (=
               (lower_tests.lower-test-function-vector-load-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               2)
             (=
               (lower_tests.lower-test-function-vector-binop-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               (if predicated?
                 6
                 3))
             (=
               (lower_tests.lower-test-function-vector-store-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               2)
             (=
               (lower_tests.lower-test-function-predicated-load-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               (if predicated?
                 2
                 0))
             (=
               (lower_tests.lower-test-function-predicated-store-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               (if predicated?
                 2
                 0))
             (=
-              (lower_tests.lower-test-function-tail-mask-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-function-tail-mask-count functions "fill")
               (if predicated?
                 1
                 0))
@@ -148,23 +146,21 @@
         [(ir.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower_tests.lower-test-function-tail-mask-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-function-tail-mask-count functions "fill")
               1)
             (=
               (lower_tests.lower-test-function-vector-load-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               1)
             (=
               (lower_tests.lower-test-function-vector-store-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               1)
             (=
               (lower_tests.lower-test-function-predicated-load-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "fill")
               1)
             ;; One parent tail store plus two divergent stores in each of the
@@ -209,25 +205,25 @@
           (and
             (=
               (lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "reduce_split_pos"
                 ir.CompilerIrBinOp.Mul)
               1)
             (=
               (lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "reduce_split_pos_swapped"
                 ir.CompilerIrBinOp.Mul)
               1)
             (=
               (lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "reduce_split_neg_i32"
                 ir.CompilerIrBinOp.Mul)
               0)
             (=
               (lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+                functions
                 "reduce_split_neg_index"
                 ir.CompilerIrBinOp.Mul)
               0)
@@ -592,24 +588,22 @@
             [(ir.CompilerIrProgram.Program _ functions _)
               (begin
                 (unless
-                  (lower_tests.lower-test-function-defined?
-                    (ir.compiler-ir-global-shared-view functions)
-                    "main")
+                  (lower_tests.lower-test-function-defined? functions "main")
                   (io.panic "lower: module entry main function missing"))
                 (unless
                   (lower_tests.lower-test-function-defined?
-                    (ir.compiler-ir-global-shared-view functions)
+                    functions
                     "arena.tl::stdlib.arena/helper")
                   (io.panic "lower: module entry helper function missing"))
                 (let
                   [path-count : i64
                     (lower_tests.lower-test-function-direct-call-count
-                      (ir.compiler-ir-global-shared-view functions)
+                      functions
                       "main"
                       "arena.tl::stdlib.arena/helper")]
                   [module-count : i64
                     (lower_tests.lower-test-function-direct-call-count
-                      (ir.compiler-ir-global-shared-view functions)
+                      functions
                       "main"
                       "stdlib.arena/helper")]
                   [bare-count : i64
@@ -658,16 +652,14 @@
   [functions : ir.CompilerIrFunctionSeq]) : bool
   (or
     (lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+      functions
       "stdlib/runtime.tl::substring")
+    (lower_tests.lower-test-function-defined? functions "runtime.tl::substring")
     (lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
-      "runtime.tl::substring")
-    (lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+      functions
       "stdlib/runtime.tl::stdlib.runtime/substring")
     (lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+      functions
       "runtime.tl::stdlib.runtime/substring")
     (lower_tests.lower-test-function-defined?
       functions
@@ -677,7 +669,7 @@
   [functions : ir.CompilerIrFunctionSeq]) : bool
   (or
     (lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+      functions
       "stdlib/string.tl::stdlib.string/substring")
     (lower_tests.lower-test-function-defined?
       functions

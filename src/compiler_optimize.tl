@@ -28,6 +28,7 @@
 (import stdlib.text_buf)
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_profile_state as profile_state)
+(cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_builtin_ids as cbi)
 (import compiler_ir_types as ir)
 (import compiler_intern_state as cis)
@@ -748,22 +749,16 @@
   4)
 (define compiler-optimize-level-default : i64
   1)
+
 (cfg
   compile-profile
-  (define compiler-opt-profile-start-ms-metric : i64
-    24))
-(cfg
-  compile-profile
-  (define compiler-opt-profile-start-total-metric : i64
-    25))
-(cfg
-  compile-profile
-  (define compiler-opt-profile-start-live-metric : i64
-    26))
-(cfg
-  compile-profile
-  (define compiler-opt-profile-detail-start-ms-metric : i64
-    27))
+  (counters.defslots
+    compiler-opt-profile-starts
+    24
+    (compiler-opt-profile-start-ms-metric)
+    (compiler-opt-profile-start-total-metric)
+    (compiler-opt-profile-start-live-metric)
+    (compiler-opt-profile-detail-start-ms-metric)))
 
 (cfg
   compile-profile-summary
@@ -799,36 +794,24 @@
 
 (cfg
   (any compile-profile test)
-  (define compiler-opt-load-cse-profile-max-table-size-metric : i64
-    32))
-(cfg
-  (any compile-profile test)
-  (define compiler-opt-load-cse-profile-max-kinds-size-metric : i64
-    33))
-(cfg
-  (any compile-profile test)
-  (define compiler-opt-load-cse-profile-max-table-cap-metric : i64
-    34))
-(cfg
-  (any compile-profile test)
-  (define compiler-opt-load-cse-profile-max-kinds-cap-metric : i64
-    35))
-(cfg
-  (any compile-profile test)
-  (define compiler-opt-load-cse-profile-table-cap-hits-metric : i64
-    36))
-(cfg
-  (any compile-profile test)
-  (define compiler-opt-load-cse-profile-kinds-cap-hits-metric : i64
-    37))
-(cfg
-  (any compile-profile test)
-  (define compiler-opt-load-cse-profile-field-key-drops-metric : i64
-    38))
-(cfg
-  (any compile-profile test)
-  (define compiler-opt-load-cse-profile-metric-end : i64
-    39))
+  (counters.defslots
+    compiler-opt-load-cse-profile
+    32
+    (compiler-opt-load-cse-profile-max-table-size-metric
+      "optimize.load_cse.max_table_size"
+      bare)
+    (compiler-opt-load-cse-profile-max-kinds-size-metric
+      "optimize.load_cse.max_kinds_size"
+      bare)
+    (compiler-opt-load-cse-profile-table-cap-hits-metric
+      "optimize.load_cse.table_cap_hits"
+      bare)
+    (compiler-opt-load-cse-profile-kinds-cap-hits-metric
+      "optimize.load_cse.kinds_cap_hits"
+      bare)
+    (compiler-opt-load-cse-profile-field-key-drops-metric
+      "optimize.load_cse.field_key_drops"
+      bare)))
 
 (cfg
   (any compile-profile test)
@@ -837,7 +820,7 @@
     (profile_state.compiler-profile-state-metric-reset-range!
       state
       compiler-opt-load-cse-profile-max-table-size-metric
-      compiler-opt-load-cse-profile-metric-end)))
+      compiler-opt-load-cse-profile-end)))
 
 (cfg
   (any compile-profile test)
@@ -875,26 +858,6 @@
 
 (cfg
   (any compile-profile test)
-  (define (compiler-opt-load-cse-profile-note-table-cap
-    [metrics : profile_state.CompilerProfileMetrics]
-    [cap : i64]) : unit
-    (compiler-opt-load-cse-profile-note-max
-      metrics
-      compiler-opt-load-cse-profile-max-table-cap-metric
-      cap)))
-
-(cfg
-  (any compile-profile test)
-  (define (compiler-opt-load-cse-profile-note-kinds-cap
-    [metrics : profile_state.CompilerProfileMetrics]
-    [cap : i64]) : unit
-    (compiler-opt-load-cse-profile-note-max
-      metrics
-      compiler-opt-load-cse-profile-max-kinds-cap-metric
-      cap)))
-
-(cfg
-  (any compile-profile test)
   (define (compiler-opt-load-cse-profile-note-table-cap-hit
     [metrics : profile_state.CompilerProfileMetrics]) : unit
     (profile_state.compiler-profile-metrics-add!
@@ -922,55 +885,10 @@
 
 (cfg
   compile-profile
-  (define (compiler-opt-load-cse-profile-line [name : String] [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|optimize.load_cse."
-        name
-        "|"
-        (string.int->string value)
-        "\n"))))
-
-(cfg
-  compile-profile
   (define (compiler-opt-load-cse-profile-emit
     [state : profile_state.CompilerProfileState]) : unit
-    (begin
-      (compiler-opt-load-cse-profile-line
-        "max_table_size"
-        (profile_state.compiler-profile-state-metric-value
-          state
-          compiler-opt-load-cse-profile-max-table-size-metric))
-      (compiler-opt-load-cse-profile-line
-        "max_kinds_size"
-        (profile_state.compiler-profile-state-metric-value
-          state
-          compiler-opt-load-cse-profile-max-kinds-size-metric))
-      (compiler-opt-load-cse-profile-line
-        "max_table_cap"
-        (profile_state.compiler-profile-state-metric-value
-          state
-          compiler-opt-load-cse-profile-max-table-cap-metric))
-      (compiler-opt-load-cse-profile-line
-        "max_kinds_cap"
-        (profile_state.compiler-profile-state-metric-value
-          state
-          compiler-opt-load-cse-profile-max-kinds-cap-metric))
-      (compiler-opt-load-cse-profile-line
-        "table_cap_hits"
-        (profile_state.compiler-profile-state-metric-value
-          state
-          compiler-opt-load-cse-profile-table-cap-hits-metric))
-      (compiler-opt-load-cse-profile-line
-        "kinds_cap_hits"
-        (profile_state.compiler-profile-state-metric-value
-          state
-          compiler-opt-load-cse-profile-kinds-cap-hits-metric))
-      (compiler-opt-load-cse-profile-line
-        "field_key_drops"
-        (profile_state.compiler-profile-state-metric-value
-          state
-          compiler-opt-load-cse-profile-field-key-drops-metric)))))
+    (compiler-opt-load-cse-profile-emit!
+      (profile_state.compiler-profile-state-metrics-address state))))
 
 (cfg
   test
@@ -1000,12 +918,6 @@
         (compiler-opt-load-cse-profile-note-kinds-size
           (compiler-opt-global-shared-view left-metrics)
           6)
-        (compiler-opt-load-cse-profile-note-table-cap
-          (compiler-opt-global-shared-view left-metrics)
-          31)
-        (compiler-opt-load-cse-profile-note-kinds-cap
-          (compiler-opt-global-shared-view left-metrics)
-          29)
         (compiler-opt-load-cse-profile-note-table-cap-hit
           (compiler-opt-global-shared-view left-metrics))
         (compiler-opt-load-cse-profile-note-kinds-cap-hit
@@ -1025,18 +937,6 @@
             compiler-opt-load-cse-profile-max-kinds-size-metric)
           6
           "left job keeps its kinds maximum")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            compiler-opt-load-cse-profile-max-table-cap-metric)
-          31
-          "left job keeps its table cap")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            compiler-opt-load-cse-profile-max-kinds-cap-metric)
-          29
-          "left job keeps its kinds cap")
         (test.assert-i64-eq
           (profile_state.compiler-profile-state-metric-value
             left
@@ -104444,13 +104344,6 @@
                 level
                 scratch
                 (compiler-opt-global-shared-view summaries)))]
-          [_report : unit
-            (cfg
-              compile-profile
-              (compiler-opt-scratch-region-report-function-escaping
-                type-segment-bases
-                (compiler-opt-global-shared-view optimized)
-                scratch))]
           [_finish : unit
             (cfg
               compile-profile
@@ -130223,177 +130116,6 @@
       (opt-scratch-state-initial)
       blocks)))
 
-(cfg
-  compile-profile
-  (define (compiler-opt-scratch-region-report-status
-    [blocker : OptScratchBlockerReason]) : String
-    (match blocker
-      [(OptScratchBlockerReason.NoBlocker) "candidate"]
-      [(OptScratchBlockerReason.Blocked _) "blocked"])))
-
-(cfg
-  compile-profile
-  (define (compiler-opt-scratch-region-report-reason
-    [blocker : OptScratchBlockerReason]) : String
-    (match blocker
-      [(OptScratchBlockerReason.NoBlocker) "none"]
-      [(OptScratchBlockerReason.Blocked reason) reason])))
-
-(cfg
-  compile-profile
-  (define (compiler-opt-scratch-region-report-line
-    [status : String]
-    [scope : String]
-    [function : String]
-    [label : i64]
-    [latch : i64]
-    [allocs : i64]
-    [bytes : i64]
-    [reason : String]) : String
-    (str_cat.str-cat
-      "compile-profile-detail|scratch_region|"
-      status
-      "|scope="
-      scope
-      "|function="
-      function
-      "|label="
-      (ir.compiler-ir-label-text label)
-      "|latch="
-      (ir.compiler-ir-label-text latch)
-      "|allocs="
-      (string.int->string allocs)
-      "|known_bytes="
-      (string.int->string bytes)
-      "|blocker="
-      reason
-      "\n")))
-
-(cfg
-  compile-profile
-  (define (compiler-opt-scratch-region-report-one
-    [scope : String]
-    [function : String]
-    [label : i64]
-    [latch : i64]
-    [report : OptScratchScopeReport]) : unit
-    (match report
-      [(OptScratchScopeReport.Report allocs bytes blocker)
-        (cfg
-          compile-profile-summary
-          unit
-          (if (> allocs 0)
-            (io.print-error
-              (compiler-opt-scratch-region-report-line
-                (compiler-opt-scratch-region-report-status
-                  (compiler-opt-global-shared-view blocker))
-                scope
-                function
-                label
-                latch
-                allocs
-                bytes
-                (compiler-opt-scratch-region-report-reason blocker)))
-            unit))])))
-
-(cfg
-  compile-profile
-  (define (compiler-opt-scratch-region-report-blocks
-    [type-segment-bases : i64]
-    [function : String]
-    [blocks : ir.CompilerIrBlockList]) : unit
-    (match blocks
-      [(ir.CompilerIrBlockList.Nil) unit]
-      [(ir.CompilerIrBlockList.Cons block rest)
-        (begin
-          (match (compiler-opt-global-shared-view block)
-            [(ir.CompilerIrBlock.Block label _)
-              (compiler-opt-scratch-region-report-one
-                "block"
-                (compiler-opt-global-shared-view function)
-                label
-                (ir.compiler-ir-label "-")
-                (opt-scratch-scope-report-block type-segment-bases block))])
-          (compiler-opt-scratch-region-report-blocks
-            type-segment-bases
-            function
-            (deref rest)))]
-      [(ir.CompilerIrBlockList.Array seq)
-        (compiler-opt-scratch-region-report-blocks
-          type-segment-bases
-          function
-          (ir.compiler-ir-block-seq-to-list seq))])))
-
-(cfg
-  compile-profile
-  (define (compiler-opt-scratch-region-report-loops
-    [type-segment-bases : i64]
-    [function : String]
-    [loops : OptNaturalLoopList]) : unit
-    (match loops
-      [(OptNaturalLoopList.Nil) unit]
-      [(OptNaturalLoopList.Cons loop rest)
-        (begin
-          (compiler-opt-scratch-region-report-one
-            "loop"
-            (compiler-opt-global-shared-view function)
-            (opt-natural-loop-header loop)
-            (opt-natural-loop-latch loop)
-            (let
-              [blocks (opt-natural-loop-body-blocks loop)]
-              (opt-scratch-scope-report-blocks type-segment-bases blocks)))
-          (compiler-opt-scratch-region-report-loops
-            type-segment-bases
-            function
-            (deref rest)))])))
-
-(cfg
-  compile-profile
-  (define (compiler-opt-scratch-region-report-function
-    [type-segment-bases : i64]
-    [func : ir.CompilerIrFunction]) : unit
-    (match func
-      [(ir.CompilerIrFunction.Function name _ _ _ blocks _)
-        (let
-          [name-text : String (ir.compiler-ir-symbol-text name)]
-          (begin
-            (compiler-opt-scratch-region-report-one
-              "function"
-              (compiler-opt-global-shared-view name-text)
-              (ir.compiler-ir-label "-")
-              (ir.compiler-ir-label "-")
-              (opt-scratch-scope-report-blocks type-segment-bases blocks))
-            (compiler-opt-scratch-region-report-blocks
-              type-segment-bases
-              (compiler-opt-global-shared-view name-text)
-              (compiler-opt-global-shared-view blocks))
-            (compiler-opt-scratch-region-report-loops
-              type-segment-bases
-              name-text
-              (opt-cfg-natural-loops blocks))))])))
-
-(cfg
-  compile-profile
-  (define (compiler-opt-scratch-region-report-function-escaping
-    [type-segment-bases : i64]
-    [func : ir.CompilerIrFunction]
-    [scratch : i64]) : unit
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch))
-        (let
-          [mark : i64 (arena.tl_region_mark)]
-          [_report : unit
-            (compiler-opt-scratch-region-report-function
-              type-segment-bases
-              func)]
-          (unsafe
-            (arena.tl_arena_set scratch)
-            (arena.tl_region_reset mark)
-            (arena.tl_arena_set enclosing)))))))
-
 ;; --- implicit scratch-region reset insertion -------------------------------
 ;;
 ;; Opt2 may wrap a proven loop-body scratch candidate with one mark before the
@@ -131918,14 +131640,10 @@
 (define (opt-load-kinds-empty-with-cap
   [_profile-state : profile_state.CompilerProfileMetrics]
   [cap : i64]) : OptLoadPtrKinds
-  (begin
-    (cfg
-      compile-profile
-      (compiler-opt-load-cse-profile-note-kinds-cap _profile-state cap))
-    (OptLoadPtrKinds.Sparse
-      (opt_i64_i64_map.with-capacity 17)
-      (opt_i64_i64_map.with-capacity 17)
-      cap)))
+  (OptLoadPtrKinds.Sparse
+    (opt_i64_i64_map.with-capacity 17)
+    (opt_i64_i64_map.with-capacity 17)
+    cap))
 
 (define (opt-load-kinds-empty) : OptLoadPtrKinds
   (OptLoadPtrKinds.Sparse
@@ -132090,11 +131808,6 @@
                   (compiler-opt-load-cse-profile-note-kinds-size
                     (compiler-opt-global-shared-view _profile-state)
                     current-len))
-                (cfg
-                  compile-profile
-                  (compiler-opt-load-cse-profile-note-kinds-cap
-                    (compiler-opt-global-shared-view _profile-state)
-                    cap))
                 (if (>= current-len cap)
                   (begin
                     (cfg
@@ -133378,11 +133091,6 @@
             (compiler-opt-load-cse-profile-note-table-size
               (compiler-opt-global-shared-view _profile-state)
               current-len))
-          (cfg
-            compile-profile
-            (compiler-opt-load-cse-profile-note-table-cap
-              (compiler-opt-global-shared-view _profile-state)
-              cap))
           (if (>= current-len cap)
             (begin
               (cfg
@@ -137106,22 +136814,16 @@
   [table-cap : i64]
   [kinds-cap : i64]
   [facts : OptAliasFacts]) : OptLoadCseState
-  (begin
-    (cfg
-      compile-profile
-      (compiler-opt-load-cse-profile-note-table-cap
-        (compiler-opt-global-shared-view profile-state)
-        table-cap))
-    (OptLoadCseState.State
-      facts
-      (OptLoadTable.Nil)
-      (opt-load-kinds-empty-with-cap
-        (compiler-opt-global-shared-view profile-state)
-        kinds-cap)
-      table-cap
-      0
-      (opt-load-global-bases-empty)
-      profile-state)))
+  (OptLoadCseState.State
+    facts
+    (OptLoadTable.Nil)
+    (opt-load-kinds-empty-with-cap
+      (compiler-opt-global-shared-view profile-state)
+      kinds-cap)
+    table-cap
+    0
+    (opt-load-global-bases-empty)
+    profile-state))
 
 (define (opt-load-cse-empty-state-for-size-with-kinds
   [profile-state : profile_state.CompilerProfileMetrics]
@@ -137130,22 +136832,16 @@
   [facts : OptAliasFacts]) : OptLoadCseState
   (let
     [table-cap : i64 (opt-load-cse-table-cap-for-size instr-count)]
-    (begin
-      (cfg
-        compile-profile
-        (compiler-opt-load-cse-profile-note-table-cap
-          (compiler-opt-global-shared-view profile-state)
-          table-cap))
-      (OptLoadCseState.State
-        facts
-        (OptLoadTable.Nil)
-        (opt-load-kinds-set-cap
-          kinds
-          (opt-load-cse-kinds-cap-for-size instr-count))
-        table-cap
-        0
-        (opt-load-global-bases-empty)
-        profile-state))))
+    (OptLoadCseState.State
+      facts
+      (OptLoadTable.Nil)
+      (opt-load-kinds-set-cap
+        kinds
+        (opt-load-cse-kinds-cap-for-size instr-count))
+      table-cap
+      0
+      (opt-load-global-bases-empty)
+      profile-state)))
 
 ;; The load table is persistent, but alias facts, pointer kinds, and global
 ;; bases are mutable tables; entering a block through a single predecessor must

@@ -6087,46 +6087,28 @@
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
     132))
+
 (cfg
   (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-total-metric : i64
-    120))
+  (counters.defslots
+    compiler-tc-macro-lifetime-starts
+    120
+    (compiler-tc-macro-lifetime-start-total-metric)
+    (compiler-tc-macro-lifetime-start-live-metric)
+    (compiler-tc-macro-lifetime-start-peak-metric)
+    (compiler-tc-macro-lifetime-start-pool-base-metric)
+    (compiler-tc-macro-lifetime-start-expr-pool-metric)
+    (compiler-tc-macro-lifetime-start-type-pool-metric)))
+
 (cfg
   (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-live-metric : i64
-    121))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-peak-metric : i64
-    122))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-pool-base-metric : i64
-    123))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-expr-pool-metric : i64
-    124))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-type-pool-metric : i64
-    125))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-enclosing-handle-metric : i64
-    128))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-enclosing-bytes-metric : i64
-    129))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-job-owner-bytes-metric : i64
-    130))
-(cfg
-  (any compile-profile test)
-  (define compiler-tc-macro-lifetime-start-scoped-env-bytes-metric : i64
-    131))
+  (counters.defslots
+    compiler-tc-macro-lifetime-owner-starts
+    128
+    (compiler-tc-macro-lifetime-start-enclosing-handle-metric)
+    (compiler-tc-macro-lifetime-start-enclosing-bytes-metric)
+    (compiler-tc-macro-lifetime-start-job-owner-bytes-metric)
+    (compiler-tc-macro-lifetime-start-scoped-env-bytes-metric)))
 
 (cfg
   (any compile-profile test)

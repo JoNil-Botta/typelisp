@@ -59,7 +59,12 @@
   compile-profile
   (define (profile-counter-bare-row! [row : String] [value : i64]) : unit
     (io.print-error
-      (str_cat.str-cat "compile-profile|" row "|" (string.int->string value) "\n"))))
+      (str_cat.str-cat
+        "compile-profile|"
+        row
+        "|"
+        (string.int->string value)
+        "\n"))))
 
 (cfg
   compile-profile
@@ -194,7 +199,8 @@
                             ["live" `(profile-counter-live-row! ,row ,value)]
                             ["bare" `(profile-counter-bare-row! ,row ,value)]
                             [_
-                              (comptime-error "defslots: a kind must be `live` or `bare`")])
+                              (comptime-error
+                                "defslots: a kind must be `live` or `bare`")])
                           rows)))
                     unit)))]
             [_

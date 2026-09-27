@@ -2734,25 +2734,8 @@
   compile-profile
   (define (compiler-lower-profile-specialization-counters
     [state : profile_state.CompilerProfileState]) : unit
-    (begin
-      (compiler-lower-profile-counter
-        "specialization.structural_keys.created"
-        (spec.spec-profile-structural-key-created-value state))
-      (compiler-lower-profile-counter
-        "specialization.structural_keys.reused"
-        (spec.spec-profile-structural-key-reused-value state))
-      (compiler-lower-profile-counter
-        "specialization.generated_text.materialized"
-        (spec.spec-profile-generated-text-materialized-value state))
-      (compiler-lower-profile-counter
-        "specialization.render.calls"
-        (spec.spec-profile-name-render-calls-value state))
-      (compiler-lower-profile-counter
-        "specialization.render.cache_hits"
-        (spec.spec-profile-name-render-cache-hits-value state))
-      (compiler-lower-profile-counter
-        "specialization.render.cache_misses"
-        (spec.spec-profile-name-render-cache-misses-value state)))))
+    (spec.spec-profile-emit!
+      (profile_state.compiler-profile-state-metrics-address state))))
 
 (define (compiler-lower-profile-string-concat-reset
   [_state : CompilerLowerState]) : unit

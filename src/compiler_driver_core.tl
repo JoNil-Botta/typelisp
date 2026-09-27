@@ -11,6 +11,7 @@
 (cfg compile-profile (import stdlib.profile))
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_profile_state as profile_state)
+(cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_backend)
 (import compiler_ast_types)
 (import compiler_typecheck_core)
@@ -1193,137 +1194,58 @@
             "lower-cleanup"))))))
 
 (cfg
-  compile-profile
-  (define compiler-driver-profile-total-start-ms-metric : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-total-start-total-metric : i64
-    1))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-total-start-live-metric : i64
-    2))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-ms-metric : i64
-    3))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-total-metric : i64
-    4))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-live-metric : i64
-    5))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-metric : i64
-    6))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-slice-metric : i64
-    7))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-generated-metric : i64
-    8))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-render-metric : i64
-    9))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-lookup-metric : i64
-    10))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-phase-start-intern-pool-len-metric : i64
-    11))
-(cfg
   (any compile-profile test)
-  (define compiler-driver-profile-prelude-source-pipeline-entries-metric : i64
-    12))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-profile-prelude-hydrations-metric : i64
-    13))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-start-ms-metric : i64
-    14))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-start-total-metric : i64
-    15))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-start-live-metric : i64
-    16))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-best-peak-metric : i64
-    17))
-(cfg
-  compile-profile
-  (define compiler-driver-batch-profile-first-live-metric : i64
-    18))
+  (counters.defslots
+    compiler-driver-profile-starts
+    0
+    (compiler-driver-profile-total-start-ms-metric)
+    (compiler-driver-profile-total-start-total-metric)
+    (compiler-driver-profile-total-start-live-metric)
+    (compiler-driver-profile-phase-start-ms-metric)
+    (compiler-driver-profile-phase-start-total-metric)
+    (compiler-driver-profile-phase-start-live-metric)
+    (compiler-driver-profile-phase-start-intern-metric)
+    (compiler-driver-profile-phase-start-intern-slice-metric)
+    (compiler-driver-profile-phase-start-intern-generated-metric)
+    (compiler-driver-profile-phase-start-intern-render-metric)
+    (compiler-driver-profile-phase-start-intern-lookup-metric)
+    (compiler-driver-profile-phase-start-intern-pool-len-metric)
+    (compiler-driver-profile-prelude-source-pipeline-entries-metric)
+    (compiler-driver-profile-prelude-hydrations-metric)
+    (compiler-driver-batch-profile-start-ms-metric)
+    (compiler-driver-batch-profile-start-total-metric)
+    (compiler-driver-batch-profile-start-live-metric)
+    (compiler-driver-batch-profile-best-peak-metric)
+    (compiler-driver-batch-profile-first-live-metric)))
 
-;; Job-owned load lifetime boundary starts (CompilerProfileState 350-361).
-;; Slot 350 is incremented by compiler_load through this job's explicit
-;; interner metrics address; the driver owns the remaining boundary snapshots.
+;; Job-owned load lifetime boundary starts (CompilerProfileState 350-360 and
+;; 368-369). Slot 350 is incremented by compiler_load through this job's
+;; explicit interner metrics address; the driver owns the remaining boundary
+;; snapshots.
 (cfg
   (any compile-profile test)
-  (define compiler-driver-load-profile-input-bytes-metric : i64
-    350))
+  (counters.defslots
+    compiler-driver-load-profile-starts
+    350
+    (compiler-driver-load-profile-input-bytes-metric)
+    (compiler-driver-load-profile-start-total-metric)
+    (compiler-driver-load-profile-start-live-metric)
+    (compiler-driver-load-profile-start-peak-metric)
+    (compiler-driver-load-profile-token-start-metric)
+    (compiler-driver-load-profile-origin-start-metric)
+    (compiler-driver-load-profile-pool-base-start-metric)
+    (compiler-driver-load-profile-expr-start-metric)
+    (compiler-driver-load-profile-type-start-metric)
+    (compiler-driver-load-profile-surface-start-metric)
+    (compiler-driver-load-profile-intern-start-metric)))
+
 (cfg
   (any compile-profile test)
-  (define compiler-driver-load-profile-start-total-metric : i64
-    351))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-start-live-metric : i64
-    352))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-start-peak-metric : i64
-    353))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-token-start-metric : i64
-    354))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-origin-start-metric : i64
-    356))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-pool-base-start-metric : i64
-    357))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-expr-start-metric : i64
-    358))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-type-start-metric : i64
-    359))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-surface-start-metric : i64
-    360))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-intern-start-metric : i64
-    361))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-enclosing-handle-metric : i64
-    368))
-(cfg
-  (any compile-profile test)
-  (define compiler-driver-load-profile-enclosing-start-metric : i64
-    369))
+  (counters.defslots
+    compiler-driver-load-profile-enclosing
+    368
+    (compiler-driver-load-profile-enclosing-handle-metric)
+    (compiler-driver-load-profile-enclosing-start-metric)))
 
 (cfg
   (any compile-profile test)

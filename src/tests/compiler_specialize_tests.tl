@@ -62,41 +62,51 @@
         (spec.spec-profile-reset!
           (profile_state.compiler-profile-state-shared-view right))
         (test.assert-i64-eq
-          (spec.spec-profile-structural-key-created-value
-            (profile_state.compiler-profile-state-shared-view left))
+          (profile_state.compiler-profile-state-metric-value
+            (profile_state.compiler-profile-state-shared-view left)
+            spec.spec-profile-structural-key-created-metric)
           1
           "left job retains structural-key creation")
         (test.assert-i64-eq
-          (spec.spec-profile-structural-key-reused-value
-            (profile_state.compiler-profile-state-shared-view left))
+          (profile_state.compiler-profile-state-metric-value
+            (profile_state.compiler-profile-state-shared-view left)
+            spec.spec-profile-structural-key-reused-metric)
           0
           "left job does not inherit right structural-key reuse")
         (test.assert-i64-eq
-          (spec.spec-profile-name-render-calls-value
-            (profile_state.compiler-profile-state-shared-view left))
+          (profile_state.compiler-profile-state-metric-value
+            (profile_state.compiler-profile-state-shared-view left)
+            spec.spec-profile-name-render-calls-metric)
           1
           "left job retains render calls")
         (test.assert-i64-eq
-          (spec.spec-profile-name-render-cache-hits-value
-            (profile_state.compiler-profile-state-shared-view left))
+          (profile_state.compiler-profile-state-metric-value
+            (profile_state.compiler-profile-state-shared-view left)
+            spec.spec-profile-name-render-cache-hits-metric)
           1
           "left job retains render cache hits")
         (test.assert-i64-eq
-          (spec.spec-profile-name-render-cache-misses-value
-            (profile_state.compiler-profile-state-shared-view left))
+          (profile_state.compiler-profile-state-metric-value
+            (profile_state.compiler-profile-state-shared-view left)
+            spec.spec-profile-name-render-cache-misses-metric)
           0
           "left job does not inherit right render cache misses")
         (test.assert-i64-eq
-          (spec.spec-profile-generated-text-materialized-value left)
+          (profile_state.compiler-profile-state-metric-value
+            left
+            spec.spec-profile-generated-text-materialized-metric)
           1
           "left job retains generated text materialization")
         (test.assert-i64-eq
-          (spec.spec-profile-structural-key-created-value
-            (profile_state.compiler-profile-state-shared-view right))
+          (profile_state.compiler-profile-state-metric-value
+            (profile_state.compiler-profile-state-shared-view right)
+            spec.spec-profile-structural-key-created-metric)
           0
           "right reset is isolated from left")
         (test.assert-i64-eq
-          (spec.spec-profile-name-render-calls-value right)
+          (profile_state.compiler-profile-state-metric-value
+            right
+            spec.spec-profile-name-render-calls-metric)
           0
           "right render counters reset independently")))))
 

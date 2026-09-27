@@ -13632,16 +13632,8 @@
       (set!
         ok
         (and
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view ref))
-            16)
-          (=
-            (lower.lower-type-align
-              ctx
-              (owned_view.compiler-owned-shared-view ref))
-            8)
+          (= (lower.lower-type-size ctx ref) 16)
+          (= (lower.lower-type-align ctx ref) 8)
           (lower.lower-type-register-resident?
             ctx
             (owned_view.compiler-owned-shared-view ref))
@@ -13651,27 +13643,13 @@
               (owned_view.compiler-owned-shared-view ref))
             2)
           (tc_core.tc-type-eq
-            (lower.lower-register-word-type
-              ctx
-              (owned_view.compiler-owned-shared-view ref)
-              0)
+            (lower.lower-register-word-type ctx ref 0)
             (ast.AstType.U64))
           (tc_core.tc-type-eq
-            (lower.lower-register-word-type
-              ctx
-              (owned_view.compiler-owned-shared-view ref)
-              1)
+            (lower.lower-register-word-type ctx ref 1)
             (ast.AstType.I64))
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view mut-ref))
-            16)
-          (=
-            (lower.lower-type-align
-              ctx
-              (owned_view.compiler-owned-shared-view mut-ref))
-            8)
+          (= (lower.lower-type-size ctx mut-ref) 16)
+          (= (lower.lower-type-align ctx mut-ref) 8)
           (lower.lower-type-register-resident?
             ctx
             (owned_view.compiler-owned-shared-view mut-ref))
@@ -13680,11 +13658,7 @@
               ctx
               (owned_view.compiler-owned-shared-view mut-ref))
             2)
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view ordinary-ref))
-            8)
+          (= (lower.lower-type-size ctx ordinary-ref) 8)
           (not
             (lower.lower-type-register-resident?
               ctx
@@ -13694,22 +13668,14 @@
               ctx
               (owned_view.compiler-owned-shared-view ordinary-ref))
             0)
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view pointer-ref))
-            8)
+          (= (lower.lower-type-size ctx pointer-ref) 8)
           (not
             (lower.lower-type-register-resident?
               ctx
               (owned_view.compiler-owned-shared-view pointer-ref)))
           (lower.lower-supported-reference-type? ctx pointer-ref)
           (lower.lower-supported-reference-type? ctx mutable-pointer-ref)
-          (=
-            (lower.lower-type-size
-              ctx
-              (owned_view.compiler-owned-shared-view bare-slice))
-            0)
+          (= (lower.lower-type-size ctx bare-slice) 0)
           (not
             (lower.lower-type-register-resident?
               ctx
@@ -13900,60 +13866,26 @@
       (set!
         ok
         (and
-          (= (lower.lower-type-size ctx (ast.ast-global-shared-view empty)) 0)
-          (= (lower.lower-type-align ctx (ast.ast-global-shared-view empty)) 1)
-          (=
-            (lower.lower-type-size ctx (ast.ast-global-shared-view u8-tuple))
-            1)
-          (=
-            (lower.lower-type-align ctx (ast.ast-global-shared-view u8-tuple))
-            1)
-          (= (lower.lower-type-size ctx (ast.ast-global-shared-view u8-u64)) 16)
-          (= (lower.lower-type-align ctx (ast.ast-global-shared-view u8-u64)) 8)
-          (= (lower.lower-type-size ctx (ast.ast-global-shared-view f32-f32)) 8)
-          (=
-            (lower.lower-type-align ctx (ast.ast-global-shared-view f32-f32))
-            4)
-          (= (lower.lower-type-size ctx (ast.ast-global-shared-view nested)) 24)
+          (= (lower.lower-type-size ctx empty) 0)
+          (= (lower.lower-type-align ctx empty) 1)
+          (= (lower.lower-type-size ctx u8-tuple) 1)
+          (= (lower.lower-type-align ctx u8-tuple) 1)
+          (= (lower.lower-type-size ctx u8-u64) 16)
+          (= (lower.lower-type-align ctx u8-u64) 8)
+          (= (lower.lower-type-size ctx f32-f32) 8)
+          (= (lower.lower-type-align ctx f32-f32) 4)
+          (= (lower.lower-type-size ctx nested) 24)
           (= (lower.lower-type-align ctx nested) 8)
-          (=
-            (lower.lower-type-size ctx (ast.ast-global-shared-view array-u8))
-            3)
-          (=
-            (lower.lower-type-align ctx (ast.ast-global-shared-view array-u8))
-            1)
-          (=
-            (lower.lower-type-size
-              ctx
-              (ast.ast-global-shared-view array-nested))
-            32)
-          (=
-            (lower.lower-type-align
-              ctx
-              (ast.ast-global-shared-view array-nested))
-            8)
-          (=
-            (lower.lower-type-size ctx (ast.ast-global-shared-view tuple-array))
-            16)
+          (= (lower.lower-type-size ctx array-u8) 3)
+          (= (lower.lower-type-align ctx array-u8) 1)
+          (= (lower.lower-type-size ctx array-nested) 32)
+          (= (lower.lower-type-align ctx array-nested) 8)
+          (= (lower.lower-type-size ctx tuple-array) 16)
           (= (lower.lower-type-align ctx tuple-array) 8)
-          (=
-            (lower.lower-type-size
-              ctx
-              (ast.ast-global-shared-view tuple-string))
-            8)
-          (=
-            (lower.lower-type-size
-              ctx
-              (ast.ast-global-shared-view array-string))
-            16)
-          (=
-            (lower.lower-type-size
-              ctx
-              (ast.ast-global-shared-view slice-ref-tuple))
-            16)
-          (lower.lower-type-inline-storage?
-            ctx
-            (ast.ast-global-shared-view u8-u64))
+          (= (lower.lower-type-size ctx tuple-string) 8)
+          (= (lower.lower-type-size ctx array-string) 16)
+          (= (lower.lower-type-size ctx slice-ref-tuple) 16)
+          (lower.lower-type-inline-storage? ctx u8-u64)
           (not
             (lower.lower-type-register-resident?
               ctx

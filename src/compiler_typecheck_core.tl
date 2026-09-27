@@ -91726,10 +91726,7 @@
                 (ast.ast-expr-lambda-with-pools
                   env.pools
                   nparams
-                  (macro-hygiene-maybe-type
-                    maybe-ret
-                    (tc-global-shared-view body-env)
-                    macro-name)
+                  (macro-hygiene-maybe-type maybe-ret body-env macro-name)
                   (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(ast.AstExpr.Tuple exprs)
       (ast.ast-node-pool-context-expr-push
@@ -92029,7 +92026,7 @@
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id value-env)
                 (match (macro-hygiene-bind-name-id
-                  (tc-global-shared-view value-env)
+                  value-env
                   macro-name
                   depth
                   prefix)
@@ -92042,10 +92039,7 @@
                       (macro-hygiene-expr expr-bases start env macro-name depth)
                       (macro-hygiene-expr expr-bases end env macro-name depth)
                       nprefix-id
-                      (macro-hygiene-type
-                        prefix-ty
-                        (tc-global-shared-view value-env)
-                        macro-name)
+                      (macro-hygiene-type prefix-ty value-env macro-name)
                       (macro-hygiene-expr expr-bases init env macro-name depth)
                       (macro-hygiene-expr
                         expr-bases
@@ -92080,7 +92074,7 @@
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id keep-env)
                 (match (macro-hygiene-bind-name-id
-                  (tc-global-shared-view keep-env)
+                  keep-env
                   macro-name
                   depth
                   slot)
@@ -92092,10 +92086,7 @@
                       (macro-hygiene-expr expr-bases start env macro-name depth)
                       (macro-hygiene-expr expr-bases end env macro-name depth)
                       nslot-id
-                      (macro-hygiene-type
-                        slot-ty
-                        (tc-global-shared-view keep-env)
-                        macro-name)
+                      (macro-hygiene-type slot-ty keep-env macro-name)
                       (macro-hygiene-expr expr-bases init env macro-name depth)
                       (macro-hygiene-expr
                         expr-bases
@@ -97668,18 +97659,18 @@
                         (tc-global-shared-view params)))
                     (macro-hygiene-produced-eval-start-with-pools!
                       (tc-context-macro-state ctx)
-                      (tc-global-shared-view syntax-pools))
+                      syntax-pools)
                     (cfg compile-profile (compiler-tc-macro-profile-start))
                     (match (let
                       [native-result : MacroNativeStdlibTlciResult
                         (macro-try-stdlib-tlci-native-resolved
-                          (tc-global-shared-view syntax-pools)
+                          syntax-pools
                           (tc-context-macro-state ctx)
                           identity
                           (tc-global-shared-view catalog)
                           (tc-global-shared-view params)
                           ret
-                          (tc-global-shared-view base-env)
+                          base-env
                           call-expr
                           (tc-global-shared-view operands)
                           count
@@ -97953,7 +97944,7 @@
               (tc-global-shared-view macro-name)
               (tc-global-shared-view params)
               (tc-global-shared-view ret)
-              (tc-global-shared-view env)
+              env
               call-expr)]
           native-result)
           [(MacroNativeStdlibTlciResult.Value value)

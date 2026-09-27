@@ -141,30 +141,20 @@
 (define (compiler-ast-state-owned-type-pool-smoke?) : bool
   (let
     [a0 : ast.AstTypeNodePoolState (ast.ast-type-node-pool-state-create 1)]
-    [aid0 : i64
-      (ast.ast-type-node-pool-state-mark
-        (owned_view.compiler-owned-shared-view a0))]
+    [aid0 : i64 (ast.ast-type-node-pool-state-mark a0)]
     [a1 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool a0 (ast.AstType.I64))]
-    [aid1 : i64
-      (ast.ast-type-node-pool-state-mark
-        (owned_view.compiler-owned-shared-view a1))]
+    [aid1 : i64 (ast.ast-type-node-pool-state-mark a1)]
     [a2 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool a1 (ast.AstType.String))]
     [b0 : ast.AstTypeNodePoolState (ast.ast-type-node-pool-state-create 1)]
-    [bmark : i64
-      (ast.ast-type-node-pool-state-mark
-        (owned_view.compiler-owned-shared-view b0))]
-    [bid0 : i64
-      (ast.ast-type-node-pool-state-mark
-        (owned_view.compiler-owned-shared-view b0))]
+    [bmark : i64 (ast.ast-type-node-pool-state-mark b0)]
+    [bid0 : i64 (ast.ast-type-node-pool-state-mark b0)]
     [b1 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool b0 (ast.AstType.Bool))]
     [breset : ast.AstTypeNodePoolState
       (ast.ast-type-node-pool-state-reset-to-mark b1 bmark)]
-    [bid1 : i64
-      (ast.ast-type-node-pool-state-mark
-        (owned_view.compiler-owned-shared-view breset))]
+    [bid1 : i64 (ast.ast-type-node-pool-state-mark breset)]
     [b2 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool breset (ast.AstType.I64))]
     [b3 : ast.AstTypeNodePoolState
@@ -626,8 +616,7 @@
                       (and
                         (= first-body second-body)
                         (not (= first-body source-body))
-                        (ast.ast-test-metadata-slow?
-                          (owned_view.compiler-owned-shared-view metadata))
+                        (ast.ast-test-metadata-slow? metadata)
                         (match (ast.ast-test-metadata-ignore-reason metadata)
                           [(ast.AstTestIgnoreReason.Some reason)
                             (string.eq reason "compaction reason")]

@@ -258,8 +258,7 @@
                                       (if (spec.compiler-specialize-needed-with-pools
                                         (owned_view.compiler-owned-shared-view
                                           normalized)
-                                        (owned_view.compiler-owned-shared-view
-                                          pools))
+                                        pools)
                                         (let
                                           [symbol-result : csym.ResultCompilerSymbolsDiagnostic
                                             (csym.build-compiler-symbols-diagnostic-with-paths
@@ -269,8 +268,7 @@
                                                 normalized-paths))]
                                           (begin
                                             (ast.ast-node-pool-context-capture-active!
-                                              (owned_view.compiler-owned-shared-view
-                                                pools))
+                                              pools)
                                             (ci.intern-compat-state-capture-from-globals!
                                               (&mut intern-state))
                                             (match symbol-result
@@ -285,14 +283,12 @@
                                                       (tc_core.tc-decl-path-list-last
                                                         normalized-paths
                                                         "")
-                                                      (owned_view.compiler-owned-shared-view
-                                                        pools)
+                                                      pools
                                                       (owned_view.compiler-owned-shared-view
                                                         intern-state))]
                                                   (begin
                                                     (ast.ast-node-pool-context-install!
-                                                      (owned_view.compiler-owned-shared-view
-                                                        pools))
+                                                      pools)
                                                     (ci.intern-compat-state-install!
                                                       (owned_view.compiler-owned-shared-view
                                                         intern-state))

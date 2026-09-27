@@ -3028,7 +3028,7 @@
   [pool : (& pool AstTypeNodePoolState)]) : bool
   pool.exhausted)
 
-(define (ast-type-node-pool-state-mark [pool : AstTypeNodePoolState]) : i64
+(define (ast-type-node-pool-state-mark [pool : (& pool AstTypeNodePoolState)]) : i64
   (ast-type-node-pool-state-len pool))
 
 (define (ast-type-node-pool-state-dedup-clear [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
@@ -5039,12 +5039,13 @@
         (box
           (AstTestMetadataValue.Metadata (AstTestIgnoreReason.Some reason) slow)))]))
 
-(define (ast-test-metadata-ignore-reason [metadata : AstTestMetadata]) : AstTestIgnoreReason
+(define (ast-test-metadata-ignore-reason
+  [metadata : (& metadata AstTestMetadata)]) : AstTestIgnoreReason
   (match (__tl-box-place metadata.value)
     [(AstTestMetadataValue.None) AstTestIgnoreReason.No]
     [(AstTestMetadataValue.Metadata reason _) reason]))
 
-(define (ast-test-metadata-slow? [metadata : AstTestMetadata]) : bool
+(define (ast-test-metadata-slow? [metadata : (& metadata AstTestMetadata)]) : bool
   (match (__tl-box-place metadata.value)
     [(AstTestMetadataValue.None) false]
     [(AstTestMetadataValue.Metadata _ slow) slow]))
@@ -5232,16 +5233,16 @@
         unit)
       (ast-type-list-slice-into out items start (+ index 1)))))
 
-(define (ast-type-list-slice [items : AstTypeList] [start : i64]) : AstTypeList
+(define (ast-type-list-slice [items : (& items AstTypeList)] [start : i64]) : AstTypeList
   (let
-    [len : i64 (ast-type-list-len (& items))]
+    [len : i64 (ast-type-list-len items)]
     [out : AstTypeList
       (ast-type-list-with-capacity
         (if (< start len)
           (- len start)
           0))]
     (begin
-      (ast-type-list-slice-into (&mut out) (& items) start 0)
+      (ast-type-list-slice-into (&mut out) items start 0)
       out)))
 
 (define (ast-type-list-cons-id [head : i64] [rest : AstTypeList]) : AstTypeList

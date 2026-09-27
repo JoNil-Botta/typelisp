@@ -2729,7 +2729,7 @@
         baseline-state
         (tc_core.tc-global-shared-view generated-import)
         (tc_core.tc-global-shared-view missing-import)
-        (tc_core.tc-global-shared-view pools))]
+        pools)]
     [_select-b : unit
       (load.compiler-load-session-state-use!
         (tc_core.tc-global-shared-view state-b))]
@@ -3551,7 +3551,7 @@
 
 (define (compiler-typecheck-smoke-program-parsed-id
   [program : ast.AstProgram]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
@@ -3578,19 +3578,19 @@
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
-                        (compiler-typecheck-smoke-expr-parsed-id value (& name)))]
+                        (compiler-typecheck-smoke-expr-parsed-id value name))]
                     [(ast.AstDecl.DefFn decl-meta name-id _ _ body _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
-                        (compiler-typecheck-smoke-expr-parsed-id body (& name)))]
+                        (compiler-typecheck-smoke-expr-parsed-id body name))]
                     [(ast.AstDecl.DefMacro decl-meta name-id _ _ body)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
-                        (compiler-typecheck-smoke-expr-parsed-id body (& name)))]
+                        (compiler-typecheck-smoke-expr-parsed-id body name))]
                     [(ast.AstDecl.DefStruct decl-meta name-id _ _ _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
@@ -3615,7 +3615,7 @@
     [name-id : i64
       (compiler-typecheck-smoke-program-parsed-id
         (tc_core.tc-context-program ctx)
-        (tc_core.tc-global-shared-view name))]
+        name)]
     (if (>= name-id 0)
       name-id
       (io.panic (str_cat.str-cat context name)))))

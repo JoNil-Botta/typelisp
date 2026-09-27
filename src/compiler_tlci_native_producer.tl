@@ -339,13 +339,13 @@
 (define (embedded-native-full-string-set-contains?
   [items : (& items (__tl_dyn-array String))]
   [len : i64]
-  [item : String]) : bool
+  [item : (& item str)]) : bool
   (let
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index len))
-        (if (string.eq (& (array-ref items index)) (& item))
+        (if (string.eq (& (array-ref items index)) item)
           (set! found true)
           (set! index (+ index 1))))
       found)))
@@ -353,16 +353,13 @@
 (define (embedded-native-full-string-set-add!
   [items : (&mut items (__tl_dyn-array String))]
   [len : i64]
-  [item : String]) : i64
+  [item : (& item str)]) : i64
   (if (or
     (>= len embedded-native-full-blocker-cap)
-    (embedded-native-full-string-set-contains?
-      (& items)
-      len
-      (owned_view.compiler-owned-shared-view item)))
+    (embedded-native-full-string-set-contains? (& items) len item))
     len
     (begin
-      (set! (array-ref items len) (string.copy (& item)))
+      (set! (array-ref items len) (string.copy item))
       (+ len 1))))
 
 (define (embedded-native-full-blocker-reset!) : unit
@@ -384,7 +381,7 @@
             (embedded-native-full-string-set-contains?
               (& embedded-native-full-walked)
               embedded-native-full-walked-len
-              (owned_view.compiler-owned-shared-view capability))))
+              capability)))
         (set! embedded-native-full-walked-overflow true))
       (set!
         embedded-native-full-walked-len
@@ -411,7 +408,7 @@
             (embedded-native-full-string-set-contains?
               (& embedded-native-full-blockers)
               embedded-native-full-blocker-len
-              (owned_view.compiler-owned-shared-view reason))))
+              reason)))
         (set! embedded-native-full-blocker-overflow true))
       (set!
         embedded-native-full-blocker-len
@@ -538,7 +535,9 @@
   (__tl_make-array 0))
 
 ;: How many non-overlapping occurrences of `needle` appear in `text`.
-(define (embedded-native-count-occurrences [text : String] [needle : String]) : i64
+(define (embedded-native-count-occurrences
+  [text : (& text str)]
+  [needle : String]) : i64
   (let
     [needle-len : i64 (string.string-length needle)]
     [limit : i64 (string.string-length text)]
@@ -5096,9 +5095,7 @@
               [(< slot 0) (embedded-native-data-value-none)]
               [(and
                   (or
-                    (embedded-native-stdlib-string-call?
-                      (owned_view.compiler-owned-shared-view head)
-                      "string-length")
+                    (embedded-native-stdlib-string-call? head "string-length")
                     (string.eq head "__tl_string_length"))
                   (= argc 1))
                 (embedded-native-data-probe-value
@@ -5107,12 +5104,8 @@
                   "0")]
               [(and
                   (or
-                    (embedded-native-stdlib-string-call?
-                      (owned_view.compiler-owned-shared-view head)
-                      "string-ref")
-                    (embedded-native-stdlib-string-call?
-                      (owned_view.compiler-owned-shared-view head)
-                      "char-at")
+                    (embedded-native-stdlib-string-call? head "string-ref")
+                    (embedded-native-stdlib-string-call? head "char-at")
                     (string.eq head "__tl_string_ref"))
                   (= argc 2))
                 (let
@@ -5156,7 +5149,9 @@
 ;: the stdlib one. The exact `__tl_string_*` intrinsic spellings admitted by
 ;: the caller above are reserved compiler builtins and therefore cannot be a
 ;: shadowed local function. Refs #5701, #7141.
-(define (embedded-native-stdlib-string-call? [head : String] [base : String]) : bool
+(define (embedded-native-stdlib-string-call?
+  [head : (& head str)]
+  [base : String]) : bool
   (or
     (string.eq
       head
@@ -8047,7 +8042,7 @@
                 (embedded-native-full-string-set-contains?
                   (& embedded-native-full-blockers)
                   embedded-native-full-blocker-len
-                  (owned_view.compiler-owned-shared-view capability)))
+                  capability))
               (embedded-native-full-report-append!
                 (owned_view.compiler-owned-shared-view identity)
                 "walked"
@@ -8195,7 +8190,7 @@
               (let
                 [arm-sites : i64
                   (embedded-native-count-occurrences
-                    (owned_view.compiler-owned-shared-view body-text)
+                    body-text
                     (string.copy (& embedded-native-interpreted-arm-marker)))]
                 (begin
                   (set! native-count (+ native-count 1))

@@ -84135,6 +84135,9 @@
             [else false])]
         [_ false]))))
 
+;; Whether the branch on `cond-value`, taken `taken?`, decides `lhs <op> rhs`
+;; true: bounds_dom's verdict on that one I64 fact, operand pairs only (no
+;; literal rule). The segment bases (0) are never read for an I64 compare.
 (define (opt-bce-mb-cond-decides?
   [blocks : ir.CompilerIrBlockList]
   [cond-value : ir.CompilerIrValue]
@@ -84145,54 +84148,39 @@
   (match cond-value
     [(ir.CompilerIrValue.Var var)
       (match (opt-bce-mb-find-def blocks var)
-        [(OptMaybeInstr.No) false]
         [(OptMaybeInstr.Some instr)
           (match instr
             [(ir.CompilerIrInstr.BinOp _ fact-op fact-lhs fact-rhs fact-ty)
-              (if (not
-                (and
-                  (opt-compare-op? fact-op)
-                  (opt-compare-op? op)
-                  (match fact-ty
-                    [(ast.AstType.I64) true]
-                    [_ false])))
-                false
-                (let
-                  [fact-mask : i64
-                    (opt-dom-cmp-fact-mask
-                      (opt-dom-cmp-canon-op
-                        (compiler-opt-global-shared-view fact-op))
-                      taken?)]
-                  ;; the relations the query REFUSES: the fact must exclude every
-                  ;; one of them
-                  [refused : i64 (bit-xor (opt-dom-cmp-op-mask op) 7)]
-                  [fact-first : ir.CompilerIrValue
+              (let
+                [fact : OptDomCmpFact
+                  (OptDomCmpFact.Fact
+                    (opt-dom-cmp-canon-op
+                      (compiler-opt-global-shared-view fact-op))
                     (let
                       [value (opt-dom-cmp-canon-lhs fact-op fact-lhs fact-rhs)]
-                      (opt-bce-mb-canon-value blocks value))]
-                  [fact-second : ir.CompilerIrValue
+                      (opt-bce-mb-canon-value blocks value))
                     (let
                       [value (opt-dom-cmp-canon-rhs fact-op fact-lhs fact-rhs)]
-                      (opt-bce-mb-canon-value blocks value))]
-                  [query-first : ir.CompilerIrValue
-                    (opt-bce-mb-canon-value blocks lhs)]
-                  [query-second : ir.CompilerIrValue
-                    (opt-bce-mb-canon-value blocks rhs)]
-                  (cond
-                    [(and
-                        (opt-value-eq
-                          (compiler-opt-global-shared-view fact-first)
-                          (compiler-opt-global-shared-view query-first))
-                        (opt-value-eq
-                          (compiler-opt-global-shared-view fact-second)
-                          (compiler-opt-global-shared-view query-second)))
-                      (= (bit-and fact-mask refused) 0)]
-                    [(and
-                        (opt-value-eq fact-first query-second)
-                        (opt-value-eq fact-second query-first))
-                      (= (bit-and (opt-dom-cmp-mask-swap fact-mask) refused) 0)]
-                    [else false])))]
-            [_ false])])]
+                      (opt-bce-mb-canon-value blocks value))
+                    fact-ty
+                    taken?
+                    (- 0 1))]
+                [query-first : ir.CompilerIrValue
+                  (opt-bce-mb-canon-value blocks lhs)]
+                [query-second : ir.CompilerIrValue
+                  (opt-bce-mb-canon-value blocks rhs)]
+                (match (opt-dom-cmp-fact-verdict
+                  0
+                  fact
+                  (opt-dom-cmp-op-mask op)
+                  query-first
+                  query-second
+                  (OptDomCmpVarLit.No)
+                  (ast.AstType.I64))
+                  [(OptDomCmpLookup.Some decided) decided]
+                  [_ false]))]
+            [_ false])]
+        [(OptMaybeInstr.No) false])]
     [_ false]))
 
 ;; `doms` is the dominator info of the function the shape was scanned in. The

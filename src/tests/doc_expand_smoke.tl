@@ -159,20 +159,16 @@
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 2)]
     [type-a : i64
-      (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools-a)
-        (ast.AstType.Struct name-a))]
+      (ast.ast-node-pool-context-type-push pools-a (ast.AstType.Struct name-a))]
     [type-b : i64
-      (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools-b)
-        (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push pools-b (ast.AstType.I64))]
     [expr-a : i64
       (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-a)
+        pools-a
         (ast.AstExpr.TypeLiteral type-a))]
     [expr-b : i64
       (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-b)
+        pools-b
         (ast.AstExpr.Literal (ast.ast-lit-int 99)))]
     [ctx-a : doc_expand.DocExpandContext
       (doc_expand.doc-expand-context-from-pools-and-intern-state
@@ -185,8 +181,7 @@
     (begin
       (ci.intern-compat-state-install!
         (owned_view.compiler-owned-shared-view intern-b))
-      (ast.ast-node-pool-context-install!
-        (owned_view.compiler-owned-shared-view pools-b))
+      (ast.ast-node-pool-context-install! pools-b)
       (set!
         ok
         (and

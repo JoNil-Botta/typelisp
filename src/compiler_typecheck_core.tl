@@ -99914,7 +99914,7 @@
   [current : ctfe_support.CtfeMaybeSyntaxPools]) : ctfe_support.CtfeMaybeSyntaxPools
   (match (macro-captured-syntax-pools env)
     [(ctfe_support.CtfeMaybeSyntaxPools.Some active-pools)
-      (match (tc-global-shared-view current)
+      (match current
         [(ctfe_support.CtfeMaybeSyntaxPools.Some current-pools)
           (if (>
             (ast.ast-node-pool-context-expr-len current-pools)
@@ -100527,7 +100527,7 @@
                 pty
                 (ast.ast-expr-list-tail-from-ref args arg-index)
                 env
-                (tc-global-shared-view syntax-pools)
+                syntax-pools
                 capture-expr-types)
                 [(ResultMacroCapturedValue.Ok value)
                   (begin
@@ -110261,7 +110261,7 @@
         (tc-job-state-macro-state job-state))
       ;; Legacy macro expansion still reads compatibility globals; bridge the
       ;; compile-owned pool and interner state at the phase boundary.
-      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ast.ast-node-pool-context-install! pools)
       (ci.intern-compat-state-install! (tc-global-shared-view intern-state))
       (macro-expand-program-structural-change-reset!
         (tc-job-state-macro-state job-state))
@@ -110322,7 +110322,7 @@
             load-state
             (tc-global-shared-view program)
             (tc-global-shared-view paths)
-            (ast.ast-place-shared-view pools)
+            pools
             source-names
             job-state
             stdlib-roots
@@ -110330,8 +110330,7 @@
         ;; Publish all legacy macro mutations before the copy-out observes pool
         ;; lengths or either public result.
         [_capture-macro-pools : unit
-          (ast.ast-node-pool-context-capture-active!
-            (ast.ast-place-shared-view pools))]
+          (ast.ast-node-pool-context-capture-active! pools)]
         [_capture-macro-interns : unit
           (ci.intern-compat-state-capture-from-globals! (&mut intern-state))]
         [stable-macro-result : ResultMacroExpand
@@ -110339,7 +110338,7 @@
             (tc-job-state-macro-state job-state)
             program
             paths
-            (ast.ast-place-shared-view pools)
+            pools
             macro-result)]
         [checked-macro-result : ResultMacroExpand
           (macro-check-expanded-imports stable-macro-result)]
@@ -110390,7 +110389,7 @@
                     unit)]
                 (if (spec.compiler-specialize-needed-with-pools
                   (tc-global-shared-view expanded)
-                  (ast.ast-place-shared-view pools))
+                  pools)
                   (begin
                     (macro-expand-program-structural-change-note!
                       (tc-job-state-macro-state job-state)
@@ -110398,7 +110397,7 @@
                     (let
                       [owner : spec.SpecOwnerContext
                         (spec.spec-owner-context-new
-                          (ast.ast-place-shared-view pools)
+                          pools
                           (tc-global-shared-view intern-state))]
                       [normalized-result : spec.ResultGenProgramWithPaths
                         (spec.gen-normalize-program-with-paths-and-pools-and-intern-state

@@ -2,7 +2,6 @@
 ;; state isolation between jobs, environment and cache smokes, and inline tests.
 (import stdlib.io)
 (import stdlib.arena)
-(import compiler_owned_view as owned_view)
 (import stdlib.hashmap)
 (import compiler_symbols as csym)
 (import compiler_load as cload)
@@ -483,13 +482,9 @@
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [root-a : i64
-      (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-a)
-        (ast.AstExpr.Var 101))]
+      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 101))]
     [root-b : i64
-      (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-b)
-        (ast.AstExpr.Var 202))]
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 202))]
     [ctx-a : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -497,7 +492,7 @@
         (csym.compiler-registries-empty)
         ""
         cbi.compiler-builtin-id-fix-empty
-        (owned_view.compiler-owned-shared-view pools-a))]
+        pools-a)]
     [ctx-b : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -505,15 +500,11 @@
         (csym.compiler-registries-empty)
         ""
         cbi.compiler-builtin-id-fix-empty
-        (owned_view.compiler-owned-shared-view pools-b))]
+        pools-b)]
     [next-a : i64
-      (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-a)
-        (ast.AstExpr.Var 303))]
+      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 303))]
     [next-b : i64
-      (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools-b)
-        (ast.AstExpr.Var 404))]
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 404))]
     [a-root-ok? : bool
       (match (tc_core.tc-context-expr-get ctx-a root-a)
         [(ast.AstExpr.Var name) (= name 101)]
@@ -532,8 +523,7 @@
         [_ false])]
     [compat-ok? : bool
       (begin
-        (ast.ast-node-pool-compat-context-use!
-          (owned_view.compiler-owned-shared-view pools-a))
+        (ast.ast-node-pool-compat-context-use! pools-a)
         (let
           [ok?
             : bool

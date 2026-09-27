@@ -416,7 +416,7 @@
         program
         spans
         (compiler_optimize.OptimizeRequest
-          (owned_view.compiler-owned-shared-view pools)
+          pools
           opt-level
           profile-state
           false

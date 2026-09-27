@@ -64,7 +64,7 @@
     (cfg_env.sym-i64-empty)
     (owned_view.compiler-owned-shared-view roots)
     (cfg_env.sym-i64-shared-view (& cfgs))
-    (ast.ast-place-shared-view pools))
+    pools)
     [(load.ResultCompilerLoadWithPaths.Ok
         runtime-decls
         runtime-paths
@@ -75,7 +75,7 @@
         runtime-seen
         (owned_view.compiler-owned-shared-view roots)
         (cfg_env.sym-i64-shared-view (& cfgs))
-        (ast.ast-place-shared-view pools))
+        pools)
         [(load.ResultCompilerLoadWithPaths.Ok
             macro-decls
             macro-paths
@@ -194,12 +194,12 @@
             (ast.ast-decl-list-len (& decls)))])]
     (if (spec.compiler-specialize-needed-with-pools
       (ast.ast-place-shared-view expanded)
-      (ast.ast-place-shared-view pools))
+      pools)
       (match (spec.compiler-specialize-program-with-paths-and-pools
         (ast.ast-place-shared-view expanded)
         (ast.ast-place-shared-view expanded-paths)
         ""
-        (ast.ast-place-shared-view pools))
+        pools)
         [(spec.ResultSpecProgramWithPaths.Err diag)
           (prelude-surface-facts-error
             "prelude surface specialization failed: "
@@ -247,7 +247,7 @@
       (ast.ast-program decls)
       paths
       ""
-      (ast.ast-place-shared-view pools))
+      pools)
       [(spec.ResultGenProgramWithPaths.Err diag)
         (prelude-surface-facts-error
           "prelude surface normalization failed: "
@@ -257,9 +257,9 @@
           (load.compiler-load-session-state-shared-view (& load-state))
           generated
           generated-paths
-          (ast.ast-place-shared-view pools)
-          (owned_view.compiler-owned-shared-view source-names)
-          (owned_view.compiler-owned-shared-view job-state)
+          pools
+          source-names
+          job-state
           (owned_view.compiler-owned-shared-view roots)
           (cfg_env.sym-i64-shared-view (& cfgs)))
           [(tc.ResultMacroExpand.Err diag)
@@ -383,7 +383,7 @@
         (load.compiler-load-session-state-shared-view (& load-state))
         (owned_view.compiler-owned-shared-view roots)
         (prelude-surface-target-cfgs windows-target)
-        (ast.ast-place-shared-view pools))
+        pools)
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (begin
             (unsafe
@@ -400,7 +400,7 @@
             (ast.ast-place-shared-view paths)
             roots
             (prelude-surface-target-cfgs windows-target)
-            (ast.ast-place-shared-view pools))
+            pools)
             [(ResultPreludeSurfaceFacts.Err message)
               (begin
                 (unsafe

@@ -187,7 +187,7 @@
                     (owned_view.compiler-owned-shared-view old-capability.key)
                     (owned_view.compiler-owned-shared-view
                       rebuilt-capability.key)
-                    (owned_view.compiler-owned-shared-view stale)))
+                    stale))
                 "package tlci transition: rebuilt image key was not admitted")
               (package-dependency-transition-copy-file
                 old-source-path

@@ -134,7 +134,7 @@
     (match (parser.parse-ast-source-with-cfg-and-pools
       source
       (parser.compiler-cfg-empty)
-      (view.compiler-owned-shared-view pools))
+      pools)
       [(parser.ResultAstProgram.Ok program)
         (let
           [ambient-count : i64 (ast.ast-node-pool-len)]

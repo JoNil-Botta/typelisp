@@ -1916,23 +1916,16 @@
       [right : profile_state.CompilerProfileState
         (profile_state.compiler-profile-state-new)]
       (begin
-        (driver.compiler-driver-profile-reset-prelude!
-          (profile_state.compiler-profile-state-shared-view left))
-        (driver.compiler-driver-profile-reset-prelude!
-          (profile_state.compiler-profile-state-shared-view right))
-        (driver.compiler-driver-profile-note-prelude-source-pipeline!
-          (profile_state.compiler-profile-state-shared-view left))
-        (driver.compiler-driver-profile-note-prelude-hydration!
-          (profile_state.compiler-profile-state-shared-view right))
-        (driver.compiler-driver-profile-note-prelude-source-pipeline!
-          (profile_state.compiler-profile-state-shared-view left))
-        (driver.compiler-driver-profile-note-prelude-hydration!
-          (profile_state.compiler-profile-state-shared-view left))
-        (driver.compiler-driver-profile-reset-prelude!
-          (profile_state.compiler-profile-state-shared-view right))
+        (driver.compiler-driver-profile-reset-prelude! left)
+        (driver.compiler-driver-profile-reset-prelude! right)
+        (driver.compiler-driver-profile-note-prelude-source-pipeline! left)
+        (driver.compiler-driver-profile-note-prelude-hydration! right)
+        (driver.compiler-driver-profile-note-prelude-source-pipeline! left)
+        (driver.compiler-driver-profile-note-prelude-hydration! left)
+        (driver.compiler-driver-profile-reset-prelude! right)
         (test.assert-i64-eq
           (driver.compiler-driver-profile-value
-            (profile_state.compiler-profile-state-shared-view left)
+            left
             driver.compiler-driver-profile-prelude-source-pipeline-entries-metric)
           2
           "left job keeps interleaved source-pipeline count")
@@ -1944,7 +1937,7 @@
           "right reset does not erase left hydration count")
         (test.assert-i64-eq
           (driver.compiler-driver-profile-value
-            (profile_state.compiler-profile-state-shared-view right)
+            right
             driver.compiler-driver-profile-prelude-source-pipeline-entries-metric)
           0
           "right source-pipeline count resets independently")

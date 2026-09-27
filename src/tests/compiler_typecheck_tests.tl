@@ -6818,80 +6818,50 @@
         [empty : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-empty macro-state pools)]
         [parent : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw
-            (tc_core.tc-global-shared-view empty)
-            7
-            70)]
+          (tc_core.macro-hygiene-env-bind-raw empty 7 70)]
         [left : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw
-            (tc_core.tc-global-shared-view parent)
-            8
-            80)]
+          (tc_core.macro-hygiene-env-bind-raw parent 8 80)]
         [right : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw
-            (tc_core.tc-global-shared-view parent)
-            9
-            90)]
+          (tc_core.macro-hygiene-env-bind-raw parent 9 90)]
         [shadow-one : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw
-            (tc_core.tc-global-shared-view parent)
-            7
-            71)]
+          (tc_core.macro-hygiene-env-bind-raw parent 7 71)]
         [shadow-two : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-raw shadow-one 7 72)]
         [pattern : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-pattern-name-raw
-            (tc_core.tc-global-shared-view empty)
-            10
-            100)]
+          (tc_core.macro-hygiene-env-bind-pattern-name-raw empty 10 100)]
         [pattern-with-bind : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-raw pattern 10 101)]
         [pattern-shadow : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-pattern-name-raw
-            (tc_core.tc-global-shared-view pattern-with-bind)
+            pattern-with-bind
             10
             102)]
         ;; Force two capacity growths while retaining earlier sibling heads.
         [deep : tc_core.MacroHygieneEnv
-          (compiler-typecheck-macro-hygiene-env-extend
-            (tc_core.tc-global-shared-view parent)
-            0
-            80)]
+          (compiler-typecheck-macro-hygiene-env-extend parent 0 80)]
         (and
           (compiler-typecheck-hygiene-name-missing?
             (tc_core.macro-hygiene-env-lookup empty 7))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view parent)
-              7)
+            (tc_core.macro-hygiene-env-lookup parent 7)
             70)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view left)
-              8)
+            (tc_core.macro-hygiene-env-lookup left 8)
             80)
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view left)
-              9))
+            (tc_core.macro-hygiene-env-lookup left 9))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view right)
-              9)
+            (tc_core.macro-hygiene-env-lookup right 9)
             90)
           (compiler-typecheck-hygiene-name-missing?
             (tc_core.macro-hygiene-env-lookup right 8))
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view parent)
-              8))
+            (tc_core.macro-hygiene-env-lookup parent 8))
           (compiler-typecheck-hygiene-name-is?
             (tc_core.macro-hygiene-env-lookup shadow-two 7)
             72)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup
-              (tc_core.tc-global-shared-view pattern-with-bind)
-              10)
+            (tc_core.macro-hygiene-env-lookup pattern-with-bind 10)
             101)
           (compiler-typecheck-hygiene-name-is?
             (tc_core.macro-hygiene-env-lookup-pattern-name pattern-with-bind 10)

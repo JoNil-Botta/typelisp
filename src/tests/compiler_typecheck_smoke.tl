@@ -5033,7 +5033,7 @@
         cbi.compiler-builtin-id-fix-empty
         (ast.ast-node-pool-context-capture-active)
         (tc_core.tc-macro-state-source-names macro-a)
-        (tc_core.tc-global-shared-view body-a))]
+        body-a)]
     [hygiene-a : tc_core.MacroHygieneEnv
       (tc_core.macro-hygiene-env-empty macro-a (tc_core.tc-context-pools ctx-a))]
     [macro-a-handle : ci.InternSourceNameSessionHandle

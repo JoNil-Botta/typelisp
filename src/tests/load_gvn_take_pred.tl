@@ -92,7 +92,7 @@
               (> id headers)
               (test.assert-i64-eq
                 (opt.opt-load-gvn-take-pred
-                  (opt.compiler-opt-global-shared-view index)
+                  index
                   (opt.compiler-opt-global-shared-view processed)
                   id)
                 (if (and

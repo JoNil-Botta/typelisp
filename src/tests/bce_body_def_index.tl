@@ -120,29 +120,20 @@
         [old
           (opt.opt-bce-mb-wire-vars-blocks
             (opt.compiler-opt-global-shared-view bs)
-            (opt.compiler-opt-global-shared-view uses)
+            uses
             (seed))]
         [new (opt.opt-bce-mb-body-defs-used defs bs uses (seed))]
         [i : i64 0]
         (begin
           (test.assert-i64-eq
-            (opt.opt-bce-mb-var-list-count
-              (opt.compiler-opt-global-shared-view old))
-            (opt.opt-bce-mb-var-list-count
-              (opt.compiler-opt-global-shared-view new))
+            (opt.opt-bce-mb-var-list-count old)
+            (opt.opt-bce-mb-var-list-count new)
             "def count")
-          (while (<
-            i
-            (opt.opt-bce-mb-var-list-count
-              (opt.compiler-opt-global-shared-view old)))
+          (while (< i (opt.opt-bce-mb-var-list-count old))
             (begin
               (test.assert-i64-eq
-                (opt.opt-bce-mb-var-list-ref
-                  (opt.compiler-opt-global-shared-view old)
-                  i)
-                (opt.opt-bce-mb-var-list-ref
-                  (opt.compiler-opt-global-shared-view new)
-                  i)
+                (opt.opt-bce-mb-var-list-ref old i)
+                (opt.opt-bce-mb-var-list-ref new i)
                 "def order")
               (set! i (+ i 1)))))))))
 

@@ -65,9 +65,7 @@
             (smoke-cfg-index-test-block label 55)
             ir.CompilerIrBlockList.Nil)))]
     [_refresh : unit
-      (opt.opt-cfg-index-refresh-blocks!
-        (opt.compiler-opt-global-shared-view index)
-        replacement-blocks)]
+      (opt.opt-cfg-index-refresh-blocks! index replacement-blocks)]
     [dense-second : i64
       (smoke-cfg-index-block-return (opt.opt-cfg-index-block index 1))]
     [_newer-index : opt.OptCfgIndex
@@ -944,7 +942,7 @@
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view sparse))]
     [sparse-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view sparse-blocks)
+        sparse-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -987,7 +985,7 @@
       (ot.opt-switch-form-function (opt.compiler-opt-global-shared-view prefix))]
     [prefix-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view prefix-blocks)
+        prefix-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -999,9 +997,7 @@
     [bare-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view bare))]
     [bare-entry : ir.CompilerIrBlock
-      (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view bare-blocks)
-        (ir.compiler-ir-label "entry"))
+      (match (opt.opt-cfg-find-block bare-blocks (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
         [(opt.OptMaybeBlock.Some block) block])]
@@ -1013,7 +1009,7 @@
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view copy-head))]
     [copy-head-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view copy-head-blocks)
+        copy-head-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1029,7 +1025,7 @@
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view total))]
     [total-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view total-blocks)
+        total-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1042,7 +1038,7 @@
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view total-late))]
     [total-late-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view total-late-blocks)
+        total-late-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1052,31 +1048,37 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.compiler-opt-global-shared-view total-late))]
     [cloned-total : ir.CompilerIrInstr
-      (opt.opt-inline-clone-multiblock-instr
-        (ir.CompilerIrInstr.TotalEnumSwitch
-          (ir.CompilerIrValue.Var 9)
+      (let
+        [instr
+          (ir.CompilerIrInstr.TotalEnumSwitch
+            (ir.CompilerIrValue.Var 9)
+            0
+            (ir.compiler-ir-switch-case-seq1
+              (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "arm")))
+            (ir.compiler-ir-label "default")
+            (ir.compiler-ir-label "trap"))]
+        (opt.opt-inline-clone-multiblock-instr
+          instr
+          "cloned"
+          (ir.CompilerIrCallArgs.Nil)
           0
-          (ir.compiler-ir-switch-case-seq1
-            (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "arm")))
-          (ir.compiler-ir-label "default")
-          (ir.compiler-ir-label "trap"))
-        "cloned"
-        (ir.CompilerIrCallArgs.Nil)
-        0
-        10)]
+          10))]
     [cloned-pending-total : ir.CompilerIrInstr
-      (opt.opt-inline-clone-multiblock-instr
-        (ir.CompilerIrInstr.TotalEnumSwitch
-          (ir.CompilerIrValue.Var 9)
+      (let
+        [instr
+          (ir.CompilerIrInstr.TotalEnumSwitch
+            (ir.CompilerIrValue.Var 9)
+            0
+            (ir.compiler-ir-switch-case-seq1
+              (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "arm")))
+            (ir.compiler-ir-label "default")
+            (ir.compiler-ir-label-none))]
+        (opt.opt-inline-clone-multiblock-instr
+          instr
+          "pending"
+          (ir.CompilerIrCallArgs.Nil)
           0
-          (ir.compiler-ir-switch-case-seq1
-            (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "arm")))
-          (ir.compiler-ir-label "default")
-          (ir.compiler-ir-label-none))
-        "pending"
-        (ir.CompilerIrCallArgs.Nil)
-        0
-        10)]
+          10))]
     [preheader-forwarded-total : ir.CompilerIrInstr
       (opt.opt-loop-preheaders-retarget-instr
         (ir.CompilerIrInstr.TotalEnumSwitch
@@ -1102,7 +1104,7 @@
       (opt.opt-function-blocks spoofed-late)]
     [spoofed-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view spoofed-blocks)
+        spoofed-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1124,7 +1126,7 @@
       (opt.opt-function-blocks marked-sparse-late)]
     [marked-sparse-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view marked-sparse-blocks)
+        marked-sparse-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1149,10 +1151,11 @@
       (ot.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-span-blocks 8 0 65)))]
     [long-sparse-entry : ir.CompilerIrBlock
-      (match (opt.opt-cfg-find-block
-        (opt.opt-function-blocks
-          (opt.compiler-opt-global-shared-view long-sparse))
-        (ir.compiler-ir-label "entry"))
+      (match (let
+        [blocks
+          (opt.opt-function-blocks
+            (opt.compiler-opt-global-shared-view long-sparse))]
+        (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry")))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
         [(opt.OptMaybeBlock.Some block) block])]
@@ -1171,9 +1174,7 @@
     [hop-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view hop))]
     [hop-entry : ir.CompilerIrBlock
-      (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view hop-blocks)
-        (ir.compiler-ir-label "entry"))
+      (match (opt.opt-cfg-find-block hop-blocks (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
         [(opt.OptMaybeBlock.Some block) block])]
@@ -1190,16 +1191,17 @@
     [hop-twice : ir.CompilerIrFunction
       (ot.opt-switch-form-function (opt.compiler-opt-global-shared-view hop))]
     [hop-twice-entry : ir.CompilerIrBlock
-      (match (opt.opt-cfg-find-block
-        (opt.opt-function-blocks
-          (opt.compiler-opt-global-shared-view hop-twice))
-        (ir.compiler-ir-label "entry"))
+      (match (let
+        [blocks
+          (opt.opt-function-blocks
+            (opt.compiler-opt-global-shared-view hop-twice))]
+        (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry")))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
         [(opt.OptMaybeBlock.Some block) block])]
     [hop-fallback-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view hop-fallback-blocks)
+        hop-fallback-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1213,7 +1215,7 @@
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view hop-shared))]
     [hop-shared-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view hop-shared-blocks)
+        hop-shared-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1227,7 +1229,7 @@
       (opt.opt-function-blocks (opt.compiler-opt-global-shared-view repeat-tag))]
     [repeat-tag-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view repeat-tag-blocks)
+        repeat-tag-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1242,7 +1244,7 @@
         (opt.compiler-opt-global-shared-view forwarded-arm))]
     [forwarded-arm-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view forwarded-arm-blocks)
+        forwarded-arm-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1255,7 +1257,7 @@
         (opt.compiler-opt-global-shared-view forwarded-phi-arm))]
     [forwarded-phi-arm-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.compiler-opt-global-shared-view forwarded-phi-arm-blocks)
+        forwarded-phi-arm-blocks
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -2273,11 +2275,15 @@
   (let
     [blocks : ir.CompilerIrBlockList (smoke-heavy-pass-large-blocks)]
     [optimized : ir.CompilerIrFunction
-      (opt.optimize-function-once-with-summaries
-        (ast.ast-node-pool-reader-context-current)
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (smoke-heavy-pass-large-function)
-        (opt.opt-program-summaries-empty))]
+      (let
+        [pools (ast.ast-node-pool-reader-context-current)]
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [func (smoke-heavy-pass-large-function)]
+        (opt.optimize-function-once-with-summaries
+          pools
+          type-segment-bases
+          func
+          (opt.opt-program-summaries-empty)))]
     (begin
       (unless
         (>
@@ -2316,16 +2322,11 @@
     [starts : (__tl_dyn-array i64) index.leaf-starts]
     (cond
       [(not (= (array-length starts) 2)) 1]
-      [(not
-          (=
-            (array-ref starts 0)
-            (opt.opt-symbol-leaf-start
-              (opt.compiler-opt-global-shared-view qualified))))
-        2]
+      [(not (= (array-ref starts 0) (opt.opt-symbol-leaf-start qualified))) 2]
       [(not (= (array-ref starts 1) 0)) 3]
       [(not
           (opt.opt-symbol-leaf-matches-from?
-            (opt.compiler-opt-global-shared-view qualified)
+            qualified
             (array-ref starts 0)
             "tl_substring"))
         4]
@@ -2442,9 +2443,7 @@
       (ir.compiler-ir-function-seq-empty))))
 
 (define (smoke-inline-phi-loop-repaired? [blocks : ir.CompilerIrBlockList]) : bool
-  (match (opt.opt-cfg-find-block
-    (opt.compiler-opt-global-shared-view blocks)
-    (ir.compiler-ir-label "header"))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "header"))
     [(opt.OptMaybeBlock.No) false]
     [(opt.OptMaybeBlock.Some header)
       (match header
@@ -2749,9 +2748,7 @@
     (+
       (match (ir.compiler-ir-instr-seq-ref instrs index)
         [(ir.CompilerIrInstr.BinOp _ op _ _ _)
-          (if (=
-            (opt.opt-binop-tag op)
-            (opt.opt-binop-tag (opt.compiler-opt-global-shared-view wanted)))
+          (if (= (opt.opt-binop-tag op) (opt.opt-binop-tag wanted))
             1
             0)]
         [_ 0])
@@ -2818,9 +2815,7 @@
             ret
             frame
             (opt.opt-dce-block-list-array
-              (opt.opt-collect-blocks-uses-array
-                frame
-                (opt.compiler-opt-global-shared-view blocks))
+              (opt.opt-collect-blocks-uses-array frame blocks)
               blocks)
             function-abi)])]
     [multi-use : ir.CompilerIrFunction
@@ -2838,9 +2833,7 @@
             ret
             frame
             (opt.opt-dce-block-list-array
-              (opt.opt-collect-blocks-uses-array
-                frame
-                (opt.compiler-opt-global-shared-view blocks))
+              (opt.opt-collect-blocks-uses-array frame blocks)
               blocks)
             function-abi)])]
     [converted-blocks : ir.CompilerIrBlockList
@@ -2928,9 +2921,7 @@
           ret
           frame
           (opt.opt-dce-block-list-array
-            (opt.opt-collect-blocks-uses-array
-              frame
-              (ir.compiler-ir-global-shared-view blocks))
+            (opt.opt-collect-blocks-uses-array frame blocks)
             blocks)
           function-abi)])))
 
@@ -2973,9 +2964,7 @@
           1))]
     [twice : ir.CompilerIrBlockList
       (opt.opt-dce-block-list-array
-        (opt.opt-collect-blocks-uses-array
-          4
-          (ir.compiler-ir-global-shared-view once))
+        (opt.opt-collect-blocks-uses-array 4 once)
         once)]
     (and
       (=

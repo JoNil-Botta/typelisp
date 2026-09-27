@@ -1912,8 +1912,7 @@
   (if (<= count 0)
     env
     (let
-      [next-len : i64
-        (- (tc_core.tc-spmd-env-len (tc_core.tc-global-shared-view env)) count)]
+      [next-len : i64 (- (tc_core.tc-spmd-env-len env) count)]
       (tc_core.tc-spmd-env-restore env (tc_core.TcSpmdEnvMark next-len)))))
 
 (define (tc-type-env-cache-raw-fields-match? [env : tc_core.TcTypeEnv]) : bool
@@ -4128,7 +4127,7 @@
     [outer : tc_core.TcSpmdEnv (tc_core.tc-spmd-env-from-type-env env)]
     [local : tc_core.TcSpmdEnv
       (tc_core.tc-spmd-env-bind-id
-        (tc_core.tc-global-shared-view outer)
+        outer
         lane-id
         (ast.AstType.I64)
         tc_core.TcSpmdClass.Varying
@@ -4140,30 +4139,25 @@
         tc_core.TcSpmdClass.Uniform)]
     [indexed : tc_core.TcSpmdEnv
       (tc_core.tc-spmd-env-bind-role-id
-        (tc_core.tc-global-shared-view updated)
+        updated
         idx-id
         (ast.AstType.I64)
         tc_core.TcSpmdClass.Uniform
         tc_core.TcSpmdScope.Local
         tc_core.TcSpmdRole.ForeachIndex)]
-    [marked-outer : tc_core.TcSpmdEnv
-      (tc_core.tc-spmd-env-mark-outer (tc_core.tc-global-shared-view indexed))]
+    [marked-outer : tc_core.TcSpmdEnv (tc_core.tc-spmd-env-mark-outer indexed)]
     [branch-right : tc_core.TcSpmdEnv
       (tc_core.tc-spmd-env-set-local-class-id
-        (tc_core.tc-global-shared-view indexed)
+        indexed
         lane-id
         tc_core.TcSpmdClass.Varying)]
     [merged : tc_core.TcSpmdEnv
       (tc_core.tc-spmd-env-merge-classes indexed branch-right)]
     [restore-mark : tc_core.TcSpmdEnvMark (tc_core.tc-spmd-env-mark outer)]
     [restored : tc_core.TcSpmdEnv
-      (tc_core.tc-spmd-env-restore
-        (tc_core.tc-global-shared-view updated)
-        restore-mark)]
+      (tc_core.tc-spmd-env-restore updated restore-mark)]
     (and
-      (match (tc_core.tc-spmd-env-lookup-id
-        (tc_core.tc-global-shared-view updated)
-        lane-id)
+      (match (tc_core.tc-spmd-env-lookup-id updated lane-id)
         [(tc_core.TcSpmdLookup.Found
             (ast.AstType.I64)
             (tc_core.TcSpmdClass.Uniform)
@@ -4171,12 +4165,8 @@
             (tc_core.TcSpmdRole.Value))
           true]
         [_ false])
-      (tc_core.tc-spmd-env-has-local-id?
-        (tc_core.tc-global-shared-view updated)
-        lane-id)
-      (tc_core.tc-spmd-env-has-outer-id?
-        (tc_core.tc-global-shared-view updated)
-        x-id)
+      (tc_core.tc-spmd-env-has-local-id? updated lane-id)
+      (tc_core.tc-spmd-env-has-outer-id? updated x-id)
       (match (tc_core.tc-spmd-env-lookup-id shadow-spmd x-id)
         [(tc_core.TcSpmdLookup.Found
             (ast.AstType.Bool)
@@ -4185,9 +4175,7 @@
             (tc_core.TcSpmdRole.Value))
           true]
         [_ false])
-      (match (tc_core.tc-spmd-env-lookup-id
-        (tc_core.tc-global-shared-view marked-outer)
-        idx-id)
+      (match (tc_core.tc-spmd-env-lookup-id marked-outer idx-id)
         [(tc_core.TcSpmdLookup.Found
             (ast.AstType.I64)
             (tc_core.TcSpmdClass.Uniform)
@@ -4195,14 +4183,9 @@
             (tc_core.TcSpmdRole.ForeachIndex))
           true]
         [_ false])
-      (not
-        (tc_core.tc-spmd-env-has-local-id?
-          (tc_core.tc-global-shared-view marked-outer)
-          lane-id))
+      (not (tc_core.tc-spmd-env-has-local-id? marked-outer lane-id))
       (tc_core.tc-spmd-env-has-outer-id? marked-outer lane-id)
-      (match (tc_core.tc-spmd-env-lookup-id
-        (tc_core.tc-global-shared-view merged)
-        lane-id)
+      (match (tc_core.tc-spmd-env-lookup-id merged lane-id)
         [(tc_core.TcSpmdLookup.Found
             (ast.AstType.I64)
             (tc_core.TcSpmdClass.Varying)

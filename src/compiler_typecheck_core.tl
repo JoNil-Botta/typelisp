@@ -3517,7 +3517,10 @@
   (role TcSpmdRole))
 
 (defstruct TcSpmdEnv
-  (bindings (__tl_dyn-array TcSpmdBinding))
+  ;; The address of the first binding. Every update copies the bindings into
+  ;; a fresh array, so no environment writes the bindings it holds; keeping
+  ;; their address instead of the array makes this Copy.
+  (bindings u64)
   (len i64))
 
 (defstruct TcSpmdEnvMark
@@ -27826,17 +27829,9 @@
   [role : TcSpmdRole]) : TcSpmdBinding
   (TcSpmdBinding name-id ty class scope role))
 
-(define (tc-spmd-binding-at
-  [bindings : (__tl_dyn-array TcSpmdBinding)]
-  [index : i64]) : TcSpmdBinding
-  (let
-    [address : u64
-      (unsafe
-        (ptr->int (ptr-offset (__tl_array-data bindings) index)))]
-    ;; SPMD environments own their dense binding storage. Erase the temporary
-    ;; array-place provenance while preserving the environment-owned value.
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr TcSpmdBinding))))))
+(define (tc-spmd-binding-at [bindings : u64] [index : i64]) : TcSpmdBinding
+  (unsafe
+    (ptr-read (ptr-offset (int->ptr bindings : (Ptr TcSpmdBinding)) index))))
 
 (define (tc-spmd-env-binding-count [env : TcTypeEnv]) : i64
   (match (tc-type-env-spine-step env)
@@ -27875,11 +27870,15 @@
         env
         (owned_view.compiler-owned-shared-view bindings)
         (- count 1))
-      (TcSpmdEnv bindings count))))
+      (tc-spmd-env-new bindings count))))
 
-(define (tc-spmd-env-bindings [env : TcSpmdEnv]) : (__tl_dyn-array
-    TcSpmdBinding)
-  env.bindings)
+(define (tc-spmd-env-new
+  [bindings : (__tl_dyn-array TcSpmdBinding)]
+  [len : i64]) : TcSpmdEnv
+  (TcSpmdEnv
+    (unsafe
+      (ptr->int (__tl_array-data bindings)))
+    len))
 
 (define (tc-spmd-env-len [env : TcSpmdEnv]) : i64
   env.len)
@@ -27890,26 +27889,24 @@
 (define (tc-spmd-env-restore [env : TcSpmdEnv] [mark : TcSpmdEnvMark]) : TcSpmdEnv
   (let
     [mark-len : i64 mark.len]
-    [current-len : i64 (tc-spmd-env-len (tc-global-shared-view env))]
+    [current-len : i64 (tc-spmd-env-len env)]
     [restored-len : i64
       (if (< mark-len 0)
         0
         (if (> mark-len current-len)
           current-len
           mark-len))]
-    (TcSpmdEnv (tc-spmd-env-bindings env) restored-len)))
+    (TcSpmdEnv env.bindings restored-len)))
 
 (define (tc-spmd-env-copy-bindings
   [dst : (__tl_dyn-array TcSpmdBinding)]
-  [src : (__tl_dyn-array TcSpmdBinding)]
+  [src : u64]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
     unit
     (begin
-      (set!
-        (array-ref dst index)
-        (tc-spmd-binding-at (owned_view.compiler-owned-shared-view src) index))
+      (set! (array-ref dst index) (tc-spmd-binding-at src index))
       (tc-spmd-env-copy-bindings dst src (+ index 1) count))))
 
 (define (tc-spmd-env-bind-id
@@ -27928,54 +27925,41 @@
   [scope : TcSpmdScope]
   [role : TcSpmdRole]) : TcSpmdEnv
   (let
-    [old-len : i64 (tc-spmd-env-len (tc-global-shared-view env))]
-    [old-bindings : (__tl_dyn-array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [old-len : i64 (tc-spmd-env-len env)]
     [new-len : i64 (+ old-len 1)]
     [new-bindings : (__tl_dyn-array TcSpmdBinding)
       (__tl_make-array TcSpmdBinding new-len)]
     (begin
       (tc-spmd-env-copy-bindings
         (owned_view.compiler-owned-shared-view new-bindings)
-        old-bindings
+        env.bindings
         0
         old-len)
       (set!
         (array-ref new-bindings old-len)
         (tc-spmd-binding name-id ty class scope role))
-      (TcSpmdEnv new-bindings new-len))))
+      (tc-spmd-env-new new-bindings new-len))))
 
-(define (tc-spmd-env-lookup-from
-  [bindings : (__tl_dyn-array TcSpmdBinding)]
-  [index : i64]
-  [name-id : i64]) : TcSpmdLookup
+(define (tc-spmd-env-lookup-from [bindings : u64] [index : i64] [name-id : i64]) : TcSpmdLookup
   (if (< index 0)
     TcSpmdLookup.Missing
     (let
-      [binding : TcSpmdBinding
-        (tc-spmd-binding-at
-          (owned_view.compiler-owned-shared-view bindings)
-          index)]
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
       (if (= binding.name name-id)
         (TcSpmdLookup.Found binding.ty binding.class binding.scope binding.role)
         (tc-spmd-env-lookup-from bindings (- index 1) name-id)))))
 
 (define (tc-spmd-env-lookup-id [env : TcSpmdEnv] [name-id : i64]) : TcSpmdLookup
-  (tc-spmd-env-lookup-from
-    (tc-spmd-env-bindings (tc-global-shared-view env))
-    (- (tc-spmd-env-len env) 1)
-    name-id))
+  (tc-spmd-env-lookup-from env.bindings (- (tc-spmd-env-len env) 1) name-id))
 
 (define (tc-spmd-env-has-local-from?
-  [bindings : (__tl_dyn-array TcSpmdBinding)]
+  [bindings : u64]
   [index : i64]
   [name-id : i64]) : bool
   (if (< index 0)
     false
     (let
-      [binding : TcSpmdBinding
-        (tc-spmd-binding-at
-          (owned_view.compiler-owned-shared-view bindings)
-          index)]
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
       (if (= binding.name name-id)
         (match binding.scope
           [(TcSpmdScope.Local) true]
@@ -27984,22 +27968,16 @@
         (tc-spmd-env-has-local-from? bindings (- index 1) name-id)))))
 
 (define (tc-spmd-env-has-local-id? [env : TcSpmdEnv] [name-id : i64]) : bool
-  (tc-spmd-env-has-local-from?
-    (tc-spmd-env-bindings (tc-global-shared-view env))
-    (- (tc-spmd-env-len env) 1)
-    name-id))
+  (tc-spmd-env-has-local-from? env.bindings (- (tc-spmd-env-len env) 1) name-id))
 
 (define (tc-spmd-env-has-outer-from?
-  [bindings : (__tl_dyn-array TcSpmdBinding)]
+  [bindings : u64]
   [index : i64]
   [name-id : i64]) : bool
   (if (< index 0)
     false
     (let
-      [binding : TcSpmdBinding
-        (tc-spmd-binding-at
-          (owned_view.compiler-owned-shared-view bindings)
-          index)]
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
       (if (= binding.name name-id)
         (match binding.scope
           [(TcSpmdScope.Outer) true]
@@ -28008,22 +27986,13 @@
         (tc-spmd-env-has-outer-from? bindings (- index 1) name-id)))))
 
 (define (tc-spmd-env-has-outer-id? [env : TcSpmdEnv] [name-id : i64]) : bool
-  (tc-spmd-env-has-outer-from?
-    (tc-spmd-env-bindings (tc-global-shared-view env))
-    (- (tc-spmd-env-len env) 1)
-    name-id))
+  (tc-spmd-env-has-outer-from? env.bindings (- (tc-spmd-env-len env) 1) name-id))
 
-(define (tc-spmd-env-local-index
-  [bindings : (__tl_dyn-array TcSpmdBinding)]
-  [index : i64]
-  [name-id : i64]) : i64
+(define (tc-spmd-env-local-index [bindings : u64] [index : i64] [name-id : i64]) : i64
   (if (< index 0)
     -1
     (let
-      [binding : TcSpmdBinding
-        (tc-spmd-binding-at
-          (owned_view.compiler-owned-shared-view bindings)
-          index)]
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
       (if (= binding.name name-id)
         (match binding.scope
           [(TcSpmdScope.Local) index]
@@ -28036,27 +28005,20 @@
   [name-id : i64]
   [class : TcSpmdClass]) : TcSpmdEnv
   (let
-    [old-len : i64 (tc-spmd-env-len (tc-global-shared-view env))]
-    [old-bindings : (__tl_dyn-array TcSpmdBinding)
-      (tc-spmd-env-bindings (tc-global-shared-view env))]
+    [old-len : i64 (tc-spmd-env-len env)]
     [local-index : i64
-      (tc-spmd-env-local-index
-        (owned_view.compiler-owned-shared-view old-bindings)
-        (- old-len 1)
-        name-id)]
+      (tc-spmd-env-local-index env.bindings (- old-len 1) name-id)]
     (if (< local-index 0)
       env
       (let
         [new-bindings : (__tl_dyn-array TcSpmdBinding)
           (__tl_make-array TcSpmdBinding old-len)]
         [old-binding : TcSpmdBinding
-          (tc-spmd-binding-at
-            (owned_view.compiler-owned-shared-view old-bindings)
-            local-index)]
+          (tc-spmd-binding-at env.bindings local-index)]
         (begin
           (tc-spmd-env-copy-bindings
             (owned_view.compiler-owned-shared-view new-bindings)
-            old-bindings
+            env.bindings
             0
             old-len)
           (set!
@@ -28067,18 +28029,17 @@
               class
               old-binding.scope
               old-binding.role))
-          (TcSpmdEnv new-bindings old-len))))))
+          (tc-spmd-env-new new-bindings old-len))))))
 
 (define (tc-spmd-env-mark-outer-into
   [dst : (__tl_dyn-array TcSpmdBinding)]
-  [src : (__tl_dyn-array TcSpmdBinding)]
+  [src : u64]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
     unit
     (let
-      [binding : TcSpmdBinding
-        (tc-spmd-binding-at (owned_view.compiler-owned-shared-view src) index)]
+      [binding : TcSpmdBinding (tc-spmd-binding-at src index)]
       (begin
         (set!
           (array-ref dst index)
@@ -28092,21 +28053,20 @@
 
 (define (tc-spmd-env-mark-outer [env : TcSpmdEnv]) : TcSpmdEnv
   (let
-    [old-len : i64 (tc-spmd-env-len (tc-global-shared-view env))]
-    [old-bindings : (__tl_dyn-array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [old-len : i64 (tc-spmd-env-len env)]
     [new-bindings : (__tl_dyn-array TcSpmdBinding)
       (__tl_make-array TcSpmdBinding old-len)]
     (begin
       (tc-spmd-env-mark-outer-into
         (owned_view.compiler-owned-shared-view new-bindings)
-        old-bindings
+        env.bindings
         0
         old-len)
-      (TcSpmdEnv new-bindings old-len))))
+      (tc-spmd-env-new new-bindings old-len))))
 
 (define (tc-spmd-env-merge-binding-class
   [left : TcSpmdBinding]
-  [right-bindings : (__tl_dyn-array TcSpmdBinding)]
+  [right-bindings : u64]
   [right-len : i64]
   [index : i64]) : TcSpmdClass
   (if (>= index right-len)
@@ -28117,18 +28077,15 @@
 
 (define (tc-spmd-env-merge-classes-into
   [dst : (__tl_dyn-array TcSpmdBinding)]
-  [left-bindings : (__tl_dyn-array TcSpmdBinding)]
-  [right-bindings : (__tl_dyn-array TcSpmdBinding)]
+  [left-bindings : u64]
+  [right-bindings : u64]
   [left-len : i64]
   [right-len : i64]
   [index : i64]) : unit
   (if (>= index left-len)
     unit
     (let
-      [left : TcSpmdBinding
-        (tc-spmd-binding-at
-          (owned_view.compiler-owned-shared-view left-bindings)
-          index)]
+      [left : TcSpmdBinding (tc-spmd-binding-at left-bindings index)]
       (begin
         (set!
           (array-ref dst index)
@@ -28137,7 +28094,7 @@
             (tc-global-shared-view left.ty)
             (tc-spmd-env-merge-binding-class
               (tc-global-shared-view left)
-              (owned_view.compiler-owned-shared-view right-bindings)
+              right-bindings
               right-len
               index)
             left.scope
@@ -28152,11 +28109,7 @@
 
 (define (tc-spmd-env-merge-classes [left : TcSpmdEnv] [right : TcSpmdEnv]) : TcSpmdEnv
   (let
-    [left-len : i64 (tc-spmd-env-len (tc-global-shared-view left))]
-    [right-len : i64 (tc-spmd-env-len (tc-global-shared-view right))]
-    [left-bindings : (__tl_dyn-array TcSpmdBinding) (tc-spmd-env-bindings left)]
-    [right-bindings : (__tl_dyn-array TcSpmdBinding)
-      (tc-spmd-env-bindings right)]
+    [left-len : i64 (tc-spmd-env-len left)]
     [merged : (__tl_dyn-array TcSpmdBinding)
       (__tl_make-array TcSpmdBinding left-len)]
     (begin
@@ -28164,12 +28117,12 @@
       ;; snapshot and local lets restore to that mark before the merge.
       (tc-spmd-env-merge-classes-into
         (owned_view.compiler-owned-shared-view merged)
-        left-bindings
-        right-bindings
+        left.bindings
+        right.bindings
         left-len
-        right-len
+        (tc-spmd-env-len right)
         0)
-      (TcSpmdEnv merged left-len))))
+      (tc-spmd-env-new merged left-len))))
 
 (define (tc-literal-type [lit : ast.AstLiteral]) : ast.AstType
   (match lit
@@ -41712,7 +41665,7 @@
           ctx
           expr-bases
           caller-env
-          (tc-global-shared-view caller-spmd-env)
+          caller-spmd-env
           (tc-global-shared-view arg))
           [(ResultTcSpmdExprInfo.Ok arg-info)
             (match arg-info
@@ -42126,7 +42079,7 @@
   (match (tc-spmd-atomic-call-symbol
     ctx
     env
-    (tc-global-shared-view spmd-env)
+    spmd-env
     (tc-global-shared-view func))
     [(ResultTcString.Ok symbol)
       (if (string.eq symbol "")
@@ -42154,7 +42107,7 @@
     ctx
     expr-bases
     env
-    (tc-global-shared-view spmd-env)
+    spmd-env
     (tc-global-shared-view func))
     [(ResultTcSpmdInlineHelper.Ok helper)
       (match helper
@@ -42289,7 +42242,7 @@
     ctx
     expr-bases
     env
-    (tc-global-shared-view spmd-env)
+    spmd-env
     (tc-global-shared-view func))
     [(ResultTcSpmdInlineHelper.Ok helper)
       (match helper
@@ -42370,7 +42323,7 @@
   (match (tc-spmd-atomic-call-symbol
     ctx
     env
-    (tc-global-shared-view spmd-env)
+    spmd-env
     (tc-global-shared-view func))
     [(ResultTcString.Ok symbol)
       (if (string.eq symbol "")
@@ -42447,23 +42400,17 @@
       true]
     [_ false]))
 
-(define (tc-spmd-env-has-compact-slot-at?
-  [bindings : (__tl_dyn-array TcSpmdBinding)]
-  [index : i64]) : bool
+(define (tc-spmd-env-has-compact-slot-at? [bindings : u64] [index : i64]) : bool
   (if (< index 0)
     false
-    (match (tc-spmd-binding-at
-      (owned_view.compiler-owned-shared-view bindings)
-      index)
+    (match (tc-spmd-binding-at bindings index)
       [(TcSpmdBinding _ _ _ _ role)
         (match role
           [(TcSpmdRole.CompactSlot) true]
           [_ (tc-spmd-env-has-compact-slot-at? bindings (- index 1))])])))
 
 (define (tc-spmd-env-has-compact-slot? [env : TcSpmdEnv]) : bool
-  (tc-spmd-env-has-compact-slot-at?
-    (tc-spmd-env-bindings (tc-global-shared-view env))
-    (- (tc-spmd-env-len env) 1)))
+  (tc-spmd-env-has-compact-slot-at? env.bindings (- (tc-spmd-env-len env) 1)))
 
 (define (tc-spmd-foreach-index-unsupported [spmd-env : TcSpmdEnv]) : ResultTcUnit
   (if (tc-spmd-env-has-compact-slot? spmd-env)
@@ -42478,7 +42425,7 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (tc-spmd-expr ctx expr-bases env (tc-global-shared-view spmd-env) expr)
+  (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
     [(ResultTcSpmdExprInfo.Ok info)
       (match info
         [(TcSpmdExprInfo _ class _)
@@ -42503,9 +42450,7 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-foreach-direct-index expr-bases spmd-env inner))]
     [(ast.AstExpr.Var name)
-      (if (tc-spmd-foreach-write-index-var?
-        (tc-global-shared-view spmd-env)
-        name)
+      (if (tc-spmd-foreach-write-index-var? spmd-env name)
         ResultTcUnit.Ok
         (tc-spmd-foreach-index-unsupported spmd-env))]
     [_ (tc-spmd-foreach-index-unsupported spmd-env)]))
@@ -42539,7 +42484,7 @@
           [(ast.AstBinOp.Add)
             (match (tc-spmd-foreach-direct-index
               expr-bases
-              (tc-global-shared-view spmd-env)
+              spmd-env
               (tc-global-shared-view left))
               [(ResultTcUnit.Ok)
                 (tc-spmd-foreach-uniform-offset
@@ -42549,10 +42494,7 @@
                   spmd-env
                   right)]
               [(ResultTcUnit.Err _)
-                (match (tc-spmd-foreach-direct-index
-                  expr-bases
-                  (tc-global-shared-view spmd-env)
-                  right)
+                (match (tc-spmd-foreach-direct-index expr-bases spmd-env right)
                   [(ResultTcUnit.Ok)
                     (tc-spmd-foreach-uniform-offset
                       ctx
@@ -42562,10 +42504,7 @@
                       left)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
           [(ast.AstBinOp.Sub)
-            (match (tc-spmd-foreach-direct-index
-              expr-bases
-              (tc-global-shared-view spmd-env)
-              left)
+            (match (tc-spmd-foreach-direct-index expr-bases spmd-env left)
               [(ResultTcUnit.Ok)
                 (tc-spmd-foreach-uniform-offset
                   ctx
@@ -42650,7 +42589,7 @@
           [(ast.AstBinOp.Add)
             (match (tc-spmd-masked-if-direct-index
               expr-bases
-              (tc-global-shared-view spmd-env)
+              spmd-env
               (tc-global-shared-view left))
               [(ResultTcUnit.Ok)
                 (tc-spmd-masked-if-uniform-offset
@@ -42662,7 +42601,7 @@
               [(ResultTcUnit.Err _)
                 (match (tc-spmd-masked-if-direct-index
                   expr-bases
-                  (tc-global-shared-view spmd-env)
+                  spmd-env
                   right)
                   [(ResultTcUnit.Ok)
                     (tc-spmd-masked-if-uniform-offset
@@ -42673,10 +42612,7 @@
                       left)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
           [(ast.AstBinOp.Sub)
-            (match (tc-spmd-masked-if-direct-index
-              expr-bases
-              (tc-global-shared-view spmd-env)
-              left)
+            (match (tc-spmd-masked-if-direct-index expr-bases spmd-env left)
               [(ResultTcUnit.Ok)
                 (tc-spmd-masked-if-uniform-offset
                   ctx
@@ -42723,7 +42659,7 @@
       ctx
       expr-bases
       env
-      (tc-global-shared-view spmd-env)
+      spmd-env
       (ast.ast-expr-segment-bases-get
         expr-bases
         (ast.ast-expr-list-get exprs index 0)))
@@ -42775,7 +42711,7 @@
             ctx
             expr-bases
             env
-            (tc-global-shared-view spmd-env)
+            spmd-env
             (tc-global-shared-view init))
             [(ResultTcUnit.Ok)
               (let
@@ -42851,12 +42787,7 @@
           (ast.ast-expr-segment-bases-get expr-bases left-box)]
         [right : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases right-box)]
-        (match (tc-spmd-masked-if-expr
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view spmd-env)
-          left)
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env left)
           [(ResultTcUnit.Ok)
             (tc-spmd-masked-if-expr ctx expr-bases env spmd-env right)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
@@ -42870,7 +42801,7 @@
               ctx
               expr-bases
               env
-              (tc-global-shared-view spmd-env)
+              spmd-env
               bindings
               (tc-spmd-env-mark spmd-env))
               [(ResultTcSpmdLetState.Ok state)
@@ -42891,18 +42822,13 @@
           (ast.ast-expr-segment-bases-get expr-bases then-box)]
         [else-branch : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases else-box)]
-        (match (tc-spmd-masked-if-expr
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view spmd-env)
-          cond)
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env cond)
           [(ResultTcUnit.Ok)
             (match (tc-spmd-masked-if-expr
               ctx
               expr-bases
               env
-              (tc-global-shared-view spmd-env)
+              spmd-env
               then-branch)
               [(ResultTcUnit.Ok)
                 (tc-spmd-masked-if-expr ctx expr-bases env spmd-env else-branch)]
@@ -42916,12 +42842,7 @@
           (ast.ast-expr-segment-bases-get expr-bases array-box)]
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (match (tc-spmd-masked-if-expr
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view spmd-env)
-          array)
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env array)
           [(ResultTcUnit.Ok)
             (match (tc-spmd-masked-if-index ctx expr-bases env spmd-env index)
               [(ResultTcUnit.Ok)
@@ -42938,19 +42859,9 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-spmd-masked-if-expr
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view spmd-env)
-          array)
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env array)
           [(ResultTcUnit.Ok)
-            (match (tc-spmd-masked-if-index
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view spmd-env)
-              index)
+            (match (tc-spmd-masked-if-index ctx expr-bases env spmd-env index)
               [(ResultTcUnit.Ok)
                 (match (tc-spmd-masked-if-expr
                   ctx
@@ -42980,12 +42891,7 @@
           (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-spmd-masked-if-expr
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view spmd-env)
-          receiver)
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env receiver)
           [(ResultTcUnit.Ok)
             (match (tc-spmd-masked-if-expr
               ctx
@@ -43016,7 +42922,7 @@
           ctx
           expr-bases
           env
-          (tc-global-shared-view spmd-env)
+          spmd-env
           (tc-global-shared-view cond))
           [(ResultTcUnit.Ok)
             (match (tc-spmd-expr ctx expr-bases env spmd-env cond)
@@ -43110,18 +43016,13 @@
   [else-branch : ast.AstExpr]) : ResultTcSpmdExprInfo
   (match (tc-spmd-masked-if-result-type-ok (tc-global-shared-view expr-ty))
     [(ResultTcUnit.Ok)
-      (match (tc-spmd-masked-if-expr
-        ctx
-        expr-bases
-        env
-        (tc-global-shared-view spmd-env)
-        then-branch)
+      (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env then-branch)
         [(ResultTcUnit.Ok)
           (match (tc-spmd-masked-if-expr
             ctx
             expr-bases
             env
-            (tc-global-shared-view spmd-env)
+            spmd-env
             else-branch)
             [(ResultTcUnit.Ok)
               (match (tc-type-strip-region (tc-global-shared-view expr-ty))
@@ -43363,7 +43264,7 @@
             [(ResultTcEnv.Ok arm-env)
               (match (tc-spmd-match-bind-pattern-names
                 arm-env
-                (tc-global-shared-view spmd-env)
+                spmd-env
                 (tc-spmd-pattern-bound-names
                   ctx
                   (tc-global-shared-view scrut-ty)
@@ -43401,7 +43302,7 @@
     ctx
     expr-bases
     env
-    (tc-global-shared-view spmd-env)
+    spmd-env
     (tc-global-shared-view scrutinee))
     [(ResultTcUnit.Ok)
       (match (tc-spmd-expr ctx expr-bases env spmd-env scrutinee)
@@ -43456,8 +43357,7 @@
         (let
           [body : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
-          [mark : TcSpmdEnvMark
-            (tc-spmd-env-mark (tc-global-shared-view spmd-env))]
+          [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
           (match (tc-bind-match-pattern
             ctx
             env
@@ -43466,7 +43366,7 @@
             [(ResultTcEnv.Ok arm-env)
               (match (tc-spmd-match-bind-pattern-names
                 arm-env
-                (tc-global-shared-view spmd-env)
+                spmd-env
                 (tc-spmd-pattern-bound-names
                   ctx
                   (tc-global-shared-view scrut-ty)
@@ -43699,7 +43599,7 @@
         TcSpmdRole.CompactIndex)]
     [body-spmd-env : TcSpmdEnv
       (tc-spmd-env-bind-role-id
-        (tc-global-shared-view index-spmd-env)
+        index-spmd-env
         slot-id
         slot-ty
         TcSpmdClass.Varying
@@ -43714,7 +43614,7 @@
           ctx
           expr-bases
           index-env
-          (tc-global-shared-view index-spmd-env)
+          index-spmd-env
           (tc-global-shared-view keep))
           [(ResultTcUnit.Ok)
             (match (tc-spmd-expr ctx expr-bases index-env index-spmd-env keep)
@@ -43864,7 +43764,7 @@
               spmd-env
               (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcSpmdExprInfo.Err message)])
-        (match (tc-spmd-env-lookup-id (tc-global-shared-view spmd-env) name)
+        (match (tc-spmd-env-lookup-id spmd-env name)
           [(TcSpmdLookup.Found _ class _ _)
             (tc-spmd-reduce-class-finish ctx env spmd-env expr class)]
           [(TcSpmdLookup.Missing)
@@ -43932,7 +43832,7 @@
               ctx
               expr-bases
               env
-              (tc-global-shared-view spmd-env)
+              spmd-env
               bindings
               (tc-spmd-env-mark spmd-env))
               [(ResultTcSpmdLetState.Ok state)
@@ -44163,8 +44063,7 @@
     (match source-info
       [(TcSpmdExprInfo source-ty source-class source-env)
         (let
-          [mark : TcSpmdEnvMark
-            (tc-spmd-env-mark (tc-global-shared-view source-env))]
+          [mark : TcSpmdEnvMark (tc-spmd-env-mark source-env)]
           [body-env : TcTypeEnv
             (tc-bind-id
               (tc-bind-id env source-name-id (tc-global-shared-view source-ty))
@@ -44203,7 +44102,7 @@
   [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
   (let
     [binding-name-id : i64 (tc-for-owned-name-id expr-bases binding-name)]
-    [mark : TcSpmdEnvMark (tc-spmd-env-mark (tc-global-shared-view spmd-env))]
+    [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
     [body-env : TcTypeEnv
       (tc-bind-id env binding-name-id (tc-global-shared-view elem-ty))]
     [body-spmd-env : TcSpmdEnv
@@ -44331,7 +44230,7 @@
               (ast.ast-expr-segment-bases-get expr-bases virtual-id)
               expr-ty)]
           [(ResultTcExprId.Err message) (ResultTcSpmdExprInfo.Err message)])
-        (match (tc-spmd-env-lookup-id (tc-global-shared-view spmd-env) name)
+        (match (tc-spmd-env-lookup-id spmd-env name)
           [(TcSpmdLookup.Found _ class _ _)
             (tc-spmd-finish-ctx ctx expr-ty class spmd-env)]
           [(TcSpmdLookup.Missing)
@@ -44384,12 +44283,7 @@
                 expr-ty
                 then-branch
                 else-branch)
-              (match (tc-spmd-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view cond-env)
-                then-branch)
+              (match (tc-spmd-expr ctx expr-bases env cond-env then-branch)
                 [(ResultTcSpmdExprInfo.Ok then-info)
                   (match then-info
                     [(TcSpmdExprInfo _ then-class then-env)
@@ -44420,7 +44314,7 @@
               ctx
               expr-bases
               env
-              (tc-global-shared-view spmd-env)
+              spmd-env
               bindings
               (tc-spmd-env-mark spmd-env))
               [(ResultTcSpmdLetState.Ok state)
@@ -44481,7 +44375,7 @@
               ctx
               expr-bases
               env
-              (tc-global-shared-view array-env)
+              array-env
               (tc-global-shared-view index))
               [(ResultTcSpmdExprInfo.Ok index-info)
                 (match index-info
@@ -44632,7 +44526,7 @@
           ctx
           expr-bases
           env
-          (tc-global-shared-view spmd-env)
+          spmd-env
           (tc-global-shared-view cond))
           [(ResultTcSpmdExprInfo.Ok cond-info)
             (match cond-info
@@ -44649,14 +44543,14 @@
                         ctx
                         expr-bases
                         (tc-enter-loop-target env)
-                        (tc-global-shared-view cond-env)
+                        cond-env
                         (tc-global-shared-view body))
                         [(ResultTcUnit.Ok)
                           (match (tc-spmd-expr
                             ctx
                             expr-bases
                             (tc-enter-loop-target env)
-                            (tc-global-shared-view cond-env)
+                            cond-env
                             body)
                             [(ResultTcSpmdExprInfo.Ok body-info)
                               (match body-info
@@ -44677,7 +44571,7 @@
                     ctx
                     expr-bases
                     (tc-enter-loop-target env)
-                    (tc-global-shared-view cond-env)
+                    cond-env
                     body)
                     [(ResultTcSpmdExprInfo.Ok body-info)
                       (match body-info
@@ -44695,7 +44589,7 @@
     [(ast.AstExpr.Unsafe exprs)
       (tc-spmd-begin-list ctx expr-bases (tc-enter-unsafe env) spmd-env exprs)]
     [(ast.AstExpr.Set name value-box)
-      (match (tc-spmd-env-lookup-id (tc-global-shared-view spmd-env) name)
+      (match (tc-spmd-env-lookup-id spmd-env name)
         [(TcSpmdLookup.Found _ _ _ (TcSpmdRole.CompactSlot))
           (ResultTcSpmdExprInfo.Err
             "typecheck: spmd-compact slot binding is read-only")]
@@ -44723,9 +44617,7 @@
                   (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
                 (match value-info
                   [(TcSpmdExprInfo _ value-class value-env)
-                    (if (tc-spmd-env-has-local-id?
-                      (tc-global-shared-view value-env)
-                      name)
+                    (if (tc-spmd-env-has-local-id? value-env name)
                       (tc-spmd-finish
                         expr-ty
                         TcSpmdClass.Uniform
@@ -44733,9 +44625,7 @@
                           value-env
                           name
                           value-class))
-                      (if (tc-spmd-env-has-outer-id?
-                        (tc-global-shared-view value-env)
-                        name)
+                      (if (tc-spmd-env-has-outer-id? value-env name)
                         (ResultTcSpmdExprInfo.Err
                           "typecheck: foreach cannot set binding declared outside foreach")
                         (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))]))))])]
@@ -44800,7 +44690,7 @@
                                 ctx
                                 expr-bases
                                 env
-                                (tc-global-shared-view end-env)
+                                end-env
                                 index
                                 (tc-resolve-type ctx index-ty)
                                 body)
@@ -80218,7 +80108,16 @@
   (macro-name-id i64)
   (definition-module-id i64)
   (declaration-id i64)
-  (symbols csym.CompilerSymbols))
+  ;; The expanding context's shared block, whose first word addresses its
+  ;; symbols; keeping the address instead of the symbols makes this Copy.
+  (context-shared u64))
+
+(define (macro-hygiene-symbols [hygiene : (& hygiene MacroHygieneContext)]) : (&
+    hygiene
+    csym.CompilerSymbols)
+  (unsafe
+    (ptr-read
+      (int->ptr hygiene.context-shared : (Ptr (& hygiene csym.CompilerSymbols))))))
 
 (defenum ResultMacroCallDecl
   (Ok MacroMaybeDecl)
@@ -89725,19 +89624,19 @@
         module-id)]
     [value-handle : i64
       (csym.compiler-symbols-lookup-value-in-module-id-or
-        hygiene.symbols
+        (macro-hygiene-symbols hygiene)
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
     [type-handle : i64
       (csym.compiler-symbols-lookup-type-in-module-id-or
-        hygiene.symbols
+        (macro-hygiene-symbols hygiene)
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
     [macro-handle : i64
       (csym.compiler-symbols-lookup-macro-in-module-id-or
-        hygiene.symbols
+        (macro-hygiene-symbols hygiene)
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
@@ -89755,7 +89654,7 @@
       (let
         [owner-module-id : i64
           (csym.compiler-symbols-owner-module-id-at-index-or
-            hygiene.symbols
+            (macro-hygiene-symbols hygiene)
             declaration-id
             fallback)]
         ;; A prior expansion can add a flat unqualified alias after a root
@@ -89809,7 +89708,7 @@
           (if (or (< full-module-id 0) (< final-id 0))
             -2
             (macro-hygiene-binding-owner-module-id-or
-              (tc-global-shared-view hygiene)
+              hygiene
               full-module-id
               final-id
               -2))]
@@ -89851,7 +89750,7 @@
                   [enum-owner-module-id : i64
                     (if (csym.compiler-symbols-handle-found?
                       (csym.compiler-symbols-lookup-type-in-module-id-or
-                        hygiene.symbols
+                        (macro-hygiene-symbols hygiene)
                         lookup-module-id
                         alias-id
                         (csym.compiler-symbols-missing-handle)))
@@ -89943,12 +89842,10 @@
 
 (define (macro-hygiene-bind-name-id
   [env : MacroHygieneEnv]
-  [macro-name : (& macro-name MacroHygieneContext)]
+  [macro-name : MacroHygieneContext]
   [depth : i64]
   [name-id : i64]) : MacroHygieneName
   (let
-    [macro-name : MacroHygieneContext
-      (owned_view.compiler-owned-reference-shared-view macro-name)]
     [session : cis.InternStructuralSessionHandle
       (macro-hygiene-env-structural-session env)]
     [source-name-id : i64 (tc-hygiene-template-source-id-or session name-id -1)]
@@ -91073,7 +90970,7 @@
             (&mut out)
             (macro-hygiene-rename-lifetime-id
               env
-              (tc-global-shared-view macro-name)
+              macro-name
               (ast.ast-lifetime-list-get
                 (& lifetimes)
                 index
@@ -91130,86 +91027,74 @@
 (define (macro-hygiene-type
   [ty : ast.AstType]
   [env : MacroHygieneEnv]
-  [macro-name : (& macro-name MacroHygieneContext)]) : ast.AstType
-  (let
-    [macro-name : MacroHygieneContext
-      (owned_view.compiler-owned-reference-shared-view macro-name)]
-    (match (tc-global-shared-view ty)
-      [(ast.AstType.Func args ret)
-        (ast.ast-ty-func
-          (macro-hygiene-type-list
-            (ast.ast-type-list-box-shared-view args)
-            env
-            (tc-global-shared-view macro-name))
-          (macro-hygiene-type (macro-hygiene-type-get env ret) env macro-name))]
-      [(ast.AstType.Tuple elems)
-        (ast.ast-ty-tuple
-          (macro-hygiene-type-list
-            (ast.ast-type-list-box-shared-view elems)
-            env
-            macro-name))]
-      [(ast.AstType.Array elem count)
-        (ast.ast-ty-array
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)
-          count)]
-      [(ast.AstType.DynArray elem)
-        (ast.ast-ty-dyn-array
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.Slice elem)
-        (ast.ast-ty-slice
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.Box elem)
-        (ast.ast-ty-box
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.Ptr elem)
-        (ast.ast-ty-ptr
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.MutPtr elem)
-        (ast.ast-ty-mut-ptr
-          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
-      [(ast.AstType.Ref region inner)
-        (ast.ast-ty-ref
-          (macro-hygiene-rename-lifetime-id
-            env
-            (tc-global-shared-view macro-name)
-            region)
-          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
-      [(ast.AstType.MutRef region inner)
-        (ast.ast-ty-mut-ref
-          (macro-hygiene-rename-lifetime-id
-            env
-            (tc-global-shared-view macro-name)
-            region)
-          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
-      [(ast.AstType.Region region inner)
-        (ast.ast-ty-region
-          (macro-hygiene-rename-lifetime-id
-            env
-            (tc-global-shared-view macro-name)
-            region)
-          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
-      [(ast.AstType.EnumArgs name lifetimes)
-        (ast.ast-ty-enum-args
-          name
-          (macro-hygiene-lifetime-list
-            (ast.ast-lifetime-list-box-shared-view lifetimes)
-            env
-            macro-name))]
-      [(ast.AstType.StructArgs name lifetimes)
-        (ast.ast-ty-struct-args
-          name
-          (macro-hygiene-lifetime-list
-            (ast.ast-lifetime-list-box-shared-view lifetimes)
-            env
-            macro-name))]
-      [(ast.AstType.VarArgs name lifetimes)
-        (ast.ast-ty-var-args
-          name
-          (macro-hygiene-lifetime-list
-            (ast.ast-lifetime-list-box-shared-view lifetimes)
-            env
-            macro-name))]
-      [_ ty])))
+  [macro-name : MacroHygieneContext]) : ast.AstType
+  (match (tc-global-shared-view ty)
+    [(ast.AstType.Func args ret)
+      (ast.ast-ty-func
+        (macro-hygiene-type-list
+          (ast.ast-type-list-box-shared-view args)
+          env
+          macro-name)
+        (macro-hygiene-type (macro-hygiene-type-get env ret) env macro-name))]
+    [(ast.AstType.Tuple elems)
+      (ast.ast-ty-tuple
+        (macro-hygiene-type-list
+          (ast.ast-type-list-box-shared-view elems)
+          env
+          macro-name))]
+    [(ast.AstType.Array elem count)
+      (ast.ast-ty-array
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)
+        count)]
+    [(ast.AstType.DynArray elem)
+      (ast.ast-ty-dyn-array
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.Slice elem)
+      (ast.ast-ty-slice
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.Box elem)
+      (ast.ast-ty-box
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.Ptr elem)
+      (ast.ast-ty-ptr
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.MutPtr elem)
+      (ast.ast-ty-mut-ptr
+        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+    [(ast.AstType.Ref region inner)
+      (ast.ast-ty-ref
+        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+    [(ast.AstType.MutRef region inner)
+      (ast.ast-ty-mut-ref
+        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+    [(ast.AstType.Region region inner)
+      (ast.ast-ty-region
+        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+    [(ast.AstType.EnumArgs name lifetimes)
+      (ast.ast-ty-enum-args
+        name
+        (macro-hygiene-lifetime-list
+          (ast.ast-lifetime-list-box-shared-view lifetimes)
+          env
+          macro-name))]
+    [(ast.AstType.StructArgs name lifetimes)
+      (ast.ast-ty-struct-args
+        name
+        (macro-hygiene-lifetime-list
+          (ast.ast-lifetime-list-box-shared-view lifetimes)
+          env
+          macro-name))]
+    [(ast.AstType.VarArgs name lifetimes)
+      (ast.ast-ty-var-args
+        name
+        (macro-hygiene-lifetime-list
+          (ast.ast-lifetime-list-box-shared-view lifetimes)
+          env
+          macro-name))]
+    [_ ty]))
 
 (define (macro-hygiene-maybe-type
   [maybe-ty : ast.AstMaybeType]
@@ -91293,7 +91178,7 @@
     (match (macro-hygiene-pattern
       (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
       env
-      (tc-global-shared-view macro-name)
+      macro-name
       depth)
       [(MacroHygienePattern.Pattern npattern next-env)
         (begin
@@ -91315,10 +91200,7 @@
     [(ast.AstPattern.Var name maybe-ty)
       (let
         [nmaybe-ty : ast.AstMaybeType
-          (macro-hygiene-maybe-type
-            maybe-ty
-            env
-            (tc-global-shared-view macro-name))]
+          (macro-hygiene-maybe-type maybe-ty env macro-name)]
         (match (macro-hygiene-bind-name-id env macro-name depth name)
           [(MacroHygieneName.Name renamed-id next-env)
             (MacroHygienePattern.Pattern
@@ -91371,11 +91253,7 @@
       (let
         [args : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view args-box)]
-        (match (macro-hygiene-pattern-list
-          args
-          env
-          (tc-global-shared-view macro-name)
-          depth)
+        (match (macro-hygiene-pattern-list args env macro-name depth)
           [(MacroHygienePatternList.PatternList nargs next-env)
             (MacroHygienePattern.Pattern
               (ast.ast-pat-variant-id
@@ -91425,10 +91303,7 @@
           [ninit : i64
             (macro-hygiene-expr expr-bases init-box env macro-name depth)]
           [nmaybe-ty : ast.AstMaybeType
-            (macro-hygiene-maybe-type
-              maybe-ty
-              env
-              (tc-global-shared-view macro-name))]
+            (macro-hygiene-maybe-type maybe-ty env macro-name)]
           (match (macro-hygiene-bind-name-id env macro-name depth name)
             [(MacroHygieneName.Name renamed-id next-env)
               (begin
@@ -91535,11 +91410,7 @@
     unit
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
-        (match (macro-hygiene-pattern
-          pattern
-          env
-          (tc-global-shared-view macro-name)
-          depth)
+        (match (macro-hygiene-pattern pattern env macro-name depth)
           [(MacroHygienePattern.Pattern npattern arm-env)
             (begin
               (ast.ast-match-arm-list-push
@@ -91569,11 +91440,9 @@
   [expr-bases : i64]
   [expr-id : i64]
   [env : MacroHygieneEnv]
-  [macro-name : (& macro-name MacroHygieneContext)]
+  [macro-name : MacroHygieneContext]
   [depth : i64]) : i64
   (let
-    [macro-name : MacroHygieneContext
-      (owned_view.compiler-owned-reference-shared-view macro-name)]
     [_profile-start : unit
       (cfg compile-profile (compiler-tc-walk-hygiene-start!))]
     [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
@@ -91730,7 +91599,7 @@
               expr-bases
               bindings
               env
-              (tc-global-shared-view macro-name)
+              macro-name
               depth)
               [(MacroHygieneLetBindings.LetBindings nbindings body-env)
                 (ast.ast-expr-let-with-pools
@@ -91742,19 +91611,12 @@
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : i64 body-box]
-            (match (macro-hygiene-param-list
-              params
-              env
-              (tc-global-shared-view macro-name)
-              depth)
+            (match (macro-hygiene-param-list params env macro-name depth)
               [(MacroHygieneParams.Params nparams body-env)
                 (ast.ast-expr-lambda-with-pools
                   env.pools
                   nparams
-                  (macro-hygiene-maybe-type
-                    maybe-ret
-                    (tc-global-shared-view body-env)
-                    (tc-global-shared-view macro-name))
+                  (macro-hygiene-maybe-type maybe-ret body-env macro-name)
                   (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(ast.AstExpr.Tuple exprs)
       (ast.ast-node-pool-context-expr-push
@@ -91949,10 +91811,7 @@
         [rhs : i64 rhs-box]
         (ast.ast-expr-set-id-with-pools
           env.pools
-          (macro-hygiene-rename-var-id
-            env
-            (tc-global-shared-view macro-name)
-            name)
+          (macro-hygiene-rename-var-id env macro-name name)
           (macro-hygiene-expr expr-bases rhs env macro-name depth)))]
     [(ast.AstExpr.Ann inner-box ty-id)
       (let
@@ -91977,7 +91836,7 @@
           (macro-hygiene-borrow-lifetime
             (ast.ast-borrow-lifetime-from-id lifetime-id)
             env
-            (tc-global-shared-view macro-name))
+            macro-name)
           (macro-hygiene-expr expr-bases place env macro-name depth)))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
@@ -92057,7 +91916,7 @@
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id value-env)
                 (match (macro-hygiene-bind-name-id
-                  (tc-global-shared-view value-env)
+                  value-env
                   macro-name
                   depth
                   prefix)
@@ -92070,10 +91929,7 @@
                       (macro-hygiene-expr expr-bases start env macro-name depth)
                       (macro-hygiene-expr expr-bases end env macro-name depth)
                       nprefix-id
-                      (macro-hygiene-type
-                        prefix-ty
-                        (tc-global-shared-view value-env)
-                        macro-name)
+                      (macro-hygiene-type prefix-ty value-env macro-name)
                       (macro-hygiene-expr expr-bases init env macro-name depth)
                       (macro-hygiene-expr
                         expr-bases
@@ -92108,7 +91964,7 @@
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id keep-env)
                 (match (macro-hygiene-bind-name-id
-                  (tc-global-shared-view keep-env)
+                  keep-env
                   macro-name
                   depth
                   slot)
@@ -92120,10 +91976,7 @@
                       (macro-hygiene-expr expr-bases start env macro-name depth)
                       (macro-hygiene-expr expr-bases end env macro-name depth)
                       nslot-id
-                      (macro-hygiene-type
-                        slot-ty
-                        (tc-global-shared-view keep-env)
-                        macro-name)
+                      (macro-hygiene-type slot-ty keep-env macro-name)
                       (macro-hygiene-expr expr-bases init env macro-name depth)
                       (macro-hygiene-expr
                         expr-bases
@@ -92207,7 +92060,7 @@
             expr-bases
             bindings
             env
-            (tc-global-shared-view macro-name)
+            macro-name
             depth)
             [(MacroHygieneResourceBindings.ResourceBindings nbindings body-env)
               (ast.ast-node-pool-context-expr-push
@@ -97696,18 +97549,18 @@
                         (tc-global-shared-view params)))
                     (macro-hygiene-produced-eval-start-with-pools!
                       (tc-context-macro-state ctx)
-                      (tc-global-shared-view syntax-pools))
+                      syntax-pools)
                     (cfg compile-profile (compiler-tc-macro-profile-start))
                     (match (let
                       [native-result : MacroNativeStdlibTlciResult
                         (macro-try-stdlib-tlci-native-resolved
-                          (tc-global-shared-view syntax-pools)
+                          syntax-pools
                           (tc-context-macro-state ctx)
                           identity
                           (tc-global-shared-view catalog)
                           (tc-global-shared-view params)
                           ret
-                          (tc-global-shared-view base-env)
+                          base-env
                           call-expr
                           (tc-global-shared-view operands)
                           count
@@ -97981,7 +97834,7 @@
               (tc-global-shared-view macro-name)
               (tc-global-shared-view params)
               (tc-global-shared-view ret)
-              (tc-global-shared-view env)
+              env
               call-expr)]
           native-result)
           [(MacroNativeStdlibTlciResult.Value value)
@@ -99012,8 +98865,7 @@
                                     macro-name-id
                                     definition-module-id
                                     declaration-id
-                                    (csym.compiler-symbols-shared-view
-                                      (tc-context-symbols ctx)))
+                                    ctx.shared)
                                   (+ depth 1))]
                               (begin
                                 (macro-hygiene-env-root-finish!
@@ -99068,8 +98920,7 @@
                                     macro-name-id
                                     definition-module-id
                                     declaration-id
-                                    (csym.compiler-symbols-shared-view
-                                      (tc-context-symbols ctx)))
+                                    ctx.shared)
                                   (+ depth 1))]
                               (begin
                                 (macro-hygiene-env-root-finish!
@@ -101337,8 +101188,7 @@
                                               macro-name
                                               definition-module
                                               declaration-id
-                                              (csym.compiler-symbols-shared-view
-                                                (tc-context-symbols call-ctx)))
+                                              call-ctx.shared)
                                             params
                                             1)
                                           (tc-global-shared-view call-expr)
@@ -101617,9 +101467,7 @@
                                                     macro-name
                                                     definition-module
                                                     declaration-id
-                                                    (csym.compiler-symbols-shared-view
-                                                      (tc-context-symbols
-                                                        call-ctx)))
+                                                    call-ctx.shared)
                                                   params
                                                   1)
                                                 (tc-global-shared-view

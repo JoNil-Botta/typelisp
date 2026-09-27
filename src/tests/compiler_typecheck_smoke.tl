@@ -4624,26 +4624,16 @@
         session-a
         root-module-id
         source-id)]
+    ;; Local ids never read the expanding context's symbols, so these hygiene
+    ;; contexts carry no shared block.
+    [hygiene : tc_core.MacroHygieneContext
+      (tc_core.MacroHygieneContext source-id root-module-id declaration-id 0)]
+    [surface-hygiene : tc_core.MacroHygieneContext
+      (tc_core.MacroHygieneContext source-id root-module-id -1 0)]
     [direct-local-id : i64
-      (tc_core.macro-hygiene-local-id
-        session-a
-        (tc_core.MacroHygieneContext
-          source-id
-          root-module-id
-          declaration-id
-          (compiler_symbols.compiler-symbols-empty))
-        3
-        source-id)]
+      (tc_core.macro-hygiene-local-id session-a hygiene 3 source-id)]
     [surface-local-id : i64
-      (tc_core.macro-hygiene-local-id
-        session-a
-        (tc_core.MacroHygieneContext
-          source-id
-          root-module-id
-          -1
-          (compiler_symbols.compiler-symbols-empty))
-        3
-        source-id)]
+      (tc_core.macro-hygiene-local-id session-a surface-hygiene 3 source-id)]
     [other-macro-local-id : i64
       (tc_core.macro-hygiene-local-id
         session-a
@@ -4651,51 +4641,19 @@
           (+ source-id 1)
           root-module-id
           declaration-id
-          (compiler_symbols.compiler-symbols-empty))
+          0)
         3
         source-id)]
     [deep-local-id : i64
-      (tc_core.macro-hygiene-local-id
-        session-a
-        (tc_core.MacroHygieneContext
-          source-id
-          root-module-id
-          declaration-id
-          (compiler_symbols.compiler-symbols-empty))
-        1024
-        source-id)]
+      (tc_core.macro-hygiene-local-id session-a hygiene 1024 source-id)]
     [deep-local-again : i64
-      (tc_core.macro-hygiene-local-id
-        session-a
-        (tc_core.MacroHygieneContext
-          source-id
-          root-module-id
-          -1
-          (compiler_symbols.compiler-symbols-empty))
-        1024
-        source-id)]
+      (tc_core.macro-hygiene-local-id session-a surface-hygiene 1024 source-id)]
     [collision-local-id : i64
-      (tc_core.macro-hygiene-local-id
-        session-a
-        (tc_core.MacroHygieneContext
-          source-id
-          root-module-id
-          declaration-id
-          (compiler_symbols.compiler-symbols-empty))
-        1536
-        source-id)]
+      (tc_core.macro-hygiene-local-id session-a hygiene 1536 source-id)]
     [b-context-id : i64
       (tc_core.macro-hygiene-global-id session-b module-id source-id false)]
     [b-local-id : i64
-      (tc_core.macro-hygiene-local-id
-        session-b
-        (tc_core.MacroHygieneContext
-          source-id
-          root-module-id
-          declaration-id
-          (compiler_symbols.compiler-symbols-empty))
-        3
-        source-id)]
+      (tc_core.macro-hygiene-local-id session-b hygiene 3 source-id)]
     [before-reset : bool
       (and
         (tc_core.macro-hygiene-global-legacy-id? session-a legacy-id)

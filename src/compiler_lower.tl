@@ -32258,25 +32258,27 @@
                     result-ty
                     origin)])])])]))
 
-(define (lower-slice-view-bounds-checked
-  [ctx : tc_core.TcContext]
+;; The first half of a view's range check: branch to PREFIX_bounds_fail unless
+;; start <= source length, as unsigned. Checked carries the state in the
+;; PREFIX_start_ok block, the fail label and the PREFIX_ok label the length
+;; check continues with.
+(defenum LowerRangeStart
+  (Checked LowerState i64 i64))
+
+(define (lower-range-start-checked
   [state : LowerState]
-  [src-ptr : ir.CompilerIrValue]
   [src-len : ir.CompilerIrValue]
   [start-value : ir.CompilerIrValue]
-  [len-value : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]
-  [result-ty : ast.AstType]
-  [origin : ast.AstExpr]) : ResultLowerExpr
+  [prefix : String]) : LowerRangeStart
   (match (lower-cast-value
     state
-    (lower-global-shared-view start-value)
+    start-value
     (ast.AstType.I64)
     (ast.AstType.U64))
     [(LowerExpr.Expr start-u-state start-u _)
       (match (lower-cast-value
         start-u-state
-        (lower-global-shared-view src-len)
+        src-len
         (ast.AstType.I64)
         (ast.AstType.U64))
         [(LowerExpr.Expr src-len-u-state src-len-u _)
@@ -32294,38 +32296,60 @@
                       (ast.AstType.U64)))]
                 (match (lower-state-fresh-label
                   start-ok-state
-                  "slice_view_start_ok")
+                  (str_cat.str-cat
+                    (lower-global-shared-view prefix)
+                    "_start_ok"))
                   [(LowerLabel.Label rem-label-state rem-label)
                     (match (lower-state-fresh-label
                       rem-label-state
-                      "slice_view_bounds_fail")
+                      (str_cat.str-cat
+                        (lower-global-shared-view prefix)
+                        "_bounds_fail"))
                       [(LowerLabel.Label fail-label-state fail-label)
                         (match (lower-state-fresh-label
                           fail-label-state
-                          "slice_view_ok")
+                          (str_cat.str-cat prefix "_ok"))
                           [(LowerLabel.Label copy-label-state copy-label)
-                            (let
-                              [rem-start : LowerState
-                                (lower-state-finish-block
-                                  (lower-state-emit
-                                    copy-label-state
-                                    (ir.CompilerIrInstr.Branch
-                                      (ir.CompilerIrValue.Var start-ok-var)
-                                      rem-label
-                                      fail-label))
-                                  rem-label)]
-                              (lower-slice-view-check-len
-                                ctx
-                                rem-start
-                                src-ptr
-                                src-len
-                                start-value
-                                len-value
-                                fail-label
-                                copy-label
-                                elem-ty
-                                result-ty
-                                origin))])])]))])])]))
+                            (LowerRangeStart.Checked
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  copy-label-state
+                                  (ir.CompilerIrInstr.Branch
+                                    (ir.CompilerIrValue.Var start-ok-var)
+                                    rem-label
+                                    fail-label))
+                                rem-label)
+                              fail-label
+                              copy-label)])])]))])])]))
+
+(define (lower-slice-view-bounds-checked
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [src-ptr : ir.CompilerIrValue]
+  [src-len : ir.CompilerIrValue]
+  [start-value : ir.CompilerIrValue]
+  [len-value : ir.CompilerIrValue]
+  [elem-ty : ast.AstType]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-range-start-checked
+    state
+    (lower-global-shared-view src-len)
+    (lower-global-shared-view start-value)
+    "slice_view")
+    [(LowerRangeStart.Checked rem-start fail-label copy-label)
+      (lower-slice-view-check-len
+        ctx
+        rem-start
+        src-ptr
+        src-len
+        start-value
+        len-value
+        fail-label
+        copy-label
+        elem-ty
+        result-ty
+        origin)]))
 
 (define (lower-slice-view-call
   [ctx : tc_core.TcContext]
@@ -32768,60 +32792,20 @@
   [src-len : ir.CompilerIrValue]
   [start-value : ir.CompilerIrValue]
   [len-value : ir.CompilerIrValue]) : ResultLowerExpr
-  (match (lower-cast-value
+  (match (lower-range-start-checked
     state
+    (lower-global-shared-view src-len)
     (lower-global-shared-view start-value)
-    (ast.AstType.I64)
-    (ast.AstType.U64))
-    [(LowerExpr.Expr start-u-state start-u _)
-      (match (lower-cast-value
-        start-u-state
-        (lower-global-shared-view src-len)
-        (ast.AstType.I64)
-        (ast.AstType.U64))
-        [(LowerExpr.Expr src-len-u-state src-len-u _)
-          (match (lower-state-alloc-var src-len-u-state)
-            [(LowerAlloc.Alloc start-ok-alloc start-ok-var)
-              (let
-                [start-ok-state : LowerState
-                  (lower-state-emit
-                    start-ok-alloc
-                    (ir.CompilerIrInstr.BinOp
-                      start-ok-var
-                      ir.CompilerIrBinOp.Le
-                      start-u
-                      src-len-u
-                      (ast.AstType.U64)))]
-                (match (lower-state-fresh-label
-                  start-ok-state
-                  "substr_start_ok")
-                  [(LowerLabel.Label rem-label-state rem-label)
-                    (match (lower-state-fresh-label
-                      rem-label-state
-                      "substr_bounds_fail")
-                      [(LowerLabel.Label fail-label-state fail-label)
-                        (match (lower-state-fresh-label
-                          fail-label-state
-                          "substr_ok")
-                          [(LowerLabel.Label copy-label-state copy-label)
-                            (let
-                              [rem-start : LowerState
-                                (lower-state-finish-block
-                                  (lower-state-emit
-                                    copy-label-state
-                                    (ir.CompilerIrInstr.Branch
-                                      (ir.CompilerIrValue.Var start-ok-var)
-                                      rem-label
-                                      fail-label))
-                                  rem-label)]
-                              (lower-substring-check-len
-                                rem-start
-                                src-ptr
-                                src-len
-                                start-value
-                                len-value
-                                fail-label
-                                copy-label))])])]))])])]))
+    "substr")
+    [(LowerRangeStart.Checked rem-start fail-label copy-label)
+      (lower-substring-check-len
+        rem-start
+        src-ptr
+        src-len
+        start-value
+        len-value
+        fail-label
+        copy-label)]))
 
 (define (lower-substring
   [ctx : tc_core.TcContext]

@@ -46,9 +46,6 @@
 (define (lower-test-generated-syntax-id [value : String]) : ci.InternSyntaxId
   (ci.intern-syntax-id-from-raw (lower-test-generated-name-id value)))
 
-(define (lower-test-renderable-name-id [value : String]) : ci.InternId
-  (ci.intern-id-from-renderable (ci.intern-generated-canonical-name value)))
-
 (define (lower-test-renderable-name-id-with-state
   [interns : (&mut interns ci.InternCompatState)]
   [value : String]) : ci.InternId
@@ -9887,10 +9884,7 @@
   (match (lower-test-functions (lower.lower-compiler-source-with-mode src mode))
     [(LowerTestFunctions.Some functions)
       (and
-        (string.eq
-          (ir.compiler-ir-spmd-private-abi-program-error
-            (ir.compiler-ir-global-shared-view functions))
-          "")
+        (string.eq (ir.compiler-ir-spmd-private-abi-program-error functions) "")
         (lower-test-function-abi-ordinary? functions caller)
         (string.eq
           (ir.compiler-ir-test-spmd-private-abi-shapes functions)
@@ -9921,8 +9915,7 @@
             (and
               (> (string.string-length before) 0)
               (string.eq
-                (ir.compiler-ir-spmd-private-abi-program-error
-                  (ir.compiler-ir-global-shared-view functions))
+                (ir.compiler-ir-spmd-private-abi-program-error functions)
                 "")
               (string.eq
                 (ir.compiler-ir-test-spmd-private-abi-shapes functions)

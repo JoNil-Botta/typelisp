@@ -3282,8 +3282,7 @@
               (lower-global-shared-view functions)))
           (compiler-lower-profile-counter
             (str_cat.str-cat "ir." (lower-global-shared-view point) ".blocks")
-            (ir.compiler-ir-function-seq-block-count
-              (lower-global-shared-view functions)))
+            (ir.compiler-ir-function-seq-block-count functions))
           (compiler-lower-profile-counter
             (str_cat.str-cat "ir." point ".instructions")
             (ir.compiler-ir-function-seq-instruction-count functions)))])))

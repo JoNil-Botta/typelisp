@@ -648,7 +648,7 @@ fi
 
 echo "[compile-profile] verify package-test native structural equality"
 run_logged "$BUILD_CLI_TEST_STDOUT" "$BUILD_CLI_TEST_STDERR" "profile package-test native structural equality failed" \
-    "$PROFILE_BIN" test --check src/build_cli_core.tl --target "$NL_BOOTSTRAP_TARGET" \
+    "$PROFILE_BIN" test --check src/build_cli_core_tests.tl --target "$NL_BOOTSTRAP_TARGET" \
     --stdlib-root stdlib
 
 echo "[compile-profile] verify hydrated prelude bypass and source parity"

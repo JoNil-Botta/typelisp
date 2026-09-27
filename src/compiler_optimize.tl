@@ -603,7 +603,7 @@
     (reg.compiler-reg-debug-set-trace-homes! trace-passes)
     (set! compiler-opt-debug-verify-ir verify-ir)
     ;; Pass snapshots accumulate in a segmented buffer: each observation is
-    ;; O(its rendered size) instead of a whole-prefix string copy (#6115).
+    ;; O(its rendered size) instead of a whole-prefix string copy.
     ;; Publish the borrowed owner and every dependent view as one value.
     ;; Configuration is a command boundary, so no inline owner is live. Reset
     ;; that substate here as well instead of carrying an empty descriptor from
@@ -1188,11 +1188,11 @@
 ;; reused across blocks. So bind/unbind only ever extend the most recent env.
 ;; We exploit that: the newest entry for a var always shadows older ones, so
 ;; `bind` and `unbind` just PREPEND (O(1)) instead of rebuilding the whole list
-;; to remove the prior entry (the old O(n)-per-instruction copy made folding a
-;; single large block O(n^2) in both time and allocation -- e.g. a function that
-;; is one giant `str-cat` lowers to a long `string-append` call chain, and each
-;; call's unbind of its dst rebuilt the entire env). `OptConstEnv.Shadow` records
-;; "this var is no longer a known constant" so lookup stops at it.
+;; to remove the prior entry, which would make folding a single large block
+;; O(n^2) in both time and allocation (a function that is one giant `str-cat`
+;; lowers to a long `string-append` call chain, and each call unbinds its dst).
+;; `OptConstEnv.Shadow` records "this var is no longer a known constant" so
+;; lookup stops at it.
 (defenum OptConstEnv
   (Nil)
   (Cons i64 ir.CompilerIrValue ast.AstType (Box OptConstEnv))
@@ -2778,8 +2778,8 @@
 ;; left the same add materialises the literal into the destination first and
 ;; then adds the register, which costs an extra instruction AND forces a copy
 ;; whenever the allocator hands the destination a register the source still
-;; occupies. Measured in benchmarks/gvn_table's inlined `gvn-facts-slot`, the
-;; `(- 0 (+ 2 slot))` tail lowers as
+;; occupies. For example gvn_table's inlined `gvn-facts-slot` tail
+;; `(- 0 (+ 2 slot))` lowers as
 ;;     movq %rcx, %r11 / movl $2, %ecx / addq %r11, %rcx
 ;; where the canonical spelling needs only `leaq 2(%r11), %rcx`.
 ;;
@@ -2816,10 +2816,11 @@
 ;; destination already holds the register operand, copies that aside as well.
 ;; sccp_lattice's dispatch loop computes `at = @sccp-instr-base + row * 8` on
 ;; every row: `leaq (,%row,8) / movq %rax, %r8 / movq base(%rip), %rax / addq
-;; %r8, %rax` today, `leaq (,%row,8) / addq base(%rip), %rax` with the cell on
-;; the right. Only a VAR on the right qualifies -- two cells, or a cell and a
-;; literal, have no better spelling either way -- and the read-modify-write of
-;; one cell keeps the cell on the left (opt-binop-commute-cell-lhs?).
+;; %r8, %rax` with the cell on the left, `leaq (,%row,8) / addq base(%rip),
+;; %rax` with it on the right. Only a VAR on the right qualifies -- two cells,
+;; or a cell and a literal, have no better spelling either way -- and the
+;; read-modify-write of one cell keeps the cell on the left
+;; (opt-binop-commute-cell-lhs?).
 (define (opt-value-global-cell? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
     [(ir.CompilerIrValue.Global _) true]
@@ -2880,9 +2881,8 @@
 ;; destination already holds something), while the unary `Neg` it means lowers
 ;; to a single `negq` and lets the allocator place the result in the operand's
 ;; own register. Restricted to the 8-byte integer types, which is where the
-;; measured shape lives (the negated-index idiom in the hashmap probe) and
-;; where `negq` needs no width reasoning beyond what a 64-bit `subq` already
-;; did.
+;; shape lives (the negated-index idiom in the hashmap probe) and where `negq`
+;; needs no width reasoning beyond what a 64-bit `subq` already did.
 (define (opt-value-zero-literal? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
     [(ir.CompilerIrValue.I64 n) (= (deref n) 0)]
@@ -3093,17 +3093,15 @@
 
 ;; --- dead-code elimination ---------------------------------------------------
 ;;
-;; Conservative DCE matching the Rust optimizer's first slice: collect every IR
-;; var id referenced as an operand anywhere in the function, then drop pure
-;; temporary-producing instructions (`Mov`/`BinOp`/`UnOp`/`Phi`) whose result is
-;; never used. Calls, stores, jumps, branches, and returns are kept regardless
-;; (they have side effects or drive control flow). The used set is gathered over
-;; the *whole reachable function* after CFG simplification, so a var used in
-;; another remaining block is never dropped. DCE itself does not decide
-;; reachability.
+;; Conservative DCE: collect every IR var id referenced as an operand anywhere
+;; in the function, then drop pure temporary-producing instructions
+;; (`Mov`/`BinOp`/`UnOp`/`Phi`) whose result is never used. Calls, stores,
+;; jumps, branches, and returns are kept regardless (they have side effects or
+;; drive control flow). The used set is gathered over the *whole reachable
+;; function* after CFG simplification, so a var used in another remaining block
+;; is never dropped. DCE itself does not decide reachability.
 ;; Used-var set: var ids referenced somewhere in the function. Backed by
-;; opt_i64_i64_map.Map (stored value 1 = present) for O(1) membership; previously a linked
-;; list with O(n) contains and O(n^2) dedup'd inserts.
+;; opt_i64_i64_map.Map (stored value 1 = present) for O(1) membership.
 (define (opt-used-contains [set : (& set opt_i64_i64_map.Map)] [var : i64]) : bool
   (opt_i64_i64_map.contains? (& set) var))
 
@@ -3264,8 +3262,7 @@
       (+ dst 1))))
 
 ;; `make-array` already returns zeroed memory, so a fresh use-count array needs
-;; no initialising pass. The `opt-used-array-fill` helper existed only to run
-;; that pass and had no other caller, so it goes with it.
+;; no initialising pass.
 (define (opt-used-array-new [count : i64]) : (__tl_dyn-array i64)
   (__tl_make-array i64 count))
 
@@ -3369,14 +3366,11 @@
           (opt-collect-phi-uses-array items rest))))))
 
 ;; Same tag-chain economics as `opt-instr-def-var` (see the note there): this
-;; `match` lowers to a linear compare chain, so arm position is cost. In an
-;; opt2 self-compile this primitive runs ~34M times and the declaration order
-;; put `Alloc` -- the single most frequent shape, and non-using, so it fell
-;; through to the catch-all -- at the end of a 50-comparison walk, pushing the
-;; average query to 29.3 comparisons. Arms are ordered by measured dynamic
-;; frequency (4.2 comparisons average on the same compile), with explicit
-;; no-use arms for the hot non-using shapes (Alloc,
-;; Jump, LaneId) that previously reached the same answer through the catch-all.
+;; `match` lowers to a linear compare chain, so arm position is cost, and
+;; `Alloc` -- the single most frequent shape, and non-using -- would otherwise
+;; walk the whole chain to the catch-all. Arms are ordered by dynamic
+;; frequency, with explicit no-use arms for the hot non-using shapes (Alloc,
+;; Jump, LaneId) so they do not reach the catch-all.
 ;; Variant patterns over one enum are disjoint, so reordering cannot change
 ;; which arm matches.
 (define (opt-collect-instr-uses-array
@@ -4145,7 +4139,7 @@
 ;; slid down to index 0 afterwards. `out` is `slots` itself for the in-place
 ;; form (the opt1 path); the fresh forms leave `slots` untouched (the opt2
 ;; fixpoint driver still needs its input). `pools` is read by the escape form
-;; only. Answers how many instructions survive. refs #5726
+;; only. Answers how many instructions survive.
 (define (opt-dce-sweep!
   [pools : ast.AstNodePoolContext]
   [items : (__tl_dyn-array i64)]
@@ -5082,7 +5076,7 @@
 ;; `storage`), followed by `addr_of base storage`. This is the same contiguous
 ;; reservation shape emitted by lowering; every other instr is kept. Blocks
 ;; without a stack-promotable alloc, or whose allocs all escaped the slot plan,
-;; keep the ORIGINAL block value by reference. refs #5726
+;; keep the ORIGINAL block value by reference.
 (define (opt-aggregate-promote-alloc-run!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [storage : i64]
@@ -5155,8 +5149,8 @@
         (opt-aggregate-promote-block slots block)
         (opt-aggregate-promote-blocks slots (deref rest)))]
     ;; Dense driver: scan the block sequence in place and write a dense output
-    ;; sequence (refs #5726). opt-aggregate-promote-block keeps blocks it does
-    ;; not rewrite by reference, so unchanged blocks are never re-sequenced.
+    ;; sequence. opt-aggregate-promote-block keeps blocks it does not rewrite by
+    ;; reference, so unchanged blocks are never re-sequenced.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -5255,12 +5249,12 @@
 ;; survives exactly once and every read reads the same value -- so no walk over
 ;; the aggregate changes.
 ;;
-;; CALL ARGUMENTS. Refused (`escape:call`), and the reason is measured rather
-;; than conservative -- see opt-aggregate-split-refuse-args! for the rows. The
-;; storage of an aggregate the callee reads has to exist at the call, so the
-;; split would have to write every word back there, and the arms that fill it
-;; would have to materialize the words they do not set; both costs land on the
-;; hot path that the buffer's single store already covered.
+;; CALL ARGUMENTS. Refused (`escape:call`), and the reason is cost rather than
+;; conservatism -- see opt-aggregate-split-refuse-args!. The storage of an
+;; aggregate the callee reads has to exist at the call, so the split would have
+;; to write every word back there, and the arms that fill it would have to
+;; materialize the words they do not set; both costs land on the hot path that
+;; the buffer's single store already covered.
 (define (opt-aggregate-split-word-limit) : i64
   8)
 
@@ -6083,18 +6077,15 @@
 ;; rather than being left to the use-count check, so the census can separate
 ;; "the address left the function" from every other surplus use.
 ;;
-;; MEASURED, not assumed. The packet asks for the escaping argument to be
-;; rematerialized -- the storage kept and every word stored back into it
-;; immediately before the call. That was implemented and measured on
-;; sccp_lattice, where `opt-sccp-state-bind`'s `merged` is exactly that shape,
-;; and it is a LOSS: the join's arms stop writing the buffer once (one store on
-;; an arm that only sets a tag) and instead materialize every word into a
-;; register -- a `xor` per word the arm does not set, because the arm's phi
-;; inputs for those words are undefined -- and then write ALL of them back at
-;; the call. The rows: base 744.0M, split with rematerialization 752.9M
-;; (+1.19%), split refusing the escape 715.5M (-3.84%). The buffer's writer is
-;; the callee's own argument slot; taking it away from the arms and giving it
-;; back at the call pays for the aggregate twice.
+;; Rematerializing the escaping argument -- keeping the storage and storing
+;; every word back into it immediately before the call -- is a LOSS (the shape
+;; is `opt-sccp-state-bind`'s `merged`): the join's arms stop writing the
+;; buffer once (one store on an arm that only sets a tag) and instead
+;; materialize every word into a register -- a `xor` per word the arm does not
+;; set, because the arm's phi inputs for those words are undefined -- and then
+;; write ALL of them back at the call. The buffer's writer is the callee's own
+;; argument slot; taking it away from the arms and giving it back at the call
+;; pays for the aggregate twice.
 (define (opt-aggregate-split-refuse-args!
   [plan : OptSplitPlan]
   [args : ir.CompilerIrCallArgs]) : unit
@@ -9944,7 +9935,7 @@
   ;; consumers can take an allocation-free tail view by decrementing `len`.
   ;; Extending a prefix is in-place only while it is the unique high-water
   ;; view. Extending a tail or an already-branched prefix copies first, keeping
-  ;; the persistent cons semantics callers had with the old linked list.
+  ;; persistent cons semantics.
   ;; The buffer travels as its handle's bits (a dynamic buffer is one
   ;; pointer), so a set is a Copy value; every view shares the one buffer.
   (Dense u64 i64))
@@ -10038,10 +10029,10 @@
 
 ;; Membership walks the backing array directly rather than through
 ;; `opt-label-count` plus one `opt-label-ref` per element. The sets are tiny --
-;; on a self-compile 45% of the queries are against the empty set and 88% see two
-;; labels or fewer -- so the dispatch per element, not the element count, is what
-;; this loop costs. Slot `len` down to slot 1 is exactly `opt-label-ref`'s index
-;; 0 up to `count - 1`, newest label first.
+;; most queries see two labels or fewer, many see none -- so the dispatch per
+;; element, not the element count, is what this loop costs. Slot `len` down to
+;; slot 1 is exactly `opt-label-ref`'s index 0 up to `count - 1`, newest label
+;; first.
 (define (opt-label-contains [set : OptLabelSet] [label : i64]) : bool
   (match set
     [(OptLabelSet.Nil) false]
@@ -10286,7 +10277,7 @@
 ;; ids drawn densely from `compiler-ir-label-count`, so one array indexed by the
 ;; label id answers the query directly. A per-build generation stamp makes
 ;; "belongs to this CFG" a compare instead of a clear, so a rebuild costs one
-;; counter bump rather than a pass over the table (refs #5718, proposal 3).
+;; counter bump rather than a pass over the table.
 ;;
 ;; The table holds exactly one build, so it only serves the build itself --
 ;; resolving successor labels while the rows are filled. A finished index answers
@@ -10345,10 +10336,10 @@
 
 ;; Which generated-block markers a label's text contains, one row per label.
 ;; Label ids are never reused and their text never changes, so each row is
-;; computed once: bit 0 says the row is filled, bit k + 1 that the text contains
-;; marker k. The substring searches this replaces ran for every block of every
-;; pass that asked, inliner trials included. DELIBERATE-RAW (#6620): process
-;; storage in the IR label arena, exactly like opt-cfg-label-slot above.
+;; computed once, instead of a substring search for every block of every pass
+;; that asks, inliner trials included: bit 0 says the row is filled, bit k + 1
+;; that the text contains marker k. DELIBERATE-RAW (#6620): process storage in
+;; the IR label arena, exactly like opt-cfg-label-slot above.
 (define opt-label-marker-rows : (__tl_dyn-array i64)
   (__tl_make-array i64 1))
 
@@ -10431,9 +10422,8 @@
 ;; `targets-known` is one of the optimizer verifier's two structural CFG checks.
 ;; It falls out of the build for free: `opt-cfg-index-build-csr` drops
 ;; successor labels it cannot resolve, so an unknown target is a short CSR row.
-;; The other check needs no field -- see `opt-cfg-index-labels-unique?`. Together
-;; they replace rebuilding a label map and rehashing every label and every
-;; successor edge, once per verified function (refs #5718).
+;; The other check needs no field -- see `opt-cfg-index-labels-unique?`. Neither
+;; has to rebuild a label map or rehash every label and successor edge.
 (defstruct OptCfgIndex
   (labels-unique bool)
   (labels (__tl_dyn-array i64))
@@ -10521,7 +10511,7 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-cfg-index-fill-label-seq! seq generation labels dense-blocks index)]))
 
-;; Integer rows are built newest-first, but CSR has always enumerated them
+;; Integer rows are built newest-first, but CSR enumerates them
 ;; oldest-first. Read physical slots directly instead of allocating a reversed
 ;; chain for each successor and predecessor row.
 (define (opt-cfg-fill-row-edges!
@@ -10591,11 +10581,8 @@
 ;; The two CSRs of an index, written directly. A successor row holds the ids of
 ;; the labels `opt-cfg-block-successors-with-next` collects for the block, in
 ;; its order (first occurrence), with labels that name no block dropped; a
-;; predecessor row holds its sources in increasing block order. Those are the
-;; rows the label-set build produced one `OptLabelSet` at a time -- a successor
-;; set and an id set per block and a growing predecessor set per edge, each
-;; then copied out -- and a short successor row is still exactly an unknown
-;; target.
+;; predecessor row holds its sources in increasing block order. A short
+;; successor row is exactly an unknown target.
 (defstruct OptCfgCsrRows
   (succs OptCfgCsr)
   (preds OptCfgCsr)
@@ -10966,7 +10953,7 @@
 
 ;; Ids are inserted in block order and an occupied slot whose label matches is
 ;; left alone, so a duplicate-label CFG resolves to its first block -- the same
-;; answer the legacy list scan gave before the verifier rejects it.
+;; answer a first-match list scan gives -- until the verifier rejects it.
 (define (opt-cfg-index-fill-id-map!
   [slots : (&mut slots (__tl_dyn-array i64))]
   [labels : (& labels (__tl_dyn-array i64))]
@@ -11061,8 +11048,8 @@
 
 ;; `opt-cfg-index-fill-labels!` records whether every label inserted exactly
 ;; once. The reverse table keeps the first entry for duplicate labels so indexed
-;; lookup agrees with the legacy list scan even before the verifier rejects the
-;; malformed CFG.
+;; lookup agrees with a first-match list scan even before the verifier rejects
+;; the malformed CFG.
 (define (opt-cfg-index-labels-unique? [index : (& index OptCfgIndex)]) : bool
   index.labels-unique)
 
@@ -11932,8 +11919,7 @@
 ;; The block is the CFG index's dense block id, not its label. Definitions are
 ;; collected by walking the same block list the paired `OptCfgContext` was built
 ;; from, and `opt-cfg-index-build` numbers blocks in that walk order, so the
-;; position is the id. Recovering it by hashing the label was the single largest
-;; `opt-cfg-index-id` caller (refs #5718).
+;; position is the id, with no label hashing.
 (defenum OptVarDef
   (Def i64 i64 i64))
 
@@ -11958,22 +11944,19 @@
 ;; Instruction-tag dispatch order matters here: a `match` over a payload enum
 ;; lowers to a linear tag compare chain, so an arm's position is its cost, and
 ;; anything routed to the trailing catch-all pays the whole chain. This is one
-;; of the two hottest primitives in an opt2 self-compile (~70M calls), and the
-;; declaration-ordered arm list made the average query walk 11.3 comparisons
-;; because the terminators and memory writers -- Branch/Return/Jump/StorePtr,
-;; which are non-defining and so hit the catch-all -- are among the most
-;; frequent shapes in real IR.
+;; of the two hottest primitives in an opt2 self-compile, and the terminators
+;; and memory writers -- Branch/Return/Jump/StorePtr, which are non-defining --
+;; are among the most frequent shapes in real IR.
 ;;
-;; The arms below are ordered by measured dynamic frequency (4.2 comparisons
-;; average on the same compile), and every hot non-defining shape gets an
-;; explicit `None` arm near the front instead of falling through ~35
-;; comparisons to reach the same answer. Variant patterns
+;; The arms below are ordered by dynamic frequency, and every hot non-defining
+;; shape gets an explicit `None` arm near the front instead of falling through
+;; the whole chain to reach the same answer. Variant patterns
 ;; over one enum are disjoint, so reordering them cannot change which arm
-;; matches; the explicit `None` arms return exactly what the catch-all returned
+;; matches; the explicit `None` arms return exactly what the catch-all returns
 ;; for those tags. Rare vector/mask/SPMD forms and the two value-returning
 ;; indirect-call definition arms stay at the back. The shapes left in the
 ;; catch-all (aggregate C-ABI store-result calls, vector and predicated stores,
-;; TailCallIndirect) keep answering `None` exactly as before.
+;; TailCallIndirect) answer `None`.
 (define (opt-instr-def-var [instr : ir.CompilerIrInstr]) : option_i64.Option
   (match instr
     [(ir.CompilerIrInstr.Alloc dst _) (option_i64.Some dst)]
@@ -13162,8 +13145,8 @@
 
 ;; Dense SSA var -> AstType table. Function-local vreg ids are dense, so the
 ;; table is a direct-index vector; lookup is O(1) by construction instead of a
-;; linear chain walk. The insertion-order sidecar preserves the retired
-;; chain's newest-first walk order exactly (#5731).
+;; linear chain walk. The insertion-order sidecar preserves a newest-first
+;; walk order.
 (defstruct OptSsaVarTypes
   (entries opt_ssa_var_type_vec.Vec)
   (order opt_dense_i64_vec.Vec))
@@ -13238,7 +13221,7 @@
 ;; present values are one-based indexes into the compact entry prefix. Both
 ;; arrays are sized from the function frame/type inventory in production, so
 ;; lookup and updates are direct without generating another collection module
-;; or allocating the expensive label/member payload for absent vars (#5731).
+;; or allocating the expensive label/member payload for absent vars.
 (defstruct OptSsaVarBlocks
   (by-var (__tl_dyn-array i64))
   (entries (__tl_dyn-array OptSsaVarBlockEntry))
@@ -13278,7 +13261,7 @@
 
 ;; These three SSA sequences share one generated dense backend. Physical push
 ;; is logical Cons/prepend, so indexed consumers read from the live end toward
-;; zero and retain the old newest-first lookup and phi emission order.
+;; zero and keep a newest-first lookup and phi emission order.
 (define (opt-ssa-phi-sites-new) : OptSsaPhiSites
   (OptSsaPhiSites (opt_ssa_dense_vec.with-capacity 4)))
 
@@ -13437,8 +13420,8 @@
       [(ir.CompilerIrRepresentationKind.Unknown) false])))
 
 ;; Compatibility entry for standalone optimizer helpers and tests that do not
-;; own a whole-program representation capability. It intentionally preserves
-;; the historical fixed-handle boundary.
+;; own a whole-program representation capability. It intentionally keeps the
+;; fixed-handle boundary.
 (define (opt-ssa-register-value-type? [ty : (& ty ast.AstType)]) : bool
   (opt-ssa-fixed-register-value-type? ty))
 
@@ -14099,7 +14082,7 @@
 ;; dominator walk, while the parallel change arrays form an exact-capacity undo
 ;; log. A child checkpoints the log and rolls it back before its sibling runs.
 ;; Block exits clone only the compact current/presence prefixes, so retained
-;; predecessor snapshots cannot alias later mutations (#5731).
+;; predecessor snapshots cannot alias later mutations.
 (define (opt-ssa-env-with-capacity
   [var-capacity : i64]
   [entry-capacity : i64]
@@ -14805,11 +14788,11 @@
 ;; it has no definition -- e.g. an inner-loop counter's phi at the OUTER loop
 ;; header sees the function-entry path, where the counter is first defined only
 ;; inside the outer body. A well-formed source never READS the var along such a
-;; path, so the input value is unobservable there. The previous fallback named
-;; the ORIGINAL var, which made the materialized function fail the
-;; use-before-definition verify and silently disabled SSA construction (and
-;; with it every SSA-gated pass: GVN, load-GVN, preheaders, LICM, induction,
-;; loop-BCE) for every function with a nested loop. Feed a typed zero constant
+;; path, so the input value is unobservable there. Naming the ORIGINAL var
+;; instead would make the materialized function fail the use-before-definition
+;; verify and silently disable SSA construction (and with it every SSA-gated
+;; pass: GVN, load-GVN, preheaders, LICM, induction, BCE) for every function
+;; with a nested loop. Feed a typed zero constant
 ;; instead: it renders and allocates like any other constant phi input, and
 ;; phis whose value is never used are removed by DCE.
 (define (opt-ssa-phi-undef-input [ty : (& ty ast.AstType)]) : ir.CompilerIrValue
@@ -14912,11 +14895,8 @@
   (match block
     [(ir.CompilerIrBlock.Block label _)
       (let
-        ;; One builder per block, filled phis-then-body. The old shape built
-        ;; a cons chain for each half, joined them with a recursive list
-        ;; append, and then had `compiler-ir-block` walk the joined spine
-        ;; twice more (count, then fill-array) to rebuild the dense sequence
-        ;; it started from.
+        ;; One builder per block, filled phis-then-body, with no cons chain
+        ;; to join and re-count.
         [builder : ir.CompilerIrInstrBuilder (ir.compiler-ir-instr-builder-new)]
         [renamed-index : i64 (opt-ssa-rename-blocks-lookup-index renamed label)]
         (begin
@@ -14985,9 +14965,7 @@
           (opt-ssa-rewrite-preexisting-phi-inputs facts outs rest ty))))))
 
 ;; Append the renamed block body to `builder`, rewriting pre-existing phi
-;; inputs in place of the old cons-per-instruction rebuild. Traversal order is
-;; unchanged: the old form evaluated the rewrite for the head before recursing
-;; on the tail, and so does this one.
+;; inputs. Instructions are rewritten in order, head first.
 (define (opt-ssa-push-rewritten-preexisting-instrs!
   [facts : OptSsaFacts]
   [outs : (& outs OptSsaBlockOuts)]
@@ -15371,10 +15349,8 @@
 ;; An `CompilerIrValue.Global` operand is a hidden LOAD of a mutable global (the backend
 ;; emits a rip-relative read at each use site), so an instruction using one is
 ;; not a pure expression: reusing its result across an intervening store/call
-;; that mutates the global yields a stale value. The opt2 self-build miscompile
-;; was exactly this -- `ty-node-push` reused the pre-grow capacity address of
-;; `ty-node-pool-slots` after the grow call replaced the array, so the bounds
-;; check compared against the old capacity and aborted once the pool grew.
+;; that mutates the global yields a stale value (for example a bounds check
+;; against a global array's capacity from before the call that grew it).
 ;; `opt-copy-safe-source?` already encodes the safe operand set: vars
 ;; (single-def under this pass's SSA gate) and unambiguous scalar literals.
 (define (opt-global-key-for-instr [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeGlobalExprKey
@@ -15779,16 +15755,13 @@
 ;;
 ;; Flagship: `opt-bit-test-mask-block` materializes its 64-bit window mask as
 ;; its own `Mov` precisely so that hoist and the two-register `bt` lowering can
-;; happen (see the note there). Before this rule the global copy sweep folded
-;; the literal straight back into the `Shr`, and lex_source's two classifier
-;; sites each paid `movabsq $4899916392364504625` on every one of the ~2.27M
-;; chain entries, one of them wrapped in a `movq %r9, 8(%rsp)` /
-;; `movq 8(%rsp), %r9` spill pair. Keeping the Var costs the register-rich site
-;; nothing at all (a bare `bt` against the hoisted register) and the
-;; register-poor site one reload, which is why the `bt` lowering had to learn to
-;; place a non-register-homed mask (compiler-backend-bit-test-load-mask) before
-;; this rule was a win everywhere: -2,690,288 Ir on lex_source, every other
-;; benchmark row unchanged.
+;; happen (see the note there). Without this rule the global copy sweep folds
+;; the literal straight back into the `Shr`, and a classifier site pays a
+;; `movabsq` on every chain entry, sometimes wrapped in a spill pair. Keeping
+;; the Var costs a register-rich site nothing at all (a bare `bt` against the
+;; hoisted register) and a register-poor site one reload, which the `bt`
+;; lowering handles by placing a non-register-homed mask
+;; (compiler-backend-bit-test-load-mask).
 ;;
 ;; Scope: the LEFT operand of a BinOp only. The backend's own wide-constant
 ;; relief reads the RIGHT operand exclusively
@@ -15968,7 +15941,7 @@
 ;; FRESH sequence and `instrs` is not touched, so this needs no unique-ownership
 ;; argument -- which matters, because the opt2 fixpoint driver
 ;; (optimize-function-pass-with-summaries) falls back to its INPUT function when
-;; a round changes nothing, and the pipeline head can still alias it. refs #5726
+;; a round changes nothing, and the pipeline head can still alias it.
 (define (opt-global-copy-instr-seq
   [facts : OptGlobalFactTable]
   [pack-facts : OptGlobalFactTable]
@@ -16137,7 +16110,7 @@
             [_ false]))]
       [_ false])))
 
-;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). refs #5726
+;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq).
 (define (opt-global-cse-instr-seq
   [type-segment-bases : i64]
   [facts : OptGlobalFactTable]
@@ -16332,7 +16305,7 @@
 ;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). The
 ;; in-place twin below (-instr-seq-rewrite!) stays reserved for the opt1 path,
 ;; which owns its blocks; this form is the one the opt2 fixpoint can use,
-;; because it leaves its input alone. refs #5726
+;; because it leaves its input alone.
 (define (opt-cfg-fold-branches-instr-seq [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
@@ -16649,11 +16622,9 @@
     false))
 
 ;; `blocks` is the list `index` was built from, so the walk position is the
-;; block id. `opt-loop-body-member-array-contains-id?` range-checks it, which is
-;; what the old missing-label arm did. At most `limit` blocks are members, so the
-;; walk stops at the last one instead of running to the end of the function;
-;; this runs once per loop, and was one recursive frame per block of the whole
-;; function.
+;; block id. `opt-loop-body-member-array-contains-id?` range-checks it. At most
+;; `limit` blocks are members, so the walk stops at the last one instead of
+;; running to the end of the function; this runs once per loop.
 (define (opt-loop-body-blocks-from
   [members : (& members (__tl_dyn-array bool))]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -16862,10 +16833,9 @@
         (OptMaybeNaturalLoop.Some loop)
         (opt-natural-loop-find (deref rest) header latch))]))
 
-;; Membership during body collection is an O(1) id-indexed marks
-;; array (the body/worklist LISTS keep their exact construction order, so
-;; downstream output is byte-identical); reachability reads the CFG index's
-;; bool array instead of scanning the label list.
+;; Membership during body collection is an O(1) id-indexed marks array (the
+;; body/worklist LISTS keep their construction order); reachability reads the
+;; CFG index's bool array instead of scanning the label list.
 (define (opt-natural-loop-collect-add-pred
   [index : (& index OptCfgIndex)]
   [marks : (&mut marks (__tl_dyn-array bool))]
@@ -17442,12 +17412,12 @@
 
 ;; --- preheader synthesis tracing ---------------------------------------------
 ;;
-;; BCE-3. The pass above had no tracer at all, so a loop that reached the
-;; versioner without a preheader could not be told apart from a loop this pass
-;; refused: `bce-version|...|refuse|shape:no-preheader` names the VERSIONER's
-;; clause, not the synthesis clause that left the shape behind, and it is by far
-;; the largest refusal class on every guard-heavy row. One line per natural loop
-;; this pass EXAMINES:
+;; BCE-3. Without this tracer a loop that reached the versioner without a
+;; preheader could not be told apart from a loop this pass refused:
+;; `bce-version|...|refuse|shape:no-preheader` names the VERSIONER's clause,
+;; not the synthesis clause that left the shape behind, and it is a large
+;; refusal class on guard-heavy code. One line per natural loop this pass
+;; EXAMINES:
 ;;
 ;;   preheader|<function>|<header>|<verdict>|<reason>|outside=<n>
 ;;
@@ -17733,8 +17703,8 @@
 ;; The header's own admission, as a CLAUSE CODE rather than a bool: the two
 ;; ways it can fail -- a header the block list no longer holds, and a header phi
 ;; with different values on two outside edges -- are different verdicts about
-;; the loop, and BCE-3's tracer has to name which one decided. The decision
-;; itself is the one `opt-loop-preheaders-header-compatible?` made.
+;; the loop, and BCE-3's tracer has to name which one decided. The phi test
+;; itself is `opt-loop-preheaders-header-instrs-compatible-from?`.
 (define (opt-loop-preheaders-header-reason
   [blocks : ir.CompilerIrBlockList]
   [header : i64]
@@ -18065,10 +18035,9 @@
         header
         preheader)]))
 
-;; The admission `and` the synthesis used to run, as the clause code that
-;; decided it. The clauses and their order are unchanged -- an empty outside
-;; set, then this pass's own existing-safe scan, then the header's admission --
-;; so the same loops are synthesized; only the verdict now has a name.
+;; The synthesis admission, as the clause code that decided it. The clauses run
+;; in order: an empty outside set, then this pass's own existing-safe scan,
+;; then the header's admission.
 (define (opt-loop-preheaders-refusal-reason
   [blocks : ir.CompilerIrBlockList]
   [pred-map : (& pred-map OptPredMap)]
@@ -18650,10 +18619,9 @@
 
 ;; --- post-SSA loop rotation (rotate_ssa) -------------------------------------
 ;;
-;; The pre-SSA rotation pass (#2458) never fires on lowered while-loops: their
-;; preheaders are synthesized by the loop-preheaders pass (#2457), which runs
-;; after register-value SSA construction, so nested/inner loops stay top-tested
-;; (a
+;; The pre-SSA rotation pass never fires on lowered while-loops: their
+;; preheaders are synthesized by the loop-preheaders pass, which runs after
+;; register-value SSA construction, so nested/inner loops stay top-tested (a
 ;; guard block plus a jump back on every iteration) and loop BCE misses the
 ;; facts it derives from the rotated shape. This pass rotates one SSA-form
 ;; natural loop per invocation (the surrounding fixpoint handles the rest):
@@ -19131,10 +19099,10 @@
         (opt-rotate-ssa-succs-inside? body (opt-label-tail succs)))]))
 
 ;; True when the header's exit arm is the loop's ONLY way out: no body block
-;; other than the header has a successor outside the body. This no longer
-;; decides whether an outside reader can be served -- the classified placement
-;; below decides that per read -- but it still separates the two populations,
-;; and the flag_exit deferral is keyed on it.
+;; other than the header has a successor outside the body. This does not
+;; decide whether an outside reader can be served -- the classified placement
+;; below decides that per read -- but it separates the two populations, and
+;; the flag_exit deferral is keyed on it.
 (define (opt-rotate-ssa-single-exit?
   [pred-map : (& pred-map OptPredMap)]
   [body : OptLabelSet]
@@ -19185,8 +19153,7 @@
 ;;              value with the latch's back-edge value), and `q` dominates
 ;;              everything the exit block dominates, so the read is rewritten
 ;;              to `q`. Unreachable positions are folded in here: they are
-;;              rewritten exactly as the pre-existing pass rewrote them, and
-;;              nothing reads them.
+;;              rewritten to `q` too, and nothing reads them.
 ;;   class 2 -- the BODY block dominates the read. That is the multi-exit case:
 ;;              the read hangs off a second exit that leaves the loop through a
 ;;              body block, and the body block's moved phi still dominates it,
@@ -19750,8 +19717,8 @@
 ;; A single-exit loop's whole outside region is class 1 by construction (the
 ;; header's exit arm is the only way out, so the exit block dominates every
 ;; reader of a loop-carried value), and saying so directly keeps that loop off
-;; the dominator queries and off the classified walks entirely -- the pass
-;; costs exactly what it cost before this file learned about second exits.
+;; the dominator queries and off the classified walks entirely, so second-exit
+;; support costs a single-exit loop nothing.
 (define (opt-rotate-ssa-plan-class [plan : OptRotateSsaPlan] [label : i64]) : i64
   (if plan.classified?
     (opt-rotate-ssa-position-class
@@ -19959,12 +19926,9 @@
 ;; conditional back edge instead. That is a fixed two-instruction saving per
 ;; trip, so it is worth having in a tight scan loop and worth nothing in a big
 ;; one -- while the cost, a rewrite plus a fresh dominator build plus a full
-;; verify per accepted loop, is paid per loop regardless. Measured on this
-;; tree, admitting every multi-exit loop cost the opt2 self-compile +0.30%
-;; (155,033,343,221 -> 155,495,112,924) for benchmark wins that came entirely
-;; from bodies under this bound: `benchmarks/peephole_lines`'s `pl-line-end`
-;; goes 7 instructions per byte to 6 (-11.5% on the benchmark's hottest
-;; function) and `benchmarks/liveness_scan`'s word scan the same way.
+;; verify per accepted loop, is paid per loop regardless. The bound admits the
+;; tight scan loops where the saving is real (the scan-loop shape of
+;; `pl-line-end`) and keeps that cost off every larger body.
 (define (opt-rotate-ssa-multi-exit-body-max) : i64
   32)
 
@@ -19979,15 +19943,13 @@
 ;; rotates in the ordinary way, with the flag test gone from the trip entirely.
 ;; That is worth far more than rotating the flag-carrying form, and rotating
 ;; first destroys it -- rotation moves the flag phi out of the header, so C1
-;; stops matching and the conversion never fires again. Measured on
-;; `benchmarks/intern_table`'s `it-slice-eq?`: rotating its `(and (< i len)
-;; ok)` loop ahead of flag_exit costs +35,506,866 Ir (591,082,051 ->
-;; 626,588,917, +6.01%), because the converted+versioned form exits on the
-;; first mismatch at 7 instructions per byte and the rotated flag form runs the
-;; whole slice at ten with a `test`/`jcc` on the flag every trip. So a loop
-;; whose second exit is still gated by a convertible monotone flag is left to
-;; flag_exit; one whose flag has a non-phi reader outside the loop is one
-;; flag_exit can never convert, and rotates here.
+;; stops matching and the conversion never fires again. On `it-slice-eq?`'s
+;; `(and (< i len) ok)` loop the converted+versioned form exits on the first
+;; mismatch, while the rotated flag form runs the whole slice with a
+;; `test`/`jcc` on the flag every trip. So a loop whose second exit is still
+;; gated by a convertible monotone flag is left to flag_exit; one whose flag has
+;; a non-phi reader outside the loop is one flag_exit can never convert, and
+;; rotates here.
 ;; The back-edge input decides whether the flag is still LIVE as a flag. C1
 ;; wants a var there to start its closure walk from; once flag_exit has run it
 ;; pins the closure's definitions to K, so the back edge carries the literal
@@ -19996,7 +19958,7 @@
 ;; still has two exits and still carries the (now constant) flag phis until
 ;; SCCP retires them, and a deferral keyed on the seed alone would refuse the
 ;; rotation flag_exit exists to enable.
-;; THE SENTINEL SHAPE. flag_exit's C1 no longer wants a bool: an i64 phi seeded
+;; THE SENTINEL SHAPE. flag_exit's C1 does not require a bool: an i64 phi seeded
 ;; with a literal or with a name the loop cannot redefine (`-1`, a `mov
 ;; @sentinel` read hoisted above the loop) and cleared to a computed value
 ;; converts the same way, with the gate copied to the assignment site. The
@@ -20135,8 +20097,8 @@
 ;; tests something DERIVED from the flag -- `benchmarks/liveness_scan`'s
 ;; `(and (< i words) (not changed))`, whose gate branches on a UnOp -- is not in
 ;; that closure and is a loop flag_exit can never convert. Deferring it would
-;; cost the rotation and buy nothing (measured: liveness_scan -2,353,975 Ir when
-;; that loop rotates), so the deferral asks for the gate flag_exit asks for.
+;; cost the rotation and buy nothing, so the deferral asks for the gate
+;; flag_exit asks for.
 (define (opt-rotate-ssa-flag-gate-instrs?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [body : OptLabelSet]
@@ -20315,10 +20277,10 @@
     ;; short an input -- but with no exit phis to mint nothing is prepended,
     ;; the exit block's own predecessors are untouched, and the rotation only
     ;; swaps the header's single edge into it for the preheader's and the
-    ;; latch's. `bce_version` is the measured producer of that shape: it clones
-    ;; a loop into a bounds-checked and a fast version that SHARE one exit
-    ;; block, so the pre-existing clause refused BOTH halves of every versioned
-    ;; counted loop -- including the hot fast half.
+    ;; latch's. `bce_version` produces that shape: it clones a loop into a
+    ;; bounds-checked and a fast version that SHARE one exit block, so
+    ;; requiring a private exit block would refuse BOTH halves of every
+    ;; versioned counted loop -- including the hot fast half.
     [exit-phis-needed? : bool
       (opt-rotate-ssa-recs-used-outside-array? recs outside-uses)]
     (if (and
@@ -20483,19 +20445,17 @@
               [(ResultCompilerOptimizeVerify.Err _) (OptFunctionCtxMaybe.No)]))])]))
 
 ;; A candidate whose rewrite fails the post-rotation verify is a REFUSAL of
-;; that loop, not the end of the round. The verify used to sit above this scan,
-;; in `opt-rotate-ssa-rounds`, so the first loop whose rewrite the verifier
-;; rejected retired the whole rounds loop and every loop AFTER it in the list
-;; lost its chance -- for the rest of the pipeline, because the next stage
-;; re-scans the same list and stops at the same poison pill. Measured in
-;; `benchmarks/liveness_scan`'s `recompute!`: the `(and (< i words) (not
-;; changed))` early-exit loop passes every admission clause but rotates into a
-;; dominance violation (its second exit leaves the loop through a body block,
-;; so the fresh exit phi does not dominate the outside reader), and the
-;; writeback loop that follows it in the list was never even examined by either
-;; rotation stage. Verifying per candidate keeps the same discipline -- only an
-;; accepted, verified rewrite is banked -- and costs one extra verify per
-;; rejected candidate per round.
+;; that loop, not the end of the round. A verify above this scan, in
+;; `opt-rotate-ssa-rounds`, would let the first loop whose rewrite the verifier
+;; rejects retire the whole rounds loop, and every loop AFTER it in the list
+;; would lose its chance -- for the rest of the pipeline, because the next
+;; stage re-scans the same list and stops at the same poison pill. (A `(and (<
+;; i words) (not changed))` early-exit loop can pass every admission clause but
+;; rotate into a dominance violation: its second exit leaves the loop through a
+;; body block, so the fresh exit phi does not dominate the outside reader.)
+;; Verifying per candidate keeps the same discipline -- only an accepted,
+;; verified rewrite is banked -- and costs one extra verify per rejected
+;; candidate per round.
 (define (opt-rotate-ssa-loops
   [func : (& func ir.CompilerIrFunction)]
   [context : OptCfgContext]
@@ -20519,14 +20479,13 @@
 ;; rewires the header's predecessors, so the loop set, the predecessor map and
 ;; the dominance facts all have to be rebuilt before the next loop's shape test
 ;; reads them, and a rejected rotation must leave the rotations already banked
-;; in place. Without the rounds a function got at most ONE rotated loop per
-;; PIPELINE iteration -- two in total at `optimize-function-max-iterations` --
-;; so sibling loops raced for the rotated shape and the passes below,
-;; `bce_version` above all, locked the losers into their top-tested form.
-;; `live-out-into!` in benchmarks/liveness_scan is the measured case: its zero
-;; fill and its inner word loop both want the rotation and only one of them
-;; could have it. Fuel-bounded by the block count; an accepted rotation retires
-;; its header's top test, so no loop is rotated twice.
+;; in place. Without the rounds a function would get at most ONE rotated loop
+;; per PIPELINE iteration -- two in total at `optimize-function-max-iterations`
+;; -- so sibling loops (a zero fill and an inner word loop, say) would race for
+;; the rotated shape and the passes below, `bce_version` above all, would lock
+;; the losers into their top-tested form. Fuel-bounded by the block count; an
+;; accepted rotation retires its header's top test, so no loop is rotated
+;; twice.
 (define (opt-rotate-ssa-rounds
   [func : ir.CompilerIrFunction]
   [context : OptCfgContext]
@@ -20587,7 +20546,7 @@
   (header-or-unknown-store? bool)
   (element-only-store? bool)
   ;; A DIRECT call the call-memory fixpoint proved writes only element storage
-  ;; (opt-direct-call-element-clean?). It is a memory writer, so it is not
+  ;; (opt-direct-call-header-clean?). It is a memory writer, so it is not
   ;; `clean?`, and it is a call, so it keeps the call BOUNDARY the hoist/allocate
   ;; interlock prices (opt-licm-store-summary-call-boundary?) -- but it provably
   ;; cannot change a descriptor header word, so it does NOT close the
@@ -20604,8 +20563,8 @@
   ;; question about static types and about nothing else.
   ;;
   ;; A write whose stored type has no class -- class 0: a byte or bool store, a
-  ;; CopyBytes, an unmodelled type -- sets ALL six bits, so it keeps killing
-  ;; exactly what it killed before and the unknown case needs no seventh flag.
+  ;; CopyBytes, an unmodelled type -- sets ALL six bits, so it kills every
+  ;; class and the unknown case needs no seventh flag.
   ;; A summary with no element write at all carries 0, which the readers gate
   ;; behind the two flags above.
   (element-classes i64)
@@ -20619,12 +20578,11 @@
   ;; proofs read through it. It IS a memory write (`clean?` is false), it
   ;; contributes every element class (the typed-word rule never separates a
   ;; load from it), and a FRAME-WORD load is still blocked by it
-  ;; (opt-licm-store-summary-frame-load-safe?) exactly as before -- the only
-  ;; loads it releases are of words it provably cannot reach. Before this flag
-  ;; every `store_ptr` into a local aggregate inside a loop closed every
-  ;; descriptor and cell proof in that loop: the sccp_lattice dispatch loop
-  ;; builds an `SccpValue` in a frame slot per record and reloaded
-  ;; `sccp-tokens`' descriptor words per record for it.
+  ;; (opt-licm-store-summary-frame-load-safe?) -- the only loads it releases
+  ;; are of words it provably cannot reach. Without this flag every
+  ;; `store_ptr` into a local aggregate inside a loop would close every
+  ;; descriptor and cell proof in that loop (the sccp_lattice dispatch loop
+  ;; builds an `SccpValue` in a frame slot per record).
   (frame-store? bool))
 
 (defenum OptLicmPtrKind
@@ -20668,7 +20626,7 @@
   ;;    a `tl_alloc`, a different allocation from every `Alloc` of this frame.
   ;;    So an element store cannot write a word of a frame object, and neither
   ;;    can an element-only CALLEE, whose every write lands in some array's
-  ;;    element storage by construction (opt-direct-call-element-clean?,
+  ;;    element storage by construction (opt-direct-call-header-clean?,
   ;;    opt-call-memory-element-bit).
   ;;
   ;; That is exactly the disjointness the descriptor-header proofs already
@@ -20698,30 +20656,23 @@
 ;; `Unknown` are therefore the same fact, and nothing is ever shadowed: there is
 ;; no second binding for a var to uncover.
 ;;
-;; This was a cons-list association environment, and the list's ORDER was never
-;; observable. `opt-licm-ptr-lookup`, `opt-licm-ptr-env-bound?` and
+;; No reader needs an ORDER or PERSISTENCE, which is what lets this be a table.
+;; `opt-licm-ptr-lookup`, `opt-licm-ptr-env-bound?` and
 ;; `opt-licm-ptr-unbind` are its only readers -- no consumer folds over it or
 ;; walks it for anything but one var -- and with at most one binding per var,
-;; "first match from the front" and "the var's class" are the same answer. The
-;; only other thing the list bought was PERSISTENCE, which this pass does not
-;; use either: the environment is threaded through one strictly linear fold per
+;; "first match from the front" and "the var's class" are the same answer. And
+;; the environment is threaded through one strictly linear fold per
 ;; function (opt-licm-provenance-state-blocks over blocks over instruction
 ;; sequences, one state in and one state out), and the one place a second walk
 ;; starts from a saved environment -- opt-licm-apply-loop, which seeds each
 ;; loop's state with the function's provenance env -- runs with
 ;; `track-provenance?` false and so never binds or unbinds at all.
 ;;
-;; What the list DID cost was quadratic. `bound?` and `lookup` scanned every
-;; live binding, once per instruction, and `unbind` rebuilt the whole chain; on
-;; the opt2 self-compile that put opt-licm-ptr-unbind and
-;; opt-licm-ptr-env-bound? at #1 and #2 of the whole profile -- 6.85% of the
-;; base compile between the three of them, and 8.9% once INL-3 absorbed 1,692
-;; callees into their sole callers and made the functions longer.
-;;
-;; So the environment is a var-indexed table instead, in exactly the shape
+;; So the environment is a var-indexed table, in exactly the shape
 ;; opt-ssa-var-types-set already uses for the TYPE environment threaded beside
 ;; it: a vector grown on demand to the highest var bound so far, updated in
-;; place and handed back as the value. Every operation is O(1), and `Unknown`
+;; place and handed back as the value. Every operation is O(1) (an association
+;; list would scan every live binding once per instruction), and `Unknown`
 ;; fills the slots no bind has reached.
 (defstruct OptLicmPtrEnv
   (kinds opt_licm_ptr_kind_vec.Vec))
@@ -20749,8 +20700,8 @@
   ;; callee's own IR rather than from an ABI assumption.
   ;;
   ;; The map is a per-program fact. Environments built by the per-function
-  ;; summary passes carry an EMPTY one, which simply keeps their older, weaker
-  ;; verdict (a call result stays unrooted).
+  ;; summary passes carry an EMPTY one, which simply keeps the weaker verdict
+  ;; (a call result stays unrooted).
   (return-alias opt_i64_i64_map.Map))
 
 (import (vector.vector OptLicmRoot core) as opt_licm_store_root_vec)
@@ -20762,8 +20713,8 @@
   (summary OptLicmStoreSummary)
   ;; `summary` excludes proven-rooted stores so a distinct checked root can use
   ;; the stronger disjointness proof. Preserve the excluded stores separately;
-  ;; composing the two summaries once per loop retains the old LICM decision
-  ;; for unrooted loads without merging every ordinary effect twice.
+  ;; composing the two summaries once per loop gives unrooted loads the
+  ;; decision over every store without merging every ordinary effect twice.
   (rooted-summary OptLicmStoreSummary)
   (ptrs OptLicmPtrEnv)
   (roots OptLicmRootEnv)
@@ -20799,7 +20750,7 @@
   ;; indirect call and an unknown effect contribute "any cell", and everything
   ;; that leaves `global-write?` alone contributes nothing. When the program
   ;; carries no table the loop is seeded with "any cell", so every consumer
-  ;; falls back to the older loop-wide answer and no decision moves.
+  ;; falls back to the loop-wide answer.
   (global-cell-writes i64)
   ;; IAG-2. The packed set of globals whose OWN STORAGE this body may write,
   ;; read against the program's OptGlobalObjModRef index. Distinct from
@@ -20891,7 +20842,7 @@
   ;; ids as noalias evidence. #6215 may restore the stronger rule once affine
   ;; by-value ownership is enforced and represented explicitly in IR.
   ;;
-  ;; ALIAS-3 RE-EXAMINED THIS AND CONFIRMED IT. The language's borrow rule is a
+  ;; WHY NO PARAMETER-ROOT RULE (ALIAS-3). The language's borrow rule is a
   ;; PLACE-PATH rule, not a physical noalias rule: tc-move-path-conflicts?
   ;; (compiler_typecheck_core.tl) makes two paths conflict only when they share
   ;; a syntactic ROOT NAME and one is a prefix of the other, so it rejects
@@ -20909,12 +20860,10 @@
   ;; (compiler_optimize_tests.tl) is the executable witness: it passes
   ;; `(& (array-ref items 0))` and `(&mut alias)` -- physically overlapping --
   ;; through two reference parameters and checks that every store is observed.
-  ;; #6693 is the commit that removed the very rule ALIAS-3 was asked to add
-  ;; back, for exactly this reason, and nothing has changed since.
+  ;; #6693 removed a parameter-root rule for exactly this reason.
   ;;
-  ;; So ALIAS-3 admits no root rule and this function is unchanged. What it
-  ;; adds instead is the next weakest condition that IS available: the
-  ;; typed-word rule at opt-licm-store-summary-element-class-safe?, which
+  ;; So there is no root rule here. The next weakest condition that IS available
+  ;; is the typed-word rule at opt-licm-store-summary-element-class-safe?, which
   ;; separates a load from a store by their static types and never asks which
   ;; object either one names.
   (match store-root
@@ -21007,17 +20956,17 @@
 ;; `GlobalAddr` (`leaq`) is a separate value form. So it is loop-invariant
 ;; exactly when nothing in the loop body can write that cell, the same question
 ;; the Load and Gep arms of opt-licm-candidate? already put to the loop's store
-;; summaries; `globals-clean?` carries that answer instead of the old blanket
-;; refusal. A global cell is written only by `Store` (the rip-relative store
-;; form, MemoryWrite -> header-or-unknown-store) or through a pointer derived
-;; from `GlobalAddr`, which is never classified DataBuffer/DataElement and so
-;; also lands in header-or-unknown-store; a call that may write reaches the
-;; summary as call-or-unknown? (indirect/C-ABI/SPMD/unknown-effect direct) or
-;; as header-or-unknown-store? (a memory-writing direct call), leaving only
-;; calls the P6 dual call-memory facts prove write nothing at all. Element-only
-;; stores write element storage, which the memory model keeps disjoint from
-;; descriptor header words and equally from named global cells, so they cannot
-;; change what a `Global` operand reads.
+;; summaries; `globals-clean?` carries that answer. A global cell is written
+;; only by `Store` (the rip-relative store form, MemoryWrite ->
+;; header-or-unknown-store) or through a pointer derived from `GlobalAddr`,
+;; which is never classified DataBuffer/DataElement and so also lands in
+;; header-or-unknown-store; a call that may write reaches the summary as
+;; call-or-unknown? (indirect/C-ABI/SPMD/unknown-effect direct) or as
+;; header-or-unknown-store? (a memory-writing direct call), leaving only calls
+;; the P6 dual call-memory facts prove write nothing at all. Element-only stores
+;; write element storage, which the memory model keeps disjoint from descriptor
+;; header words and equally from named global cells, so they cannot change what
+;; a `Global` operand reads.
 (define (opt-licm-value-invariant?
   [globals-clean? : bool]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
@@ -21045,24 +20994,18 @@
 ;; (see opt-licm-value-invariant?): nothing the body executes can write a global
 ;; cell.
 ;;
-;; This used to be spelled as two proxies -- `any-call?` plus the composed RAW
-;; store summary's header-load-safety -- because no fact answered the actual
-;; question. Both proxies over-refuse for the same reason: they answer "can this
-;; write MEMORY", and a callee that writes only through the objects its
-;; parameters name writes plenty of memory while touching no global storage at
-;; all. `global-write?` answers the real question directly, contributed by
-;; exactly the terms the two proxies contributed (see the field comment on
-;; OptLicmStoreState) except at a direct call the call-memory fixpoint has
-;; proven global-clean -- which is the one class of decision this predicate
-;; moves.
+;; The proxies `any-call?` plus the composed RAW store summary's
+;; header-load-safety would over-refuse: they answer "can this write MEMORY",
+;; and a callee that writes only through the objects its parameters name writes
+;; plenty of memory while touching no global storage at all. `global-write?`
+;; answers the real question directly, contributed by exactly the terms those
+;; proxies would contribute (see the field comment on OptLicmStoreState) except
+;; at a direct call the call-memory fixpoint has proven global-clean.
 ;;
-;; The older reading's register-pressure argument is preserved where it was
-;; measured. `any-call?` stays, untouched, on the Gep and Load arms of
-;; opt-licm-candidate?, which is where the P6 hoist/allocate interlock priced
-;; loop-spanning live ranges that cross a call (cachegrind, one run each on the
-;; then-baseline: dropping that term gave back the whole gvn_table win,
-;; 1,299,265,156 with it and 1,306,531,147 without against a 1,306,562,712
-;; baseline, while buying peephole_lines 7.59M). What a `Global` operand's
+;; The register-pressure argument lives elsewhere. `any-call?` stays on the Gep
+;; and Load arms of opt-licm-candidate?, which is where the P6 hoist/allocate
+;; interlock prices loop-spanning live ranges that cross a call (dropping that
+;; term there gives back more than it buys). What a `Global` operand's
 ;; invariance costs is not a live range that crosses the call -- the promoted
 ;; cell load lands in the PREHEADER, outside every loop-spanning range that gate
 ;; is pricing -- so that verdict never applied to this question. The preheader
@@ -21077,9 +21020,9 @@
   (not global-write?))
 
 ;; P18. What the loop passes know about `Global` operands: the loop-wide answer
-;; the older gate computed, plus the per-global refinement of it.
+;; plus the per-global refinement of it.
 ;;
-;; `clean?` is unchanged -- `opt-licm-globals-clean?` composed with the
+;; `clean?` is `opt-licm-globals-clean?` composed with the
 ;; memory-clean-call tier's refusal at the loop site. It stays the answer the
 ;; ADDRESS-forming Gep arm asks, for the register-pressure reason recorded at
 ;; that arm.
@@ -21255,9 +21198,9 @@
 ;; An element-only CALLEE writes element storage of a class this summary does
 ;; not carry yet, so it contributes "any class" and the typed-word rule below
 ;; proves nothing about it. The per-callee set already exists
-;; (opt-call-memory-summary-element-class); wiring it through is a separate
-;; change and is deliberately not made here, so this packet's rule moves no
-;; decision that involves a call.
+;; (opt-call-memory-summary-element-class); wiring it through is an open
+;; follow-up, so until then the typed-word rule moves no decision that
+;; involves a call.
 (define (opt-licm-store-summary-element-only-call) : OptLicmStoreSummary
   (OptLicmStoreSummary
     false
@@ -21330,10 +21273,10 @@
 ;; same buffer, inside the same object, whatever either address turns out to
 ;; be. Nothing here is an aliasing claim: no root, no provenance, no borrow
 ;; rule and no allocation-layer argument is involved, which is precisely why
-;; this is the condition ALIAS-3 can admit where the parameter-root rule the
-;; packet proposed cannot (see the note at opt-licm-root-disjoint-store?: this
-;; language does not make two checked-reference parameters disjoint, and
-;; #6693 removed the rule that assumed it).
+;; this is a condition ALIAS-3 can admit where a parameter-root rule cannot
+;; (see the note at opt-licm-root-disjoint-store?: this language does not make
+;; two checked-reference parameters disjoint, and #6693 removed the rule that
+;; assumed it).
 ;;
 ;; It is the same rule opt-load-entry-survives-store-location? already applies
 ;; to the load table one layer down (MF-4 ii), read here off the loop's own
@@ -21361,21 +21304,13 @@
 ;; exactly like any other call -- its memory verdict is softer, its calling
 ;; convention is not.
 ;;
-;; P14 re-measured dropping `element-only-call?` from this predicate outright,
-;; on the whole 17-row corpus: gvn_table -344,685 and liveness_scan -31,277
-;; against cfg_domloops +11,853, intern_table +6. It kept the boundary, because
-;; the residual loss was not separable from the win: gvn-scan-ints and
-;; cfg-scan-ints are character-identical sources whose asm diffs are identical
-;; modulo symbol ids, and they moved in OPPOSITE directions, so no static
-;; property of the loop distinguishes them.
-;;
-;; P16 measured it a third time, now that the memory proof it was waiting on
-;; exists (opt-licm-local-slot-kind). Dropping the bit here and excepting only
-;; the fixed-word ADDRESS class at the Gep site
-;; (opt-licm-gep-call-boundary-ok?) give byte-identical counts on all
-;; seventeen rows. The narrow exception is what lands: it keeps this predicate,
-;; and with it R7's and P14's verdict for every address the exception does not
-;; name, at no measured cost.
+;; P14 kept `element-only-call?` in this predicate: dropping it outright wins
+;; and loses on loops no static property separates (two character-identical
+;; sources, identical asm modulo symbol ids, moved in OPPOSITE directions).
+;; Dropping the bit here and excepting only the fixed-word ADDRESS class at the
+;; Gep site (opt-licm-gep-call-boundary-ok?) give the same code, so the narrow
+;; exception is what lands: it keeps this predicate, and with it R7's and P14's
+;; verdict for every address the exception does not name.
 (define (opt-licm-store-summary-call-boundary? [summary : OptLicmStoreSummary]) : bool
   (or summary.call-or-unknown? summary.element-only-call?))
 
@@ -21466,28 +21401,27 @@
 
 ;; Direct callees that DO return. opt-licm-store-state-direct-call filters the
 ;; non-returning trap helpers out ahead of this, so a ControlFlow effect never
-;; reaches the match below and the `_` arm keeps its old meaning: an ordinary
-;; direct call of unknown effect.
+;; reaches the match below and the `_` arm means an ordinary direct call of
+;; unknown effect.
 ;;
 ;; The element-only tier is the middle rung between "writes nothing" and "may
 ;; write anything". Such a callee gets the same MEMORY verdict an in-function
 ;; element-only store already gets (opt-licm-store-summary-for-storeptr): not
 ;; clean, so every root-keyed memory proof still refuses it, but header-load-
 ;; safe, so a descriptor-header load is not killed by it. Without this the call
-;; fell to `call-or-unknown?`, which kills the descriptor class outright -- the
-;; reason a `xs.slots` / `slots.len` / `slots.data` chain reloads on every trip
-;; of a loop that calls an element-only helper.
+;; would fall to `call-or-unknown?`, which kills the descriptor class outright,
+;; so a `xs.slots` / `slots.len` / `slots.data` chain would reload on every
+;; trip of a loop that calls an element-only helper.
 ;;
 ;; It gets its own field rather than `element-only-store?` because it is still a
 ;; CALL: the hoist/allocate interlock reads
-;; opt-licm-store-summary-call-boundary? and keeps pricing it as one. R7
-;; measured that separation as the whole difference between a win and a loss --
+;; opt-licm-store-summary-call-boundary? and keeps pricing it as one. R7 found
+;; that separation to be the whole difference between a win and a loss:
 ;; routing the bit through `element-only-store?` instead, so the interlock
-;; stopped seeing the call, cost intern_table 602,891,376 -> 611,411,217
-;; (+1.41%) for a gvn_table gain of 0.34M. The separation still stands, but the
-;; boundary is no longer all-or-nothing: P16 excepts one ADDRESS class from it
-;; by name (opt-licm-gep-call-boundary-ok?) while every other consumer keeps
-;; pricing an element-only call exactly as a call.
+;; stops seeing the call, is a net loss. The boundary is not all-or-nothing,
+;; though: P16 excepts one ADDRESS class from it by name
+;; (opt-licm-gep-call-boundary-ok?) while every other consumer keeps pricing an
+;; element-only call exactly as a call.
 (define (opt-licm-store-summary-for-direct-call
   [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
   [name : i64]) : OptLicmStoreSummary
@@ -21505,9 +21439,7 @@
   (OptLicmPtrEnv (opt_licm_ptr_kind_vec.new)))
 
 ;; Drop a var's class. A var the table has never reached is already `Unknown`,
-;; so an out-of-range id is a no-op rather than a reason to grow the table --
-;; which is what the old chain did too, by rebuilding a list that did not
-;; contain the var.
+;; so an out-of-range id is a no-op rather than a reason to grow the table.
 (define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
   (let
     [kinds : opt_licm_ptr_kind_vec.Vec env.kinds]
@@ -21521,10 +21453,8 @@
       (OptLicmPtrEnv kinds))))
 
 ;; Membership probe: absence and `Unknown` are the same fact, so this is the
-;; lookup with its payload thrown away. It survives the change because it says
-;; what it means at the two places that ask it; it is no longer a scan, and the
-;; probe-before-unbind the old chain needed to avoid rebuilding itself is gone
-;; with the chain.
+;; lookup with its payload thrown away. It is kept because it says what it
+;; means at the two places that ask it.
 (define (opt-licm-ptr-env-bound? [env : OptLicmPtrEnv] [var : i64]) : bool
   (match (opt-licm-ptr-lookup env var)
     [(OptLicmPtrKind.Unknown) false]
@@ -21770,8 +21700,8 @@
 ;; aborts) does not qualify: there is no returned value to describe.
 ;;
 ;; The table is built once per program beside the other call summaries and is
-;; empty at levels that build no summaries, where it costs the older verdict
-;; and nothing else.
+;; empty at levels that build no summaries, where it costs only the weaker
+;; verdict.
 (define (opt-licm-return-alias-instr
   [params : ir.CompilerIrParamSeq]
   [found : i64]
@@ -21961,13 +21891,13 @@
       (opt-licm-array-header-type? type-segment-bases ty)]
     [(OptMaybeAstType.No) false]))
 
-;; #M-E: the data-pointer slot of an array/string descriptor is fat offset 0.
-;; A zero literal offset addresses byte 0 regardless of the GEP's scale type,
-;; so accept any element type here: the real array lowering emits
-;; `Gep arr 0 i64` (lower-array-element-addr-finish) while the string path
-;; emits `Gep arr 0 u8` -- the old U8-only match classified array data-slot
-;; GEPs as Unknown, which turned element stores into header-or-unknown stores
-;; and blocked descriptor-load hoisting.
+;; #M-E (opt-licm-data-slot? below): the data-pointer slot of an array/string
+;; descriptor is fat offset 0. A zero literal offset addresses byte 0
+;; regardless of the GEP's scale type, so accept any element type: the real
+;; array lowering emits `Gep arr 0 i64` (lower-array-element-addr-finish) while
+;; the string path emits `Gep arr 0 u8` -- a U8-only match would classify array
+;; data-slot GEPs as Unknown, turning element stores into header-or-unknown
+;; stores and blocking descriptor-load hoisting.
 ;; LICM-GDP: the globals whose declared type is a header type, filled once per
 ;; program by opt-global-cell-summary-build-with-call-memory from the same
 ;; declared types the summary records, and read by the gep classifier (which
@@ -22136,19 +22066,17 @@
 ;; two halves of one chain -- the address, and the load through it -- so a class
 ;; one accepts and the other refuses stalls the chain at its first link.
 ;;
-;; The first arm is the original spelling and decides every case it decided
-;; before: a Gep off a var whose TYPE is a descriptor handle, at the length or
-;; data offset, addresses a descriptor header word.
+;; The first arm: a Gep off a var whose TYPE is a descriptor handle, at the
+;; length or data offset, addresses a descriptor header word.
 ;;
-;; The second arm is this packet's rule, and it is the HEAD of the chain:
-;; `gep @g, <literal>`, whose base is a `Global` operand rather than a var and
-;; which the type arm therefore refused outright while
-;; opt-licm-header-slot-ptr-kind? has always accepted the `GlobalSlot` it
-;; produces. Refusing the head refused everything behind it -- the handle load,
-;; and the descriptor's length and data words derived from that handle -- so a
-;; loop whose only write is a scalar element store still reloaded the global
-;; cell, the length and the data pointer on every trip, and `bce_version` saw a
-;; loop-VARIANT length.
+;; The second arm is the HEAD of the chain: `gep @g, <literal>`, whose base is
+;; a `Global` operand rather than a var, so the type arm cannot see it, while
+;; opt-licm-header-slot-ptr-kind? accepts the `GlobalSlot` it produces.
+;; Refusing the head refuses everything behind it -- the handle load, and the
+;; descriptor's length and data words derived from that handle -- so a loop
+;; whose only write is a scalar element store would reload the global cell,
+;; the length and the data pointer on every trip, and `bce_version` would see
+;; a loop-VARIANT length.
 ;;
 ;; MEMORY-MODEL ARGUMENT. A literal-offset Gep off `@g` addresses a fixed word
 ;; of the object g's cell designates -- after IAG-1, of g's own storage. A
@@ -22162,8 +22090,8 @@
 ;; opt-licm-store-summary-header-load-safe?: no call that may write and no
 ;; header-or-unknown store anywhere in the body.
 ;;
-;; BOUNDARY. Three writer classes keep exactly today's classification, and none
-;; of them reaches this predicate at all:
+;; BOUNDARY. Three writer classes keep their classification, and none of them
+;; reaches this predicate at all:
 ;;
 ;;   * an AGGREGATE element copy is a `CopyBytes`, which
 ;;     opt-licm-store-state-instr classifies as a header-or-unknown store, so
@@ -22183,32 +22111,28 @@
 ;; exactly as opt-licm-gep-kind's `Global` arm already decides it.
 ;;
 ;; PRESSURE, and why this arm names ONE class and asks IAG-2's gate for it.
-;; Soundness is the paragraphs above; what is left is the trade P18 measured
-;; and IAG-2 priced, and it is priced HERE by the gate IAG-2 already owns
-;; rather than by a second one. `opt-licm-global-header-value?` is the
-;; predicate the Gep arm's IAG-2 disjunct asks of this very operand: the loop
-;; writes neither g's cell nor g's storage (the per-global rows), and
-;; `header-hoist?` -- the live-in budget of opt-licm-global-header-hoist? --
-;; has admitted this loop for taking a handle out.
+;; Soundness is the paragraphs above; what is left is the register-pressure
+;; trade, and it is priced HERE by the gate IAG-2 already owns rather than by a
+;; second one. `opt-licm-global-header-value?` is the predicate the Gep arm's
+;; IAG-2 disjunct asks of this very operand: the loop writes neither g's cell
+;; nor g's storage (the per-global rows), and `header-hoist?` -- the live-in
+;; budget of opt-licm-global-header-hoist? -- has admitted this loop for taking
+;; a handle out.
 ;;
-;; Two wider readings were measured and rejected (cachegrind, one run each,
-;; against the bank tip):
+;; Two wider readings are losses:
 ;;
 ;;   * accepting EVERY class opt-licm-header-slot-ptr-kind? names -- which adds
-;;     P16's `LocalObject`/`LocalSlot` frame words -- costs intern_table
-;;     +62,547,644 (+17.35%): `it-bench`'s locally allocated Vec chains all
-;;     leave their loops at once and the function spills what it was holding in
-;;     registers. Only the global head is admitted here; a frame object's field
-;;     keeps today's classification;
-;;   * admitting the global head with NO pressure gate costs ssa_construct
-;;     +1,325,496, which the `header-hoist?` question removes exactly.
+;;     P16's `LocalObject`/`LocalSlot` frame words -- lets locally allocated
+;;     Vec chains all leave their loops at once, and the function spills what
+;;     it was holding in registers. Only the global head is admitted here; a
+;;     frame object's field keeps its classification;
+;;   * admitting the global head with NO pressure gate costs spills that the
+;;     `header-hoist?` question removes.
 ;;
-;; What the gate does NOT remove is the residue this packet accepts: two loops
-;; whose chains it lets out are net losses (`rg-load-function` +2,699,823 and
-;; gvn_table's `gvn-run-function` +145,024) against the -52,227,539 it buys on
-;; `rg-union-insert-segment!`. Pricing the arm at the chain's three words
-;; instead of the one IAG-2 prices was measured too and is worse, not better:
-;; it leaves both of those alone and gives back `rg-merge-run!`'s -818,244.
+;; The gate still lets out a few chains that are net losses, accepted against
+;; the larger wins. Pricing the arm at the chain's three words instead of the
+;; one IAG-2 prices is worse, not better: it spares those losses but gives
+;; back wins.
 (define (opt-licm-header-slot-gep?
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
@@ -22340,8 +22264,8 @@
 
 ;; The part of a store summary that can reach a global cell: an unknown call and
 ;; an unknown-or-header store both can, an element-only store cannot (its
-;; pointer is a descriptor's data, never a cell -- the same argument the older
-;; opt-licm-store-summary-header-load-safe? made).
+;; pointer is a descriptor's data, never a cell -- the same argument
+;; opt-licm-store-summary-header-load-safe? makes).
 (define (opt-licm-store-summary-global-write? [summary : OptLicmStoreSummary]) : bool
   (or summary.call-or-unknown? summary.header-or-unknown-store?))
 
@@ -22544,28 +22468,17 @@
 ;; the `any-call?` boundary the register-pressure interlock prices, the store
 ;; summary the memory proofs read -- is unchanged.
 ;;
-;; A MEMORY-clean callee -- the stronger fact, and the one this predicate used
-;; to REFUSE with an explicit `(not (memory-clean? name))` clause -- is admitted
-;; here, but only to the loop-scope cell PROMOTION and only under a live-in
-;; budget. The refusal was never a soundness claim; it was an unpaid trade, and
-;; the two halves of that trade turn out to be separable.
-;;
-;; WHAT THE OLD CLAUSE COST AND BOUGHT. Dropping it outright (one cachegrind run
-;; each) gives peephole_lines 667,587,443 -> 647,836,877 (-2.96%) and takes
-;; gvn_table 1,165,315,557 -> 1,174,025,601 (+0.75%), intern_table 611,002,492
-;; -> 614,441,836 (+0.56%), cfg_domloops 768,935,005 -> 769,279,945 (+0.04%).
+;; A MEMORY-clean callee -- the stronger fact -- is admitted here, but only to
+;; the loop-scope cell PROMOTION and only under a live-in budget. Refusing it
+;; was never a soundness claim; it was an unpaid trade, and the two halves of
+;; that trade are separable.
 ;;
 ;; THE TRADE SPLITS IN TWO. `globals-clean?` drives two unrelated things: the
 ;; INVARIANCE question opt-licm-candidate? asks of a `Global` operand, and the
-;; loop-scope cell promotion (opt-licm-global-promote). Measured separately on
-;; this corpus:
-;;
-;;   relaxed invariance only:  peephole -10.9M, gvn +8.7M, intern +3.4M
-;;   relaxed promotion only:   peephole -19.7M, gvn  0.0M, intern +3.4M
-;;
-;; The whole peephole prize is the PROMOTION's; the whole gvn_table loss is the
-;; INVARIANCE relaxation's. So invariance keeps the old refusal (see
-;; `globals-clean-strict?` at the loop site) and only promotion is relaxed.
+;; loop-scope cell promotion (opt-licm-global-promote). The gain is the
+;; PROMOTION's; the loss is the INVARIANCE relaxation's. So invariance keeps
+;; the refusal (see `globals-clean-strict?` at the loop site) and only
+;; promotion is relaxed.
 ;;
 ;; WHY INVARIANCE LOSES. Relaxing it opens a whole hoist CHAIN rooted at the
 ;; cell read -- the cell load, the descriptor it designates, that descriptor's
@@ -22582,10 +22495,8 @@
 ;; values than the register file can hold it does not get a register: it lands
 ;; in a frame slot, the preheader pays a load AND a spill store on every loop
 ;; ENTRY, each use trades a rip-relative load for an equal-length frame load,
-;; and the frame grows. That is the entire intern_table regression, in one loop
-;; -- it_intern_slice's probe loop, frame 264 -> 280 bytes, promoted
-;; `it_state_capacity` homed at 192(%rsp), +2 instructions and +2 frame
-;; accesses. opt-licm-global-promote-live-in-budget is what refuses it.
+;; and the frame grows (it_intern_slice's probe loop is the shape).
+;; opt-licm-global-promote-live-in-budget is what refuses it.
 (define (opt-licm-direct-call-keeps-globals-clean?
   [direct-call-clean : (& direct-call-clean opt_i64_i64_map.Map)]
   [global-cells : (& global-cells OptGlobalCellSummary)]
@@ -22611,13 +22522,13 @@
 ;; callee called with a global's address would write that global, which is
 ;; exactly why opt-direct-call-clean-unconditional-global-bit is not set for
 ;; any callee with a parameter write, and why, in a program with one
-;; address-taken global, opt-licm-direct-call-keeps-globals-clean? refused
+;; address-taken global, opt-licm-direct-call-keeps-globals-clean? refuses
 ;; every `sret`-returning helper at every site.
 ;;
-;; The measurement is sccp_lattice's dispatch loop: `sccp-value` (and the
+;; The shape is sccp_lattice's dispatch loop: `sccp-value` (and the
 ;; `sccp-fold-*` helpers) return an `SccpValue` through a hidden slot the
-;; caller allocates, the loop calls them 1.7M times, and every descriptor
-;; word of `sccp-tokens` and the `sccp-instr-base` cell reloaded per record
+;; caller allocates, and without this every descriptor word of `sccp-tokens`
+;; and the `sccp-instr-base` cell reloads per record
 ;; (`licm-refuse ... global-cell|header-load-safe:call:call=sccp-value`).
 ;;
 ;; What the call still is: a CALL. It keeps `any-call?`, its cell and
@@ -22627,8 +22538,8 @@
 ;; object it writes, exactly what a `store_ptr` through that object's address
 ;; contributes (the StorePtr arm of opt-licm-store-state-instr), so a load of
 ;; the same object is blocked as before. Callees with an unknown write, or any
-;; written parameter whose argument is not such an object, take the older
-;; path unchanged.
+;; written parameter whose argument is not such an object, take the ordinary
+;; direct-call path.
 (defenum OptLicmFrameCall
   (No)
   (Some OptLicmStoreState))
@@ -22733,8 +22644,7 @@
               summary)
             ;; Unproven: the flag is set here rather than left to the summary,
             ;; because a memory-clean callee contributes the EMPTY summary and
-            ;; would otherwise sail through. `any-call?` used to be what closed
-            ;; that case.
+            ;; would otherwise sail through.
             (opt-licm-store-state-add-summary
               (opt-licm-store-state-mark-global-write called)
               summary))]))))
@@ -22766,8 +22676,7 @@
   [ptrs : (& ptrs OptLicmPtrEnv)]
   ;; ALIAS-3: the class set this write contributes when it IS an element write.
   ;; The caller reads it off the store's own static type; a caller with no type
-  ;; in hand passes (opt-licm-element-class-any) and the summary is exactly the
-  ;; one this function used to return.
+  ;; in hand passes (opt-licm-element-class-any), which claims every class.
   [classes : i64]
   [ptr : ir.CompilerIrValue]) : OptLicmStoreSummary
   (match ptr
@@ -22883,9 +22792,7 @@
       ;; every write through it degrades from `element-only` to
       ;; `header-or-unknown`, LICM stops hoisting the SOURCE descriptor's words
       ;; out of the copy loop, and bce_version/copy_call no longer see the
-      ;; contiguous shape they turn into `tl_mem_copy_fwd`. Measured on the
-      ;; compiler itself: tlci-slice-bytes alone regressed +392,318,706 Ir of a
-      ;; +401,563,417 self-compile delta.
+      ;; contiguous shape they turn into `tl_mem_copy_fwd`.
       ;;
       ;; Only the element-vs-header CLASS is read off `DataBuffer`; its object
       ;; component is ignored by every store summary
@@ -23439,11 +23346,10 @@
   ;; a proof that the body's writes cannot reach this word, so it answers the
   ;; MEMORY question and leaves every pressure gate around it untouched.
   ;;
-  ;; It carries no root, which is why it is the disjunct this packet adds. The
-  ;; rule the packet proposed -- that two distinct checked-reference parameters
-  ;; name disjoint objects -- is NOT available in this language (the note at
-  ;; opt-licm-root-disjoint-store?, and #6693, which removed exactly it), so
-  ;; the root disjunct below is left as it stands.
+  ;; It carries no root. A root rule -- that two distinct checked-reference
+  ;; parameters name disjoint objects -- is NOT available in this language (the
+  ;; note at opt-licm-root-disjoint-store?, and #6693, which removed exactly
+  ;; it), so the root disjunct below is left as it stands.
   [class-safe? : bool]) : bool
   (match load-root
     [(OptLicmRoot.NoRoot)
@@ -23453,25 +23359,25 @@
         class-safe?)]
     [_
       (and
-        ;; A call in the body used to close this path outright. That is what a
-        ;; call whose effects are unknown demands, but a DIRECT call already
-        ;; proven memory-clean contributes `opt-licm-store-summary-empty` (see
+        ;; A call whose effects are unknown closes this path outright, but a
+        ;; DIRECT call already proven memory-clean contributes
+        ;; `opt-licm-store-summary-empty` (see
         ;; opt-licm-store-summary-for-direct-call), so it can write neither the
         ;; loaded root nor any other object: nothing it does can invalidate a
         ;; load the summaries already certify. Recognizing that is the same
-        ;; refinement the Gep arm of opt-licm-candidate? already applies, moved
-        ;; here so the Load arm shares it. `any-call?` still closes the path for
-        ;; indirect, C-ABI and SPMD calls, which set call-or-unknown? in both
-        ;; summaries and therefore fail this disjunct -- as does an element-only
-        ;; direct call, whose softer memory verdict buys it nothing here: this
-        ;; disjunct is the register-pressure boundary, not a memory proof.
+        ;; refinement the Gep arm of opt-licm-candidate? applies. `any-call?`
+        ;; still closes the path for indirect, C-ABI and SPMD calls, which set
+        ;; call-or-unknown? in both summaries and therefore fail this disjunct
+        ;; -- as does an element-only direct call, whose softer memory verdict
+        ;; buys it nothing here: this disjunct is the register-pressure
+        ;; boundary, not a memory proof.
         (or
           (not any-call?)
           (and
             (not (opt-licm-store-summary-call-boundary? root-summary))
             (not (opt-licm-store-summary-call-boundary? legacy-summary))))
         (or
-          ;; Root identity is a coarse object-level fact. Preserve the older,
+          ;; Root identity is a coarse object-level fact. Preserve the
           ;; more precise descriptor-header proof when stores touch only data
           ;; elements of that same object.
           legacy-special-safe?
@@ -23547,20 +23453,13 @@
 ;; the boundary is an element-only DIRECT call -- an unknown call still closes
 ;; the path, for memory reasons as much as pressure ones.
 ;;
-;; MEASURED (P16, one cachegrind run each, base target/wsl/ic-p15.tsv). With
-;; the memory proof in place but this exception absent, the interner's six Vec
+;; With the memory proof in place but this exception absent, the interner's Vec
 ;; header chains still cannot leave the per-symbol loop -- their first link is
-;; an address, and it is this gate that holds it -- and intern_table stops at
-;; 499,720,995. With the exception it reaches 435,013,637 (-15.58% against the
-;; base's 515,307,475), alongside gvn_table -344,685, liveness_scan -649,743,
-;; opt_quicksort -31,992 and cfg_domloops +11,853. Dropping
+;; an address, and it is this gate that holds it. Dropping
 ;; `element-only-call?` from opt-licm-store-summary-call-boundary? instead --
-;; the general relaxation P14 rejected -- reproduces those seventeen numbers
-;; exactly, so the narrow exception is chosen for costing nothing extra and
-;; leaving the general boundary, and R7's and P14's evidence for it, in force.
-;; The cfg_domloops +11,853 is P14's coalescing artifact, unchanged and
-;; unchanged in cause: three register copies at no-op `cast i64 to u64` sites
-;; in cfg-scan-ints, whose gvn_table twin moves the other way by 30x as much.
+;; the general relaxation P14 rejected -- gives the same code, so the narrow
+;; exception is chosen for costing nothing extra and leaving the general
+;; boundary, and R7's and P14's evidence for it, in force.
 (define (opt-licm-gep-call-boundary-ok?
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
@@ -23666,12 +23565,11 @@
 ;; iteration still pays one flag-setting instruction, the preheader pays two
 ;; more, and a boolean register stays live across the whole loop.
 ;;
-;; The corpus pins it. intern_table's slice-equality guard had one conjunct
-;; hoisted this way (`%659 = sub len, start ; %661 = le count, %659` lifted out
-;; of the versioning guard into the enclosing loop's entry, then consumed by
-;; `test %r10, %r10`): six instructions on EVERY intern call, hit or miss,
-;; 1,719,672 times, for a conjunct that costs two where its branch is
-;; (`target/research/phase3/intern_table.md` S4.1 site 10, 10,318,032 Ir).
+;; For example, a slice-equality guard with one conjunct hoisted this way
+;; (`%659 = sub len, start ; %661 = le count, %659` lifted out of the
+;; versioning guard into the enclosing loop's entry, then consumed by `test
+;; %r10, %r10`) pays six instructions on EVERY call, hit or miss, for a
+;; conjunct that costs two where its branch is.
 ;;
 ;; So a var whose every use is a branch condition is not collected here, and
 ;; the BinOp/UnOp arms of `opt-licm-candidate?` -- which is where this set is
@@ -23687,20 +23585,16 @@
 ;;     pass does, so nothing is materialized that was not materialized already;
 ;;   * a use in a NESTED loop, which runs many times per outer iteration, so
 ;;     lifting its compare out of the outer loop removes real per-iteration
-;;     work and the one-off `setcc`/`movzx` is repaid. Measured from the losing
-;;     side with the nested-loop case excluded too: spmd_zip +600,003, its inner
-;;     unrolled loop's guard compare left inside the enclosing loop.
+;;     work and the one-off `setcc`/`movzx` is repaid. Excluding the nested
+;;     case too leaves an inner unrolled loop's guard compare inside the
+;;     enclosing loop.
 ;;
-;; THE MEASURED TRADE. The rule is a per-iteration argument, not a whole-program
-;; one, and two rows pay a SECONDARY cost for it through the allocator rather
-;; than through the guard: keeping a compare's two invariant operands live where
-;; the compare is changes register pressure downstream. Measured against
-;; `tl-itbase`: intern_table -9,285,450 and liveness_scan -566,375, cfg_domloops
-;; -101,280, peephole_lines -6,138, against graph_dijkstra +783,894 (its `/1e9`
-;; magic constant pushed out of the stack slot an `imulq mem` reads into a
-;; per-iteration `movabs $imm64` plus `imul`), spmd_zip +600,003 and phys_nbody
-;; +9,190 -- none of them a baseline row, and none of them a change in what the
-;; guard tests. Self-compile +0.0185%.
+;; THE TRADE. The rule is a per-iteration argument, not a whole-program one,
+;; and it can cost a SECONDARY price through the allocator rather than through
+;; the guard: keeping a compare's two invariant operands live where the compare
+;; is changes register pressure downstream (it can push a `/1e9` magic constant
+;; out of the stack slot an `imulq mem` reads into a per-iteration `movabs
+;; $imm64` plus `imul`) -- never a change in what the guard tests.
 (define (opt-licm-collect-nonbranch-uses-array
   [items : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
@@ -23794,8 +23688,9 @@
 ;; question: can the loop write the word this load reads? Moving the load to the
 ;; preheader asks a second one: is the ADDRESS readable there? For the classes
 ;; the hoist was built on the answer is unconditional. A descriptor's own header
-;; words, a word of a frame object or of a global's storage are fixed words of a live object, readable whether or not the loop would have
-;; read them. An ELEMENT address is not: `gep data, i` is readable only while
+;; words, a word of a frame object or of a global's storage are fixed words of
+;; a live object, readable whether or not the loop would have read them. An
+;; ELEMENT address is not: `gep data, i` is readable only while
 ;; `i <u len`, and in the source that fact is the `bounds_check i, len` in front
 ;; of the load, which stays in the body. A hoisted element load therefore read
 ;; memory the program never touched whenever the check would have failed or the
@@ -24596,10 +24491,10 @@
         (opt-licm-mode-late? licm-mode)
         (opt-licm-global-value-invariant? globals loop-defs hoisted src)
         ;; In scalar loops, do not lengthen an arbitrary outside value's live
-        ;; range merely to move its copy (the quicksort copy-c-string
-        ;; regression). Literal seeds still unlock folding/motion. Vector loops
-        ;; also keep copies: splitting their data-pointer live ranges prevents
-        ;; the backend from reloading each pointer for every unrolled access.
+        ;; range merely to move its copy. Literal seeds still unlock
+        ;; folding/motion. Vector loops also keep copies: splitting their
+        ;; data-pointer live ranges prevents the backend from reloading each
+        ;; pointer for every unrolled access.
         (match src
           [(ir.CompilerIrValue.Var _) (opt-licm-mode-vector? licm-mode)]
           [_ true]))]
@@ -24688,29 +24583,25 @@
         ;; that address. A hidden mutable-global read among the operands is
         ;; admitted only when opt-licm-globals-clean? proves the body cannot
         ;; write any global cell, so intervening stores cannot invalidate this
-        ;; pure address calculation. Before BCE, retain the older memory
-        ;; gate: moving a descriptor-length address too early can hide the
+        ;; pure address calculation. Before BCE, keep the memory gate:
+        ;; moving a descriptor-length address too early can hide the
         ;; shared bound identity BCE needs. The post-LFTR run can use purity
         ;; after BCE and unrolling have consumed that fact.
         ;;
         ;; P18 DELIBERATELY LEAVES THIS ARM ON THE LOOP-WIDE ANSWER, and the
-        ;; reason is measured, not conservative bookkeeping. This is the one
-        ;; operand position that starts a CHAIN: `gep @g, <literal>` is a
-        ;; GlobalSlot address, the load through it is the descriptor the cell
+        ;; reason is register pressure, not conservative bookkeeping. This is
+        ;; the one operand position that starts a CHAIN: `gep @g, <literal>` is
+        ;; a GlobalSlot address, the load through it is the descriptor the cell
         ;; designates, and that descriptor's length and data words follow it
         ;; out, so admitting the operand here lets three or four new values per
-        ;; global span the whole loop. On cfg_domloops' `cfg-natural-loops` --
-        ;; whose five read-only globals are already OUTSIDE the loop's
-        ;; per-global cell-write set, so the refinement WOULD admit them --
-        ;; letting the chain out puts fourteen values in the function's
-        ;; preheader, ten of which land in the frame, and costs that one
-        ;; function 108,369,216 -> 118,358,256 Ir (+9,989,040; the whole row
-        ;; +1.42%) with every other function in the benchmark byte-identical:
-        ;; the loop-carried hash accumulator loses its register, and the
-        ;; versioned inner loop grows an eight-compare guard on a path that
-        ;; averages 1.06 trips. That is P8's "WHY INVARIANCE LOSES" verdict
-        ;; reproduced with a per-global proof in hand, so the proof changes
-        ;; nothing here. The scalar arms above carry no such chain -- each
+        ;; global span the whole loop. A loop over several read-only globals --
+        ;; already OUTSIDE its per-global cell-write set, so the refinement
+        ;; WOULD admit them -- then puts many values in the preheader, most of
+        ;; which land in the frame: the loop-carried accumulator loses its
+        ;; register, and a versioned inner loop grows a long guard on a path
+        ;; that averages about one trip. That is P8's "WHY INVARIANCE LOSES"
+        ;; verdict reproduced with a per-global proof in hand, so the proof
+        ;; changes nothing here. The scalar arms above carry no such chain -- each
         ;; admits exactly one instruction and at most one new loop-spanning
         ;; value -- which is why they take the refinement and this arm does not.
         (or
@@ -24757,7 +24648,7 @@
         (opt-gvn-value-stable? sources (compiler-opt-global-shared-view src))
         ;; A `Global` SOURCE here is a load THROUGH the pointer that cell holds
         ;; -- the head of the very chain the Gep arm above prices -- so it keeps
-        ;; the loop-wide answer for the same measured reason.
+        ;; the loop-wide answer for the same reason.
         (or (opt-licm-value-invariant? globals.clean? loop-defs hoisted src))
         (or
           ;; IAG-2. The one load this hoist moves: the descriptor handle out of
@@ -25168,16 +25059,16 @@
 ;; (one gep+load pair per inlined bounds check, kept distinct in-body because
 ;; element stores conservatively clear the block-local load-CSE table) lands N
 ;; IDENTICAL gep+load pairs in the preheader -- N live registers carrying one
-;; value through the loop (measured: qs_partition hoists the data-slot load 5x
-;; and the len-slot load 3x -> 3 spilled vars + per-iteration spill/scavenge
-;; traffic in a zero-call loop). Build a substitution env mapping every
-;; duplicate's dst to the FIRST hoisted def of the same (operand-substituted)
-;; shape, then rewrite all uses in the preheader instructions and the loop
-;; body. The duplicate defs are KEPT (their dsts become dead-or-preheader-local,
-;; zero loop-carried pressure), so any use the substituter conservatively skips
-;; (phi inputs, AddrOf raw vars) still reads a defined var -- partial
-;; substitution is always sound. Dsts are single-def (opt-gvn-stable-var? gates
-;; candidacy), so a body use can only see the preheader def.
+;; value through the loop, enough to force spills and per-iteration
+;; spill/scavenge traffic even in a zero-call loop. Build a substitution env
+;; mapping every duplicate's dst to the FIRST hoisted def of the same
+;; (operand-substituted) shape, then rewrite all uses in the preheader
+;; instructions and the loop body. The duplicate defs are KEPT (their dsts
+;; become dead-or-preheader-local, zero loop-carried pressure), so any use the
+;; substituter conservatively skips (phi inputs, AddrOf raw vars) still reads a
+;; defined var -- partial substitution is always sound. Dsts are single-def
+;; (opt-gvn-stable-var? gates candidacy), so a body use can only see the
+;; preheader def.
 (defenum OptLicmDup
   (OptLicmDupNone)
   (OptLicmDupVar i64))
@@ -25616,29 +25507,19 @@
 ;; one, for no instruction saved. It is also, and for the same reason on the
 ;; same proxy, the multiblock unroller's own live-in constant.
 ;;
-;; PINNED TWO-SIDED, one cachegrind run per budget. Both neighbours are loops
-;; this tier newly admits and both have only return-shaped side exits, so no
-;; cheaper structural class separates them -- refusing the whole return-shaped
-;; class was measured and it takes the win with the loss (intern_table returns
-;; to baseline and peephole_lines keeps 0.1M of its 19.7M).
+;; PINNED TWO-SIDED. Both neighbours are loops this tier newly admits and both
+;; have only return-shaped side exits, so no cheaper structural class separates
+;; them -- refusing the whole return-shaped class takes the win with the loss.
 ;;
-;;   ADMITTED: every loop whose promotion is worth anything on this corpus sits
-;;     at live-in 4 or below -- peephole_lines' line scanner
-;;     (_tl_bench_pl_first_rsp_read, where the promoted `pl_text`/`pl_len`
+;;   ADMITTED: the loops whose promotion pays sit at live-in 4 or below --
+;;     peephole_lines' line scanner, where the promoted `pl_text`/`pl_len`
 ;;     copies keep registers and a long text scan drops a rip-relative cell load
-;;     at eight distinct use sites) and cfg_domloops' loop. Budgets 4, 6, 8, 10
-;;     and 12 all measure identically: peephole_lines 647,839,245 (-2.96%),
-;;     cfg_domloops 769,279,945 (+0.04%), gvn_table and intern_table exactly at
-;;     baseline.
+;;     at eight distinct use sites.
 ;;   REFUSED, nearest: live-in 13 -- intern_table's probe loop
-;;     (it_intern_slice), whose promoted `it_state_capacity` copy spills to
-;;     192(%rsp) and grows the frame 264 -> 280 bytes while the loop itself runs
-;;     one or two probes. Raising the budget to 13 restores exactly that
-;;     regression and nothing else: intern_table 611,002,492 -> 614,441,836
-;;     (+0.56%), every other row unmoved.
+;;     (it_intern_slice), whose promoted `it_state_capacity` copy spills to the
+;;     frame and grows it while the loop itself runs one or two probes.
 ;;
-;; So the whole measured corpus lies outside [5, 12] and six sits inside that
-;; gap on the side the register file argues for.
+;; Six sits inside that gap on the side the register file argues for.
 (define (opt-licm-global-promote-live-in-budget) : i64
   6)
 
@@ -25691,8 +25572,7 @@
 ;; cells. `cell-writes` is 0 -- accepting every name -- on the loop-wide path,
 ;; which keeps that path byte-identical; the caller passes the real set only on
 ;; the per-global path (opt-licm-apply-loop). A body that writes g promotes
-;; every other cell it references and refuses g alone, where before it refused
-;; all of them.
+;; every other cell it references and refuses g alone.
 (define (opt-licm-global-promote-plan
   [cells : (& cells OptGlobalCellSummary)]
   [refs : OptLabelSet]
@@ -25850,40 +25730,23 @@
 ;; length stays), and an element-only callee lets the whole chain out. The
 ;; budget therefore charges one word.
 ;;
-;; WHY NOT THREE, AND WHY THE SPLIT IS NOT ENFORCED. The packet this gate
-;; implements asked for the split to be enforced -- hoist the handle, hold the
-;; length and data loads in the loop whatever the callee is -- on P18's measured
-;; grounds that letting a whole chain out of `cfg-natural-loops` cost that
-;; function +9,989,040 Ir. That verdict no longer reproduces, and enforcing the
-;; split is a large LOSS. Both shapes were built and measured (one cachegrind
-;; run each on the 17-row corpus, base target/ir-base-iag2):
-;;
-;;   A. this one -- the handle is admitted and the existing descriptor proofs
-;;      decide the rest: cfg_domloops 585,575,375 -> 574,109,423
-;;      (-11,465,952, -1.96%), the other SIXTEEN rows byte-identical.
-;;   B. the packet's shape -- the same admission plus a chain stop that holds
-;;      every descriptor word behind a hoisted handle inside the loop, stated
-;;      on the pointer class so it is stable across LICM rounds: cfg_domloops
-;;      585,575,375 -> 605,539,517 (+19,964,142, +3.41%), every other row
-;;      byte-identical. The half chain is a loss: the handle still has to live across the call in a
-;;      callee-saved register, while the two loads it feeds stay in the body,
-;;      so the loop pays the register and keeps the work.
-;;
-;; What changed since P18 measured the other way: the register allocator now keeps an
-;; over-arity call's arguments in registers, so the chains this admits stop
-;; turning into whole-range spills. IAG-1 is the other half -- `@g` is a
-;; link-time address now, so the chain is one load shorter than the one P18
+;; WHY NOT THREE, AND WHY THE SPLIT IS NOT ENFORCED. Enforcing the split --
+;; hoist the handle, hold the length and data loads in the loop whatever the
+;; callee is (a chain stop on the pointer class) -- is a LOSS: the handle
+;; still has to live across the call in a callee-saved register, while the two
+;; loads it feeds stay in the body, so the loop pays the register and keeps
+;; the work. Letting the existing descriptor proofs decide the rest pays
+;; where P18 found whole chains a loss, for two reasons: the register
+;; allocator keeps an over-arity call's arguments in registers, so the chains
+;; this admits stop turning into whole-range spills, and IAG-1 made `@g` a
+;; link-time address, so the chain is one load shorter than the one P18
 ;; priced.
 ;;
 ;; WHY TWELVE. The budget is the shared chain budget, for the same
 ;; reason (opt-licm-chain-live-in-budget): a value live across a call
 ;; can only live in the callee-saved GP file, and twelve is where that file
 ;; plus the frame staging the register allocator now keeps in registers stops
-;; paying. cfg-natural-
-;; loops' two loops sit at live-in 8 with four globals and live-in 5 with five;
-;; the nearest refusal on this corpus is the same outer loop at live-in 13 in
-;; an earlier round, which the budget declines and which the admitted round
-;; then supersedes.
+;; paying.
 ;;
 ;; Two further conditions. `late?` keeps the
 ;; hoist out of the pre-BCE run, where moving a descriptor address can hide the
@@ -25932,10 +25795,9 @@
 
 ;; The globals the budget is charged for: those that actually HEAD a chain
 ;; here, i.e. appear as the base of a literal-offset `Gep`. A global that only
-;; rides a call's argument list -- `f(.., @g, ..)`, which cfg-natural-loops does
-;; seven times -- creates no preheader value and must not be charged for one;
-;; charging it was measured to push that loop from 11 words to 14 against a
-;; budget of 12 and refuse the hoist outright.
+;; rides a call's argument list -- `f(.., @g, ..)` -- creates no preheader
+;; value and must not be charged for one; charging it would push a loop that
+;; passes globals to calls over the budget and refuse the hoist outright.
 ;;
 ;; The walk spans the loop BODY and its PREHEADER, so the gate keeps giving the
 ;; same answer once it has fired: after the first round the `gep @g, 0` that
@@ -26315,15 +26177,14 @@
 
 ;; --- ALIAS-2: LICM refusal tracing ---------------------------------------------
 ;;
-;; Every clause below is a verdict about ONE loop-invariant CANDIDATE, and until
-;; now the only way to learn WHICH conjunct held a candidate inside its loop was
-;; to instrument the pass by hand. `--trace-passes` reported the pass's block and
-;; instruction counts, plus IAG-2's own budget arithmetic
-;; (opt-licm-global-header-trace!) for loops that reached it -- and a loop whose
-;; storage table was never built reaches it silently, reporting nothing at all.
-;; That is the exact shape ALIAS-2 is about: `ssa-dominance-frontier`'s inner
-;; loop reloads two global descriptor chains on every trip and no line anywhere
-;; says why.
+;; Every clause below is a verdict about ONE loop-invariant CANDIDATE, and
+;; without this tracer the only way to learn WHICH conjunct held a candidate
+;; inside its loop is to instrument the pass by hand. `--trace-passes` otherwise
+;; reports the pass's block and instruction counts, plus IAG-2's own budget
+;; arithmetic (opt-licm-global-header-trace!) for loops that reach it -- and a
+;; loop whose storage table was never built reaches it silently, reporting
+;; nothing at all, so a loop that reloads global descriptor chains on every
+;; trip has no line anywhere saying why.
 ;;
 ;; The tracer prints one line per candidate the loop KEPT that a call or a store
 ;; is what kept:
@@ -27085,8 +26946,7 @@
 
 ;; Preheader instruction list: the hoisted instructions followed by the
 ;; promotion's cell loads. No promotion means the hoisted list is handed back
-;; unchanged rather than copied, keeping the no-promotion path allocation- and
-;; byte-identical.
+;; unchanged rather than copied, keeping the no-promotion path allocation-free.
 (define (opt-licm-preheader-instrs
   [hoisted : ir.CompilerIrInstrSeq]
   [loads : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
@@ -27161,18 +27021,16 @@
             (opt-natural-loop-latch loop)
             (opt-natural-loop-body loop)
             body-blocks)]
-        ;; Measured (cachegrind, three rounds): hoisting invariant loads out
-        ;; of PROBE-SHAPED loops -- every side exit an early RETURN, trips
-        ;; averaging one or two iterations -- is pure register pressure: the
-        ;; extra live-across-loop values push other values into spill staging
-        ;; on the return paths (hashmap_get +1.2%, hashmap_insert +0.6%,
-        ;; self_compile +0.74%). Suppressing ALL side-exit loops overshot the
-        ;; other way: break-into-work side exits mark long-trip kernels
-        ;; (spmd_zip +50%, opt_quicksort +1.0% under the broad gate). So the
-        ;; load/gep hoist is suppressed exactly when every side exit is
-        ;; return-shaped (reaches Return through staging-only blocks; an
-        ;; aborting runtime call also qualifies), by folding a header-store
-        ;; poison into the summary. Pure BinOp/UnOp hoisting is unaffected.
+        ;; Hoisting invariant loads out of PROBE-SHAPED loops -- every side
+        ;; exit an early RETURN, trips averaging one or two iterations -- is
+        ;; pure register pressure: the extra live-across-loop values push
+        ;; other values into spill staging on the return paths. Suppressing
+        ;; ALL side-exit loops overshoots the other way: break-into-work side
+        ;; exits mark long-trip kernels. So the load/gep hoist is suppressed
+        ;; exactly when every side exit is return-shaped (reaches Return through
+        ;; staging-only blocks; an aborting runtime call also qualifies), by
+        ;; folding a header-store poison into the summary. Pure BinOp/UnOp
+        ;; hoisting is unaffected.
         ;; The poison is a profitability gate, not a soundness one, so one
         ;; load class is excepted from it: descriptor header loads (the
         ;; data-pointer or length slot of a loop-invariant array/string
@@ -27213,11 +27071,11 @@
         ;; plus the descriptor words re-derived from it) the preheader copy
         ;; removes outright rather than merely relocating.
         ;; The memory-clean direct-call tier reaches the PROMOTION only, and
-        ;; only under a live-in budget; the INVARIANCE question keeps the older
+        ;; only under a live-in budget; the INVARIANCE question keeps the
         ;; refusal. See opt-licm-direct-call-keeps-globals-clean? for the split
         ;; and opt-licm-global-promote-live-in-budget for the budget. A loop
-        ;; that was already globals-clean without that tier takes the strict
-        ;; flag on both sides, so it is byte-identical to before.
+        ;; that is globals-clean without that tier takes the strict flag on
+        ;; both sides.
         [globals-clean-relaxed? : bool
           (opt-licm-globals-clean? store-state.global-write?)]
         [globals-clean-strict? : bool
@@ -27364,7 +27222,7 @@
               (if (or changed promotion.changed?)
                 ;; M-G (B1): fold duplicate hoisted loads/geps onto their first
                 ;; occurrence (see opt-licm-dedup-env). An empty env means no
-                ;; duplicates -- skip the rewrite, byte-identical to pre-B1.
+                ;; duplicates -- skip the rewrite.
                 (let
                   [dedup-env : OptCopyEnv
                     (opt-licm-dedup-env
@@ -27953,9 +27811,8 @@
 ;; short-circuit fuser (opt-bool-branch-chain) has already split into two real
 ;; edges. LICM hoists all four CONDITIONS to the preheader and none of the four
 ;; BRANCHES, so the enclosing loop re-decides an invariant dispatch every trip.
-;; benchmarks/string_scan is the measured case: eight instructions per outer
-;; iteration, 4.1% of the whole row, and unswitching any single one of them
-;; leaves the other six.
+;; benchmarks/string_scan is the shape, and unswitching any single one of the
+;; branches leaves the others.
 ;;
 ;; So the shape is the whole chain. Walk the blocks that hold NOTHING BUT one
 ;; more terminator -- a Jump to pass through, a Branch on a loop-invariant
@@ -27992,7 +27849,7 @@
 ;; on an outer-invariant `c` is exactly that -- and resolving it would be sound
 ;; (the conjunction says `c` holds, and the original spins on `c` too) but it is
 ;; not what this pass is for and it takes the shape past the one the block
-;; ceiling above was measured on.
+;; ceiling above was chosen for.
 (define (opt-licm-unswitch-nested-loop-header?
   [loops : (& loops OptNaturalLoopList)]
   [outer-header : i64]
@@ -28261,7 +28118,7 @@
 ;; compare over values the loop does not define; LICM leaves it in the body on
 ;; purpose (a compare feeding one branch is cheaper re-executed than kept
 ;; live), so `loop-defs` names it and the invariance test above refused it.
-;; `ssa-dominance-frontier`'s pred loop is the measured case: its guard chain
+;; `ssa-dominance-frontier`'s pred loop is the shape: its guard chain
 ;; is `label <u reachable.len`, `label <u tin.len`, `label <u tout.len`, three
 ;; compares of the outer loop's parameter against three hoisted lengths, run
 ;; on every outer iteration.
@@ -28290,10 +28147,10 @@
 ;; PH-1: a compare the body computes over invariant operands is read as an
 ;; invariant condition only for the predicate hoist. Materializing it in the
 ;; preheader costs a setcc/and sequence per loop ENTRY, and the loops the
-;; clone serves are entered often and trip rarely (intern_table's probe loop
-;; paid 17 instructions per lookup to save 4 per probe, +8.7%); the hoist
-;; serves bodies past the clone cap, whose trips are what make them big. Set
-;; by opt-licm-unswitch-loop-shape from the body's block count.
+;; clone serves are entered often and trip rarely (a probe loop pays more per
+;; lookup than it saves per probe); the hoist serves bodies past the clone cap,
+;; whose trips are what make them big. Set by opt-licm-unswitch-loop-shape from
+;; the body's block count.
 (define opt-licm-unswitch-body-compare-on : bool
   false)
 
@@ -28416,10 +28273,9 @@
               ;; body tests at least TWICE. The dispatch the unswitch adds runs
               ;; once per loop entry and the saving once per test per
               ;; iteration, so two tests pay for the dispatch on the first trip
-              ;; (`rg-merge-run!`'s three `from-order` tests: regalloc_greedy
-              ;; -2.1%); one test does not on the short-trip loops the corpus
-              ;; has (ssa-verify's per-instruction use scan, 1-2 trips per
-              ;; entry: +0.3% when admitted). LU-1's rail is live-pipeline only
+              ;; (`rg-merge-run!`'s three `from-order` tests); one test does not
+              ;; on a short-trip loop (a per-instruction use scan running one or
+              ;; two trips per entry). LU-1's rail is live-pipeline only
               ;; (opt-licm-unswitch-widened?).
               (match (compiler-opt-global-shared-view cond)
                 [(ir.CompilerIrValue.Var var)
@@ -28568,13 +28424,12 @@
               (opt-licm-unswitch-clone-max-blocks)))]
         (if (or
           (< (opt-label-count body-labels) 3)
-          ;; LU-1: the bounds were 16 blocks and 192 instructions, sized for an
-          ;; entry guard's outer body; `rg-merge-run!`'s merge loop, with
-          ;; `rg-weight-before?` inlined, is 41 blocks. The clone is cold on
-          ;; one side of the dispatch and hot on the other, so the bound is a
-          ;; code-size statement, not a pressure one. The refusal of bodies
-          ;; holding a `__bce_` label went with it: the corpus's unswitchable
-          ;; loops ARE versioned fast copies, and no row moved on the rule.
+          ;; LU-1: the bounds admit more than an entry guard's outer body --
+          ;; `rg-merge-run!`'s merge loop, with `rg-weight-before?` inlined,
+          ;; is 41 blocks. The clone is cold on one side of the dispatch and
+          ;; hot on the other, so the bound is a code-size statement, not a
+          ;; pressure one. Bodies holding a `__bce_` label are not refused:
+          ;; unswitchable loops are often versioned fast copies.
           (> (opt-label-count body-labels) 128)
           (>
             (ir.compiler-ir-block-list-instruction-count
@@ -28986,12 +28841,12 @@
 ;; --- PH-1: a big loop's guard chain, tested once in the preheader ----------
 ;;
 ;; The unswitch clones the loop so that one copy never tests the chain. For a
-;; body past the clone cap -- `ssa-dominance-frontier`'s 107-block outer loop,
+;; body past the clone cap -- `ssa-dominance-frontier`'s big outer loop,
 ;; whose pred loop's versioner guard (`label <u reachable/tin/tout.len`, three
 ;; `[cmp; branch]` blocks failing to the same slow copy) is re-tested on every
-;; block visit -- the clone was measured at +4.87M: the doubled body cost the
-;; allocator more in spills and scratch parks in the HOT copy than the six
-;; instructions per trip it saved. The hoist keeps one loop. The conjunction
+;; block visit -- the clone is a loss: the doubled body costs the allocator
+;; more in spills and scratch parks in the HOT copy than the few instructions
+;; per trip it saves. The hoist keeps one loop. The conjunction
 ;; of the chain's conditions is computed in the preheader (the same fused
 ;; predicate the clone dispatches on), the chain's head branches on it to the
 ;; chain's continuation or the slow target, and the rest of the chain becomes
@@ -30287,9 +30142,9 @@
       (match (opt-induction-add-inv-scale scaled phi-var var)
         [(option_i64.Some scale)
           ;; Products only. The plain `c + i` sum would trade one add per
-          ;; trip for a loop-live phi, and admitting it cost regalloc_greedy
-          ;; +24.8M and ssa_construct +33.4M in spills; the product rule's
-          ;; own scale window is the right gate here too.
+          ;; trip for a loop-live phi, and admitting it costs more in spills
+          ;; than it saves; the product rule's own scale window is the right
+          ;; gate here too.
           (if (opt-induction-scale-ok? step scale)
             (OptMaybeInductionDerived.Some
               (OptInductionDerived.AddInv c scale ty))
@@ -31096,8 +30951,8 @@
 
 ;; The rewrite mov must carry the PHI's type: for address deriveds that is
 ;; the word type, never the element type -- a `mov %ptr : u8` lets the
-;; backend truncate the 64-bit pointer (spill/reload sizing), which used to
-;; crash byte-buffer loops as soon as the mov-chase let the pass fire there.
+;; backend truncate the 64-bit pointer (spill/reload sizing), which crashes
+;; byte-buffer loops.
 (define (opt-induction-rewrite-instr
   [type-segment-bases : i64]
   [fact : (& fact OptInductionFact)]
@@ -31448,9 +31303,8 @@
   (phi-instrs ir.CompilerIrInstrSeq)
   (next-instrs ir.CompilerIrInstrSeq))
 
-;; Build the three support streams in one derived-value walk. The former shape
-;; built and appended three cons chains, then immediately counted and copied
-;; them into the destination block builders. refs #5726
+;; Build the three support streams in one derived-value walk, straight into the
+;; destination block builders.
 (define (opt-induction-push-support-instrs!
   [fact : OptInductionFact]
   [deriveds : OptInductionDerivedList]
@@ -32008,8 +31862,8 @@
 ;; back edge and re-tests it at the top of every iteration, so the loop pays a
 ;; `test`/`jcc` per iteration for a flag that is only ever CLEARED. C compiles
 ;; the same source to a direct branch out of the loop at the mismatch site --
-;; `benchmarks/intern_table`'s `it-slice-eq?` byte compare spends two of its ten
-;; instructions per byte on the re-test and its C twin spends none.
+;; `it-slice-eq?`'s byte compare re-tests its flag on every byte and its C twin
+;; does not.
 ;;
 ;; The flag starts at a loop-invariant value K in the preheader, the gate tests
 ;; it against K, and the body's only other business with it is to ASSIGN it.
@@ -32024,34 +31878,31 @@
 ;;   * both K and the assigned value are decidable here -- the bool
 ;;     `(set! ok false)` against a `true` seed, or one sentinel literal against
 ;;     another -- and the verdict is known now: the edge is redirected outright
-;;     to the gate's exit arm, which is the conversion this pass has always
-;;     done.
+;;     to the gate's exit arm.
 ;;   * the assigned value is computed, or K is a name rather than a literal --
-;;     `benchmarks/peephole_lines`' `found = pl-none` cleared to a register
-;;     index, `pl-find-comma-space`'s `-1` cleared to `i` -- and the verdict
-;;     needs the compare. The edge is routed through a fresh block holding a
-;;     COPY of the gate, `c = ne w, K; branch c, X, <the edge's own target>`,
-;;     which is what LLVM's JumpThreading does with the same shape: the compare
-;;     the header ran once per iteration now runs once per assignment, and the
-;;     path that keeps going arrives at the header with the flag proved equal
-;;     to K.
+;;     peephole_lines' `found = pl-none` cleared to a register index,
+;;     `pl-find-comma-space`'s `-1` cleared to `i` -- and the verdict needs the
+;;     compare. The edge is routed through a fresh block holding a COPY of the
+;;     gate, `c = ne w, K; branch c, X, <the edge's own target>`, which is what
+;;     LLVM's JumpThreading does with the same shape: the compare the header ran
+;;     once per iteration now runs once per assignment, and the path that keeps
+;;     going arrives at the header with the flag proved equal to K.
 ;; Either way the invariant the rest of this pass rests on is the same -- every
 ;; surviving path into a flag definition carries K -- and step 5 pins them all
 ;; to it.
 ;;
-;; Exit phis and the phi-web budget. An earlier phi-block-collapse experiment on
-;; this tree regressed 10% by duplicating phi copies, so any rewrite near a loop
-;; exit has to pay for its edges. This one is nearly free. The clear edges adopt
-;; the gate's own exit arm rather than the shared exit block, and the gate's own
-;; edge into it goes away at the same time, so with the usual single clear edge
-;; the exit block's predecessor count is IDENTICAL before and after (4 -> 4 on
-;; `it-slice-eq?`) and only the values on those edges change; a second clear
-;; edge costs one. And every changed value becomes a literal where it can -- an
-;; exit phi input reached through the gate arm becomes C, one reached through
-;; any other edge out of the loop becomes K. Since
-;; `compiler-reg-phi-touched-add-inputs!` (src/compiler_regalloc.tl) marks only
-;; `Value.Var` inputs, replacing Var inputs with literals strictly shrinks the
-;; phi-touched set and the live-out-input exclusion riding on it, so phi-web
+;; Exit phis and the phi-web budget. Duplicated phi copies are a known way for a
+;; CFG rewrite to regress, so any rewrite near a loop exit has to pay for its
+;; edges. This one is nearly free. The clear edges adopt the gate's own exit arm
+;; rather than the shared exit block, and the gate's own edge into it goes away
+;; at the same time, so with the usual single clear edge the exit block's
+;; predecessor count is IDENTICAL before and after and only the values on those
+;; edges change; a second clear edge costs one. And every changed value becomes
+;; a literal where it can -- an exit phi input reached through the gate arm
+;; becomes C, one reached through any other edge out of the loop becomes K.
+;; Since `compiler-reg-phi-touched-add-inputs!` (src/compiler_regalloc.tl) marks
+;; only `Value.Var` inputs, replacing Var inputs with literals strictly shrinks
+;; the phi-touched set and the live-out-input exclusion riding on it, so phi-web
 ;; coalescing can only improve. The exit phis C8 mints are the one addition, and
 ;; they are minted only for a loop value the region under X actually reads --
 ;; which is the value the loop was computing, so the phi replaces a stack slot
@@ -32067,16 +31918,15 @@
 ;;
 ;; Placed between `induction` and `bce_version`. Conversion only shrinks what
 ;; the versioner has to fit: the clearing arm leaves the loop, so a converted
-;; body loses a block and everything in it (seven labels to six on
-;; `it-slice-eq?`, and the dropped instructions come straight off the
-;; versioner's `opt-bce-mb-instr-max` growth budget), and the top-tested
-;; shape the versioner
-;; matches survives untouched -- the header still ends `Branch c, body, exit`
-;; with the body target inside the loop. Converting first is also what lets the
-;; versioner see a probe loop's real index expression: the redirect trivialises
-;; the loop's carried phis, and only once the next round's `gvn`/`dead_phi` have
-;; folded them does a capacity read like `cap - 1` become loop-invariant enough
-;; for the masked-index derivation to name it.
+;; body loses a block and everything in it (the dropped instructions come
+;; straight off the versioner's `opt-bce-mb-instr-max` growth budget), and the
+;; top-tested shape the versioner matches survives untouched -- the header still
+;; ends `Branch c, body, exit` with the body target inside the loop. Converting
+;; first is also what lets the versioner see a probe loop's real index
+;; expression: the redirect trivialises the loop's carried phis, and only once
+;; the next round's `gvn`/`dead_phi` have folded them does a capacity read like
+;; `cap - 1` become loop-invariant enough for the masked-index derivation to
+;; name it.
 ;;
 ;; Conditions, all required:
 ;;   C1 invariant seed: a header phi `f = phi [K, preheader], [v, latch]` with
@@ -32105,8 +31955,8 @@
 ;;      `mov @pl-none` and tested against another read of the same global in
 ;;      the same straight line is one K. The helper shapes are how
 ;;      `(while (and (< i n) (not done)) ...)` and `(while (= found pl-none)
-;;      ...)` lower, and refusing them left intern_table's and gvn_table's
-;;      probe loops testing a stack slot every trip.
+;;      ...)` lower, and refusing them leaves probe loops testing a stack slot
+;;      every trip.
 ;;   C4 uses: the flag and every closure var are read only by the closure, by
 ;;      the gate branch and its helper, by phis outside the loop keyed on one of
 ;;      the loop's exit blocks, by X's own phis, and from the region X dominates
@@ -32188,7 +32038,7 @@
 (defenum OptFlagExitEdgeList
   (Nil)
   ;; Physical append is logical Cons/prepend. Consumers read from the live end
-  ;; so the old newest-first traversal order is unchanged.
+  ;; so traversal stays newest-first.
   (Dense (__tl_dyn-array OptFlagExitEdge) i64))
 
 (define (opt-flag-exit-edge-ref
@@ -38736,10 +38586,10 @@
 ;; block's phi prefix, and the backend's edge-copy emitter walks a block from
 ;; instruction 0 and stops at the first non-phi
 ;; (`compiler-backend-leading-phi-copies-seq-from`, src/compiler_backend.tl):
-;; every phi below the mov would silently lose its incoming copies. Until this
-;; fold arrived the question could not come up -- all phis of a block carry one
-;; input per predecessor, so the one-input rewrite either fired for all of them
-;; or for none -- and `opt-flag-exit-const-inputs` records the same rule.
+;; every phi below the mov would silently lose its incoming copies. The
+;; one-input rewrite alone cannot raise the question -- all phis of a block
+;; carry one input per predecessor, so it fires for all of them or for none --
+;; and `opt-flag-exit-const-inputs` records the same rule.
 ;;
 ;; Keep the prefix contiguous by hoisting the phis that survived above the movs
 ;; the fold produced. Any order among the two groups is correct: a phi input
@@ -38793,7 +38643,7 @@
             (set! write (+ write 1))))
         (set! read (+ read 1))))))
 
-;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). refs #5726
+;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq).
 (define (opt-cfg-clean-instr-seq
   [index : (& index OptCfgIndex)]
   [block-label : i64]
@@ -38988,7 +38838,7 @@
 ;; --- T1-2b part C: merge a block into its unique predecessor ----------------
 ;;
 ;; LLVM's `MergeBlockIntoPredecessor` (Local.cpp), which SimplifyCFG runs after
-;; every edge it folds. Nothing here did it: `opt-cfg-straighten` only DELETES a
+;; every edge it folds. Nothing else does it: `opt-cfg-straighten` only DELETES a
 ;; block that is nothing but a `jump`, and the rest of the CFG cleanup never
 ;; moves an instruction between blocks. So a run that arrives split --
 ;;
@@ -39027,23 +38877,18 @@
 ;;     links are not lost: the fixpoint below absorbs a run from its tail
 ;;     backwards, one link per round, so `A -> M -> C1` still collapses whole --
 ;;     `C1` into `M` first, then the `M` that now ends in `C1`'s branch into
-;;     `A`. Absorbing them head-first instead let the merge run away with blocks
-;;     that gained nothing, and a longer block is a longer live range: it cost
-;;     `intern_table`'s `it_hash_words` a spilled bounds-group limit (+0.87%).
+;;     `A`. Absorbing them head-first instead lets the merge run away with
+;;     blocks that gain nothing, and a longer block is a longer live range.
 ;;   - and the rail that keeps this from being a general block-layout rewrite:
 ;;     B's FIRST instruction must read the value P's last instruction defines.
 ;;     That is precisely the def/use pair the merge exists to make adjacent, and
 ;;     it is the only thing the backend's contiguous-run folds can act on.
-;;     Merging on structure alone measured badly and for a structural reason:
-;;     the register allocator sees longer blocks as longer live ranges, so a
-;;     merge that gains no adjacency still costs spills. `lex_source`'s
-;;     `ls_scan_symbol_end` lost its whole `btq` bit-test fold to exactly that
-;;     (+3.7% on the row, a 224-byte frame where it had none), `cfg_domloops`'
-;;     `cfg_dfs_postorder` gained a spill/reload pair in its hottest store, and
-;;     `hashmap_get` flipped an inline verdict (the checked inline tier prices a
-;;     candidate by OPTIMIZING it, so every change here moves that measurement)
-;;     and lost 15.8%. With the adjacency rail those rows are flat and the rows
-;;     the merge was written for keep their gains.
+;;     Merging on structure alone is a loss for a structural reason: the
+;;     register allocator sees longer blocks as longer live ranges, so a merge
+;;     that gains no adjacency still costs spills (enough to lose a `btq`
+;;     bit-test fold or add a spill/reload pair to a hot store), and it can flip
+;;     an inline verdict (the checked inline tier prices a candidate by
+;;     OPTIMIZING it, so every change here moves that measurement).
 ;; Phi keys: B's label disappears, so every phi input keyed on B in B's
 ;; successors is re-keyed to P. Only the LAST block of a merged run has
 ;; surviving successors -- every earlier one ends in the `Jump` that is dropped
@@ -39078,12 +38923,11 @@
 ;; backend folds `... ; compare ; branch` only as one contiguous run, and the
 ;; mov (or the one-input phi the `cfg` cleanup has not folded to one yet) that a
 ;; threaded sentinel merge leaves holding that compare's operand. Absorbing on
-;; adjacency alone still let the merge take blocks whose head is a load, a gep
-;; or an arithmetic op -- runs the backend has no fold for -- and paid for them
-;; in live-range length: `intern_table`'s `it_hash_words` grew its inner byte
-;; loop past the size at which loop versioning admits, and the bounds-group
-;; limit that versioning then materialized cost eleven instructions and a spill
-;; on every entry of a loop that runs a handful of iterations (+0.87%).
+;; adjacency alone still lets the merge take blocks whose head is a load, a gep
+;; or an arithmetic op -- runs the backend has no fold for -- and pays for them
+;; in live-range length: a longer inner loop can grow past the size at which
+;; loop versioning admits, and the bounds-group limit that versioning then
+;; materializes costs instructions and a spill on every entry of a short loop.
 (define (opt-cfg-merge-absorbable-head?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
   (if (= (ir.compiler-ir-instr-seq-count instrs) 0)
@@ -39620,7 +39464,7 @@
 
 ;; A run is absorbed whole in one round, so the fixpoint only re-runs for the
 ;; opportunities the trailing simplify opens (a phi folded to a mov, a block the
-;; merge orphaned). Four rounds is far past what the corpus needs.
+;; merge orphaned). The bound is far past what real code needs.
 (define (opt-cfg-merge-blocks-fuel) : i64
   6)
 
@@ -39861,12 +39705,11 @@
     ;; of a versioning guard's conjuncts before this pass runs (`lt 0, %n`
     ;; re-tested inside the region the loop-entry branch already decided), and
     ;; copy propagation substitutes the literal into the And chain, leaving
-    ;; `and true, %c` at its root. Before this arm every such chain was
-    ;; refused outright and the whole fan was materialised with setcc/movzbq,
-    ;; which is the shape the branch chain exists to avoid. `true` states
-    ;; nothing, so it contributes no conjunct; `false` makes the conjunction
-    ;; constant and is left to the const folder, which retires the branch
-    ;; instead of splitting it.
+    ;; `and true, %c` at its root. Refusing such a chain would materialise the
+    ;; whole fan with setcc/movzbq, which is the shape the branch chain exists
+    ;; to avoid. `true` states nothing, so it contributes no conjunct; `false`
+    ;; makes the conjunction constant and is left to the const folder, which
+    ;; retires the branch instead of splitting it.
     [(ir.CompilerIrValue.Bool literal) literal]
     [_ false]))
 
@@ -41354,10 +41197,7 @@
           false))]))
 
 ;; The bool-branch fuser mutates its working copy, so it clones the block
-;; contents first. The clone used to go seq -> cons list -> seq: it built a
-;; 112 B node per instruction and then `compiler-ir-block` re-counted the spine
-;; and copied it back into an array, purely to reproduce the array it started
-;; from. It is a straight row copy. refs #5726
+;; contents first: a straight row copy, no cons round trip.
 (define (opt-bool-branch-clone-instr-seq [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
@@ -41413,8 +41253,8 @@
     frame
     remaining))
 
-;; `[bool phi, branch on that phi]` -- the shape the fuser was originally
-;; written for, and the only one decidable from a single block.
+;; `[bool phi, branch on that phi]` -- the fuser's base shape, and the only one
+;; decidable from a single block.
 (define (opt-bool-branch-block-direct-candidate?
   [type-segment-bases : i64]
   [block : (& block ir.CompilerIrBlock)]) : bool
@@ -41594,7 +41434,7 @@
 ;;
 ;; A checked accessor that returns a sentinel joins its two arms in a merge
 ;; block and compares the joined value there. `peephole_lines`' inlined
-;; `pl-byte-at` is the shape verbatim (target/diag/pl_tl.ir):
+;; `pl-byte-at` is the shape verbatim:
 ;;
 ;;   if_then.6:  %46 = gep %41, %4 : char ; %47 = load %46 : char
 ;;               %38 = cast %47 : char to i64 ; jump cont
@@ -41603,10 +41443,10 @@
 ;;               %7 = eq %5, 37 : i64 ; branch %7, if_then.2, if_else.3
 ;;
 ;; Every reader of the loaded byte is behind the phi, so the backend's M6-C fold
-;; (`Load ; Cast ; compare ; Branch` as one contiguous run, compiler_backend.tl
-;; :53703) never sees its shape: the byte is widened into a register, the
-;; sentinel arm materializes `-1` into the same home, and the compare runs on
-;; the join -- 11 instructions per site where the same source in C is 7. The
+;; (`Load ; Cast ; compare ; Branch` as one contiguous run, see
+;; compiler_backend.tl) never sees its shape: the byte is widened into a
+;; register, the sentinel arm materializes `-1` into the same home, and the
+;; compare runs on the join, where C compares the loaded byte in place. The
 ;; sentinel edge also walks through the merge to reach a branch whose verdict
 ;; `-1` already decided.
 ;;
@@ -41636,7 +41476,7 @@
 ;;     are the phi and a literal, and the phi and the compare each have exactly
 ;;     one use (the compare and the branch). So no value defined in the merge is
 ;;     live in a successor and the repair never has to forward a merge-defined
-;;     value -- the same property thread_branch's single-phi rule buys there.
+;;     value.
 ;;   - the phi carries exactly one Var input, from a predecessor that ends in an
 ;;     unconditional `Jump` to the merge (LLVM's `SeenNonSimplifiedInVal` budget
 ;;     of one, InstructionCombining.cpp:2035), and at least one literal input,
@@ -42133,7 +41973,7 @@
 ;; next round's phi_cmp_fold + cfg do thread it, but that round's bounds_dom
 ;; has already run, so `cg-scan-ints`' digit cursor is never fenced (the guard
 ;; `lt i n` does not dominate its `i + 1` across the join) and the byte
-;; scanner's four str_bounds checks survive (callgraph_scc: 7.4M Ir).
+;; scanner's four str_bounds checks survive.
 ;; A `Mov` of a literal that nothing reads defines no value any exit can be live
 ;; in, so skipping it leaves the link's argument -- every value defined in the
 ;; run is its own compare, read by its own branch alone -- exactly as it was.
@@ -42291,8 +42131,8 @@
       [false-link? false-label]
       [else (ir.compiler-ir-label-none)])))
 
-;; Longer than this and the site is not a classifier chain; the corpus' longest
-;; is the two links of `(and (>= b 48) (<= b 57))`.
+;; Longer than this and the site is not a classifier chain; the typical one is
+;; the two links of `(and (>= b 48) (<= b 57))`.
 (define (opt-phi-cmp-fold-chain-fuel) : i64
   8)
 
@@ -42857,9 +42697,8 @@
 
 ;; One site per round: the rewrite retargets edges and repairs phis through the
 ;; CFG index, so the index and the use census are rebuilt for the next one. The
-;; cap only bounds the loop; a function with more sentinel sites than this is
-;; not represented in the corpus (peephole_lines' `pl-parse-line`, the densest,
-;; holds twelve).
+;; cap only bounds the loop; it sits well above the sentinel-site count of real
+;; functions.
 (define (opt-phi-cmp-fold-fuel) : i64
   64)
 
@@ -43011,30 +42850,12 @@
 ;; Gate for the bool-branch `and`-chain pass: does any conditional branch test a
 ;; value that an `and` materialized in this function?
 ;;
-;; Proving that used to be quadratic. For every block ending in `branch %v` the
-;; walk re-read every instruction of every block looking for `%v = and ...`, and
-;; re-materialized a cons list of the whole block array once per re-read. The
-;; answer needs neither: the `and` destinations and the branch conditions are
-;; two independent facts, each decidable in one sequential pass over the dense
-;; instruction/block arrays that already hold them.
-;;
-;; Measured over the opt2 self-compile of src/main.tl (59,726 gate calls), which
-;; is where the old walk was the profile's worst D1 read-miss density -- 64.2M
-;; D1 read misses, one per 20 instructions executed:
-;;   - the scanned functions hold 4,990,494 instructions, and the walk performed
-;;     86,389,242 instruction visits: every instruction stream was re-read 17.3x
-;;     on average (worst single call: 8,757 instructions re-read 179 times =
-;;     1,567,503 visits), far past what L1 holds, so nearly every visit missed;
-;;   - 11,844,076 cons cells were materialized by the per-re-read
-;;     `compiler-ir-block-seq-to-list`, all cold on first touch;
-;;   - 59,384 of the 59,726 calls (99.4%) ran that walk over a function with no
-;;     `and` instruction at all, where no re-read can ever succeed. The whole
-;;     self-compile contains just 546 `and` destinations.
-;; So the common answer is settled by one sequential pass with no allocation,
-;; and the 0.6% that can still say yes cost two more sequential passes. That
-;; leaves 5,037,778 instruction visits (1.009x the stream, 17.2x fewer), 2,494
-;; block visits (none of them consed), and 342 mark arrays. Running both walks
-;; against each other inside one compiler agreed on all 59,766 gate answers.
+;; The `and` destinations and the branch conditions are two independent facts,
+;; each decidable in one sequential pass over the dense instruction/block arrays
+;; that already hold them; re-reading every block per branch is quadratic and
+;; misses cache on large functions. Almost every function has no `and` at all,
+;; so the common answer is settled by one sequential pass with no allocation,
+;; and only a function that can still say yes pays two more sequential passes.
 (define (opt-bool-branch-chain-instrs-and-dst-max
   [instrs : ir.CompilerIrInstrSeq]
   [best : i64]) : i64
@@ -43077,8 +42898,8 @@
       found)))
 
 ;; Highest destination of an `and` BinOp anywhere in the block list, or -1 when
-;; the function has none -- which is also the whole gate answer for 99.4% of
-;; calls, since a branch condition no `and` defines can never be a chain root.
+;; the function has none -- which is also the whole gate answer for almost every
+;; call, since a branch condition no `and` defines can never be a chain root.
 (define (opt-bool-branch-chain-blocks-and-dst-max
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [best : i64]) : i64
@@ -43251,13 +43072,12 @@
 ;; `cfg` stage right after this pass) deletes it, which retires the boolean
 ;; store as well; a merge that keeps a predecessor is left with a smaller phi.
 ;;
-;; The rails are deliberately strict for this first version:
-;;   - the merge holds phis and its branch and nothing else (no dead Movs, no
-;;     compare-against-constant condition -- both are follow-ups);
-;;   - the condition is the merge's SINGLE phi and its only use is that branch,
-;;     so no value defined in the merge can be live in the threaded successor
-;;     and successor-phi repair never has to forward a merge-defined value;
-;;   - the forwarding block of a depth-2 chain has the same single-phi shape;
+;; The rails:
+;;   - what the merge may hold ahead of its branch (phis, pure Movs, one
+;;     compare) and which of its definitions may be live past it are decided
+;;     by the forms and the live-out rule below (D2, T2-5, D3);
+;;   - a forwarding block on the input walk is `[phi; jump]`, at most
+;;     `opt-thread-chain-depth` deep;
 ;;   - a successor phi must already carry an input for the merge;
 ;;   - the merge may not be its own branch target, and an edge is never
 ;;     retargeted onto the block it already leaves or onto its own origin.
@@ -43494,7 +43314,7 @@
 ;; Depth of the `[phi; jump]` forwarding chain the input walk resolves.
 ;; JumpThreading recurses through phi operands under a `RecursionSet`
 ;; (JumpThreading.cpp:558, 607-625); the compiler's own `cond` ladders build
-;; chains 13 deep (`pl-single-dest?`), so 16 covers the corpus with room over.
+;; chains 13 deep (`pl-single-dest?`), so 16 leaves room over them.
 (define (opt-thread-chain-depth) : i64
   16)
 
@@ -43735,23 +43555,21 @@
               next)])))))
 
 ;; Every comparison the branch can decide per edge is threaded. The ordering
-;; forms came first, for "a constant is materialised on an early-exit edge and
-;; re-tested at the merge": the sentinel is out of band (`-1`, `0`) and the
-;; re-test is a validity test -- `ge x, 0`, `gt x, 0` -- which is the shape
-;; gvn_table's `cont` merges hold. The equalities were held back while
-;; threading them measured +15,585,433 Ir on peephole_lines, whose foldable
-;; merges are all `eq`/`ne` against character literals: the sentinel edge there
-;; is one value among many in a byte-comparison chain, and the merge sits on
-;; the hot path. That reading is stale -- with the later passes as they now
-;; stand (T2-5's Mov tail, the D3 live-out rule, bool_branch_late, cmp_dup)
-;; the same admission measures -2,839,286 on peephole_lines and -11,493,328 on
-;; sccp_lattice (JT-1), whose tag scans are the row: `(= (sccp-env-tag i) 1)`
-;; is a `match` over the slot's tag word whose arms merge `0`, `1` and `2` into
-;; one phi and compare it with 1, so every iteration re-tested a verdict each
-;; arm already knew. No other row moved. LLVM has no such split because it
-;; clones the block into a freshly split edge instead of retargeting the
-;; predecessor (`SimplifyCFG.cpp:3619`), which leaves the original merge, and
-;; everything the later passes see in it, exactly where it was.
+;; forms serve "a constant is materialised on an early-exit edge and re-tested
+;; at the merge": the sentinel is out of band (`-1`, `0`) and the re-test is a
+;; validity test -- `ge x, 0`, `gt x, 0` -- which is the shape gvn_table's
+;; `cont` merges hold. The equalities serve tag scans (JT-1): `(= (sccp-env-tag
+;; i) 1)` is a `match` over the slot's tag word whose arms merge `0`, `1` and
+;; `2` into one phi and compare it with 1, so every iteration re-tested a
+;; verdict each arm already knew. Threading the equalities relies on the later
+;; passes (T2-5's Mov tail, the D3 live-out rule, bool_branch_late, cmp_dup):
+;; without them it is a loss where the merges are `eq`/`ne` against character
+;; literals, because the sentinel edge there is one value among many in a
+;; byte-comparison chain and the merge sits on the hot path. LLVM does not
+;; depend on later passes here because it clones the block into a freshly
+;; split edge instead of retargeting the predecessor (`SimplifyCFG.cpp:3619`),
+;; which leaves the original merge, and everything the later passes see in it,
+;; exactly where it was.
 (define (opt-thread-compare-threadable-op? [op : (& op ir.CompilerIrBinOp)]) : bool
   (match op
     [(ir.CompilerIrBinOp.Lt) true]
@@ -44288,10 +44106,10 @@
 ;; edge redirects -- nothing is cloned -- so the only thing that grows is the
 ;; target's phi web, one input per redirected predecessor, against the merge's
 ;; own phis losing one each. The cap bounds that growth for a merge with a wide
-;; fan-in the way `TailDupPlacementThreshold` bounds tail duplication, and it is
-;; the rail this pass's own history asks for: `opt-bool-branch` recorded a 10 %
-;; regression from duplicating phi copies. A round threads at most this many
-;; predecessors of one block; the fixpoint below picks the rest up next round.
+;; fan-in the way `TailDupPlacementThreshold` bounds tail duplication: duplicated
+;; phi copies are a known way for this kind of rewrite to regress. A round
+;; threads at most this many predecessors of one block; the fixpoint below
+;; picks the rest up next round.
 (define (opt-thread-pred-budget) : i64
   4)
 
@@ -44467,8 +44285,8 @@
 ;; a `[phi; jump]` forwarding block defines is walked into, so the literals one
 ;; level further back decide the same branch from one block further away. That
 ;; recursion is JumpThreading's phi-operand walk (JumpThreading.cpp:607-625) and
-;; it is what collapses the compiler's own `cond` ladders, whose 13 forwarding
-;; merges the depth-1 version stopped at after the first hop.
+;; it is what collapses the compiler's own `cond` ladders, whose forwarding
+;; merges a depth-1 walk stops at after the first hop.
 (define (opt-thread-scan-chain-inputs!
   [budget : (&mut budget (__tl_dyn-array i64))]
   [type-segment-bases : i64]
@@ -44774,11 +44592,11 @@
 ;;
 ;; A LATCH is left alone (opt-thread-latch-merge?): its phis and its branch are
 ;; the loop's own shape, and an edge redirected around it moves the loop's
-;; exit or its back edge. Measured: `rg-count-conflicts`' outer latch threaded
-;; -- the header's exit edge straight to the function exit, the inner loop's
-;; exit straight to the header -- retired a compare that ran once per outer
-;; trip and cost a spill pair per outer trip (+3.27M); the compare a latch
-;; re-tests is the loop-carried one the allocator has already placed.
+;; exit or its back edge. Threading an outer latch -- the header's exit edge
+;; straight to the function exit, the inner loop's exit straight to the header
+;; -- retires a compare that runs once per outer trip and costs a spill pair per
+;; outer trip; the compare a latch re-tests is the loop-carried one the
+;; allocator has already placed.
 (define (opt-thread-facts-preds-try!
   [budget : (&mut budget (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
@@ -45080,10 +44898,8 @@
 ;; re-run for the opportunities the previous round's cleanup exposed: a depth-2
 ;; chain resolves inside a single round, and each further round peels one more
 ;; level off a merge chain. A long `cond` ladder in the compiler's own sources
-;; builds exactly such a chain, and an instrumented build showed a 16-round cap
-;; truncating five of them while 64 converges everywhere (nine benchmarks and
-;; src/main.tl at opt2, all with rounds to spare). The cap therefore only
-;; bounds the loop; it is not reached in practice.
+;; builds exactly such a chain, so a much smaller cap would truncate real
+;; chains. This one only bounds the loop; it is not reached in practice.
 (define (opt-thread-const-branch-fuel) : i64
   64)
 
@@ -45287,11 +45103,11 @@
 ;; tag is its own literal, `old.tag` was decided by the branch that selected
 ;; the predecessor (`%53 = eq %239, 0` at `inl.entry.12.entry`, `%73` one block
 ;; down), and a payload compared with itself (`eq %238, %234` with `%234 = %238`
-;; on that edge) is equal. The run is re-executed on every call -- 2,851,680
-;; calls, six to eleven instructions each -- to re-derive a verdict the join
-;; arm already held. LLVM threads it: JumpThreading evaluates the condition on
-;; each incoming edge with LazyValueInfo supplying `%239`'s range from the
-;; dominating branches, and clones the block into the edge that decides it.
+;; on that edge) is equal. The run is re-executed on every call to re-derive a
+;; verdict the join arm already held. LLVM threads it: JumpThreading evaluates
+;; the condition on each incoming edge with LazyValueInfo supplying `%239`'s
+;; range from the dominating branches, and clones the block into the edge that
+;; decides it.
 ;;
 ;; The two rails above thread a merge whose OWN compare reads its phis (D2), or
 ;; a merge whose single phi is the one value a compare run reads (T1-2b). This
@@ -46308,11 +46124,10 @@
 ;; merge's branch condition is already known constant. They are lowering
 ;; artifacts, not something a late pass reintroduces -- they are present in the
 ;; `--opt-level 0` dump -- and they survive to the backend, where each one costs
-;; a taken `jmp` every time it executes: 4.48M of them in gvn_table's
-;; `gvn-facts-slot` probe loop and 15.23M in intern_table's `it-slice-eq?` byte
-;; loop, in both cases on the hottest path in the benchmark. The backend already
-;; elides a `jmp` to the next block and already inverts a branch to fall through,
-;; so removing the block is the whole fix; no emitter change is involved.
+;; a taken `jmp` every time it executes, often on a hot path (`gvn-facts-slot`'s
+;; probe loop, `it-slice-eq?`'s byte loop). The backend already elides a `jmp`
+;; to the next block and already inverts a branch to fall through, so removing
+;; the block is the whole fix; no emitter change is involved.
 ;;
 ;; The rails are narrow on purpose. A block forwards only when it is EXACTLY one
 ;; `Jump`, which rules out phis and side effects in a single test, and a
@@ -46354,14 +46169,13 @@
 ;; no instruction, and it can lose several. Two backend features want exactly
 ;; that shape -- a jump-only block sitting immediately before the code it
 ;; guards. `opt-loop-preheaders` emits one per loop, and M-F loop-hoisted
-;; backend constants (compiler_backend.tl:17419) only fire for a loop "whose
-;; single out-of-loop predecessor P lies before the loop and ends in an
-;; unconditional Jump to the header". Straightening arith_loop's
-;; `while_body.1__preheader` away cost the two hoisted `movabsq` a register home
-;; and put them back inside the 16x-unrolled body: +40% on that benchmark, and
-;; +36.8% each on opt_arithmetic_loops and opt_function_calls. Skipping
-;; already-fallthrough blocks preserves every preheader and keeps every arm
-;; trampoline, because an arm's join never sits directly behind it.
+;; backend constants (the M-F note in compiler_backend.tl) only fire for a loop
+;; whose single out-of-loop predecessor P lies before the loop and ends in an
+;; unconditional Jump to the header. Straightening a preheader away costs the
+;; hoisted `movabsq` constants their register home and puts them back inside the
+;; loop body. Skipping already-fallthrough blocks preserves every preheader and
+;; keeps every arm trampoline, because an arm's join never sits directly behind
+;; it.
 ;;
 ;; Block ids are assigned in list order by `opt-cfg-index-fill-labels!`, so
 ;; id + 1 is the lexically next block.
@@ -46803,16 +46617,15 @@
 ;; ST-2. The late threader retargets the jump of a jump-only arm whose phi
 ;; inputs decided its tree, so an arm that fell through when the pass above ran
 ;; no longer does, and the hot path around it pays the `jmp` the pass exists to
-;; remove (state-bind's `if_else.7`, 2.85M times in sccp_lattice). The pass
-;; runs once more below the threader -- with one guard the first run gets from
-;; lexical adjacency for free: a trampoline on a LOOP BOUNDARY stays. A loop's
-;; dedicated exit block (every predecessor inside the loop, the block outside),
-;; a jump-only latch and a jump-only preheader are shapes the allocator and the
+;; remove (sccp_lattice's state-bind `if_else.7` is one). The pass runs once
+;; more below the threader -- with one guard the first run gets from lexical
+;; adjacency for free: a trampoline on a LOOP BOUNDARY stays. A loop's dedicated
+;; exit block (every predecessor inside the loop, the block outside), a
+;; jump-only latch and a jump-only preheader are shapes the allocator and the
 ;; backend rely on (spill placement at the exit, the back edge's phi copies on
 ;; the latch, hoisted constants ahead of the header); splicing an inner loop's
-;; exit edges straight onto the outer join cost intern_table +4.05M, and
-;; pointing a probe loop's continue branch straight at its header cost
-;; hashmap_get +3.44M, when the second run lacked the guard.
+;; exit edges straight onto the outer join, or pointing a probe loop's continue
+;; branch straight at its header, costs more than the `jmp` it saves.
 (define opt-cfg-straighten-protect-on? : bool
   false)
 (define opt-cfg-straighten-protected : opt_i64_i64_map.Map
@@ -46936,17 +46749,12 @@
   (Const ir.CompilerIrValue ast.AstType)
   (Overdefined))
 
-;; The SCCP lattice was a persistent assoc list
-;; (OptSccpEnvCons id value rest) where opt-sccp-env-set rebuilt the WHOLE list on
-;; every bind (via opt-sccp-env-remove) -> O(V) alloc per bind, O(V^2) per analysis
-;; sweep, x fixpoint sweeps x all functions (~42s / ~12GB of the -O2 optimize
-;; phase). The lattice is a single monotonically-rising map threaded linearly
-;; through analysis (never branched), so it is now a mutable array indexed by var
+;; The SCCP lattice is a single monotonically-rising map threaded linearly
+;; through analysis (never branched), so it is a mutable array indexed by var
 ;; id: O(1) lookup/set, no rebuild. Var ids are dense within a function; the array
 ;; is sized to cover every bound var (params + every instruction dst that
-;; opt-sccp-process-instr binds). Out-of-range lookups return Unknown (the same
-;; default the list gave for an unbound var), so the analysis result -- and the
-;; folded output -- is byte-identical.
+;; opt-sccp-process-instr binds). Out-of-range lookups return Unknown, the
+;; lattice's value for an unbound var.
 (defenum OptSccpEnv
   (Env i64 (__tl_dyn-array OptSccpValue)))
 
@@ -47073,7 +46881,7 @@
 
 ;; Mutates the shared lattice array in place and returns the same env. The
 ;; environment is threaded linearly through the monotone analysis, so in-place
-;; update is observationally identical to the old persistent cons/remove.
+;; update is observationally identical to a persistent update.
 (define (opt-sccp-env-set [env : OptSccpEnv] [var : i64] [value : OptSccpValue]) : OptSccpEnv
   (match (compiler-opt-global-shared-view env)
     [(OptSccpEnv.Env cap slots)
@@ -47630,14 +47438,9 @@
       ;; Fully-constant BinOps still fold: opt-sccp-rewrite-scalar-def replaces
       ;; the whole instruction with a Mov when dst's own lattice is Const.
       ;;
-      ;; MEASURED over the 17 benchmark rows: lex_source -6,092,768 Ir, and
-      ;; peephole_lines +144 Ir -- one site where keeping the Var costs the
-      ;; allocator a spill/reload pair, the case the rule's own doc comment
-      ;; calls out as still not the worse choice. Every other row is byte-equal.
-      ;; Gating the refusal on the late slot alone (the packet's fallback) was
-      ;; built and measured too and reproduces that table exactly, so the cost
-      ;; belongs to the late run and the flag would buy nothing: the rule is
-      ;; stated once here, for every sccp run, as its own scope note argues.
+      ;; Gating the refusal on the late slot alone gives the same code (the
+      ;; late run is where the refusal matters), so the rule is stated once
+      ;; here, for every sccp run, as its own scope note argues.
       (let
         [resolved-lhs : ir.CompilerIrValue (opt-sccp-rewrite-value env lhs)]
         [resolved-rhs : ir.CompilerIrValue (opt-sccp-rewrite-value env rhs)]
@@ -47702,8 +47505,8 @@
 ;; in range), so the output length is not known up front: build it with the
 ;; capacity-managed dense builder seeded at the input length, not a cons
 ;; accumulator. `opt-sccp-rewrite-instr` is a pure function of `env` and the
-;; instruction, so walking forward instead of the old backward-cons produces
-;; the identical sequence. Output is fresh; `instrs` is untouched. refs #5726
+;; instruction, so the walk order cannot change the result. Output is fresh;
+;; `instrs` is untouched.
 (define (opt-sccp-rewrite-instr-seq
   [env : OptSccpEnv]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
@@ -48054,13 +47857,13 @@
 ;; Function-local vreg ids are dense, so destination lookup is direct. `-1` is
 ;; explicit absence; valid vreg sources are non-negative. A compact active-dst
 ;; sidecar bounds invalidation by actual occupancy instead of the largest vreg
-;; id, while preserving the old all-matches removal without rebuilding a boxed
-;; chain. Both dense fields reuse the module's existing i64 vector instead of
-;; generating another collection family. Most prefixes contain no relevant move
-;; at all, so keep the dense storage lazy: `Empty` has no backing arrays and the
-;; first binding promotes it to a one-word boxed `Dense` handle. Keeping the two
-;; vectors out of the carrier also avoids copying a wide environment through the
-;; recursive prefix walk.
+;; id, while still dropping every pair a redefinition invalidates. Both dense
+;; fields reuse the module's existing i64 vector instead of generating another
+;; collection family. Most prefixes contain no relevant move at all, so keep the
+;; dense storage lazy: `Empty` has no backing arrays and the first binding
+;; promotes it to a one-word boxed `Dense` handle. Keeping the two vectors out
+;; of the carrier also avoids copying a wide environment through the recursive
+;; prefix walk.
 (defstruct OptSwitchCopyState
   (sources opt_dense_i64_vec.Vec)
   (active opt_dense_i64_vec.Vec))
@@ -48644,9 +48447,9 @@
 ;; the chain's own tags must occupy. A gap tag costs one 8-byte table slot and
 ;; saves nothing, so a chain that is mostly gaps would trade instructions for
 ;; rodata and D-cache footprint; a compared tag replaces roughly (chain
-;; position) compares with one indexed jump. 50% is the standard floor and, on
-;; the self-compile, admits the wide AST/IR walkers (65 of 76 `AstExpr` tags,
-;; 64 of 67, ...) that an exact-density rule rejected over a handful of gaps.
+;; position) compares with one indexed jump. 50% is the standard floor, and it
+;; admits the wide AST/IR walkers that an exact-density rule would reject over a
+;; handful of gaps.
 (define (opt-switch-density-percent) : i64
   50)
 
@@ -48659,15 +48462,12 @@
 ;; tabling most. Chains of at least `opt-switch-long-chain-count` compares get
 ;; the lower floor; shorter ones keep the 50% floor above.
 ;;
-;; Pinned two-sided on the corpus. Admitted at the low floor: the lexer's byte
-;; dispatch -- 13 tags (9, 10, 13, 32, 34, 39, 40, 41, 44, 59, 91, 93, 96) over
-;; a span of 88, 14.7% -- which as a chain walks 26 instructions for every byte
-;; that starts a symbol, and which clang tables here too, over that same 88-slot
-;; range. Refused, in rising density: an 8-compare chain spanning more than 66
-;; slots (below 12%); peephole_lines' 6-tag classifier over a span of 36
-;; (16.7%) and its two 4-tag chains over spans of 22 (18.2%) -- short enough to
-;; keep the 50% floor, and measured: admitting them costs that row +0.23%,
-;; because a sparse early chain preempts a denser later one in the same
+;; Admitted at the low floor: the lexer's byte dispatch -- 13 tags over a span
+;; of 88, 14.7% -- which as a chain walks 26 instructions for every byte that
+;; starts a symbol, and which clang tables too. Refused, in rising density: an
+;; 8-compare chain spanning more than 66 slots (below 12%); a short sparse
+;; classifier (6 tags over a span of 36, 4 tags over 22), which keeps the 50%
+;; floor because a sparse early chain preempts a denser later one in the same
 ;; function; and the 4-tag span-21 chain (19%) the pass self-test pins.
 (define (opt-switch-long-chain-count) : i64
   8)
@@ -48683,8 +48483,7 @@
 ;; Hard ceiling on the emitted table's entry count. The density floor already
 ;; bounds the span by a small multiple of the compare count, so this only fires
 ;; for chains that are pathological in absolute size; it keeps a single match
-;; from emitting an unbounded rodata table (and bounds
-;; `opt-switch-build-cases-desc` recursion) regardless of the source program.
+;; from emitting an unbounded rodata table regardless of the source program.
 (define (opt-switch-max-table-entries) : i64
   1024)
 
@@ -52460,15 +52259,16 @@
 ;;   * `x * c`, c > 0: admitted under `x >= 0` and `x <= MAX / c`, so the
 ;;     product is at most `(MAX / c) * c <= MAX`.
 ;;
-;; A container length is `< 2^63` (the ubound header argument, O:79715), so a
-;; value some `bounds_check` uses as its LENGTH is non-negative read as an i64
-;; wherever it is live -- that is what gives a scanner's `len` operand a sign
-;; with no guard at all. Which values those are is collected once per function
-;; (`opt-bounds-dom-var-facts`), and that collection also reads the length a
-;; function never checks with: a `load` through a `gep base, length-slot` whose
-;; base is an array/string descriptor HANDLE at every definition site is the
-;; same `< 2^63` word (see `opt-bounds-dom-var-fact-length-slot` for why the
-;; base premise, and not the gep shape, is what makes that sound).
+;; A container length is `< 2^63` (the ubound header argument,
+;; `opt-ubound-len-nonneg?`), so a value some `bounds_check` uses as its LENGTH
+;; is non-negative read as an i64 wherever it is live -- that is what gives a
+;; scanner's `len` operand a sign with no guard at all. Which values those are
+;; is collected once per function (`opt-bounds-dom-var-facts`), and that
+;; collection also reads the length a function never checks with: a `load`
+;; through a `gep base, length-slot` whose base is an array/string descriptor
+;; HANDLE at every definition site is the same `< 2^63` word (see
+;; `opt-bounds-dom-var-fact-length-slot` for why the base premise, and not the
+;; gep shape, is what makes that sound).
 ;;
 ;; NARROWING FORMS, admitted with no fence at all. The three fenced rules above
 ;; are the ones that can LEAVE the range; these cannot, so each is decided by
@@ -52495,8 +52295,7 @@
 ;; SIGNED spelling, so the retyping silently switches them off.
 ;;
 ;;   * `opt-ubound-latch-shape` wants `lt back, n : i64` at the latch; retyping
-;;     a scanner's loop test cost lex_source +38.5M Ir (+7.7%, measured) by
-;;     losing the min(n, len) narrowing, plus gvn_table +1.2M.
+;;     a scanner's loop test loses the min(n, len) narrowing.
 ;;   * `lftr` wants the exit compare signed; retyping it left the counter phi
 ;;     and its `add ..., 1` un-retired and broke the
 ;;     `check_lftr_counter_retire` asm-shape gate outright.
@@ -54290,8 +54089,8 @@
 ;; one dominator chain -- lowers to k+1 checks of the SAME length whose indexes
 ;; differ by a literal. `opt-bounds-contains` above retires only the EXACT pair,
 ;; so every offset paid its own cmp+jb: `gvn-run-block`'s instruction fetch reads
-;; six token slots per iteration and checked all six (24.1M Ir in the running
-;; benchmark), and `it-hash-words`' word loader checks eight.
+;; six token slots per iteration and checked all six, and `it-hash-words`' word
+;; loader checks eight.
 ;;
 ;; TWO of them imply the rest. Write the run's indexes as `base + j`; the adds
 ;; WRAP like all TypeLisp integer arithmetic, so `base + j` denotes
@@ -55054,10 +54853,9 @@
 ;; loop only when its derivation set is non-empty, and cross-array fusion is
 ;; exactly the rule that derives the checks LE would retire: retiring them here
 ;; first empties that set, the loop stays unversioned, and the clone's shape is
-;; worth more than the checks were (measured on cfg_domloops' cfg-natural-loops,
-;; +1.2M). Straight-line code has no versioner to lose, which is where P-B pays;
-;; inside a loop the relation is read by bce_version instead, where it shortens
-;; the fusion guard rather than replacing it.
+;; worth more than the checks were. Straight-line code has no versioner to lose,
+;; which is where P-B pays; inside a loop the relation is read by bce_version
+;; instead, where it shortens the fusion guard rather than replacing it.
 (defstruct OptLenEqUse
   (table opt_i64_i64_map.Map)
   (defs (__tl_dyn-array OptBoolBranchDef))
@@ -55621,14 +55419,10 @@
   ;; Retain-only walk (drops bounds checks a dominating check/comparison already
   ;; proved, folds decided comparisons), so the output length is not known up
   ;; front: it goes into the capacity-managed dense builder seeded at the input
-  ;; length. This used to be a tail-consing recursion -- recurse first, cons the
-  ;; head onto the returned tail -- which built the whole block as a 112 B-per-
-  ;; instruction spine that `compiler-ir-block` then re-counted and re-copied.
-  ;; The facts/cmp-facts threading was already strictly forward (each step hands
+  ;; length. The facts/cmp-facts threading is strictly forward (each step hands
   ;; the NEXT step its updated facts and the head is emitted with the facts that
-  ;; were current when it was read), so the loop below threads them the same way
-  ;; and pushes in the same order. Output is fresh; `instrs` is untouched.
-  ;; refs #5726
+  ;; were current when it was read), and the loop below pushes in that order.
+  ;; Output is fresh; `instrs` is untouched.
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [builder : ir.CompilerIrInstrBuilder
@@ -56245,8 +56039,8 @@
 ;; length, by the same fixed layout the `bounds_check` lowering reads it with.
 ;; That is exactly the premise `opt-bce-mb-descriptor-length` already hoists a
 ;; length load into a guard block on, so no new trust is extended here. The
-;; length is `< 2^63` (the ubound header argument, O:79715), so the loaded i64
-;; is non-negative read as an i64 wherever it is live.
+;; length is `< 2^63` (the argument at `opt-ubound-len-nonneg?`), so the loaded
+;; i64 is non-negative read as an i64 wherever it is live.
 ;;
 ;; The bit is bookkeeping for bit 0 -- it marks the ADDRESS, and the load
 ;; through it is what carries the length fact -- and is never queried alone.
@@ -56479,10 +56273,10 @@
 ;;     becomes provably in range HERE, its `bounds_check` goes, and `bce_version`
 ;;     -- which runs BELOW this pass -- then has nothing to version, so the
 ;;     `__bce_guard`/`__bce_fast` pair that `copy_call` matches on is never
-;;     built and a 25-slot `dst[i] = src[i]` loop that used to become one
-;;     `tl_mem_copy8_fwd` call stays a scalar loop (peephole_lines +6.0M Ir,
-;;     measured). Copy/fill recognition of a CHECK-FREE counted loop is the
-;;     fix; until it exists, this pass does not take that check away.
+;;     built and a `dst[i] = src[i]` loop that would become one
+;;     `tl_mem_copy8_fwd` call stays a scalar loop. Copy/fill recognition of a
+;;     CHECK-FREE counted loop is the fix; until it exists, this pass does not
+;;     take that check away.
 ;;   bit 2, FENCED: `x + k` (k > 0) or `x * c` (c > 0) whose overflow fence is
 ;;     discharged here (see WRAP FENCES). The value is then non-negative exactly
 ;;     when `x` is, which the structural recursion decides.
@@ -57867,7 +57661,7 @@
 ;; outer loop's own test has just proved true -- and flag_exit converts a loop
 ;; only off a seed it can decide, so neither loop converts and both re-test the
 ;; flag at the top of every iteration. With the seed spelled `true` both
-;; convert: route_http's matcher, which C compiles to direct exits.
+;; convert, into the direct exits C compiles such a matcher to.
 ;;
 ;; THE FACT. A block X whose only predecessor P ends in `branch v, T, F` with
 ;; T != F learns `v = (X == T)`, and every block X dominates inherits it: this
@@ -57880,7 +57674,7 @@
 ;; Only seeds: inside a loop the flag's own web has to stay the flag, since
 ;; flag_exit recognises a loop by the latch carrying the flag (or a copy of it)
 ;; on every keep-going path, and a `true` spelled there instead hides the loop
-;; from it -- intern_table's `it-slice-eq?` stops converting and pays 25%.
+;; from it, so the loop stops converting and keeps its per-iteration test.
 ;; `branch <literal>` is folded, and its dead edge dropped, by `cfg` below, the
 ;; same as for the comparison verdicts.
 ;;
@@ -58232,9 +58026,9 @@
 ;; The dominated-branch half, run from bounds_dom: a re-test of a flag its own
 ;; dominating test decided becomes `branch <literal>`, which cfg folds -- it
 ;; only ever removes work. Seeds are NOT rewritten here: a literal seed on a
-;; loop flag_exit then does not convert costs a `mov $1` the var did not
-;; (peephole_lines' `pl-decimal-valid?`), so seeds are flag_exit's to try, one
-;; loop at a time (opt-flag-exit-convert-loops).
+;; loop flag_exit then does not convert costs a `mov $1` the var did not, so
+;; seeds are flag_exit's to try, one loop at a time
+;; (opt-flag-exit-convert-loops).
 (define (opt-flag-facts-rewrite-blocks
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
@@ -58442,13 +58236,12 @@
 ;;
 ;; The early bounds_dom run stands back from every loop body: the multi-block
 ;; versioner's cross-array fusion derives exactly the checks LE would retire,
-;; and a loop it then declines to clone costs more than those checks were worth
-;; (cfg_domloops' cfg-natural-loops, +1.2M). AFTER the versioner has had its
-;; turn that reason is spent. Whatever check is still inside a loop belongs
-;; either to a loop the versioner REFUSED -- a call in the body, over its
-;; block/instruction caps, an inner loop already cloned, the economics gate --
-;; or to a clone that KEPT it, and P-B can retire both. This slot sweeps them
-;; with the loop set withdrawn.
+;; and a loop it then declines to clone costs more than those checks were
+;; worth. AFTER the versioner has had its turn that reason is spent. Whatever
+;; check is still inside a loop belongs either to a loop the versioner REFUSED
+;; -- a call in the body, over its block/instruction caps, an inner loop already
+;; cloned, the economics gate -- or to a clone that KEPT it, and P-B can retire
+;; both. This slot sweeps them with the loop set withdrawn.
 ;;
 ;; The pass is the same one, parameterised by its `OptLenEqUse`: it only deletes
 ;; mid-block `BoundsCheck`es, reorders a constant-offset run inside one block,
@@ -59113,10 +58906,8 @@
     [(option_i64.Some dst) (opt-divrem-facts-remove-var facts dst)]
     [(option_i64.None) facts]))
 
-;; 1:1 rewrite with forward-threaded facts. The old form accumulated a reversed
-;; cons list and reversed it back at the end; the fact threading is unchanged,
-;; the output just lands in a right-sized dense array. Output is fresh;
-;; `instrs` is untouched. refs #5726
+;; 1:1 rewrite with forward-threaded facts; the output lands in a right-sized
+;; dense array. Output is fresh; `instrs` is untouched.
 (define (opt-divrem-rewrite-instr-seq
   [type-segment-bases : i64]
   [facts : OptDivRemFacts]
@@ -59819,8 +59610,8 @@
     [(ir.CompilerIrInstr.BinOp _ _ _ _ ty) ty]
     [_ (ast.AstType.I64)]))
 
-;; `dst = src + k` (Add, or Sub with k already negated; `emit-add?` keeps a
-;; no-rewrite Sub in Sub form while its record is still additive).
+;; `dst = src + k` (Add, or Sub with k already negated; a Sub this step does
+;; not rewrite keeps its Sub form while its record is still additive).
 (define (opt-affine-add-step
   [instrs : ir.CompilerIrInstrSeq]
   [uses : (&mut uses (__tl_dyn-array i64))]
@@ -60267,7 +60058,7 @@
     [_ false]))
 
 ;; Only the consumers that establish the repeated Slice guard/load key need
-;; pre-load copy substitution. General copies retain the old load-then-copy
+;; pre-load copy substitution. General copies keep load-then-copy
 ;; scheduling, so unrelated local load hits remain available for GVN to erase
 ;; instead of becoming dead Movs in the pre-SSA block pass.
 (define (opt-slice-word-copy-use?
@@ -61122,14 +60913,12 @@
         ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
         ;; pure expressions, propagate the resulting copies, then remove duplicate
         ;; proven bounds checks; function-level DCE drops dead copies. Independent
-        ;; per-stage states preserve the old scheduling while the forward
-        ;; one-in/one-out stages share two in-place traversals of the cloned block
-        ;; sequence; bounds-check elimination then compacts that sequence in place.
-        ;; Fold runs ONCE: it is a single forward pass that binds every folded
-        ;; result into its env, so over the block it already reaches a fixpoint --
-        ;; a second `opt-fold-instrs` over the result only re-walked and rebuilt
-        ;; the list without changing it (byte-identical output, ~0.9% of
-        ;; self-compile).
+        ;; per-stage states preserve the stage-by-stage scheduling, while the
+        ;; forward one-in/one-out stages share two in-place traversals
+        ;; of the cloned block sequence; bounds-check elimination then compacts
+        ;; that sequence in place. Fold runs ONCE: it is a single forward pass
+        ;; that binds every folded result into its env, so over the block it
+        ;; already reaches a fixpoint and a second fold would change nothing.
         (begin
           (set!
             store-capacity
@@ -61247,10 +61036,8 @@
       (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count)))))
 
 ;; Cons-list arm of the same walk. It exists because the block-local pipeline is
-;; still reached with a cons list far more often than with an `.Array` (in an
-;; opt2 self-compile the `.Array` arm was never taken at all, so the dense
-;; workspace this shares was dead code); the two arms otherwise run identical
-;; per-block work.
+;; reached with a cons list far more often than with an `.Array`; the two arms
+;; share the dense workspace and otherwise run identical per-block work.
 (define (optimize-block-list-hs-dense
   [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
@@ -61318,7 +61105,7 @@
         block)
         (optimize-block-list-has-work? scan-work (deref rest))
         true)]
-    ;; Read-only, early-exit: scan the sequence directly (refs #5729).
+    ;; Read-only, early-exit: scan the sequence directly.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -61365,10 +61152,9 @@
           (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))]
         [seed-facts : OptAliasFacts
           (opt-alias-seed-params type-segment-bases params)]
-        ;; One frame-sized dense workspace per pass, for either block container.
-        ;; The cons arm used to build two sparse `OptLoadPtrKinds` per block --
-        ;; four 32-slot hash tables, 3 KiB of zero fill, allocated even for the
-        ;; blocks `opt-block-scan-skippable?` then skipped.
+        ;; One frame-sized dense workspace per pass, for either block container,
+        ;; rather than sparse per-block tables that would be allocated even for
+        ;; the blocks `opt-block-scan-skippable?` then skips.
         [work : OptLoadKindsDenseWork
           (opt-load-kinds-dense-work-with-size frame)]
         [next : ir.CompilerIrBlockList
@@ -61428,8 +61214,8 @@
   1026)
 
 ;; The inliner uses a separate crossing guard. Raising it with the heavy-pass
-;; limit regresses the measured self-compile path, so keep the old boundary
-;; until the inliner has a cost model that pays for larger callers directly.
+;; limit costs self-compile time, so it keeps its own boundary until the
+;; inliner has a cost model that pays for larger callers directly.
 (define (opt-inline-heavy-gate-block-limit) : i64
   1024)
 
@@ -61451,10 +61237,10 @@
 ;; source-level `(set! param ...)` lowers to. Every successful conversion also
 ;; adds an explicit entry preheader: initial parameter definitions belong to
 ;; that predecessor, while the rewritten tail calls become ordinary backedges
-;; to the old entry. The following SSA construction can therefore insert typed
-;; loop phis instead of rejecting duplicate parameter definitions. Re-running
-;; the old entry block per iteration remains precisely the tail-recursion
-;; semantics (a real recursive call re-executes the entire body).
+;; to the original entry. The following SSA construction can therefore insert
+;; typed loop phis instead of rejecting duplicate parameter definitions.
+;; Re-running the original entry block per iteration remains precisely the
+;; tail-recursion semantics (a real recursive call re-executes the entire body).
 (define (opt-tailrec-param-count [params : (& params ir.CompilerIrParamSeq)]) : i64
   params.len)
 
@@ -61568,9 +61354,8 @@
         (opt-tailrec-blocks-have-hybrid-identity? blocks fname n params))]))
 
 ;; Copy each parameter's staged temp back into the parameter slot. Run after
-;; all staging moves so the temps already hold the new argument values. The
-;; tail-recursion rewrite used to prepend these moves to a linked instruction
-;; tail; push them into the dense output in program order instead. refs #5726
+;; all staging moves so the temps already hold the new argument values, and
+;; push them into the dense output in program order.
 (define (opt-tailrec-push-assign-movs!
   [params : ir.CompilerIrParamSeq]
   [base : i64]
@@ -61796,7 +61581,7 @@
           (if (opt-tailrec-instr-seq-has-convertible? instrs fname n)
             true
             (opt-tailrec-blocks-have-convertible? (deref rest) fname n))])]
-    ;; Read-only, early-exit: scan the sequence directly (refs #5729).
+    ;; Read-only, early-exit: scan the sequence directly.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -61905,9 +61690,10 @@
 ;; the loop would have executed -- and no clause reorders, merges or elides a
 ;; memory operation. (The ascending classes rest on the same property; it is
 ;; stated here because the descending shift is the first admitted body for
-;; which two copies of it can touch the same address.) The x16 group depth lets the affine pass fold long constant-step
-;; chains (LCG-style `acc = acc*A + K`) into one composed mul+add per group,
-;; which is what closes the arith_loop/array_sum instruction gap to clang.
+;; which two copies of it can touch the same address.)
+;;
+;; The x16 group depth lets the affine pass fold long constant-step chains
+;; (LCG-style `acc = acc*A + K`) into one composed mul+add per group.
 ;; A loop-carried phi other than the counter: dst, init value (from the outside
 ;; pred), back-edge value (from B), phi type.
 (defenum OptUnrollPhi
@@ -61918,8 +61704,8 @@
   (Dense (__tl_dyn-array OptUnrollPhi) i64))
 
 ;; The source scan recurses to the end before prepending each non-counter phi.
-;; Store those prepends as amortized physical pushes and expose the old source
-;; order by indexing from the live end toward zero.
+;; Each prepend is an amortized physical push, and indexing from the live end
+;; toward zero yields source order.
 (define (opt-unroll-phi-list-ref
   [phis : (& phis OptUnrollPhiList)]
   [index : i64]) : OptUnrollPhi
@@ -62362,12 +62148,11 @@
     [(ir.CompilerIrInstr.Select _) true]
     [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) true]
     ;; StorePtr deliberately EXCLUDED: store-bearing counted loops are
-    ;; dominated by fills and short-trip container writes (hashmap grow/insert
-    ;; regressed 1-2%, self-compile +1.4% when they unrolled -- the entry
-    ;; guard plus 4x body is a net loss below ~8 iterations, and trip counts
-    ;; are unknowable statically). Pure compute/load loops (arithmetic
-    ;; recurrences, sums, reductions, scans) are the long-trip shapes where
-    ;; x4 pays: arith_loop -30%, array_sum -33%, spmd_reduce -36%.
+    ;; dominated by fills and short-trip container writes (hashmap
+    ;; grow/insert), where the entry guard plus the unrolled body is a net
+    ;; loss below ~8 iterations and trip counts are unknowable statically.
+    ;; Pure compute/load loops (arithmetic recurrences, sums, reductions,
+    ;; scans) are the long-trip shapes where unrolling pays.
     [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ false]))
 
@@ -62577,14 +62362,11 @@
 ;; predecessors (`__unroll_guard`, its and-chain block, `__unroll_body`) and
 ;; bce_version splices its guard onto a single preheader edge.
 ;;
-;; intern_table's `it-hash-words` is the measured case. Its byte tail runs after
-;; a word loop that exits on `i >= len - 7`, so at most 7 bytes are left, and the
-;; x16 clone the unroller builds for it is 492 statically dead instructions (88%
-;; of the function) whose only dynamic cost is the guard -- while the 5,851,734
-;; tail bytes it strands pay 3 instructions each for the BoundsCheck the
-;; versioner would have hoisted. Refusing the unroll is what lets round 2 version
-;; the tail: the control experiment in the report (`m1_tail.tl`, the same loop
-;; with no word loop ahead of it) versions in round 1 and is never unrolled.
+;; A hash function's byte tail is the case. It runs after a word loop that
+;; exits on `i >= len - 7`, so at most 7 bytes are left, and an x16 clone of it
+;; is statically dead code whose only dynamic cost is the guard -- while the
+;; tail bytes it strands pay for the BoundsCheck the versioner would have
+;; hoisted. Refusing the unroll is what lets a later round version the tail.
 ;;
 ;; WHAT IS PROVED, exactly: `bound - seed <= C` for a literal C at most the
 ;; factor, from the loop's own entry facts and nothing else. `seed` resolves to a
@@ -62979,12 +62761,11 @@
 ;; The guard is paid on every loop ENTRY and the group is entered only when at
 ;; least K+1 trips remain, so a loop whose trip count is bounded by a literal
 ;; small enough that the group can run AT MOST ONCE pays its guard on every
-;; call to buy a single group. `stdlib.string/int->string`'s digit writer is
-;; the measured case: it walks `digits - 1` down to 0 for a `digits` that
-;; inlining turns into a phi of the literals 1..19, so the x16 group is
-;; reachable for three of the nineteen digit counts while the two-instruction
-;; guard is paid on all of them -- asm_render +824,922 Ir with nothing on the
-;; other side.
+;; call to buy a single group. An int->string digit writer is the case: it
+;; walks `digits - 1` down to 0 for a `digits` that inlining turns into a phi
+;; of the literals 1..19, so the x16 group is reachable for three of the
+;; nineteen digit counts while the two-instruction guard is paid on all of
+;; them.
 ;;
 ;; WHAT IS PROVED, exactly: an upper bound on `seed` as a literal, from the
 ;; value's own definition and nothing else -- a literal, a phi every input of
@@ -62997,8 +62778,7 @@
 ;; whole groups.
 ;;
 ;; ASCENDING loops are deliberately not asked. They have their own refusal
-;; (opt-unroll-trip-remainder-bounded?), measured and tuned on this corpus, and
-;; this clause is not allowed to move a single ascending row.
+;; (opt-unroll-trip-remainder-bounded?), and this clause leaves them alone.
 (defenum OptUnrollMaybeI64
   (No)
   (Some i64))
@@ -63250,8 +63030,8 @@
 ;;  * A SIGNED type for the descending form. Its guard adds K to the floor and
 ;;    rejects the wrap with a signed `>=` in the counter's own type; at an
 ;;    unsigned type `i - 1` at zero wraps to the top and `>= floor` never
-;;    fails. The ascending form keeps the integer-type admission it was
-;;    measured with, so no ascending loop changes class here.
+;;    fails. The ascending form keeps its own integer-type admission, so no
+;;    ascending loop changes class here.
 (define (opt-unroll-shape-step-admit
   [blocks : ir.CompilerIrBlockList]
   [label : i64]
@@ -63336,9 +63116,9 @@
                 [_ (opt-unroll-trace-refuse (opt-unroll-reason-step-form))])]
             ;; UNR-2. `i = i - 1`, the spelling the front end emits for
             ;; `(set! cursor (- cursor 1))`. Admitted only under a descending
-            ;; latch, so the ascending class keeps exactly the instruction
-            ;; sequences it was measured on: a `Sub` of a NEGATIVE literal is
-            ;; an ascending step in disguise and stays refused here.
+            ;; latch, so the ascending class keeps exactly its own instruction
+            ;; sequences: a `Sub` of a NEGATIVE literal is an ascending step
+            ;; in disguise and stays refused here.
             [(ir.CompilerIrBinOp.Sub)
               (if (< mode 1)
                 (opt-unroll-trace-refuse (opt-unroll-reason-step-direction))
@@ -63484,7 +63264,7 @@
               ;; the same clause ALIAS-1 admits in the versioner
               ;; (opt-bce-version-shape-counter's `Ge` arm), so a loop the
               ;; versioner already stripped the checks off is exactly the loop
-              ;; this pass now sees.
+              ;; this pass sees.
               [(ir.CompilerIrBinOp.Ge)
                 (opt-unroll-shape-counter-arm
                   blocks
@@ -63546,20 +63326,19 @@
 ;; The third body class: a SCALAR counted loop that BOTH loads and stores.
 ;; Neither whitelist above admits one -- opt-unroll-body-instr-ok? excludes
 ;; StorePtr and the fill exception excludes Load -- so the merge/copy/update
-;; shape `dst[i] = f(dst[i], src[i])` has never been unrolled at any factor.
+;; shape `dst[i] = f(dst[i], src[i])` falls outside both.
 ;;
 ;; BoundsCheck is REFUSED here even though the store-free whitelist admits it,
 ;; and that refusal is what confines this class to a versioner fast clone
 ;; without naming one. A copy duplicates every check in the body, so a checked
 ;; merge loop would pay twice the check code to save 1.5 of its 3 overhead
-;; instructions -- but the measured damage was worse than that trade, because
-;; unrolling a still-checked body PRE-EMPTS the versioner. On spmd_map's
-;; `foreach_body.13` the checked merge loop unrolled on the pipeline iteration
-;; before versioning, so the hot path became a CHECKED unrolled body with a
-;; second versioned-and-unrolled nest hanging off its remainder: spmd_map
-;; +14.3% and spmd_short_tail +14.4%. Requiring a check-free body is the
-;; IR-level spelling of "the fast clone only" -- `__bce_fast` is exactly the
-;; check-free form, and it is where the saving is.
+;; instructions -- and the real damage is worse than that trade, because
+;; unrolling a still-checked body PRE-EMPTS the versioner: a checked merge loop
+;; unrolled on the pipeline iteration before versioning leaves the hot path a
+;; CHECKED unrolled body with a second versioned-and-unrolled nest hanging off
+;; its remainder. Requiring a check-free body is the IR-level spelling of "the
+;; fast clone only" -- `__bce_fast` is exactly the check-free form, and it is
+;; where the saving is.
 ;;
 ;; A body holding ANY vector instruction is likewise not this class. The
 ;; store-free SIMD admission above and the gang unroller below
@@ -63604,19 +63383,11 @@
 ;; describes: at K=16 the affine pass composes a group's chained
 ;; `acc = acc*A + C` into ONE mul+add and folds the sixteen `i+1..i+15` into
 ;; parallel offsets off the group counter, so lowering K multiplies the whole
-;; body, not just the latch. Measured on this tree, 21 rows, one rebuilt
-;; compiler per rung against the same base:
-;;   K=8:  cfg_domloops -2,826,720, but arith_loop +312,500,000 (+100.0%),
-;;         array_sum +225,037,500, spmd_reduce +223,201,224, opt_crc32
-;;         +10,080,224, string_scan +225,000,009, spmd_zip +1,496.
-;;   K=4:  cfg_domloops -3,161,508, but arith_loop +937,500,000 (+300.0%),
-;;         array_sum +675,112,500, spmd_reduce +680,403,756, opt_crc32
-;;         +32,400,720, string_scan +450,000,018, spmd_zip +4,548.
-;; string_scan and spmd_zip are zero-tolerance heavy-baseline rows, so both
-;; rungs are unshippable -- and the cfg win in each is COVERAGE of the sub-16
-;; tail, not the steady state: cfg_function's two hash loops average ~9 trips,
-;; so the x16 group never runs for about half their elements and those pay the
-;; remainder's 3 control instructions apiece.
+;; body, not just the latch: a first factor of 8 or 4 costs pure-arithmetic,
+;; reduction and scan loops far more than it wins. What a smaller factor does
+;; win is COVERAGE of the sub-16 tail, not the steady state: a hash loop
+;; averaging ~9 trips never runs the x16 group for about half its elements,
+;; and those pay the remainder's 3 control instructions apiece.
 ;;
 ;; The second level buys that coverage without touching the first factor. Per
 ;; loop ENTRY it costs one extra guard (5 instructions, and only on the path
@@ -63630,27 +63401,24 @@
 
 ;; The cascade only ever refines a group the class already chose, and only
 ;; when that group is strictly coarser than the cascade factor: the
-;; load-and-store class (K=2) and the word-merge tier (K=4) keep exactly the
-;; shapes they were measured at.
+;; load-and-store class (K=2) and the word-merge tier (K=4) keep their own
+;; factors.
 (define (opt-unroll-cascade-count [copies : i64]) : i64
   (if (> copies (opt-unroll-cascade-copies))
     (opt-unroll-cascade-copies)
     0))
 
-;; ...and only for the LOAD-BEARING compute class. Two exclusions, both
-;; measured, both with a reason that is not the benchmark:
+;; ...and only for the LOAD-BEARING compute class. Two exclusions:
 ;;
 ;;  * A store-only FILL is excluded. Its sub-16 tail is already the target of
-;;    the `fill_call` rewrite below, whose comment records that the corpus's
-;;    fills average ~20 slots -- so the tail a second group would divide is a
-;;    handful of stores, while the guard is paid on every entry. Measured with
-;;    fills included: liveness_scan +494,690 on one two-array zeroing loop
-;;    (`while_body.5`), which is the whole of that row's regression.
+;;    the `fill_call` rewrite below, and fills are typically a couple of dozen
+;;    slots -- so the tail a second group would divide is a handful of stores,
+;;    while the guard is paid on every entry.
 ;;  * A body with NO Load at all -- a pure counter/accumulator recurrence -- is
 ;;    excluded. The affine pass composes such a group into one mul+add, so the
 ;;    first group already costs ~5 instructions per 16 iterations and the tail
 ;;    is at most 15 iterations of a two-instruction body; there is nothing for
-;;    a second group to recover. Measured with them included: arith_loop +4.
+;;    a second group to recover.
 ;;
 ;; What remains is the streaming shape the cascade is for: hash/scan/reduction
 ;; loops that read one element per trip, whose remainder genuinely costs 3
@@ -63678,46 +63446,33 @@
 ;; recorded on opt-unroll-body-instr-ok? is not about unrolling stores as such;
 ;; it is about the SIXTEEN-copy clone of a body that keeps a container pointer
 ;; and a loaded value live across every store, on loops whose trip counts are
-;; unknowable statically and were measured short (hashmap grow/insert -1..2%,
-;; self-compile +1.4%). Both terms of that cost are per EXTRA copy: at K=2 the
+;; unknowable statically and often short (hashmap grow/insert). Both terms of
+;; that cost are per EXTRA copy: at K=2 the
 ;; clone doubles instead of sixteen-folding, each copy's loaded value still
 ;; dies at its own store one copy later, and the entry guard (which admits only
 ;; `seed < bound - K`) breaks even at ~4 trips instead of ~19. Loads without
-;; stores and stores without loads keep K=16: their measured shapes are the
+;; stores and stores without loads keep K=16: their typical shapes are the
 ;; long-trip reductions and fills the larger factor was tuned for.
 ;; ...AND NOT EVEN TWO, for a loop whose trip count is a REMAINDER. The factor
 ;; above is a per-TRIP trade against a per-ENTRY guard, so it needs trips to
 ;; pay it back, and the "~4 trips" break-even is where that happens. A byte
 ;; tail seeded at `8 * (n / 8)` and bounded by `n` runs `n mod 8` times, which
 ;; is at most seven for every n, so the trade can never be made: at most
-;; 1.5 x 7 = 10.5 Ir recovered against seven paid on every entry.
-;;
-;; The corpus numbers, measured on this tree at `benchmarks/asm_render`
-;; (`target/dev/tl-b3` vs the same tree with the refusal, `--dump-instr`
-;; callgrind over `asm-tape.txt`, 10 rounds):
-;;
-;;   asm-append5      205.97 -> 197.88 Ir per call over 554,850 calls (-4.5M)
-;;   asm-append4      161.41 -> 156.14 Ir per call over 211,710 calls
-;;   asm-append2      101.85 ->  99.72 Ir per call over 198,300 calls
-;;   concat3-borrowed 129.95 -> 123.77 Ir per call over 612,251 calls
-;;
-;; -- a shade over two instructions per copied piece, which is the guard's
-;; `lea` + `cmp` + `jl` minus what the K=2 group recovered over a tail that on
-;; this corpus is one to seven bytes long (operand parts: register names,
-;; mnemonics, small decimals). Over the whole benchmark the refusal is
-;; asm_render -11,228,158 Ir with no other row moving.
+;; 1.5 x 7 = 10.5 Ir recovered against seven paid on every entry. A string
+;; builder's copy of one short piece (a register name, a mnemonic, a small
+;; decimal) is exactly such a tail, paying the guard's `lea` + `cmp` + `jl` per
+;; piece for almost nothing back.
 ;;
 ;; The refusal is `opt-unroll-short-remainder?`, stated with its trip-count
 ;; argument beside the bound oracle below. It applies to THIS class and to the
 ;; word-merge tier, both of which are per-trip trades of the same shape; the
-;; x16 class and the cascade keep their measured constants and their admission
-;; untouched, and no loop of either class in this corpus carries the seed.
+;; x16 class and the cascade keep their admission untouched.
 (define (opt-unroll-load-store-group-copies) : i64
   2)
 
 ;; The WORD-MERGE tier: a third factor between the load-and-store class's K=2
 ;; and the store-free K=16, for the one load-and-store shape where K=2 leaves
-;; measurable loop control on the table.
+;; real loop control on the table.
 ;;
 ;; Why not simply raise the class. K=2 was pinned TWO-SIDED against container-
 ;; pointer pressure on short-trip hashmap loops, and that pin holds: the cost
@@ -63750,8 +63505,8 @@
 ;; refines, only ever versions a `__bce_fast` clone and never duplicates a
 ;; check. K=4 recovers 2.25 of the 3 loop-control instructions where K=2
 ;; recovers 1.50, and its entry guard (`seed < bound - 4`) breaks even around
-;; 7 trips instead of 4 -- the word-merge loops measured run the word count of
-;; a live set, which is comfortably past that.
+;; 7 trips instead of 4 -- word-merge loops typically run the word count of a
+;; live set, which is comfortably past that.
 (define (opt-unroll-word-merge-group-copies) : i64
   4)
 
@@ -64121,9 +63876,9 @@
 ;; The tail runs `n - 8*(n/8)` times. For n >= 0 that is `n mod 8`; for n < 0
 ;; truncating division rounds toward zero, so `8*(n/8) >= n` and the loop runs
 ;; not at all. Either way the trip count is in [0, 7], so K=2 can recover at
-;; most 1.5 x 7 = 10.5 Ir while its guard costs seven on every entry -- and the
-;; entries are what there are a lot of: asm_render pays one per copied piece,
-;; five per `asm-append5` call over 554,850 calls.
+;; most 1.5 x 7 = 10.5 Ir while its guard costs seven on every entry -- and
+;; such loops are entered often: a string builder pays one entry per copied
+;; piece.
 ;;
 ;; The `n & ~7` spelling of the same split is admitted on the same argument and
 ;; is even simpler: `n - (n & ~7)` is `n & 7`, in [0, 7] for every n including
@@ -64133,9 +63888,8 @@
 ;; when the loop's seed is `q * c` for `q = n / c` (or `n >> log2 c`), or
 ;; `n & -c`, with `n` the loop's own bound and `c` in {2, 4, 8}: the trip count
 ;; is then at most `c - 1 <= 7`. The x16 class and the cascade keep their
-;; measured constants and their admission untouched -- their factors are chosen
-;; for long-trip reductions and the sub-16 tails of those, and no loop of either
-;; class in this corpus carries this seed.
+;; admission untouched -- their factors are chosen for long-trip reductions and
+;; the sub-16 tails of those, which do not carry this seed in practice.
 (define (opt-unroll-short-remainder-max-trips) : i64
   7)
 
@@ -66010,8 +65764,8 @@
 ;; `rep stosq`, which the deterministic instruction-count gate charges ONE
 ;; instruction per slot; the x16 unroller this pass pre-empts charges 19 per 16
 ;; slots in its body PLUS an 11-instruction version guard PLUS 4 per slot in the
-;; sub-16 remainder, and the corpus's fills average ~20 slots, so the remainder
-;; and the guard -- not the steady state -- are what this recovers.
+;; sub-16 remainder, and typical fills are a couple of dozen slots, so the
+;; remainder and the guard -- not the steady state -- are what this recovers.
 ;;
 ;; WHY IT IS SOUND TO DROP THE BOUNDS CHECKS: this pass rewrites ONLY the
 ;; `__bce_fast` clone the versioner produced, and only when the clone's single
@@ -66112,8 +65866,8 @@
 ;; Only the versioner's fast clones are candidates, and testing that BEFORE the
 ;; counter/bound analysis is what keeps this stage off every other rotated
 ;; self-loop. It matters most at opt1, where the versioner does not run at all:
-;; without this gate the pass paid a defs scan and a map allocation per loop for
-;; a rewrite that can never fire (measured +0.021% on the opt1 self-compile).
+;; without this gate the pass would pay a defs scan and a map allocation per
+;; loop for a rewrite that can never fire.
 (define (opt-loop-call-fast-clone-label? [label : i64]) : bool
   (let
     [text : String (ir.compiler-ir-label-text label)]
@@ -66942,16 +66696,16 @@
 ;;
 ;; WORD COPIES CARRY A TRIP FLOOR, byte copies do not. A refused loop is not
 ;; free code: it falls to the word-merge K=4 unroller (the tier
-;; `opt-unroll-word-merge-group-copies` exists for, and the one that claims
-;; this shape today), whose version guard enters a group only while
-;; `i < bound - 4`. At a LITERAL bound that guard folds, and the cost is
+;; `opt-unroll-word-merge-group-copies` exists for), whose version guard
+;; enters a group only while `i < bound - 4`. At a LITERAL bound that guard
+;; folds, and the cost is
 ;;   n <= 4 : 1 + 5n                      -- no group runs; the plain body is
 ;;                                           load, store, add, cmp, branch
 ;;   n >= 5 : 1 + 11*ceil((n-4)/4) + 5*r  -- r = n - 4*ceil((n-4)/4), 1 <= r <= 4
-;; (n=25, the peephole_lines row, is 1 + 66 + 5 = 72, which is what that row
-;; measures). The helper costs `n + 9..14`: two to four argument set-ups and a
-;; call, then testq/jle/movq/cmpq/jbe -- plus leaq/cmpq/jae when the destination
-;; is above the source -- the `rep movsq`, and a ret. The two cross at FOUR:
+;; (n=25 is 1 + 66 + 5 = 72). The helper costs `n + 9..14`: two to four
+;; argument set-ups and a call, then testq/jle/movq/cmpq/jbe -- plus
+;; leaq/cmpq/jae when the destination is above the source -- the `rep movsq`,
+;; and a ret. The two cross at FOUR:
 ;; n=1 is 6 against 10..15 and n=3 is 16 against 12..17, either of which the
 ;; loop can win, while n=4 is 21 against 13..18 and every larger n only widens
 ;; it. So the floor is FOUR (`opt-copy-call-word-slot-floor`) -- the first count
@@ -66960,9 +66714,8 @@
 ;; on every entry and still falls back to the 5-per-element body below five
 ;; trips, so the helper wins from about two slots up and nothing is left to
 ;; decide. Byte copies keep no floor at all: their competing tier is the x2
-;; unroller at 3.5 instructions per byte, and the corpus's byte copies are
-;; dynamic-length anyway (intern_table's name-pool copy averages 21.5 bytes),
-;; so a floor there would only give the win back.
+;; unroller at 3.5 instructions per byte, and byte copies are typically
+;; dynamic-length anyway, so a floor there would only give the win back.
 ;;
 ;; The rewrite keeps the block and every other instruction in it, exactly as
 ;; fill_call does: it drops the self-edge phi inputs (so the body computes its
@@ -67013,10 +66766,8 @@
 ;; The trip floor for eight-byte elements, in slots. Four is the first count at
 ;; which the helper beats the unroller's folded-guard body under every
 ;; call-site and prologue length; see the pass header for the arithmetic. It is
-;; only ever consulted for a literal bound. No copy in the instruction-count
-;; corpus, nor in the compiler's own sources, has a literal bound below it --
-;; measured by building the pass with the floor at 1 and finding the same call
-;; sites -- so it is a rail, not a trade.
+;; only ever consulted for a literal bound. Copies with a literal bound below
+;; it are not expected in practice, so it is a rail, not a trade.
 (define (opt-copy-call-word-slot-floor) : i64
   4)
 
@@ -67024,8 +66775,7 @@
 ;; unroller does better with it. A non-literal bound is admitted: no tier can
 ;; unroll an unknown trip count to straight-line code, so the helper's only
 ;; competition there is a guarded unrolled loop it beats from a couple of
-;; slots up. Byte copies are unconditional, as they were before word elements
-;; existed.
+;; slots up. Byte copies are unconditional.
 (define (opt-copy-call-count-ok?
   [width : i64]
   [bound : (& bound ir.CompilerIrValue)]) : bool
@@ -68345,7 +68095,7 @@
 ;;       c2   = (u64)t > (u64)S     (omitted when S = 0: it restates c1)
 ;;     gok  = the and of all group conditions; Branch gok FAST SLOW
 ;;   FAST: the trip copies with the grouped checks REMOVED. Checks that do
-;;     not belong to a derivable group stay in the copies exactly as today
+;;     not belong to a derivable group stay in the copies unchanged
 ;;     (the guard never speaks for them). All copy destinations are fresh,
 ;;     so the slow loop below is the sole definition site of the original
 ;;     body vars.
@@ -68777,7 +68527,7 @@
 ;; Derivation walk over the body: derived checks fold their (base, length)
 ;; group into `groups` and their body index into `skips` (dropped from the
 ;; fast copies); the returned count is the grouped total (zero means nothing
-;; consolidates and the arm unrolls as today).
+;; consolidates and the arm unrolls without a guard).
 (define (opt-unroll-const-guard-scan
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -69110,8 +68860,8 @@
             (opt-unroll-const-guard-exit-instrs-ok? instrs 0))])]))
 
 ;; The consolidation plan: merged guard groups, the grouped checks' body
-;; indices, and the exit merge records. No means the arm unrolls exactly as
-;; today (no guard, copies keep the original destinations).
+;; indices, and the exit merge records. No means the arm unrolls plainly (no
+;; guard, copies keep the original destinations).
 (defenum OptUcePlan
   (No)
   (Some opt_uce_group_vec.Vec opt_dense_i64_vec.Vec OptUceExitRecs))
@@ -69730,8 +69480,8 @@
   [memory-bases : (& memory-bases OptUnrollSimdMemoryList)]) : i64
   (opt_unroll_simd_memory_vec.len (& memory-bases.items)))
 
-;; Appends replace list prepends, so logical index zero remains the newest
-;; base/type pair and preserves the old Cons traversal order.
+;; Entries are appended physically, but logical index zero is the newest
+;; base/type pair (prepend order).
 (define (opt-unroll-simd-memory-at
   [memory-bases : (& memory-bases OptUnrollSimdMemoryList)]
   [index : i64]) : OptUnrollSimdMemory
@@ -70015,8 +69765,8 @@
                                                 memory-count
                                                 load-count
                                                 store-count)
-                                              ;; Preserve the old single-base
-                                              ;; store-free scope. Store-bearing
+                                              ;; A store-free body keeps to a
+                                              ;; single base. Store-bearing
                                               ;; maps may use any number of
                                               ;; invariant bases, but a pure
                                               ;; fill is deliberately excluded.
@@ -70543,10 +70293,9 @@
 ;; and the single-block and multi-block bce_version drivers). A pass's driver
 ;; repeats its scan and applies to each eligible loop in scan order while its
 ;; budget lasts, verifying every application on its own. 2 pipeline iterations
-;; x 4 = up to 8 applications per pass per function (2 today): enough to pick
-;; up the hot loops the single-slot scheduler displaced in measured workloads
-;; (the first eligible loop absorbed the whole invocation, leaving later loops
-;; to the next pipeline iteration or stranded at the iteration cap), while
+;; x 4 = up to 8 applications per pass per function: enough that the first
+;; eligible loop does not absorb the whole invocation and leave later hot loops
+;; to the next pipeline iteration or stranded at the iteration cap, while
 ;; bounding code growth and the extra verify/context-rebuild cost.
 (define (opt-loop-apply-budget) : i64
   4)
@@ -71735,20 +71484,14 @@
 ;;   * idx == B + counter + k with B a loop-invariant VARIABLE base (SCALE 1,
 ;;     either Add operand order) -> the no-division scale-1 specialization
 ;;     `B_eff >= 0 && bound-1 <= len-1-B_eff` (opt-bce-version-var-base-guard,
-;;     shared with the multi-block pass), admitted ONLY when at least TWO of
-;;     the loop's checks are eliminable. That gate is guard economics, not
-;;     soundness. One guard per loop ENTRY buys `2 * checks` instructions per
-;;     TRIP, and a measured scale-1 guard is ~12 instructions for one array
-;;     and ~17 for two, so break-even sits near 8 trips at one removed check
-;;     and 4 at two. Measured on intern_table: it-hash-words' tail loop is
-;;     one check at 3.5 trips/entry (a 7M-instruction LOSS -- it stays out
-;;     under the gate), while it-intern-slice's miss-copy loop is two checks
-;;     at 21 trips/entry (+2.8M) and stdlib's byte-buf slot copy is two
-;;     checks at a whole-buffer trip count (+5.9M). Requiring two eliminable
-;;     checks is the cheapest static proxy that separates them: it doubles
-;;     the per-trip return while the guard grows by well under 2x. The
-;;     multi-block pass admits scale 1 unconditionally because its clone
-;;     already amortizes a whole multi-block body per entry;
+;;     shared with the multi-block pass), admitted only when the loop has an
+;;     eliminable check at all, and two for a descending counter (see the
+;;     floor notes in opt-bce-version-guard-conds). That gate is guard
+;;     economics, not soundness: one guard per loop ENTRY buys `2 * checks`
+;;     instructions per TRIP, so the guard's size decides how many trips a
+;;     removal needs to repay it. The multi-block pass admits scale 1
+;;     unconditionally because its clone already amortizes a whole
+;;     multi-block body per entry;
 ;;   * idx loop-invariant          -> `idx >= 0 && idx < len`.
 ;; The loop is VERSIONED on the conjunction: a fresh guard block on the entry
 ;; edge branches to a check-free fast clone when every condition holds and to
@@ -71785,7 +71528,7 @@
 ;; (a literal bound that can never satisfy it rejects the versioning outright,
 ;; like a literal negative seed).
 ;;
-;; A check whose condition cannot be derived no longer rejects the loop: with
+;; A check whose condition cannot be derived does not reject the loop: with
 ;; at least one derived check the loop PARTIALLY versions, and each
 ;; underivable check STAYS (remapped) in the fast clone, preserving the slow
 ;; path's exact abort semantics for its index. The guard then constrains only
@@ -71806,12 +71549,10 @@
 ;; with fallback like unroll.
 ;; --- versioner refusal tracing -------------------------------------------------
 ;;
-;; VT-1. Every clause in this pass is a verdict about ONE loop, and until now
-;; the only way to learn WHICH clause turned a loop down was to instrument the
-;; pass by hand: `--trace-passes` printed the pass's block and instruction
-;; counts and nothing at all about the loops inside them. A loop that looks
-;; versionable and is refused by one specific clause is the pass's most common
-;; shape, and it was invisible.
+;; VT-1. Every clause in this pass is a verdict about ONE loop, and a loop that
+;; looks versionable and is refused by one specific clause is the pass's most
+;; common shape. `--trace-passes` alone prints only the pass's block and
+;; instruction counts, so this tracer names the clause that decided.
 ;;
 ;; The tracer prints one line per loop either scan EXAMINES:
 ;;
@@ -72331,8 +72072,8 @@
 ;;
 ;;   * `x <op> x` on the same operand -- `le %63, %63` is what a counter loop
 ;;     whose bound IS the container length emits once load-CSE/GVN has unified
-;;     the two loads (cfg_domloops, gvn_table), and what the mirrored
-;;     negative-scale guard emits for a unit stride;
+;;     the two loads, and what the mirrored negative-scale guard emits for a
+;;     unit stride;
 ;;   * two literals -- `ge k, 0` for a literal seed, `lt k, len` for a literal
 ;;     index against a literal length.
 ;;
@@ -73067,11 +72808,11 @@
 ;; `k <= kmax`, and `seed >= -kmin` gives `seed >= -k` for every `k >= kmin`, so
 ;; the extremes imply every member. A six-byte pattern scan indexing
 ;; `i, i+1, ... i+5` therefore pays one Sub and one compare instead of six of
-;; each, which is what `pl-indexed-rsp?`'s and `pl-stack-parens`' guards are.
+;; each.
 ;;
 ;; `kmax = 0` skips the Sub: the condition is the plain `bound <= length` the
-;; bare counter has always emitted, so a single-member family at offset 0 costs
-;; exactly what it used to.
+;; bare counter emits, so a single-member family at offset 0 costs exactly
+;; that.
 (define (opt-bce-version-scale1-range-guard
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
@@ -73255,15 +72996,15 @@
 ;;   * T = scale*counter + k2 with a literal scale > 1 -- induction lowering
 ;;     has not (or not yet) strength-reduced the multiply. Scale 1 is admitted
 ;;     under the guard-economics gate at opt-bce-version-guard-conds: one guard
-;;     per loop entry could not pay for one removed check per trip on the
-;;     pico-trip loops that measured an intern_table regression, so the form is
-;;     gated on the loop having an eliminable check at all;
+;;     per loop entry cannot pay for one removed check per trip on pico-trip
+;;     loops, so the form is gated on the loop having an eliminable check at
+;;     all;
 ;;   * T = dphi + k2 with dphi a derived induction phi (invariant init d0,
 ;;     literal step > 1) -- the shape induction lowering leaves behind for
 ;;     `B + scale*counter + k` once the multiply becomes the phi's step.
 ;;     Step 1 stays out for the same reason as scale 1: it degenerates to
-;;     one removed check per trip per entry guard (the measured pico-trip
-;;     loser class), and the primary counter is itself a step-1 phi, so an
+;;     one removed check per trip per entry guard (the pico-trip loser
+;;     class), and the primary counter is itself a step-1 phi, so an
 ;;     ungated step-1 form would smuggle `base + counter` back in.
 ;;
 ;; Overflow-checked literal accumulation for the offset peeling below: the
@@ -73563,7 +73304,7 @@
                   (ir.CompilerIrValue.I64 off2))))])])))
 
 ;; Prove `base + counter + offset` stays in [0, length) for every counter in
-;; [seed, bound), with `base` loop-invariant. This is the existing literal
+;; [seed, bound), with `base` loop-invariant. This is the literal
 ;; affine guard with scale 1 and the variable `base + offset` folded in for
 ;; the literal offset; the division is exact at scale 1 and needs no
 ;; instruction. The conditions are
@@ -73573,13 +73314,12 @@
 ;;
 ;; alongside the once-only primary `seed >= 0 && seed < bound`.
 ;;
-;; COND B IS THE `bound - 1 <= length - 1 - base_eff` this guard used to emit,
-;; with the two `- 1`s cancelled: one Sub and one compare rather than three Subs
-;; and one compare, which is the whole difference between the two forms. The
-;; cancellation is not just algebra on the mathematical values, because these are
-;; wrapping machine subtractions, so the case split is stated here in full. Write
-;; `room = wrap(length - base_eff)`, and note that cond A gives `base_eff` in
-;; [0, MAX] and the once-only primary gives `0 <= seed < bound`.
+;; COND B IS `bound - 1 <= length - 1 - base_eff` with the two `- 1`s cancelled:
+;; one Sub and one compare rather than three Subs and one compare. The
+;; cancellation is not just algebra on the mathematical values, because these
+;; are wrapping machine subtractions, so the case split is stated here in full.
+;; Write `room = wrap(length - base_eff)`, and note that cond A gives `base_eff`
+;; in [0, MAX] and the once-only primary gives `0 <= seed < bound`.
 ;;
 ;;   * `length >= 0` (signed): `length - base_eff` lies in [-MAX, MAX], so it
 ;;     does not wrap, and cond B is exactly `base_eff + bound <= length`. Every
@@ -73888,16 +73628,15 @@
 
 ;; --- index-family fan subsumption -----------------------------------------------
 ;;
-;; A strided-access loop (the it-hash-words word loader is the running
+;; A strided-access loop (a hash function's word loader is the running
 ;; example) carries a whole FAN of `B + counter + k` checks against one
 ;; length, with consecutive literal offsets k0..k7. Deriving each check's
 ;; scale-1 guard independently costs two conditions per check; the and-chain
-;; over ~18 values lowers to ~160 instructions per loop ENTRY, which swamps
-;; the ~27/trip the fast clone saves when the loop averages a few trips per
-;; entry (measured: intern_table +9.3%). But the family's conditions are
-;; monotone in k: with cond A at the SMALLEST offset (`wrap(B + kmin) >= 0`,
-;; the no-underflow side), cond A at the LARGEST offset (`wrap(B + kmax) >=
-;; 0`, the no-wrap side), and cond B at the largest offset
+;; over all of them costs far more per loop ENTRY than the fast clone saves per
+;; trip when the loop averages a few trips per entry. But the family's
+;; conditions are monotone in k: with cond A at the SMALLEST offset
+;; (`wrap(B + kmin) >= 0`, the no-underflow side), cond A at the LARGEST offset
+;; (`wrap(B + kmax) >= 0`, the no-wrap side), and cond B at the largest offset
 ;; (`bound-1 <= len-1 - wrap(B + kmax)`), EVERY intermediate offset is
 ;; covered too. Derivation therefore only RECORDS the (base, length, k)
 ;; triple in this table and emits nothing; the flush at guard assembly emits
@@ -73926,10 +73665,10 @@
 ;; family's step and shape, so `B + scale*counter + k` and `B + dphi + k`
 ;; collapse the same way -- their extremal argument, and why only the
 ;; increasing direction is fanned, are stated at
-;; `opt-bce-version-fan-derived-flush` below. cfg_domloops' `build_csr` edge
-;; loop is the measured shape: `tokens[base+2*edge]` and `tokens[base+2*edge+1]`
-;; paid two full three-condition derived guards with a divide each, and pay one
-;; guard, one shift and one extra compare as a family.
+;; `opt-bce-version-fan-derived-flush` below. A CSR-building edge loop reading
+;; `tokens[base+2*edge]` and `tokens[base+2*edge+1]` is the shape: two full
+;; three-condition derived guards with a divide each become one guard, one
+;; shift and one extra compare as a family.
 ;;
 ;; Storage is a DENSE scoped record, allocated per guard assembly and dropped
 ;; with it -- no linked chain, no per-check allocation. Entry i keeps its base,
@@ -74164,7 +73903,8 @@
 ;;
 ;; so derived-seed(k) is MONOTONE in k and every member's index sits between
 ;; the kmin member's and the kmax member's. Four conditions decide the whole
-;; family, whatever its size, against the SIX a two-member fan pays today:
+;; family, whatever its size, against the SIX two members guarded separately
+;; pay:
 ;;
 ;;   the full positive-step derived guard at kmax
 ;;     (A) derived-seed(kmax) >= 0
@@ -74396,10 +74136,10 @@
           ;; at both ends, and only the smaller end can ever be shared.
           ;;
           ;; The second compare is a compare of two loop-invariant VARIABLES
-          ;; where `base >= 0` compares against a literal, which used to make
+          ;; where `base >= 0` compares against a literal, which could make
           ;; LICM lift it out of an enclosing loop and materialize it as a
-          ;; boolean. That is priced in `opt-licm-hot-use-vars`, which no longer
-          ;; counts a branch condition as a consumer that pays for a hoist.
+          ;; boolean. `opt-licm-hot-use-vars` prices that: it does not count a
+          ;; branch condition as a consumer that pays for a hoist.
           (if (and
             (or (> kmax kmin) (not base-shared?))
             (opt-ubound-len-nonneg? type-segment-bases blocks length))
@@ -74437,11 +74177,8 @@
 ;; replace it: with `base > length` the difference `length - base` is negative,
 ;; reads as a huge unsigned value, and `count <=u length - base` would ACCEPT an
 ;; out-of-range span. So a shared base is the one shape where the two-compare
-;; form costs a conjunct instead of saving one, and it keeps the signed chain.
-;;
-;; Measured on liveness_scan (`fixpoint!` walks two arrays off one index base):
-;; +1,352,450 with the normal form applied there, the whole of that row's
-;; regression, turned into -566,375 once the shared base keeps the chain.
+;; form costs a conjunct instead of saving one, and it keeps the signed chain
+;; (a fixpoint loop walking two arrays off one index base is the shape).
 ;;
 ;; A family that spans a REAL offset range still takes the normal form even with
 ;; a shared base: its signed chain costs three conjuncts (cond A at each end,
@@ -74939,8 +74676,7 @@
 ;; `allow-scale1` carries the loop-level profitability verdict for the plain
 ;; `base + counter + k` form (see opt-bce-version-guard-conds): when it is
 ;; false a scale-1 recovery reports No and the check simply stays in the
-;; fast clone, exactly as before this form was admitted. Scale > 1 ignores
-;; the flag -- its economics were settled when it landed.
+;; fast clone. Scale > 1 ignores the flag.
 (define (opt-bce-version-var-base-side-strided
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -75047,8 +74783,8 @@
 
 ;; `base - strided + k0`: the strided side enters with every coefficient's sign
 ;; flipped, which is the decreasing form of the Add case above and the shape a
-;; reversed copy walks with (`postorder[post - 1 - i]`, cfg_domloops' rpo copy
-;; loop). Only THIS operand order is a variable-base index: `strided - base`
+;; reversed copy walks with (`postorder[post - 1 - i]`, an rpo copy loop).
+;; Only THIS operand order is a variable-base index: `strided - base`
 ;; would need the base itself negated, an instruction the guard has no reason to
 ;; emit for a shape the corpus does not carry.
 ;;
@@ -75221,7 +74957,7 @@
             ;; The peeled core is the DERIVED INDUCTION PHI itself: `dphi + k`
             ;; with no variable base at all, which is what induction lowering
             ;; leaves for a strided walker whose base was folded into the
-            ;; phi's initializer (gvn_table's `run_block` reads
+            ;; phi's initializer (a token-block walker reads
             ;; `tokens[pos]` .. `tokens[pos+5]` off a step-6 phi). It is the
             ;; base-0 member of the same derived family the bare phi joins, so
             ;; the whole fan of offsets flushes ONE guard with the extremal
@@ -75269,8 +75005,8 @@
 ;; unsigned, the conjunct needs no companion sign condition either: a mask with
 ;; its sign bit set is >=u 2^63, above every container length, so the conjunct is
 ;; simply false there and the fast path is not selected. That is cheaper than the
-;; signed pair `M >= 0 && M < len` the pass used to document for a LITERAL mask,
-;; and it assumes nothing about the length's sign.
+;; signed pair `M >= 0 && M < len`, and it assumes nothing about the length's
+;; sign.
 ;;
 ;; The same reading covers a loop-INVARIANT index reaching a phi: its own value
 ;; is the bound, and `v <u len` is then literally the check the loop would have
@@ -75833,8 +75569,8 @@
                           ;; `dphi + k` reads belong to (see
                           ;; opt-bce-version-var-base-strided): recorded, not
                           ;; emitted, so the whole family flushes one guard.
-                          ;; A lone member flushes to exactly the derived
-                          ;; guard this used to emit directly.
+                          ;; A lone member flushes to exactly the plain
+                          ;; derived guard.
                           [(OptBceDerivedInduction.Some derived-seed step)
                             (opt-bce-version-derived-family
                               fan
@@ -75967,9 +75703,8 @@
 ;; bound IS the length, the mirrored guard's unit stride). The clone is then
 ;; unconditionally the right one, so the guard block states a literal `true`
 ;; and the branch's false arm -- the untouched original -- simply becomes
-;; unreachable for the const folder to retire. Refusing it instead would be a
-;; regression: before the conjunct folding those loops versioned behind a
-;; comparison that was already trivially true.
+;; unreachable for the const folder to retire. Refusing it instead would lose
+;; loops whose guard was only ever a trivially true comparison.
 (define (opt-bce-version-build-guard
   [cell : (&mut cell (__tl_dyn-array i64))]
   [instrs-input : ir.CompilerIrInstrBuilder]
@@ -76316,14 +76051,13 @@
 ;; finish them (seed compares + And chain).
 ;;
 ;; The scale-1 variable-base form is admitted only when the loop ends up with
-;; at least TWO eliminable checks (the guard-economics gate documented at the
-;; head of this pass). Deciding that needs the derived count, which is what
-;; the scan produces, so the scan runs twice: once on a THROWAWAY var counter
-;; to take the census, then for real with the verdict. The trial's condition
-;; instructions are discarded with its counter, so the emitted guard is
-;; exactly what a single scan under the chosen verdict would build, and a
-;; rejected verdict reproduces the pre-gate behaviour instruction for
-;; instruction.
+;; at least one eliminable check (the guard-economics gate documented at the
+;; head of this pass and priced at `allow-scale1` below). Deciding that needs
+;; the derived count, which is what the scan produces, so the scan runs twice:
+;; once on a THROWAWAY var counter to take the census, then for real with the
+;; verdict. The trial's condition instructions are discarded with its counter,
+;; so the emitted guard is exactly what a single scan under the chosen verdict
+;; would build.
 (define (opt-bce-version-guard-conds
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -76364,20 +76098,18 @@
         true
         (opt-bce-version-fan-new)
         (opt-bce-version-derive-start last))]
-    ;; RE-COST, 2 -> 1. The floor was two eliminable checks because the guard a
-    ;; single one bought was too expensive: the pre-fan scale-1 form emitted two
-    ;; conditions per check, and the once-only pair on top of them, for a loop
-    ;; that might run a couple of trips per entry. Three things have since
-    ;; changed the price of exactly this guard: `opt-bce-version-var-base-guard`
-    ;; states its upper condition in one Sub and one compare instead of three
-    ;; Subs and one, the once-only `seed < bound` is dropped when a dominating
-    ;; branch already decided it (which is the rotated shape every one of these
-    ;; loops has), and a multi-offset family collapses to one extremal pair. A
-    ;; one-check `base + counter` loop now pays ~7 instructions at entry.
+    ;; A FLOOR OF ONE eliminable check. Three things keep the price of exactly
+    ;; this guard low enough for a single check to repay it:
+    ;; `opt-bce-version-var-base-guard` states its upper condition in one Sub
+    ;; and one compare, the once-only `seed < bound` is dropped when a
+    ;; dominating branch already decided it (which is the rotated shape every
+    ;; one of these loops has), and a multi-offset family collapses to one
+    ;; extremal pair. A one-check `base + counter` loop pays ~7 instructions at
+    ;; entry.
     ;;
-    ;; intern_table's `it-hash-words` byte tail is the measured shape: `text[start
-    ;; + i]`, one check, 7.3 trips per entry over 5,851,734 bytes, where the
-    ;; hoist is worth 3 instructions per byte against a guard paid 802,254 times.
+    ;; A hash function's byte tail is the shape: `text[start + i]`, one check, a
+    ;; handful of trips per entry, where the hoist is worth 3 instructions per
+    ;; byte against a guard paid once per entry.
     ;; The floor stays a floor -- a loop deriving nothing still refuses, which is
     ;; the `derived = 0` rejection below -- and the census that computes it stays
     ;; where it is, because the verdict still has to be known before the real
@@ -76403,23 +76135,20 @@
     ;; Partial versioning still needs at least one REMOVED check to pay for
     ;; the clone; with none, the loop is left untouched.
     ;;
-    ;; ALIAS-1 RE-COSTS THE DESCENDING FORM BACK TO THE OLD FLOOR OF TWO. The
-    ;; three price cuts the note above records -- the one-Sub upper condition,
-    ;; the dropped once-only `seed < bound`, the collapsed multi-offset family
-    ;; -- are what took the floor from two eliminable checks to one, and a
-    ;; descending counter gets none of the last two: its bound is the
-    ;; synthesized `seed + 1`, which no dominating branch has decided and whose
-    ;; sign nothing knows, so the once-only pair is emitted in full and cannot
-    ;; merge into one unsigned compare, and the range costs an Add and a
-    ;; no-wrap compare on top (opt-bce-version-down-range). Measured on the
-    ;; corpus: with the one-check floor applied to it as well, intern_table's
-    ;; `it-hash-words` versions its short byte tail at round 1 and the shape
-    ;; that leaves displaces the step-8 word loop's own clone at round 2
-    ;; (100,598,868 -> 109,448,064 on that function, with `it-grow!`
-    ;; 4,237,956 -> 9,639,624 beside it, for +14,250,864 on the row); at the
-    ;; two-check floor both are refused, the word loop keeps its clone, and
-    ;; the row is unchanged. The shift loop this packet is about derives BOTH
-    ;; of its checks and clears the floor unaided.
+    ;; ALIAS-1: THE DESCENDING FORM KEEPS A FLOOR OF TWO. The three price cuts
+    ;; the note above records -- the one-Sub upper condition, the dropped
+    ;; once-only `seed < bound`, the collapsed multi-offset family -- are what
+    ;; make one eliminable check enough, and a descending counter gets none of
+    ;; the last two: its bound is the synthesized `seed + 1`, which no
+    ;; dominating branch has decided and whose sign nothing knows, so the
+    ;; once-only pair is emitted in full and cannot merge into one unsigned
+    ;; compare, and the range costs an Add and a no-wrap compare on top
+    ;; (opt-bce-version-down-range). With the one-check floor applied to it as
+    ;; well, a hash function's short byte tail versions in an early round and
+    ;; the shape that leaves displaces the neighbouring step-8 word loop's own
+    ;; clone in the next; at the two-check floor the word loop keeps its clone.
+    ;; The shift loop ALIAS-1 is about derives BOTH of its checks and clears
+    ;; the floor unaided.
     [_trace : unit (opt-bce-trace-derivation! state.derived state.keep.count)]
     (if (or (= state.derived 0) (and down? (< state.derived 2)))
       (opt-bce-trace-refuse-guard
@@ -76829,9 +76558,8 @@
                     ;; A self-branching block on a Var condition IS the loop
                     ;; this scan examines; every verdict from here on is a
                     ;; decision about it and earns a trace line. The size test
-                    ;; the old first clause made is now the body reason's, so a
-                    ;; three-instruction self-loop is reported rather than
-                    ;; silently skipped.
+                    ;; is the body reason's, so a three-instruction self-loop
+                    ;; is reported rather than silently skipped.
                     (let
                       [_examined : unit (opt-bce-trace-examined!)]
                       [last : i64 (- count 1)]
@@ -77784,8 +77512,9 @@
   ;; per entry, so for a nested loop it runs once per enclosing iteration while
   ;; the checks it removes run once per INNER iteration. The counter-free phase
   ;; already refuses such a candidate outright
-  ;; (`opt-bce-reason-free-not-outermost`); a counted one is priced instead, at
-  ;; `opt-bce-mb-guard-conds-ranged`. Computed where the loop list is in hand
+  ;; (`opt-bce-reason-free-not-outermost`); for a counted one the price is only
+  ;; traced, at `opt-bce-mb-guard-conds-ranged` (see its NOT ADMITTED note).
+  ;; Computed where the loop list is in hand
   ;; (`opt-bce-mb-loop-shape-with-preheader`) with the same
   ;; `opt-bce-mb-preheader-outside-loops?` test that clause uses.
   (nested-entry? bool))
@@ -77798,8 +77527,8 @@
 ;; in INSTRUCTIONS. Block count is the wrong metric here. A `when (and a b c)`
 ;; body lowers to a fan of one-armed forwarders and merges -- `mov false` +
 ;; `jump`, or a bare `jump` -- so a counting loop whose real work is ~30
-;; instructions can span thirteen blocks. Under a block cap those loops were
-;; rejected while the single-block pass happily versions a 48-instruction
+;; instructions can span thirteen blocks. Under a block cap those loops would
+;; be rejected while the single-block pass versions a larger straight-line
 ;; body, which is backwards: the and-chain loop clones LESS code. The cap
 ;; counts every non-phi instruction across the loop's blocks (terminators
 ;; included -- an empty forwarder still costs its jump) and phis are excluded
@@ -77807,21 +77536,15 @@
 ;; excludes them: a phi is register-transfer bookkeeping the backend
 ;; coalesces, not per-iteration work the clone duplicates.
 ;;
-;; RE-COST, 96 -> 160. The constant is a static-code price, and what the corpus
-;; says about it is that 96 was set where the loops that pay best sit just
-;; outside it. An inlined `(pl-byte-at i)` range test is ~11 instructions and
-;; nine blocks of forwarders, so a six-byte pattern scan -- `pl-indexed-rsp?`
-;; (128 non-phi instructions, 6 checks) and `pl-stack-parens` (138, 6) -- is
-;; over the old budget on the strength of the very repetition that makes
-;; versioning pay: six checks removed from every iteration of the hottest scan
-;; in peephole_lines. The clone is also NOT the size this counts, because the
-;; guard's own facts then fold the range tests the guard decided out of it: the
-;; one loop of this family that fit the old budget, `pl-find-comma-space`,
-;; clones 83 counted instructions into a 45-instruction fast body, so the
-;; metric over-states the growth by nearly half for exactly this shape. 160
-;; admits that family and nothing an order larger; the same instruction-count
-;; reasoning, re-priced against the loops that were measured rather than
-;; against the ones that happened to fit.
+;; The constant is a static-code price, set so the loops that pay best fit
+;; inside it. An inlined byte-range test is ~11 instructions and nine blocks of
+;; forwarders, so a six-byte pattern scan runs well past a hundred non-phi
+;; instructions on the strength of the very repetition that makes versioning
+;; pay: six checks removed from every iteration of a hot scan. The clone is
+;; also NOT the size this counts, because the guard's own facts then fold the
+;; range tests the guard decided out of it, so the metric over-states the
+;; growth by nearly half for exactly this shape. 160 admits that family and
+;; nothing an order larger.
 (define (opt-bce-mb-instr-max) : i64
   160)
 
@@ -77834,17 +77557,14 @@
 ;; check grows on demand (`opt-label-add`'s dense set, `opt-bce-mb-keep-cons`'s
 ;; doubling array, the remap `(__tl_dyn-array i64)` sized by the function's var
 ;; count, `opt_bce_mb_upper_vec`), so the constant buys walk time, not capacity.
-;; At 24 it was ALSO a growth gate in disguise, and a badly aimed one: a loop's
-;; block count says nothing about how much code the clone duplicates -- that is
-;; what the instruction budget above measures -- while the lowering of a
-;; `when (and a b c)` body spends blocks at a rate no source-level size
-;; predicts. Two measured refusals were the cap and nothing else:
-;; peephole_lines' `pl-find-comma-space` (16 blocks in the final IR, 27 at the
-;; round bce_version sees it -- one inlined range test is nine blocks of
-;; one-armed forwarders, so the SECOND byte read is what crossed 24) and
-;; `pl-indexed-rsp?` (72). Both fit the instruction budget.
+;; A smaller block cap would ALSO be a growth gate in disguise, and a badly
+;; aimed one: a loop's block count says nothing about how much code the clone
+;; duplicates -- that is what the instruction budget above measures -- while
+;; the lowering of a `when (and a b c)` body spends blocks at a rate no
+;; source-level size predicts (one inlined range test is nine blocks of
+;; one-armed forwarders).
 ;;
-;; So each block cap is now exactly its instruction budget, and the pass has ONE
+;; So each block cap is exactly its instruction budget, and the pass has ONE
 ;; growth metric. That is not a cap chosen to be large: a block is charged for
 ;; its own terminator by the instruction count (an empty fallthrough forwarder
 ;; being the only exception), so a loop inside the instruction budget is inside
@@ -77888,13 +77608,13 @@
 ;; body, and they are the right price there: the clone is an alternative path,
 ;; so nothing it holds is ever executed in addition to the original -- the cost
 ;; is code, and instructions are what code is measured in. A CALL breaks that
-;; equivalence in exactly the way #6307's retirement measured for the inliner's
-;; static bands: an instruction count cannot see that a call site makes every
-;; value live across it the register allocator's problem, and duplicating the
-;; site duplicates that pressure inside one function, where the allocator prices
-;; the union. The bands keep their call-free clauses for that reason; this pass
-;; cannot -- refusing calls outright is what kept whole measured regions
-;; unversioned -- so it charges for them instead.
+;; equivalence the same way it does for the inliner's static bands: an
+;; instruction count cannot see that a call site makes every value live across
+;; it the register allocator's problem, and duplicating the site duplicates that
+;; pressure inside one function, where the allocator prices the union. The
+;; bands keep their call-free clauses for that reason; this pass cannot --
+;; refusing calls outright would leave whole regions unversioned -- so it
+;; charges for them instead.
 ;;
 ;; The charge is stated in the only currency the versioner earns: DERIVED
 ;; CHECKS, the checks the guard proves and the clone therefore drops. A
@@ -77903,26 +77623,23 @@
 ;; this many per call site, so a shape pays for its duplicated pressure with
 ;; removals that repay every iteration rather than with a promise.
 ;;
-;; THREE FOR A REGION, and the corpus pins it from both sides rather than taste
-;; doing so.
+;; THREE FOR A REGION, pinned from both sides.
 ;;
 ;; Above: it is strictly more than the incidental loop that happens to hold a
-;; call and derives one or two checks. Those are the shapes the retired
-;; call-free clause was accidentally right about -- a clone bought with two
-;; removals, paying a call boundary's worth of duplicated pressure for them --
-;; and three keeps every one of them out.
+;; call and derives one or two checks -- a clone bought with two removals,
+;; paying a call boundary's worth of duplicated pressure for them -- and three
+;; keeps every one of them out.
 ;;
-;; Below: three is the LARGEST value that still admits the measured region this
-;; whole capability exists for, cfg_domloops' `cfg-natural-loops` -- a
-;; region-sized descending nest holding two direct calls (its loop-body and
-;; loop-preheader walkers) and deriving six checks, one of them inside the inner
-;; loop where its removal repeats per inner iteration. Six over two calls is
-;; exactly three.
+;; Below: three is the LARGEST value that still admits the region this whole
+;; capability exists for, a natural-loop finder's region-sized descending nest
+;; holding two direct calls (its loop-body and loop-preheader walkers) and
+;; deriving six checks, one of them inside the inner loop where its removal
+;; repeats per inner iteration. Six over two calls is exactly three.
 ;;
-;; And it separates: the same benchmark's nearest neighbour is an ascending
-;; two-call scan deriving FOUR, two per call, which stays refused. So the
-;; constant is not a threshold that happens to let everything through -- one
-;; measured shape of this class passes it and the adjacent one does not.
+;; And it separates: that nest's nearest neighbour is an ascending two-call
+;; scan deriving FOUR, two per call, which stays refused. So the constant is
+;; not a threshold that happens to let everything through -- one shape of this
+;; class passes it and the adjacent one does not.
 ;;
 ;; TWO FOR A ONE-BLOCK LOOP, which is a different clone and not a softer
 ;; verdict on the same one. Everything the region rate is defending against
@@ -77933,13 +77650,11 @@
 ;; is removed from EVERY trip instead of from the trips that reach its arm.
 ;; Both shapes the region rate is pinned by are multi-block and keep it.
 ;;
-;; gvn_table's `gvn-run-block` is the measured one-block shape: a self-loop
-;; whose step-6 derived phi reads `tokens[pos]` .. `tokens[pos+5]` around one
-;; `gvn-dispatch` call. `bounds_group` had already collapsed those six reads
-;; into their extremal pair before this pass ran, so two is all the derivation
-;; is allowed to count, and charging it three would price the earlier pass's
-;; work rather than this clone's. Admitted at two: gvn_table -1,488,494
-;; (-0.177%), every other row of the 17 bit-identical, self-compile +0.0006%.
+;; The one-block shape: a self-loop whose step-6 derived phi reads
+;; `tokens[pos]` .. `tokens[pos+5]` around one call. `bounds_group` has already
+;; collapsed those six reads into their extremal pair before this pass runs,
+;; so two is all the derivation is allowed to count, and charging it three
+;; would price the earlier pass's work rather than this clone's.
 ;;
 ;; Read as a ratio, either rate says a duplicated call must be bought by that
 ;; many checks removed from every iteration, against a call boundary the
@@ -78200,14 +77915,14 @@
 ;;
 ;; Top-tested alternative to the do-while latch branch: the latch ends
 ;; `Jump header` and the counter compare `iphi < bound` ends an EXITING branch
-;; somewhere on the loop's entry path. The compare used to be required at the
-;; header itself, which refused every loop whose entry test short-circuits
-;; through more than one branch -- `(while (if done false (< i n)) ...)` (and
-;; every `and`-guarded condition whose counter compare is not the FIRST
-;; conjunct) lowers to a header that branches on the flag and a second block
-;; that branches on the counter, so the counter compare is one block down and
-;; the header's own branch is a second exiting branch. Nothing about that shape
-;; is unsound: an early exit only shortens the trip.
+;; somewhere on the loop's entry path. Requiring the compare at the header
+;; itself would refuse every loop whose entry test short-circuits through more
+;; than one branch -- `(while (if done false (< i n)) ...)` (and every
+;; `and`-guarded condition whose counter compare is not the FIRST conjunct)
+;; lowers to a header that branches on the flag and a second block that branches
+;; on the counter, so the counter compare is one block down and the header's own
+;; branch is a second exiting branch. Nothing about that shape is unsound: an
+;; early exit only shortens the trip.
 ;;
 ;; So the scan walks the chain instead. Starting at the header it follows the
 ;; block's single IN-LOOP successor -- a `Jump` inside the loop, or a `Branch`
@@ -78233,8 +77948,8 @@
 ;; that fails the compare. Their checks stay in the fast clone (see the shape's
 ;; `uncovered` set, which the derivation turns into unconditional `keep`
 ;; entries) exactly like an underivable index, so the clone keeps their abort
-;; sites. Whether the chain is the header alone (the shape this pass always
-;; accepted) or a flag test plus a compare makes no difference to that rule.
+;; sites. Whether the chain is the header alone or a flag test plus a compare
+;; makes no difference to that rule.
 (defenum OptBceMbMaybeChain
   (No)
   ;; the recovered counter, and the chain labels (header through the compare
@@ -78493,8 +78208,7 @@
 ;;
 ;; The unshifted spellings fall out of the same two formulas: a top-tested
 ;; `iphi < bound` peels to k = 0 (delta 0), and a do-while's `inext < bound`
-;; peels to k = step (delta = 0 - step + step = 0), which is the behaviour this
-;; pass has always had.
+;; peels to k = step (delta = 0 - step + step = 0).
 ;;
 ;; WRAP MAGNITUDE, likewise per form. The finisher's conjunct must keep the
 ;; largest sum the COMPARE itself computes representable:
@@ -78507,13 +78221,13 @@
 ;;
 ;; and `opt-bce-mb-counter-wrap-step` folds w to 1 -- the value that emits
 ;; nothing -- exactly when the conjunct it would ask for is vacuous. Both
-;; unshifted spellings fold to "emit iff step > 1", again the existing rule.
+;; unshifted spellings fold to "emit iff step > 1".
 ;;
 ;; DESCENDING keeps delta 0 (its unshifted spelling produces exactly that) and
 ;; refuses anything else: the mirrored range opt-bce-mb-counter-range builds for
 ;; it reports the wrap magnitude of its synthesized `seed + 1` limit, not of the
 ;; bottom, so a shifted descending bottom would have no conjunct covering its
-;; compare's sum. No measured loop asks for one.
+;; compare's sum. No known loop asks for one.
 (defenum OptBceMbMaybeWrapStep
   (No)
   (Some i64))
@@ -78565,8 +78279,8 @@
                 [(OptBceMbMaybeWrapStep.Some wrap-step)
                   ;; VT-1. An invariant OFFSET is admitted for the two
                   ;; UNSHIFTED ascending spellings at unit step, and for
-                  ;; nothing else. The argument at
-                  ;; opt-bce-mb-counter-offset-limit is stated over
+                  ;; nothing else. The range argument above
+                  ;; opt-bce-mb-counter-offset-side is stated over
                   ;; `offset + i` increasing by one until it first reaches
                   ;; `bound`; a larger step would need the compare's own sum to
                   ;; be shown representable one step past the limit (the `w`
@@ -78744,8 +78458,7 @@
 ;;
 ;; VT-1. The recovery above lands on the counter phi only when the compare's
 ;; left operand IS the counter (up to literal addends). A copy loop written
-;; `while (< (+ src i) end)` -- ssa_construct's `ssa-materialize` inner copy,
-;; `out[fill + i] = in[src + i]`, is the measured one -- tests `src + i`
+;; `while (< (+ src i) end)` -- `out[fill + i] = in[src + i]` -- tests `src + i`
 ;; instead, with `src` loop-invariant, and no counter is recovered at all: the
 ;; loop keeps both checks over its whole trip count, and the counter-free phase
 ;; cannot help because neither index is invariant or masked.
@@ -78754,7 +78467,7 @@
 ;; other side is loop-invariant; what it adds is the OFFSET, which
 ;; opt-bce-mb-guard-conds turns into the counter's limit.
 ;;
-;; THE RANGE ARGUMENT, in full, because it is the packet's second new fact.
+;; THE RANGE ARGUMENT, in full.
 ;; Write `b` for the invariant offset, `N` for the compare's invariant right
 ;; operand, `s0` for the counter's seed, and take the unit-step ascending
 ;; spelling (the only one opt-bce-mb-counter-shifted admits with an offset).
@@ -78896,7 +78609,7 @@
 ;; Which way does this compare let the counter walk, and by how much does its
 ;; own order move the limit?
 ;;
-;; `Lt` is the ascending test the pass has always taken: `bound` is the
+;; `Lt` is the plain ascending test: `bound` is the
 ;; EXCLUSIVE top of the counter's range, so the shift it carries is 0. `Le` is
 ;; the same walk with an INCLUSIVE top, one higher: shift 1, which
 ;; opt-bce-mb-counter-range materializes like any other delta. `Ge` is the
@@ -78907,7 +78620,7 @@
 ;; `Gt` -- the exclusive DESCENDING bottom -- stays absent: it is the one
 ;; remaining order whose shift moves a `seed`-topped range's bottom, and the
 ;; wrap argument for that is the mirror image of the ascending one rather than
-;; the same statement. No measured loop asks for it.
+;; the same statement. No known loop asks for it.
 (defenum OptBceMbCounterDirection
   (No)
   ;; the literal the compare's own order adds to the exclusive limit
@@ -79221,11 +78934,6 @@
 ;; economics the nest budget exists to refuse. Second, the growth budget prices
 ;; ONE clone: a clone inside a clone leaves the loop's body present three times
 ;; with nothing accounting for the third.
-;;
-;; Measured on cfg_domloops' `cfg-idom-iterate`, whose 32-block region clone the
-;; nest budgets then let re-version its inner edge loop: +7.4M, 1.1% of the
-;; benchmark, against a base compiler that produces no nested clone anywhere in
-;; the corpus.
 (define (opt-bce-mb-label-in-clone? [label : i64]) : bool
   (opt-label-has-marker? label (opt-label-marker-bce-fast)))
 
@@ -79388,8 +79096,8 @@
 ;; `opt-bce-mb-nest-instr-max`), but the scan offers FLAT loops first and
 ;; nests only when none of them versioned, so an inner loop that can version
 ;; on its own always wins the slot: its checks run per INNER iteration, and
-;; versioning it first is what kept array_sum's hot inner scan versioned
-;; while the outer round loop stayed alone.
+;; versioning it first keeps a hot inner scan versioned while the outer loop
+;; stays alone.
 (define (opt-bce-mb-has-nested-loop?
   [loops : (& loops OptNaturalLoopList)]
   [header : i64]
@@ -79505,11 +79213,11 @@
           (opt-bce-reason-body-too-big)]
         [(> (opt-bce-mb-body-instrs body-blocks 0) instr-max)
           (opt-bce-reason-body-too-big)]
-        ;; The scan's own entry (`opt-bce-mb-loop-shape`) now asks both of these
-        ;; before it asks about the preheader, so on that path they are already
-        ;; decided. They stay here as this function's own guarantee of the
-        ;; one-clone-per-loop invariant above, for any caller that reaches it
-        ;; without having asked: dropping them would let a clone be versioned
+        ;; The scan's own entry (`opt-bce-mb-loop-shape`) also asks both of
+        ;; these before it asks about the preheader, so on that path they are
+        ;; already decided. They stay here as this function's own guarantee of
+        ;; the one-clone-per-loop invariant above, for any caller that reaches
+        ;; it without having asked: dropping them would let a clone be versioned
         ;; again, which the growth budget does not price.
         [(opt-bce-mb-label-in-clone? header) (opt-bce-reason-already-versioned)]
         [(opt-cfg-block-exists?
@@ -79537,12 +79245,11 @@
         ;; OUTERMOST ONLY, the same clause `region?` uses. A counter-free guard
         ;; carries no trip-range clause, so its whole price is per ENTRY, and an
         ;; entry inside another loop is paid once per enclosing iteration against
-        ;; derivations that are the weakest set the pass has. gvn_table's
-        ;; `gvn-facts-grow` rehash is the measured case: its insert probe sits
-        ;; inside the walk over the old table, so a two-conjunct guard ran once
-        ;; per rehashed key to remove one check from a probe that averages about
-        ;; one iteration -- +2,614,752 on that benchmark. Outside every loop the
-        ;; guard is paid once per call instead.
+        ;; derivations that are the weakest set the pass has. A rehash is the
+        ;; typical case: its insert probe sits inside the walk over the old
+        ;; table, so a two-conjunct guard would run once per rehashed key to
+        ;; remove one check from a probe that averages about one iteration.
+        ;; Outside every loop the guard is paid once per call instead.
         (if (opt-bce-mb-preheader-outside-loops?
           (owned_view.compiler-owned-reference-shared-view loops)
           pred)
@@ -79665,9 +79372,9 @@
 ;; one phase, and the driver runs the flat phase first (see
 ;; `opt-bce-mb-loops-scan-phased`).
 ;; Whether the loop reached this scan without a dedicated preheader. A
-;; predicate rather than an arm of the outer match, because BCE-3's census
-;; showed that the ORDER in which this scan asks the question is what its
-;; vocabulary means -- see the clause below.
+;; predicate rather than an arm of the outer match, because the ORDER in which
+;; this scan asks the question is what its vocabulary means -- see the clause
+;; below.
 (define (opt-bce-mb-preheader-missing? [preheader : OptLoopPreheader]) : bool
   (match preheader
     [(OptLoopPreheader.No) true]
@@ -79689,17 +79396,14 @@
           (cond
             ;; SINGLE-BLOCK self-loops belong to the dedicated pass above,
             ;; EXCEPT for the one thing that pass will not clone: a direct
-            ;; call. `opt-bce-version-body-instr-ok?` has no call in it, and
-            ;; the note at `opt-bce-mb-body-instr-ok?` assumed this scan
-            ;; already reached such loops -- it did not, because of this very
-            ;; clause, so a one-block loop holding a call was versioned by
-            ;; neither pass. gvn_table's `gvn-run-block` is the measured
-            ;; shape: a self-loop whose step-6 derived phi reads
-            ;; `tokens[pos]` .. `tokens[pos+5]` around one `gvn-dispatch`
-            ;; call, whose extremal pair derives as one derived family.
-            ;; Everything downstream already prices and classifies the call
-            ;; (opt-bce-mb-call-clone-min-derived, opt-bce-mb-stable-instr?);
-            ;; only admission was missing. The single-block pass still runs
+            ;; call. `opt-bce-version-body-instr-ok?` has no call in it, so
+            ;; without this exception a one-block loop holding a call would
+            ;; be versioned by neither pass. The shape: a self-loop whose
+            ;; step-6 derived phi reads `tokens[pos]` .. `tokens[pos+5]`
+            ;; around one call, whose extremal pair derives as one derived
+            ;; family. Everything downstream already prices and classifies
+            ;; the call (opt-bce-mb-call-clone-min-derived,
+            ;; opt-bce-mb-stable-instr?). The single-block pass still runs
             ;; FIRST every round, so every call-free self-loop it can take is
             ;; still its.
             ;;
@@ -79718,30 +79422,19 @@
               (opt-bce-reason-none)]
             ;; IDEMPOTENCE BEFORE SHAPE. These two tests -- the header is
             ;; itself a clone label, and this header already owns a
-            ;; `__bce_guard` -- used to sit below, inside
-            ;; `opt-bce-mb-loop-shape-with-preheader`, so a loop this pass
-            ;; had ALREADY versioned could only reach them through the
-            ;; preheader test above. It never did: versioning a loop
-            ;; REMOVES its preheader (the `__bce_guard` chain the rewrite
-            ;; puts in front of the header is a branch, not a
-            ;; single-successor block), so every later phase and every
-            ;; later pipeline round re-examined a finished loop and
-            ;; reported it as `shape:no-preheader`.
-            ;;
-            ;; That is not a verdict about the loop's shape; it is the
-            ;; pass reading its own footprint. Measured at 46df0e08 it was
-            ;; the whole of that reason's census: of the loops reported
-            ;; `no-preheader` on cfg_domloops / ssa_construct /
-            ;; intern_table / callgraph_scc, 23/53/15/18 were the pass's
-            ;; own `__bce_fast` clones and 23/51/15/18 were loops it had
-            ;; versioned -- 0, 0, 0 and 1 were loops that genuinely lacked
-            ;; one, and that one holds no bounds check at all. Asking the
-            ;; idempotence questions first costs nothing (both are pure
-            ;; functions of `header` and `blocks`) and leaves
-            ;; `shape:no-preheader` naming only loops that really lack a
-            ;; preheader. No loop's ADMISSION changes: a loop that reached
-            ;; the clauses below with a preheader was refused there for
-            ;; the same reason it is refused here.
+            ;; `__bce_guard` -- come before the preheader test because
+            ;; versioning a loop REMOVES its preheader (the `__bce_guard`
+            ;; chain the rewrite puts in front of the header is a branch,
+            ;; not a single-successor block). Asked after it, every later
+            ;; phase and every later pipeline round would re-examine a
+            ;; finished loop and report it as `shape:no-preheader` -- not
+            ;; a verdict about the loop's shape but the pass reading its
+            ;; own footprint. Asking the idempotence questions first costs
+            ;; nothing (both are pure functions of `header` and `blocks`)
+            ;; and leaves `shape:no-preheader` naming only loops that
+            ;; really lack a preheader. No loop's ADMISSION depends on the
+            ;; order: a loop that reaches the clauses below with a
+            ;; preheader is refused there for the same reason.
             [(opt-bce-mb-label-in-clone? header)
               (opt-bce-reason-already-versioned)]
             [(opt-cfg-block-exists?
@@ -79751,11 +79444,10 @@
                     (ir.compiler-ir-label-text header)
                     "__bce_guard")))
               (opt-bce-reason-already-versioned)]
-            ;; And the preheader test itself moves below the two silences
+            ;; And the preheader test itself sits below the two silences
             ;; above for the same reason: a loop this phase does not own,
             ;; or one the single-block scan owns, gets its line from the
-            ;; scan that owns it, and a preheaderless loop used to get an
-            ;; extra line here from every phase as well.
+            ;; scan that owns it, not an extra line here from every phase.
             [(opt-bce-mb-preheader-missing? preheader)
               (opt-bce-reason-no-preheader)]
             [(= header entry-label) (opt-bce-reason-entry-block)]
@@ -79901,8 +79593,8 @@
 (define (opt-bce-mb-var-list-empty? [vars : (& vars OptBceMbVarList)]) : bool
   (= (opt-bce-mb-var-list-count vars) 0))
 
-;; Physical pushes preserve the old Cons/prepend operation. Logical readers
-;; therefore walk from the live end toward zero (newest first).
+;; Physical pushes keep the logical prepend order: readers walk from the live
+;; end toward zero (newest first).
 (define (opt-bce-mb-var-list-prepend [vars : OptBceMbVarList] [var : i64]) : OptBceMbVarList
   (let
     [items : opt_dense_i64_vec.Vec vars.items]
@@ -80545,10 +80237,10 @@
 ;; breaks exactly that and nothing else: the absorbed body's exit joins into the
 ;; site's `cont` merge, so the callee's own exit block becomes a jump-only
 ;; FORWARDER between the loop and the phi that reads the loop's result, and the
-;; input is keyed on the forwarder. The measured case is `it-slice-eq?`'s byte
-;; compare, which versions to a check-free clone standing alone and refuses the
-;; instant it is absorbed into `it-intern-slice` -- same loop, same counter, same
-;; invariant bound, same two derivable checks. The refusal was POSITIONAL.
+;; input is keyed on the forwarder. A slice byte compare is the case: it
+;; versions to a check-free clone standing alone and would refuse the instant
+;; it is absorbed into its caller -- same loop, same counter, same invariant
+;; bound, same two derivable checks. That refusal is POSITIONAL.
 ;;
 ;; What absorption adds, and only absorption, is an EXIT JOIN: the callee's exit
 ;; arms fan into the callee's own exit block, which then forwards into the
@@ -80558,24 +80250,23 @@
 ;;
 ;; The other is the block a LOOP EXIT jumps through on its own: the whole
 ;; predecessor set is clone-group blocks, so the phi's key is a jump-only
-;; forwarder the loop reaches directly. `pl-indexed-rsp?`'s `(not found)` exit is
-;; the measured case -- `if_else.7: jump while_exit.2` sits between the entry
-;; chain's counter compare and the return phi that reads the loop's flag, and
-;; nothing else refused that loop. Pulling the forwarder into the group gives it
-;; a fast twin whose predecessor is the fast twin of the compare block, and the
-;; ordinary exit-phi extension then keys the parallel input on that twin; the
-;; slow forwarder keeps its own edge from the slow compare block, so no block
-;; gains a predecessor the loop did not already reach. It is the exit-phi case
-;; one forwarder removed, which is why the same admission covers it.
+;; forwarder the loop reaches directly. A search loop's `(not found)` exit is
+;; the case: a jump-only block sits between the entry chain's counter compare
+;; and the return phi that reads the loop's flag. Pulling the forwarder into the
+;; group gives it a fast twin whose predecessor is the fast twin of the compare
+;; block, and the ordinary exit-phi extension then keys the parallel input on
+;; that twin; the slow forwarder keeps its own edge from the slow compare block,
+;; so no block gains a predecessor the loop did not already reach. It is the
+;; exit-phi case one forwarder removed, which is why the same admission covers
+;; it.
 ;;
 ;; MIXED stays refused. A block keyed directly off a loop edge is the ordinary
 ;; exit-phi case the extension already handles; a block with BOTH a loop edge and
 ;; a forwarder edge is one CFG simplification away from it, and taking it costs
 ;; the rotated version the pass builds a pipeline round later from the same
-;; loop -- measured on lex_source's `ls-tokenize` newline scan, where admitting
-;; that shape versions the pre-rotation top-tested form and gives up the rotated
-;; clone's register assignment for +0.118%. So the predecessor set has to be
-;; homogeneous: all group blocks, or all forwarding stubs.
+;; loop: admitting that shape versions the pre-rotation top-tested form and
+;; gives up the rotated clone's register assignment. So the predecessor set has
+;; to be homogeneous: all group blocks, or all forwarding stubs.
 ;;
 ;; Every level is the forwarding stub the direct-use wiring already defines: an
 ;; outside block that only Jumps to its user, check-free, phi-free, clonable by
@@ -81557,30 +81248,23 @@
 ;; on some. Since ONE false clause deselects the fast path for the whole loop,
 ;; an over-approximation can cost every removal the guard did prove.
 ;;
-;; intern_table's `it-index-lines` is that case: a byte counter over `text` and a
-;; LINE counter incremented on newlines only, indexing `starts` and `lengths`.
-;; The guard reads `n <= lengths.len && n <= starts.len && n <= text.len` with
-;; n = 1,484,510 bytes against 143,307 lines, so it fails on the first clause and
-;; the `text[i]` read the third had proved goes through the checked path anyway;
-;; 68% of the function is statically dead.
+;; A line indexer is that case: a byte counter over `text` and a LINE counter
+;; incremented on newlines only, indexing `starts` and `lengths`. The guard
+;; reads `n <= lengths.len && n <= starts.len && n <= text.len` with n the byte
+;; count, far above the line count, so it fails on the first clause and the
+;; `text[i]` read the third had proved goes through the checked path anyway.
 ;;
 ;; DECLINING the derivation there -- keeping the two line-counter checks in the
-;; clone, which partial versioning is built to do -- was implemented and
-;; MEASURED, and it loses:
-;;
-;;   opt_quicksort  +85,548,708  (+21.3%)   partition loop, `store` vs `scan`
-;;   gvn_table       +2,765,322  (+0.26%)   `gvn-facts-grow` compaction loop
-;;   intern_table    -3,255,631  (-0.56%)   `it-index-lines`, the win above
-;;
-;; and the reason is a cost the "keep instead of poison" rule cannot see: a clone
-;; that keeps ANY BoundsCheck is no longer eligible for the check-free downstream
-;; passes. `opt-unroll-body-load-store-instr-ok?` refuses a BoundsCheck, so
-;; quicksort's partition clone and gvn_table's compaction clone lose their 2x
-;; multi-block unroll -- the whole 85M -- and `fill_call`/`copy_call` are gated on
-;; the same check-freeness. Nothing static separates the three shapes either:
-;; gvn_table's `live` advances exactly as conditionally as `it-index-lines`' line
-;; counter and indexes arrays the counter never touches, and its clause is simply
-;; TRUE at runtime where the other is false.
+;; clone, which partial versioning is built to do -- loses overall, and the
+;; reason is a cost the "keep instead of poison" rule cannot see: a clone that
+;; keeps ANY BoundsCheck is no longer eligible for the check-free downstream
+;; passes. `opt-unroll-body-load-store-instr-ok?` refuses a BoundsCheck, so a
+;; quicksort partition clone (`store` vs `scan`) and a hash-table compaction
+;; clone lose their 2x multi-block unroll, and `fill_call`/`copy_call` are
+;; gated on the same check-freeness. Nothing static separates the shapes
+;; either: the compaction loop's `live` advances exactly as conditionally as
+;; the line counter and indexes arrays the counter never touches, and its
+;; clause is simply TRUE at runtime where the other is false.
 ;;
 ;; So the derivation stays as it is -- the sound, least specific rule -- and the
 ;; conjunction keeps the clause. Separating the two shapes needs a runtime
@@ -81803,8 +81487,8 @@
 
 ;; Length-relation conjuncts the cross-array fusion derivation has already put
 ;; in the guard, so a second fused check over the same pair of arrays reuses
-;; the conjunct instead of adding a duplicate compare. Physical pushes replace
-;; the old Cons/prepend operation; logical readers walk newest-first.
+;; the conjunct instead of adding a duplicate compare. Entries are pushed
+;; physically; logical readers walk newest-first.
 (defstruct OptBceMbFusedPair
   (lhs ir.CompilerIrValue)
   (rhs ir.CompilerIrValue))
@@ -81897,18 +81581,15 @@
 ;; second header phi -- `cursor = phi(3*index0, cursor + 3)` for
 ;; `union[base + 3*index + 1]` -- and after that rewrite the affine recovery
 ;; sees a Phi and gives up, taking the whole variable-base family with it. The
-;; single-block pass has had the missing arm since the strided families landed
-;; (`opt-bce-version-strided-side` falls through to
-;; `opt-bce-version-strided-derived`); the multi-block pass never grew it, so a
-;; strength-reduced index versioned in a self-loop and not in a two-block one.
-;; regalloc_greedy's `rg-union-refresh-max!` is the measured shape: a four-block
-;; loop whose two checks are `base + cursor + 1` and `base + cursor + 2` over a
-;; step-3 cursor, deriving NOTHING today.
+;; single-block pass has the matching arm (`opt-bce-version-strided-side` falls
+;; through to `opt-bce-version-strided-derived`); this is the multi-block one.
+;; The shape: a four-block loop whose two checks are `base + cursor + 1` and
+;; `base + cursor + 2` over a step-3 cursor.
 ;;
 ;; The recovery is `opt-bce-mb-derived-induction`, which is the multi-block
-;; twin of the one the single-block arm uses and was already written for the
-;; pair path: a header phi split (preheader, latch) whose initializer is
-;; loop-invariant and whose back-edge value is `phi + <positive literal>`. Its
+;; twin of the one the single-block arm uses and also serves the pair path: a
+;; header phi split (preheader, latch) whose initializer is loop-invariant and
+;; whose back-edge value is `phi + <positive literal>`. Its
 ;; guard is `opt-bce-version-derived-family`, the SAME family builder both
 ;; passes' scaled and derived members flush through, so nothing about the
 ;; conditions or their soundness argument is new here -- only the shape that
@@ -82207,12 +81888,12 @@
 ;; outside the loop has already read? That is the one question the guard's
 ;; hoisted length loads ask of the body.
 ;;
-;; The old answer was the load_combine "writes memory at all" classification --
-;; stores, calls, syscalls, vector/predicated stores -- which is sound but
+;; The blanket answer is the load_combine "writes memory at all" classification
+;; -- stores, calls, syscalls, vector/predicated stores -- which is sound but
 ;; answers a strictly bigger question, so a single cold call anywhere in the
-;; body refused every descriptor length in it. A DIRECT call has a per-callee
-;; answer to the REAL question, in the `direct-call-clean` bits the program
-;; summaries already build:
+;; body would refuse every descriptor length in it. A DIRECT call has a
+;; per-callee answer to the REAL question, in the `direct-call-clean` bits the
+;; program summaries already build:
 ;;
 ;;   memory-clean (bit 0)   writes nothing at all, so nothing of any class
 ;;   element-only (bit 2)   every write it makes lands in the element storage a
@@ -82227,7 +81908,7 @@
 ;; caller passed it: neither verdict depends on the argument list, so no
 ;; GlobalAddr-style call-site gate is needed here. Everything else -- an
 ;; unresolved or memory-writing direct callee, any indirect/C-ABI/SPMD call,
-;; every store, every vector write -- keeps the old blanket refusal. So this can
+;; every store, every vector write -- keeps the blanket refusal. So this can
 ;; only ADMIT loops the write-free test already refused; it can never admit a
 ;; body the write-free test accepted and this one would not.
 ;;
@@ -82235,18 +81916,16 @@
 ;; in the guard instead of once per iteration; it moves no store, no call, and
 ;; no check.
 ;;
-;; WHY THE BLANKET STORE REFUSAL STAYS. The one measured check this predicate
-;; was suspected of holding back -- `bounds_check %281, %92` in cfg_domloops'
-;; `cfg-idom-iterate`, kept inside `while_header.27__bce_fast` -- does not fail
-;; on its LENGTH at all. `%92` is loaded in the versioned region's preheader, so
-;; `opt-bce-mb-invariant-operand` accepts it directly and the guard block names
-;; it verbatim (`%251 = le %92, %72`); no descriptor hoist is consulted, so no
-;; relaxation here could reach the check. What fails is the INDEX: `%281` is a
-;; loop-carried phi of the versioned region whose back value is an `idom[...]`
-;; load, so it is neither bounded by the counter, nor a derived induction, nor
-;; masked, and the check is kept. Admitting element-only stores for descriptor
-;; invariance would therefore buy that case nothing, and it is the case the
-;; question was asked about.
+;; WHY THE BLANKET STORE REFUSAL STAYS. The check this predicate was suspected
+;; of holding back -- a `bounds_check` kept inside a dominator solver's fast
+;; clone -- does not fail on its LENGTH at all. The length is loaded in the
+;; versioned region's preheader, so `opt-bce-mb-invariant-operand` accepts it
+;; directly and the guard block names it verbatim; no descriptor hoist is
+;; consulted, so no relaxation here could reach the check. What fails is the
+;; INDEX: a loop-carried phi of the versioned region whose back value is an
+;; `idom[...]` load, so it is neither bounded by the counter, nor a derived
+;; induction, nor masked, and the check is kept. Admitting element-only stores
+;; for descriptor invariance would therefore buy that case nothing.
 ;; The type-pool segment bases the descriptor context carries, or -1 when
 ;; recognition is disabled (test entries without type-pool access).
 (define (opt-bce-mb-descriptor-type-segment-bases
@@ -82334,12 +82013,13 @@
 ;;     %o  = gep %d, 1
 ;;     %n  = load %o        ;; the length
 ;;
-;; `%d` is a loop def, so the old test refused the whole chain and every check
-;; against `%n` stayed. But the loop defines `%d` only because it RELOADS it:
-;; the value is the global cell's content, and opt-bce-mb-stable-blocks? has
-;; already proved that nothing the loop executes can write a global cell (or a
-;; descriptor word). So the guard may recover the handle itself, once, with the
-;; same two instructions, and every iteration's `%d` equals it.
+;; `%d` is a loop def, so a plain loop-def test refuses the whole chain and
+;; every check against `%n` stays. But the loop defines `%d` only because it
+;; RELOADS it: the value is the global cell's content, and
+;; opt-bce-mb-stable-blocks? has already proved that nothing the loop executes
+;; can write a global cell (or a descriptor word). So the guard may recover the
+;; handle itself, once, with the same two instructions, and every iteration's
+;; `%d` equals it.
 ;;
 ;; SAFETY OF THE HOISTED RECOVERY. `gep @g, k` is a symbol address, and the load
 ;; through it reads the global's own storage -- always mapped, whatever path
@@ -82350,7 +82030,7 @@
 ;; in the guard, which the fast clone alone is entered from.
 ;;
 ;; Only a GLOBAL-rooted chain is recovered. A base the loop computes any other
-;; way (an element read, an arithmetic address) is refused exactly as before:
+;; way (an element read, an arithmetic address) is refused:
 ;; the recovery has to be a re-execution of instructions whose result cannot
 ;; depend on where in the loop they run, and a symbol address plus a cell read
 ;; that no body instruction can write is the one such chain.
@@ -82634,11 +82314,11 @@
 ;; `opt-bce-version-mask-operand`).
 ;; --- P-E: a header phi the loop never changes --------------------------------
 ;;
-;; `capacity` in intern_table's probe loop (intern_table_kernel.tl's
-;; `it-intern-slice`) is a header phi, so the loop-def set calls it variant and
-;; the mask `capacity - 1` with it -- yet the only arm that assigns it is the
-;; MISS arm, which grows the table and then leaves the loop, so nothing but the
-;; phi's own value ever comes back around the back edge:
+;; `capacity` in a hash-intern probe loop is a header phi, so the loop-def set
+;; calls it variant and the mask `capacity - 1` with it -- yet the only arm
+;; that assigns it is the MISS arm, which grows the table and then leaves the
+;; loop, so nothing but the phi's own value ever comes back around the back
+;; edge:
 ;;
 ;;   while_header.0:  %562 = phi [%561, if_merge.8], [%323, entry]
 ;;   if_merge.8:      %561 = mov %562
@@ -83145,41 +82825,39 @@
               acc)]
           ;; loop-invariant index: exactly its own range check, hoisted.
           ;;
-          ;; ONE UNSIGNED CONJUNCT, not the signed pair this used to state.
-          ;; `BoundsCheck` compares UNSIGNED (opt-bce-version-mask-cond reads
-          ;; the same fact for an invariant mask), so `id <u len` IS the removed
-          ;; check, evaluated once in the guard instead of once per iteration.
-          ;; It needs no companion sign condition: a negative `id` is >=u 2^63
-          ;; and fails the conjunct exactly where the check itself would have
-          ;; trapped, and a length whose own sign bit is set admits the same
-          ;; indexes the check admits. So the guard is EXACT in both directions
-          ;; -- false sends the entry to the original loop, which aborts exactly
-          ;; where it did -- and no ordering question among aborts arises.
+          ;; ONE UNSIGNED CONJUNCT. `BoundsCheck` compares UNSIGNED
+          ;; (opt-bce-version-mask-cond reads the same fact for an invariant
+          ;; mask), so `id <u len` IS the removed check, evaluated once in the
+          ;; guard instead of once per iteration. It needs no companion sign
+          ;; condition: a negative `id` is >=u 2^63 and fails the conjunct
+          ;; exactly where the check itself would have trapped, and a length
+          ;; whose own sign bit is set admits the same indexes the check admits.
+          ;; So the guard is EXACT in both directions -- false sends the entry
+          ;; to the original loop, which aborts exactly where it did -- and no
+          ;; ordering question among aborts arises.
           ;;
           ;; COUNTED SHAPES ONLY, and the single conjunct does not change that.
           ;; The rule reads no trip range, so the counter-free economics gate
           ;; (at most one conjunct per removed check,
-          ;; opt-bce-mb-guard-conds-ranged) now admits it -- which is exactly
+          ;; opt-bce-mb-guard-conds-ranged) would admit it -- which is exactly
           ;; the shape that must not be admitted. A loop-invariant index sits on
           ;; whatever arm the body puts it on, so its removals fire only on the
           ;; iterations that reach that arm while the conjunct is paid on every
           ;; ENTRY: the cross-array fusion is scoped away from counter-free
-          ;; shapes for the same reason, one paragraph up. Measured by dropping
-          ;; this clause: lex_source's `ls-scan-symbol-end` -- a counter-free
-          ;; scan whose three `buf[start + k]` reads are hoisted into the
-          ;; preheader and checked on one conditional arm -- bought a
+          ;; shapes for the same reason, one paragraph up. Without this clause
+          ;; a counter-free scan whose three `buf[start + k]` reads are hoisted
+          ;; into the preheader and checked on one conditional arm buys a
           ;; three-conjunct entry guard per call for three removals that fire
-          ;; only when the arm is taken, +8,804,144 (+1.84%) on that benchmark
-          ;; with every other row bit-identical.
+          ;; only when the arm is taken.
           ;;
           ;; So the walk loops this would otherwise reach (`rpo_num[b]` with `b`
-          ;; fixed across cfg_domloops' idom walks) keep their check. Two
-          ;; further gates stand behind this one for that measured case anyway:
-          ;; the counter-free shape is offered only to loops whose preheader is
+          ;; fixed across a dominator solver's idom walks) keep their check. Two
+          ;; further gates stand behind this one for that case anyway: the
+          ;; counter-free shape is offered only to loops whose preheader is
           ;; outside every loop (opt-bce-mb-loop-shape-with-preheader), and a
           ;; loop already inside a fast clone is refused outright
-          ;; (opt-bce-mb-label-in-clone?), which is where `while_header.27`
-          ;; lives once the enclosing region versions.
+          ;; (opt-bce-mb-label-in-clone?), which is where such a walk lives once
+          ;; the enclosing region versions.
           [(and (>= iphi 0) (not (opt-used-contains defs id)))
             (opt-bce-version-mask-cond
               cell
@@ -83559,8 +83237,8 @@
                                   ;; The base-0 member of this loop's DERIVED
                                   ;; family (see the single-block pass's note
                                   ;; at opt-bce-version-var-base-strided): a
-                                  ;; lone member flushes to exactly the derived
-                                  ;; guard this used to emit directly.
+                                  ;; lone member flushes to exactly the plain
+                                  ;; derived guard.
                                   [(OptBceDerivedInduction.Some
                                       derived-seed
                                       step)
@@ -83630,11 +83308,10 @@
 ;;
 ;; WHAT THE ANCHOR DOES NOT NEED TO BE. Nothing here cares whether the covered
 ;; arrays are read or WRITTEN: the removed check may be the one guarding a
-;; store (`idom[id] := candidate` is the running example, and its check is the
-;; largest single consumer in the running benchmark), and the value stored is
-;; irrelevant to it -- a store's bounds check constrains the INDEX. Nor does a
-;; later read of that array inherit anything: it carries its own anchor. So the
-;; "closed set of values" the region has to track is just the set of index
+;; store (`idom[id] := candidate` is the running example), and the value stored
+;; is irrelevant to it -- a store's bounds check constrains the INDEX. Nor does
+;; a later read of that array inherit anything: it carries its own anchor. So
+;; the "closed set of values" the region has to track is just the set of index
 ;; values a retained check has already proven in range, and dominance is what
 ;; propagates it.
 ;;
@@ -84001,10 +83678,9 @@
         ;; COUNTED SHAPES ONLY. Fusion states one conjunct per pair of arrays the
         ;; walk touches, and the checks it removes fire only on the iterations
         ;; that reach them, so it needs the trip-count evidence a counted shape
-        ;; carries. Offered to a counter-free bucket walk it inverts: measured on
-        ;; gvn_table, `gvn-table-lookup`'s chain walk took a SIX-conjunct guard
-        ;; (12 instructions per call, one per node array) to remove checks that
-        ;; only the matching-key iterations execute, +18.6M on the benchmark. The
+        ;; carries. Offered to a counter-free bucket walk it inverts: a hash
+        ;; chain walk takes one conjunct per node array, paid on every call, to
+        ;; remove checks that only the matching-key iterations execute. The
         ;; counter-free relaxation exists for the masked-index family, whose
         ;; guard is one unsigned conjunct per (mask, length) pair and whose
         ;; removal fires on EVERY iteration; nothing else rides along.
@@ -84796,10 +84472,9 @@
 ;; resolution every other value identity in this pass uses.
 ;;
 ;; Every predecessor of `label`, over the WHOLE successor relation: switch cases
-;; and positional fallthrough included. `opt-bce-mb-preds-from` reads only the
-;; Jump/Branch part of a terminator, which is all its own caller needs; the
-;; dominance claim below is a claim about the complete set, and a predecessor it
-;; did not see is a path the fact does not hold on.
+;; and positional fallthrough included. The dominance claim below is a claim
+;; about the complete set, and a predecessor a Jump/Branch-only reading did not
+;; see is a path the fact does not hold on.
 (define (opt-bce-mb-all-preds
   [remaining : ir.CompilerIrBlockList]
   [label : i64]
@@ -85195,44 +84870,30 @@
           ;; iterates, and its own floors (opt-bce-mb-call-clone-min-derived, the
           ;; scale-1 census) price the rest.
           ;;
-          ;; The corpus pins it from the losing side. intern_table's
-          ;; `it-map-insert-from` probe takes TWO conjuncts -- the invariant seed
-          ;; cursor and the mask -- to remove ONE check from a loop that averages
-          ;; ~1.15 iterations per call: measured +281,442 on that benchmark, with
-          ;; the same shape again inside `it-grow!`. The masked micro this
-          ;; relaxation exists for (target/wsl/research/gvn_table/micro/m3.tl)
-          ;; sits on the other side at one conjunct for one check, and its
-          ;; check-free clone then unrolls x16.
+          ;; A hash probe that takes TWO conjuncts -- the invariant seed cursor
+          ;; and the mask -- to remove ONE check from a loop that averages about
+          ;; one iteration per call is the losing side. A masked-index loop at
+          ;; one conjunct for one check is the side this relaxation exists for,
+          ;; and its check-free clone then unrolls.
           ;;
           ;; ENTRY ECONOMICS (BCE-4). The counted shape's trip-range clauses are
           ;; evidence that the loop iterates, but they say nothing about how
           ;; often it is ENTERED. A loop whose entry is inside another loop pays
-          ;; its whole guard once per enclosing iteration, and BCE-3's labelled
-          ;; per-site census measured what that costs where the inner trip count
-          ;; is small: on intern_table the `__bce_guard` blocks of `it-bench`
-          ;; cost 31,088,050 Ir -- 10.0% of the row and 3.6x the 8.5M of checks
-          ;; the versionings removed -- because two of the versioned loops are
-          ;; probe/compare loops re-entered once per interned name. So a nested
-          ;; entry is priced: its conjuncts must be repaid by the removals at
-          ;; this loop's trip estimate. The counter-free clause above is the
-          ;; same statement for a shape with no trip evidence at all.
+          ;; its whole guard once per enclosing iteration, which is dear where
+          ;; the inner trip count is small (probe/compare loops re-entered once
+          ;; per interned name). That price is traced but not gated: see below.
           (let
             [conjuncts : i64 (opt-bce-mb-guard-compare-count guard-instrs 0 0)]
             [_trace : unit (opt-bce-trace-guard! conjuncts shape.nested-entry?)]
-            ;; MEASURED AND NOT ADMITTED. Pricing a nested entry at a trip
-            ;; estimate of one -- the statement the counter-free clause makes --
-            ;; refuses versionings the corpus wants: intern_table +37,445,512
-            ;; (+11.08%), liveness_scan +34,065,442 (+8.66%), callgraph_scc
-            ;; +7,160,562 (+1.10%), gvn_table +4,559,842, regalloc_greedy
-            ;; +3,106,871, ssa_construct +1,461,504. The guard Ir BCE-3 measured
-            ;; (31,088,050 on intern_table) is not what the versioning costs
-            ;; against nothing: it is what it costs against the checks it
+            ;; NOT ADMITTED: pricing a nested entry at a trip estimate of one --
+            ;; the statement the counter-free clause makes -- refuses
+            ;; versionings that pay. The guard's cost is not what the versioning
+            ;; costs against nothing: it is what it costs against the checks it
             ;; REMOVED, which never appear in a profile of the versioned
-            ;; program. Refusing them puts those checks back and the row moves
-            ;; the other way by more than the whole guard. The gate also reaches
-            ;; the checked inliner's measured plan, so a callee whose inlined
-            ;; loop it refuses stops being inlined at all -- which is where
-            ;; intern_table's +11% comes from.
+            ;; program. Refusing them puts those checks back, which costs more
+            ;; than the whole guard. The gate also reaches the checked inliner's
+            ;; measured plan, so a callee whose inlined loop it refuses stops
+            ;; being inlined at all.
             ;;
             ;; The price is still REPORTED (`|guard=<conjuncts>|nested=<0|1>`
             ;; above), because that is the number any future entry-economics
@@ -86640,9 +86301,8 @@
 ;; one applied leaves `__bce_fast` labels that make every loop containing it
 ;; ineligible for the rest of the round.
 ;;
-;; FLAT FIRST, for the reason this pass has always had: an inner loop that
-;; versions on its own removes checks per INNER iteration, strictly more than an
-;; enclosing nest's one-per-outer-iteration.
+;; FLAT FIRST: an inner loop that versions on its own removes checks per INNER
+;; iteration, strictly more than an enclosing nest's one-per-outer-iteration.
 ;;
 ;; REGIONS BEFORE ORDINARY NESTS, because between two NESTS that reasoning
 ;; inverts. A region's preheader lies outside every loop, so its guard is paid
@@ -86650,24 +86310,22 @@
 ;; checks TOO, at a strictly cheaper guard, which is why the region gate demands
 ;; an inner-loop removal in the first place (opt-bce-mb-derived-in-inner?). An
 ;; inner nest taking the slot therefore trades the outer region's removals away
-;; for a subset of them behind a per-outer-iteration guard. cfg_domloops'
-;; `cfg-idom-iterate` is the measured case: the edge loop (a 20-block nest
-;; holding the two idom walks) and the whole slot loop (a 32-block region
-;; deriving 12 checks, three of them inside those walks) overlap, and versioning
-;; the edge loop instead of the region costs +24.8M -- 3.5% of the benchmark.
-;; Ordering it explicitly is what makes that a decision rather than a side
-;; effect of whichever cap happened to refuse the inner nest first.
+;; for a subset of them behind a per-outer-iteration guard. An iterative
+;; dominator solver is the typical case: the edge loop (a nest holding the two
+;; idom walks) and the whole slot loop (a region deriving checks inside those
+;; walks and around them) overlap, and versioning the edge loop instead of the
+;; region loses. Ordering it explicitly is what makes that a decision rather
+;; than a side effect of whichever cap happened to refuse the inner nest first.
 ;;
 ;; COUNTED SHAPES BEFORE COUNTER-FREE ONES -- phases 0-2, then the same three
 ;; for `opt-bce-mb-loop-shape-free`. A counter-free candidate can only derive
 ;; the counter-INDEPENDENT rules (a masked index, an invariant index, the
 ;; cross-array fusion), which is a SUBSET of what the same loop's counted shape
 ;; derives, so it must never take a slot a counted candidate could use. Offering
-;; both in one phase does exactly that, and it is measurable: a counter-free
-;; list walk in cfg_domloops' `cfg-idom-iterate` displaced the 12-check region
-;; the ordering above exists to protect, +56.0M on that benchmark (+8.0%), and
-;; lex_source lost 19.0M the same way. The separation costs one extra scan per
-;; round, and only in the rounds where no counted candidate applied at all.
+;; both in one phase does exactly that: a counter-free list walk inside the
+;; dominator solver above displaces the region the ordering above exists to
+;; protect. The separation costs one extra scan per round, and only in the
+;; rounds where no counted candidate applied at all.
 (define (opt-bce-mb-scan-phase-count) : i64
   6)
 
@@ -87989,32 +87647,23 @@
       (opt-bce-mb-latch-branch latch-block header body-labels)]))
 
 ;; ADMISSION: a counted loop that CONTAINS ANOTHER LOOP and CALLS OUT of its
-;; body, which is the class this packet names and, measured, the only class the
-;; trade pays in.
+;; body, which is the only class the trade pays in.
 ;;
 ;; The trade is per-ENTRY cost against per-TRIP saving: the min chain and the
 ;; early-exit test run once per entry, every removed check leaves every trip. A
 ;; static trip estimate does not exist here, so the admission is a proxy for
-;; "trips per entry is not about one", and both sides of it were measured on
-;; this corpus rather than guessed.
+;; "trips per entry is not about one".
 ;;
-;; The losers are all FLAT innermost loops entered about as often as they trip.
-;; cfg_domloops' natural-loops successor walk runs 1,486,236 trips over
-;; 1,401,648 entries -- 1.06 -- so its one removed check never repays the entry;
-;; its idom intersection walks, its loop-body worklist and its Euler scans are
-;; the same shape. Ungated, the pass took fourteen such loops and cost that row
-;; +28,149,312 (+5.08%) while the loops it was aimed at were unaffected.
-;;
-;; The winner is the shape the packet describes: intern_table's `k` loop, which
-;; walks every line of the corpus, calls the interner per line and holds the
-;; interner's own probe loop inline. Gated to that class the same pass is
-;; -9,847,504 on that row (-2.57%) with cfg_domloops back to what the clone-free
-;; MOVE alone buys it.
+;; The losers are all FLAT innermost loops entered about as often as they trip
+;; -- a CFG successor walk, idom intersection walks, a loop-body worklist,
+;; Euler scans -- so their one removed check never repays the entry. The
+;; winning shape is an outer loop that walks every line of its input, calls an
+;; interner per line and holds the interner's own probe loop inline.
 ;;
 ;; A nested loop is not a trip count and this comment does not claim it is. It
-;; is the property that separated the measured winners from the measured losers:
-;; a loop whose body runs another loop is walking a collection, and a flat
-;; innermost scan with a call on one arm is not.
+;; is the property that separates the winners from the losers: a loop whose
+;; body runs another loop is walking a collection, and a flat innermost scan
+;; with a call on one arm is not.
 (define (opt-bce-tighten-loop
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [loops : (& loops OptNaturalLoopList)]
@@ -88260,7 +87909,7 @@
 ;; THAT ONE LOOP for the rest of the invocation (`rejected`, keyed by loop
 ;; label / loop header), then rescans. A loop the verifier refuses costs the
 ;; function's remaining loops nothing -- which is what merged bodies need,
-;; where one bad loop used to suppress every later one -- and, since a
+;; where one bad loop would otherwise suppress every later one -- and, since a
 ;; rejected application consumes no budget, the run still gets its full quota
 ;; of accepted rewrites. Each rejection adds a label the scans then skip, so
 ;; the retry sequence is bounded by the block count. The generated
@@ -88735,8 +88384,8 @@
 ;;   then/else: ...; Jump L
 ;;   L: merged state; inext = i + 1; c = inext < bound; Branch c H exit
 ;;
-;; Its separate merge latch is the first gate that rejected quicksort's
-;; `__bce_fast` clone; its store-bearing swap arm would also fail the
+;; Its separate merge latch fails the self-loop prescan, and the store-bearing
+;; swap arm of a quicksort partition's `__bce_fast` clone would also fail the
 ;; straight-line instruction whitelist. This path is intentionally narrower
 ;; than the multi-block BCE cloner: exactly one check-free four-block diamond,
 ;; at most two header phis, no calls or fallthroughs, <= 32 IR instructions,
@@ -89136,7 +88785,7 @@
                   (opt-unroll-mb-diamond? blocks body-labels header latch)
                   ;; The 2x path pays an odd-trip guard and duplicates four
                   ;; blocks. Keep it for the store-bearing swap/update shape
-                  ;; that benefits measurably; read-only reductions/searches
+                  ;; that benefits; read-only reductions/searches
                   ;; are better left to the ordinary scalar loop pipeline.
                   (= (opt-unroll-mb-body-status body-blocks) 1)
                   (<=
@@ -89285,10 +88934,9 @@
         (= dst shape.cond-var)
         (= (opt-bce-mb-resolve shape.body-blocks dst 16) shape.inext)))))
 
-;; The historical cons rewrite allocated copy-1 GEP shift temporaries while
-;; unwinding recursion, from the end of the block toward the front. Reserve
-;; those ids in the same order before the forward dense emission so generated
-;; names and assembly stay stable.
+;; Copy-1 GEP shift temporaries are allocated from the end of the block toward
+;; the front. Reserve those ids in that order before the forward dense emission
+;; so generated names and assembly stay stable.
 (define (opt-unroll-mb-shifted-vars
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [shape : (& shape OptUnrollMbShape)]
@@ -89734,9 +89382,9 @@
 ;; A loop body that reads `base[invariant + counter]` lowers to a THREE-term
 ;; address: `A = Add I, V` inside the loop, then `Gep base, A`. The x86 SIB mode
 ;; is `disp(base, index, scale)` -- one register base plus one register index --
-;; so the third term costs a `lea` per access per iteration.
-;; `benchmarks/intern_table`'s `it-slice-eq?` byte compare pays that twice per
-;; byte; the C twin hoists `p = names + name_start` once and loads `(p,i,1)`.
+;; so the third term costs a `lea` per access per iteration. A slice byte
+;; compare pays that twice per byte, where C hoists `p = names + name_start`
+;; once and loads `(p,i,1)`.
 ;;
 ;; Gep is exactly associative in its index -- `Gep b, (I + V) : t` and
 ;; `Gep (Gep b, I : t), V : t` both address `b + (I + V) * sizeof t` -- so the
@@ -90295,7 +89943,7 @@
 ;; ACCEPTS a synthesized one. The attempt is part of the scan: a loop whose
 ;; synthesis DECLINES is skipped, and the scan continues down the list.
 ;;
-;; That skip is load-bearing. `opt-loop-preheaders-header-compatible?` refuses a
+;; That skip is load-bearing. `opt-loop-preheaders-header-reason` refuses a
 ;; header whose phis take different values from two different outside
 ;; predecessors, because one preheader cannot carry two incoming values -- and
 ;; that is exactly an unrolled loop's REMAINDER header (its counter phi reads 0
@@ -91411,7 +91059,7 @@
 ;; zero-offset Gep base is also an address-only use: the wrapper is pointer
 ;; identity, so rewriting it with the wrapped Gep's operands exposes the
 ;; existing single-Gep memory fusion. chainuses distinguishes that useful
-;; single-use case from the multi-use splitting this pass originally owned.
+;; single-use case from multi-use splitting.
 (define (opt-gep-split-memuses-instrs!
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -91636,11 +91284,9 @@
 ;; One fresh single-use Gep immediately before its Load/StorePtr use.
 ;; Emit the rewrite of one instruction into the output builder. Expand shape:
 ;; a candidate `Load`/`StorePtr` emits a fresh `Gep` ahead of the memory op, so
-;; the output can be longer than the input. Per #5726's migration shape an
-;; insert/expand pass takes a capacity-managed dense builder, not a cons
-;; accumulator. The fresh-var allocator `cell` is consumed in exactly the order
-;; the old recursion consumed it: that code allocated for instruction `i`
-;; before recursing on `i + 1`, and this loop pushes for `i` before advancing.
+;; the output can be longer than the input, so it goes into a
+;; capacity-managed dense builder. The fresh-var allocator `cell` is consumed
+;; in instruction order: this loop pushes for `i` before advancing.
 (define (opt-gep-split-push-instr!
   [instr : ir.CompilerIrInstr]
   [cands : (__tl_dyn-array i64)]
@@ -91807,9 +91453,8 @@
               offsets
               tys
               cell))])]
-    ;; The array arm used to materialise a whole block cons chain purely to
-    ;; walk it once (refs #5729); it now scans the sequence in place and
-    ;; writes a dense output sequence. Same forward order, so `cell` hands out
+    ;; The array arm scans the sequence in place and writes a dense output
+    ;; sequence in the same forward order as the list arm, so `cell` hands out
     ;; the same fresh var ids in the same places.
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -92089,9 +91734,9 @@
 ;; register shorter -- but every probe in that family reads the instruction at
 ;; `load index + 1`: the fold requires ADJACENCY, and source evaluation order
 ;; does not supply it. `(bit-or (ln-ref uses k) (bit-and (ln-ref scratch-out i)
-;; (bit-xor (ln-ref defs k) -1)))` -- benchmarks/liveness_scan's flagship loop,
-;; 11.8M iterations -- lowers its three element reads first and its three ALU
-;; ops after, so the `and`'s load sits four slots back and the `or`'s eight.
+;; (bit-xor (ln-ref defs k) -1)))` lowers its three element reads first and
+;; its three ALU ops after, so the `and`'s load sits four slots back and the
+;; `or`'s eight.
 ;; Only the innermost `xor` is adjacent, and only the `xor` folds; the loop
 ;; pays ten instructions where eight would do.
 ;;
@@ -92492,11 +92137,10 @@
 ;;
 ;;   * SEVERAL branches share one GVN-unified comparison. The pair then costs
 ;;     `cmp`/`setcc`/`movzbq`/`test`/`jcc` plus `test`/`jcc` -- seven
-;;     instructions where two fused pairs spend four. This is the measured cure
-;;     for three separately recorded regressions of the same family: an inlined
-;;     accessor's guard merging with its caller's loop test, a bit-test head
-;;     compare losing single-use status, and a late-rotation guard clone CSE'ing
-;;     with the versioning guard.
+;;     instructions where two fused pairs spend four. Three shapes of this
+;;     family: an inlined accessor's guard merging with its caller's loop test,
+;;     a bit-test head compare losing single-use status, and a late-rotation
+;;     guard clone CSE'ing with the versioning guard.
 ;;   * ONE branch reads a condition computed in a different block -- the shape
 ;;     LICM leaves whenever it hoists a loop-invariant guard condition into the
 ;;     preheader or the entry block. Here the copy is a SINK, not a duplication:
@@ -92521,8 +92165,8 @@
 ;; back through the WHOLE pipeline again, so a copy made at the pipeline's bottom
 ;; still meets the next iteration's `gvn`, which re-unifies it and strands the
 ;; copy as dead code -- and a dead compare ahead of a branch reads as an impure
-;; link to the classifier-chain pass, which measurably truncated
-;; `benchmarks/lex_source`'s symbol-class bitmask. So the pass runs from
+;; link to the classifier-chain pass, which then truncates a symbol-class
+;; bitmask chain. So the pass runs from
 ;; `opt-cmp-dup-final-pass`, below the fixpoint AND below the final CFG passes,
 ;; with the `dce` that retires an original whose every reader took a copy.
 ;;
@@ -92766,10 +92410,9 @@
 ;; operand (the other a literal) that exchange is one-for-one and the copy
 ;; cannot raise register pressure anywhere. With two it raises it by one across
 ;; the whole gap, and when a hot loop sits in that gap the loop pays for it:
-;; sinking intern_table's `le %322, %329` out of the entry block into its guard
-;; chain took `rbx` from the inlined byte-compare loop, which then scavenged its
-;; second array base through a spill slot every trip (+3 instructions x 15.2M
-;; trips, far past the materialisation the sink retired).
+;; the extra live value can take a register from an inner loop, which then
+;; scavenges a value through a spill slot every trip, far past the
+;; materialisation the sink retired.
 (define (opt-cmp-dup-recipe-var-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
     [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
@@ -92814,8 +92457,8 @@
     (= (array-ref uses v) (array-ref branch-uses v))
     ;; At least one of those readers does not already have its own compare.
     (>= (array-ref loose v) 1)
-    ;; A boolean SHARED by several branches keeps the rule this pass was
-    ;; measured with: the materialisation it retires is paid for once and read
+    ;; A boolean SHARED by several branches admits a two-variable recipe:
+    ;; the materialisation it retires is paid for once and read
     ;; from every site, so the copies are worth one more value across the gap.
     ;; A boolean with a SINGLE branch reader is admitted on the strength of the
     ;; copy being free, so it is held to exactly that: the live-range exchange
@@ -94273,7 +93916,7 @@
             (opt-successor-sink-fill-defs! frame instrs defs)])
         (opt-successor-sink-fill-all-defs! frame (deref rest) defs))]
     ;; Read-only over the blocks (it writes only the `defs` side array, in the
-    ;; same order): scan the sequence directly (refs #5729).
+    ;; same order): scan the sequence directly.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -95050,12 +94693,12 @@
 ;; The same dead-Pack test `opt-successor-sink-strip-dead-packs-block` applies,
 ;; asked as a question instead of answered by rebuilding. The strip rebuilds
 ;; every block of every function on every run of this pass to delete a Pack
-;; that is almost never there (1.1K of 57.8K opt2 self-compile runs plan any
-;; move at all), and the rebuilt list -- structurally identical to its input in
-;; the no-strip case -- then forces a fresh CFG context build and a second full
-;; SSA verify downstream. Asking first keeps the input list itself as the
-;; answer, which is what the whole no-strip path needs: same blocks, so the
-;; caller's context stays valid and its entry verify's verdict still binds.
+;; that is almost never there, and the rebuilt list -- structurally identical
+;; to its input in the no-strip case -- then forces a fresh CFG context build
+;; and a second full SSA verify downstream. Asking first keeps the input list
+;; itself as the answer, which is what the whole no-strip path needs: same
+;; blocks, so the caller's context stays valid and its entry verify's verdict
+;; still binds.
 (define (opt-successor-sink-instrs-have-dead-pack?
   [frame : i64]
   [uses : (& uses (__tl_dyn-array i64))]
@@ -95283,7 +94926,7 @@
 ;; `context` must be valid for `func`'s blocks: the entry verify runs against it
 ;; instead of building an identical one, and both rejection paths report it
 ;; unchanged. The returned context is valid for the returned function's blocks,
-;; which spares the caller the rebuild it used to do right after this returned.
+;; so the caller need not rebuild it.
 (define (opt-successor-sink-function-with-context-result
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -95335,8 +94978,7 @@
             ;; the same name/params/return type/frame/block list as `func` and
             ;; `next-context` is the very context just verified against, so the
             ;; entry verify above already decided this exit verify: it is the
-            ;; same pure query on the same values and can only answer Ok. Half
-            ;; of every SSA verify in the opt2 self-compile is this one.
+            ;; same pure query on the same values and can only answer Ok.
             (if (match sink-result
               [(OptSuccessorSinkBlocksResult.Result _ _ _ unchanged)
                 (and unchanged (= (array-ref frame-cell 0) frame))])
@@ -95372,13 +95014,11 @@
 ;; That leftover is not cosmetic. It is a HEADER phi, so `rotate_ssa` counts it
 ;; among the loop-carried values whose readers the rotation has to place, and its
 ;; one reader sits at the join of the loop's two exits -- position class 0, the
-;; class no placement serves. `benchmarks/gvn_table`'s
-;; `gvn-table-invalidate-var` is the measured case: a `while (node >= 0 && !
-;; mentions)` walk whose descriptor derivations LICM lifts to the function's
-;; entry block, where they run on all 1,556,478 calls although only the 601,286
-;; with a non-empty table need them. The rotation that would give that loop a
-;; depth-0 landing block for `guard_sink` to sink them into is refused by one
-;; constant phi.
+;; class no placement serves. A `while (node >= 0 && ! mentions)` walk whose
+;; descriptor derivations LICM lifts to the function's entry block (where they
+;; run on every call, needed or not) is the shape: the rotation that would give
+;; that loop a depth-0 landing block for `guard_sink` to sink them into is
+;; refused by one constant phi.
 ;;
 ;; So this substitutes rather than folds: the phi is REMOVED and every read of
 ;; its destination is rewritten to the uniform value. A `Mov` would not do --
@@ -95438,12 +95078,10 @@
 ;; instruction `guard_sink` will move into the landing block the rotation is
 ;; about to mint, and the only reason to want the rotation at all.
 ;;
-;; Without that clause the rewrite is a general re-pricing of rotation, which is
-;; what T1-7/LS2 measured and rejected. It reproduces here in a new form:
-;; `benchmarks/intern_table`'s `it-slice-eq?` has a constant header phi too, its
+;; Without that clause the rewrite is a general re-pricing of rotation, which
+;; loses: a byte compare like `it-slice-eq?` has a constant header phi too, its
 ;; preheader derives nothing the loop reads, and rotating it for free stops the
-;; inliner from absorbing it into `it-bench` -- the byte compare reappears as a
-;; 137-line out-of-line callee costing 165,426,156 Ir (+31,754,258 on the row).
+;; inliner from absorbing it into its caller.
 (define (opt-uniform-phi-body-uses
   [set : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
@@ -95736,8 +95374,8 @@
 ;;   Storage g  -- `Load (gep @g, <literal>)`, a word of g's own storage. IAG-2's
 ;;                 OptGlobalObjModRef row answers that for calls; a pointer
 ;;                 write inside the region answers "any storage".
-;;   Unknown    -- everything else. Per the packet's rule, such a load may not
-;;                 cross ANY call or ANY store.
+;;   Unknown    -- everything else. Such a load may not cross ANY call or ANY
+;;                 store.
 ;;
 ;; The region a load has to be clean over is the instructions of B below I plus
 ;; every block on a B -> D path, computed as (forward reachable from B without
@@ -95746,7 +95384,7 @@
 ;; it.
 ;;
 ;; Four admission rules narrow the move beyond dominance, each with its own
-;; measurement recorded at the predicate that enforces it: the value must be
+;; reason recorded at the predicate that enforces it: the value must be
 ;; rooted at a GLOBAL (opt-guard-sink-note-ptr!), B must end in a CONDITIONAL
 ;; BRANCH and D must lie under exactly one of its arms (opt-guard-sink-choose,
 ;; opt-guard-sink-single-arm?), and D must not itself end in a conditional
@@ -95776,8 +95414,8 @@
 
 ;; A move makes its operands' producers eligible in the NEXT round (the use
 ;; positions they are scored on have just changed), so a gep/load/word chain
-;; needs one round per link. Four covers the descriptor chains this pass was
-;; measured on (`gep @g,0; load; gep,1; load`).
+;; needs one round per link. Four covers a descriptor chain
+;; (`gep @g,0; load; gep,1; load`).
 (define (opt-guard-sink-round-limit) : i64
   4)
 
@@ -95813,18 +95451,15 @@
 ;; load through that address be classified `Storage g` instead of `Unknown`.
 ;; `ptr-root[v]` marks a value DERIVED FROM A GLOBAL: `@g` itself, an address
 ;; formed from one, and anything loaded through such an address. Only such a
-;; value is sunk, and that is a measured rule.
+;; value is sunk.
 ;;
 ;; A read rooted at a global has no base to keep alive -- the address is
 ;; rip-relative -- so moving it below a guard costs nothing but its own
 ;; placement. A read rooted at a PARAMETER does: the pointer it walks has to
 ;; survive from the entry block into the guarded region, and the allocator pays
-;; for that in exactly the currency the move was trying to save. Measured on
-;; `benchmarks/liveness_scan`'s `fixpoint!`, sinking three `(&mut Buffer)`
-;; parameters' `gep; load` descriptor chains out of the entry block spilled all
-;; three parameters to stack slots and cost a reload apiece (+83,480 Ir), while
-;; `benchmarks/gvn_table`'s global-rooted descriptor chains are the pass's
-;; largest win.
+;; for that in exactly the currency the move was trying to save -- sinking a
+;; `(&mut Buffer)` parameter's `gep; load` descriptor chain out of the entry
+;; block spills the parameter to a stack slot and costs a reload per use.
 (define (opt-guard-sink-note-ptr!
   [frame : i64]
   [ptr-kind : (&mut ptr-kind (__tl_dyn-array i64))]
@@ -95921,12 +95556,11 @@
   (match instr
     ;; A `Mov` from a VAR is a copy, and copies are the allocator's business:
     ;; moving one buys no executed instruction (it is coalesced away or it is
-    ;; not) and only reshuffles which values get a callee-saved home. Measured on
-    ;; `benchmarks/liveness_scan`'s `fixpoint!`, sinking two parameter copies out
-    ;; of the entry block spilled the two parameters they carried into stack
-    ;; slots and cost a reload per descriptor read (+83,480 Ir). A `Mov` from a
-    ;; `Global` is a rip-relative CELL READ and a `Mov` from a literal is a
-    ;; materialization; both are real work an early exit can skip.
+    ;; not) and only reshuffles which values get a callee-saved home. Sinking
+    ;; parameter copies out of the entry block can spill the parameters they
+    ;; carry into stack slots and cost a reload per descriptor read. A `Mov`
+    ;; from a `Global` is a rip-relative CELL READ and a `Mov` from a literal is
+    ;; a materialization; both are real work an early exit can skip.
     [(ir.CompilerIrInstr.Mov _ src _)
       (match src
         [(ir.CompilerIrValue.Global name)
@@ -96027,18 +95661,14 @@
         [(ir.CompilerIrEffect.ControlFlow) false]
         [_ true])]))
 
-;; A block that ends in a CONDITIONAL BRANCH is refused as a target, and that is
-;; a measured rule with a named owner. A lowered `(and (<= 0 i) (< i len))`
-;; reaches the backend as one unsigned `cmp`/`jae` -- IT-1's range-guard normal
-;; form, and the reason a bounds check costs two instructions instead of five --
-;; but the rule that builds it wants the guard block to hold its compare and
-;; nothing else. Splice a load in front of that compare and the pair never
-;; fuses: measured on `benchmarks/peephole_lines`, sinking the `pl_text`
-;; descriptor read into three such blocks turned `cmpq %rax, %rdi; jae` into
-;; `testq %rdi, %rdi; jl; cmpq %rdx, %rdi; jge` in `pl-movq-prefix?` (+392,518
-;; Ir), `pl-reg-index` (+424,080) and `pl-direct-jmp-line?` (+377,290), and the
-;; same splice into a `__bce_guard__bool_and` chain cost
-;; `benchmarks/liveness_scan` +339,469.
+;; A block that ends in a CONDITIONAL BRANCH is refused as a target, and that
+;; rule has a named owner. A lowered `(and (<= 0 i) (< i len))` reaches the
+;; backend as one unsigned `cmp`/`jae` -- IT-1's range-guard normal form, and
+;; the reason a bounds check costs two instructions instead of five -- but the
+;; rule that builds it wants the guard block to hold its compare and nothing
+;; else. Splice a load in front of that compare and the pair never fuses:
+;; `cmpq %rax, %rdi; jae` becomes `testq %rdi, %rdi; jl; cmpq %rdx, %rdi; jge`,
+;; and a `__bce_guard__bool_and` chain loses the same way.
 ;;
 ;; Nothing the pass exists for is lost. A decision block is reached exactly when
 ;; its predecessor's test passed, so a definition placed there is no cheaper
@@ -97748,23 +97378,20 @@
         [_ false])]
     [_ false]))
 
-;; The join is one this pass already folded to a `Select` before it learned to
-;; see past the block layout: a contiguous four-block diamond (arms at `id + 1`
-;; and `id + 2`, merge at `id + 3`) whose source opens with a phi and closes
-;; `compare; branch`.
+;; The legacy join shape, folded to a `Select` in every form: a contiguous
+;; four-block diamond (arms at `id + 1` and `id + 2`, merge at `id + 3`) whose
+;; source opens with a phi and closes `compare; branch`.
 ;;
-;; Everything this packet ADDED -- triangles, scattered layouts, a condition
-;; that is not a freshly adjacent compare -- is admitted for the CONSTANT forms
-;; only, and the reason is measured rather than stylistic. This backend's select
-;; lowering (`compiler-backend-emit-select`) re-materialises the mask and tests
-;; it instead of reusing the defining compare's flags, so a var/var join costs
-;; `mov; test; setcc; movzbq; mov; test; cmov` where the branch it replaces
-;; costs `test; jcc; mov`. Handing every join the pass can now see to that
-;; lowering measured +28.3M Ir on gvn_table, +0.44M on route_http and +0.54M on
-;; peephole_lines -- paid against a branch predictor an executed-instruction
-;; count does not model. The constant forms have no such trade: they are one
-;; instruction, or two. Taking the cmov off the compare's own flags (research
-;; item P5) is what unblocks the rest.
+;; Every other shape -- triangles, scattered layouts, a condition that is not a
+;; freshly adjacent compare -- is admitted for the CONSTANT forms only. This
+;; backend's select lowering (`compiler-backend-emit-select`) re-materialises
+;; the mask and tests it instead of reusing the defining compare's flags, so a
+;; var/var join costs `mov; test; setcc; movzbq; mov; test; cmov` where the
+;; branch it replaces costs `test; jcc; mov`. Handing every join the pass can
+;; see to that lowering is a loss, paid against a branch predictor an
+;; executed-instruction count does not model. The constant forms have no such
+;; trade: they are one instruction, or two. Taking the cmov off the compare's
+;; own flags is what would unblock the rest.
 (define (opt-if-convert-legacy-select?
   [source : (& source OptIfConvertBlockFact)]
   [id : i64]
@@ -98935,9 +98562,8 @@
 
 ;; Dense forward rebuild of a planned block: plan action -2 drops the instr,
 ;; an action >= 0 replaces it with the forwarded `gep base, action : u8`, and
-;; anything else keeps the instr -- the same output the old backward cons walk
-;; produced, in the same program order, without a cons spine or the re-counting
-;; `compiler-ir-block` wrapper. refs #5726
+;; anything else keeps the instr, in program order, without a cons spine or the
+;; re-counting `compiler-ir-block` wrapper.
 (define (opt-ctor-fwd-rewrite-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
   [plan : (__tl_dyn-array i64)]
@@ -99024,7 +98650,7 @@
         (opt-ctor-fwd-block uses block)
         (opt-ctor-fwd-blocks uses (deref rest)))]
     ;; Dense driver: scan the block sequence in place and write a dense output
-    ;; sequence (refs #5726). opt-ctor-fwd-block returns the ORIGINAL block by
+    ;; sequence. opt-ctor-fwd-block returns the ORIGINAL block by
     ;; reference for blocks it does not rewrite, so unchanged blocks are never
     ;; re-sequenced.
     [(ir.CompilerIrBlockList.Array seq)
@@ -100881,18 +100507,18 @@
                 (set! cursor (+ cursor 1))))
             (and (>= geps 1) (= (array-ref uses dst) (+ geps 1))))))]))
 
-;; The group worth rewriting in this block, as its first member's position, or
-;; `-1`. Bigger groups win; a lone member only counts when the split can carry
-;; its offset Add along AND freeing that Add actually retires it.
+;; opt-bg-best-start (below) finds the group worth rewriting in a block, as its
+;; first member's position, or `-1`. Bigger groups win; a lone member only
+;; counts when the split can carry its offset Add along AND freeing that Add
+;; actually retires it.
+;;
 ;; The loop's exit edges: successors of body blocks that leave the body. A
 ;; counted scan has one; a search loop -- a hash probe's `found`/`empty` arms,
 ;; a list walk's hit -- has more, and runs a trip or two. The single-member
 ;; admission below pays one preheader build (a compare, a materialised flag, a
 ;; `cmov`, and one more invariant to keep live) to save one `lea` per
-;; execution, which only a loop of many trips repays: measured on
-;; callgraph_scc's probe loops, the same rewrite cost +9 Ir per call at ~1.3
-;; trips (insert-ref! +10.8M, get-value-or +6.0M) against the 5.5M it earns on
-;; cfg_domloops' counted `pred-off[id + 1]` loops. The exit count is the
+;; execution, which only a loop of many trips repays: a probe loop's trip or
+;; two does not, a counted `pred-off[id + 1]` loop does. The exit count is the
 ;; structural line between the two.
 (define (opt-bg-loop-exit-count
   [index : (& index OptCfgIndex)]
@@ -101081,15 +100707,13 @@
 
 ;; --- loop choice -------------------------------------------------------------
 ;;
-;; Two structural rules decide which loops a block may build its bound for, and
-;; both came out of measurement rather than taste.
+;; Two structural rules decide which loops a block may build its bound for.
 ;;
 ;; The preheader must sit outside every loop of the function, so the build is
 ;; paid once per call. A bound built one level in is rebuilt per iteration of
 ;; THAT loop, and the build is not cheap: `min` lowers to a compare, a
-;; materialised flag and a `cmov`. Measured on intern_table's hash-probe loop, a
-;; bound one level in cost 6.8M Ir of arithmetic and 12.0M Ir of spill traffic
-;; against a 3.4M Ir saving -- a rewrite that removed real checks and still lost.
+;; materialised flag and a `cmov`, and one more invariant to keep live. Its
+;; arithmetic and spill traffic can outweigh the checks it removes.
 ;;
 ;; Loops are still visited widest body first, so that where two loops could both
 ;; host a block the outer one -- the one that builds less often -- claims it,
@@ -101133,11 +100757,8 @@
 ;; the body ends one register hungrier than it started. An innermost body is
 ;; where that fits; a body that wraps other loops is already carrying their
 ;; live-through state, and there the extra invariant evicts something hotter
-;; than the two instructions the filter saved. Measured: on cfg_domloops'
-;; `cfg-idom-iterate` the rewrite removed 2.5M checks and still cost +4.3M Ir,
-;; because the outer loop's counter and its flag were pushed to the stack
-;; (`if_merge.51` grew from 3 instructions to 11); intern_table's `it-bench`
-;; line loop lost 6.9M Ir of reload traffic against a 6.8M Ir saving.
+;; (the outer loop's counter and flag) than the two instructions the filter
+;; saved.
 (define (opt-bg-loop-body-size [loop : (& loop OptNaturalLoop)]) : i64
   (opt-label-count (opt-natural-loop-body loop)))
 
@@ -101523,7 +101144,7 @@
     [blocks : ir.CompilerIrBlockList tail]
     (begin
       ;; Prepend from the oldest logical plan back toward the newest so the
-      ;; resulting block list traverses in the old newest-first order.
+      ;; resulting block list traverses newest-first.
       (while (>= cursor 0)
         (let
           [plan : OptBgPlan (opt-bg-plan-list-ref plans cursor)]
@@ -101890,17 +101511,16 @@
       (OptFunctionPassResult.Result next changed)]))
 
 ;; The pass runs BELOW the pipeline fixpoint, from the escaping per-function
-;; driver rather than from `optimize-function-once-with-summaries`. Two measured
-;; regressions pin it there. Inside the pipeline, the fixpoint second iteration
+;; driver rather than from `optimize-function-once-with-summaries`. Two
+;; regressions pin it there. Inside the pipeline, the fixpoint's second iteration
 ;; re-derives `bce_version`'s guard chain from a body whose checks now sit on
-;; cold arms; the weaker chain puts a check back on a hot path the old chain had
-;; proved away (`cfg-idom-iterate`, +9.5M Ir on cfg_domloops). And the inliner's
-;; checked cost model MEASURES a candidate by running the level-2 optimizer over
-;; it and weighing the result, so a pass that adds cold STATIC instructions
-;; inside that measurement flips inline decisions on bodies it never made faster
-;; (intern_table, +27.8M Ir). Below the pipeline the pass sees the final shape --
-;; versioned clones and unrolled bodies included -- and nothing re-reads its
-;; output.
+;; cold arms; the weaker chain puts a check back on a hot path the first chain
+;; had proved away. And the inliner's checked cost model MEASURES a candidate by
+;; running the level-2 optimizer over it and weighing the result, so a pass that
+;; adds cold STATIC instructions inside that measurement flips inline decisions
+;; on bodies it never made faster. Below the pipeline the pass sees the final
+;; shape -- versioned clones and unrolled bodies included -- and nothing
+;; re-reads its output.
 ;;
 ;; Its own bounded fixpoint takes the place of the pipeline iteration it gave
 ;; up: a block with two groups splits once per round, and the second group is
@@ -101962,7 +101582,8 @@
 ;; every stage below except those marked `opt-live-only`, in the order they
 ;; appear. The live pipeline can gain, lose or move a stage without moving a
 ;; verdict: a new stage goes in as `opt-live-only`, a stage the live pipeline
-;; drops stays behind as `opt-priced-only`, and a moved stage is both.
+;; drops stays behind guarded to run only when `priced?` holds, and a moved
+;; stage is both.
 (defstruct OptPassState
   (type-segment-bases i64)
   (profile-state profile_state.CompilerProfileState)
@@ -102920,10 +102541,9 @@
     ;; keeps its flag live at a non-phi reader through pipeline iteration 1
     ;; (flag_exit's C4) so the conversion lands on iteration 2, and
     ;; `optimize-function-max-iterations` is 2 -- the rotatable shape is
-    ;; produced strictly after the last upstream chance to rotate it. Both
-    ;; clones of `benchmarks/intern_table`'s `it-slice-eq?` byte compare stayed
-    ;; top-tested for exactly that reason and paid an unconditional back-edge
-    ;; `jmp` on every byte.
+    ;; produced strictly after the last upstream chance to rotate it. Without
+    ;; this round a byte compare like `it-slice-eq?` stays top-tested and pays
+    ;; an unconditional back-edge `jmp` on every byte.
     ;;
     ;; Placed below `global_gvn`, and that is not incidental. Rotation
     ;; duplicates the header guard into the preheader with the phi's INIT value
@@ -102932,14 +102552,12 @@
     ;; its own `__bce_guard`. Run above GVN, the clones CSE into that one
     ;; compare, its three branch users stop being single-use, and the backend
     ;; has to materialize the bool (`cmp`/`setl`/`movzbq`, then a `test` per
-    ;; site) instead of folding each into a `cmp`/`jcc`. Measured on
-    ;; `it-slice-eq?` that cost five instructions per call and ate a third of
-    ;; the rotation's win, and it regressed cfg_domloops and lex_source
-    ;; outright. Below GVN each clone stays single-use and fuses. Nothing
-    ;; downstream needs the top-tested shape: `cmp_sink` and `successor_sink`
-    ;; are block-local, `bool_branch_late` builds its own context, and the
-    ;; trailing dce/fold/cfg retire the landing block. The pass is unchanged
-    ;; and still verifier-gated; a loop the upstream stage already rotated has
+    ;; site) instead of folding each into a `cmp`/`jcc`. Below GVN each clone
+    ;; stays single-use and fuses. Nothing downstream needs the top-tested
+    ;; shape: `cmp_sink` and `successor_sink` are block-local,
+    ;; `bool_branch_late` builds its own context, and the trailing
+    ;; dce/fold/cfg retire the landing block. The pass is verifier-gated; a
+    ;; loop the upstream stage already rotated has
     ;; no unconditional back edge left, so `opt-loop-rotation-edge-compatible?`
     ;; makes this round a no-op on it.
     ;;
@@ -102956,10 +102574,9 @@
     ;;
     ;; The substitution is SPECULATIVE and is thrown away when no rotation
     ;; followed. Kept unconditionally it is a different function under the
-    ;; inliner's measured plan: `benchmarks/intern_table`'s `it-slice-eq?`
-    ;; stopped being absorbed into `it-bench` and reappeared as a 137-line
-    ;; out-of-line callee costing 165,426,156 Ir (+31,754,258 on the row) for
-    ;; a rotation it was already getting.
+    ;; inliner's measured plan: a byte compare like `it-slice-eq?` stops being
+    ;; absorbed into its caller and reappears as an out-of-line callee, for a
+    ;; rotation it was already getting.
     [s
       (opt-stage
         "rotate_ssa"
@@ -103050,14 +102667,13 @@
             (opt-ubound-function-pass type-segment-bases (opt-pass-func s))
             s)
           s))]
-    ;; The compare/branch fusion pass that used to sit here now runs BELOW the
-    ;; whole pipeline fixpoint (`opt-cmp-dup-final-pass`). Its copies exist
-    ;; only to be adjacent to their branch, and this position is inside the
-    ;; body `optimize-function-fixed-pass-with-summaries` feeds back into
-    ;; another full iteration, whose `gvn` folds them back onto one var and
-    ;; leaves the copy behind as dead code -- which then reads as an impure
-    ;; link to the classifier-chain pass and truncated
-    ;; `benchmarks/lex_source`'s symbol-class bitmask by three links (+2.09%).
+    ;; The compare/branch fusion pass does not run here but BELOW the whole
+    ;; pipeline fixpoint (`opt-cmp-dup-final-pass`). Its copies exist only to
+    ;; be adjacent to their branch, and this position is inside the body
+    ;; `optimize-function-fixed-pass-with-summaries` feeds back into another
+    ;; full iteration, whose `gvn` would fold them back onto one var and leave
+    ;; the copy behind as dead code -- which then reads as an impure link to
+    ;; the classifier-chain pass and truncates a symbol-class bitmask chain.
     [s
       (opt-stage
         "dce"
@@ -103195,12 +102811,11 @@
 ;; satisfies that within ONE pipeline round. It does not satisfy it ACROSS
 ;; rounds, and the level-2 pipeline runs up to `optimize-function-max-iterations`
 ;; of them, so facts read anywhere inside the pipeline starve the NEXT round's
-;; bce_version. Measured on cfg_domloops: reading them in either in-pipeline
-;; slot costs cfg-idom-iterate its versioned outer-loop clone, +11,078,760 Ir,
-;; against -5,306,710 of checks retired everywhere else -- the row goes UP.
-;; Below the fixpoint there is no next round to starve: the same retires land
-;; (cfg-stamp-euler -3.44M, cfg-build-csr -1.43M, cfg-scan-ints -0.55M,
-;; cfg-build-euler-tree -0.32M) and every clone is kept.
+;; bce_version: reading them in either in-pipeline slot can cost a loop (such
+;; as cfg_domloops' `cfg-idom-iterate`) its versioned outer-loop clone, which
+;; is worth more than the checks the facts retire everywhere else. Below the
+;; fixpoint there is no next round to starve: the same retires land and every
+;; clone is kept.
 ;;
 ;; The sweep is the same pass the in-pipeline late slot runs, so its own
 ;; invariants are unchanged: it only deletes mid-block `BoundsCheck`es,
@@ -103324,8 +102939,7 @@
     ;; so the join reaches here as `phi [true, ..], [true, ..], [%f, ..]` with
     ;; `%f` a phi of `false`s. Folding that lattice is what turns the last edge
     ;; into a literal and lets the merge retire outright instead of surviving as
-    ;; a one-input copy the loop header then has to keep live (measured:
-    ;; gvn_table -9.7M with this line, -0.7M without).
+    ;; a one-input copy the loop header then has to keep live.
     [folded : ir.CompilerIrFunction
       (match (compiler-opt-global-shared-view func)
         [(ir.CompilerIrFunction.Function
@@ -103379,12 +102993,12 @@
 ;;
 ;; Every pass in the late list can MINT instructions, and the last of them run
 ;; BELOW the pipeline's own `dce`, so what they leave behind reaches the
-;; backend. Two shapes measurably do.
+;; backend. Two shapes do.
 ;;
 ;; (1) A phi whose inputs all agree collapses to `mov <literal>` in the same
 ;; step that retires its only reader, so the Mov survives with a use count of
-;; zero. gvn_table's probe headers carry five of them per function
-;; (`mov -1` x 4 and `mov false`), one emitted instruction each.
+;; zero. A probe loop's header can carry several of them, one emitted
+;; instruction each.
 ;;
 ;; (2) The threader's own output is what MAKES a branch constant: it rewrites
 ;; the edges that fed a bool phi, the phi collapses to `mov false`, and the
@@ -103995,9 +103609,7 @@
 
 ;; Opt levels (0/1/2): 0 = none, 1 = cheap stack-only (the fast self-compile
 ;; path), 2 = the full optimizer + scalar register allocation + inlining (the
-;; quality "ship" build). The old four-level scheme (with a redundant -fast level
-;; between 0 and the cheap level) was collapsed: old level 2 became level 1 and
-;; old level 3 became level 2.
+;; quality "ship" build).
 (define (optimize-function-with-level-and-summaries-pass
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -104158,9 +103770,8 @@
 ;; returns only its final rewritten bodies are still read: the devirtualized
 ;; function index, the call graph, the SCC and census tables, every superseded
 ;; caller generation, and every superseded spans array are already dead. Those
-;; leftovers are the majority of that arena (measured on the self-compile: 460
-;; MiB committed, of which a deep copy of the surviving reachable functions is
-;; 204 MiB), and a bump arena cannot release them piecewise. The per-function
+;; leftovers are the majority of that arena, and a bump arena cannot release
+;; them piecewise. The per-function
 ;; optimizer loop then reads the surviving functions from end to end, so the
 ;; whole arena -- dead generations included -- would otherwise stay resident
 ;; across the loop, which is where the opt2 process peak forms.
@@ -104203,9 +103814,9 @@
     (unsafe
       (arena.tl_arena_destroy handle))))
 
-;; Per-function arena escape. The optimizer fixpoint allocates up to
-;; ~80 throwaway IR copies per function (10 iterations x ~8 passes), none freed
-;; by the bump allocator. To cap peak memory we run each function's optimization
+;; Per-function arena escape. The optimizer fixpoint allocates throwaway IR
+;; copies per pass and per iteration, none freed by the bump allocator. To cap
+;; peak memory we run each function's optimization
 ;; in a reusable scratch arena, deep-`clone` only the final result back into the
 ;; enclosing (program) arena, then rewind the scratch so a single function's
 ;; transient generations are reclaimed before the next function is processed.
@@ -104475,12 +104086,10 @@
 ;; OptFunctionIndex.names already maps a name to). `reachable` dedups by slot
 ;; (a generated i64/i64 map) and the worklist carries slots, so per-edge dedup,
 ;; membership, and pop-and-resolve are O(1) i64 compares instead of re-hashing
-;; and string_eq-ing the name (string_eq was ~6% of an opt1 self-compile,
-;; dominated by these
-;; reach/cfg sweeps). One name->slot probe per reference stays (unavoidable to
-;; resolve a reference), but the index value is a plain slot, so no global intern
-;; table is mutated -- IR names live in the transient optimize arena and interning
-;; them would dangle a table pointer after the rewind.
+;; and string_eq-ing the name. One name->slot probe per reference stays
+;; (unavoidable to resolve a reference), but the index value is a plain slot, so
+;; no global intern table is mutated -- IR names live in the transient optimize
+;; arena and interning them would dangle a table pointer after the rewind.
 (defstruct OptReachWorklist
   (items opt_dense_i64_vec.Vec)
   (len i64))
@@ -104723,13 +104332,13 @@
 ;; holds it, W^min(depth, cap). This is the classic static frequency estimate
 ;; (LLVM and GCC both weight a loop level by about ten); W is 8 here because it
 ;; is a power of two, and the cap is 2 so one weight is exactly the tier's
-;; existing 64-reference floor. Read as an admission rule, the floor now says:
-;; sixty-four straight-line references, OR eight references inside a loop, OR
-;; one reference inside a nested loop -- three statements of the same evidence
-;; that the callee is dynamically dominant.
+;; 64-reference floor. Read as an admission rule, the floor says: sixty-four
+;; straight-line references, OR eight references inside a loop, OR one
+;; reference inside a nested loop -- three statements of the same evidence that
+;; the callee is dynamically dominant.
 ;;
 ;; The weight is never below 1, so this count is always at least the raw count
-;; and no callee that used to clear a floor stops clearing it.
+;; and no callee that clears a floor on the raw count fails to clear it here.
 (define (opt-inline-census-depth-base) : i64
   8)
 
@@ -104843,10 +104452,10 @@
             (opt-inline-census-slow-mark! blocks generation)
             ;; INL-16: the depths are the natural-loop nesting the allocator's
             ;; own rounds read (compiler-reg-function-loop-depths: dominators
-            ;; and back edges), not a scan of back edges in BLOCK ORDER. The
-            ;; scan mis-nested a body whenever a rewrite reordered its blocks,
+            ;; and back edges), not a scan of back edges in BLOCK ORDER. Such a
+            ;; scan mis-nests a body whenever a rewrite reorders its blocks,
             ;; which an inline does to every caller it lands in, and the
-            ;; measured tier's two sides were then priced in different
+            ;; measured tier's two sides would then be priced in different
             ;; currencies exactly when the merged body's shape changed most.
             (let
               [depths : (__tl_dyn-array i64)
@@ -104882,17 +104491,14 @@
 
 ;; INL-14: the versioner's SLOW copies. A loop the bounds-check versioner
 ;; split leaves its original body in place as the guard's failure path and
-;; runs the `__bce_fast` clone; the guard passes on every iteration the row
-;; measures, so the slow copy executes at most on a cold entry. Priced at its
+;; runs the `__bce_fast` clone; the guard passes on every iteration in
+;; practice, so the slow copy executes at most on a cold entry. Priced at its
 ;; loop weight it doubles a versioned body, and the checked tier's two sides
 ;; are then measured in different currencies exactly when only one of them
-;; versions: `pl-line-end` standalone priced 2,288 with 1,152 of that in the
-;; slow copy, inlined into `pl-drop-fallthrough` the merged loop no longer
-;; versioned and priced 1,674, and the model read that as a saving of 1,065
-;; where the truth was a loss of 87 (peephole_lines +18% when the cap that
-;; guards the model let it through). One bool per block position, marked
-;; beside the depths: a block whose label with `__bce_fast` appended is
-;; another block of the same body is a slow copy.
+;; versions: a standalone callee pays for its slow copy, the merged loop that
+;; no longer versions does not, and the model reads a loss as a saving. One
+;; bool per block position, marked beside the depths: a block whose label with
+;; `__bce_fast` appended is another block of the same body is a slow copy.
 (define opt-inline-census-slow-slots : (__tl_dyn-array bool)
   (__tl_make-array bool 64))
 
@@ -105080,7 +104686,7 @@
               (deref rest)
               (+ position 1)))])]
     ;; Read-only: scan the sequence instead of materialising a block cons
-    ;; chain to walk once (refs #5729).
+    ;; chain to walk once.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -105198,7 +104804,7 @@
 ;; Largest static reference count a callee may carry and still be treated as
 ;; belonging to its call sites. 1 is absorption: the body moves and nothing is
 ;; left behind. 2 is duplication: the body is copied into both sites, and the
-;; measured leaves that qualify (see opt-inline-dup-absorb-ok?) are small enough
+;; leaves that qualify (see opt-inline-dup-absorb-ok?) are small enough
 ;; that the copy is cheaper than the boundary it retires.
 (define (opt-inline-dup-max-refcount) : i64
   2)
@@ -105209,8 +104815,7 @@
 ;; opt-inline-dup-max-refcount = duplicable). Address-taken callees, `main`, and
 ;; self-calls are class 0 for the same reasons opt-inline-census-absorbable?
 ;; refuses them. Class 1 is exactly opt-inline-census-absorbable?, so the sites
-;; that used to ask that question read this number instead of paying for a
-;; second refcount lookup.
+;; read this number instead of paying for a second refcount lookup.
 (define (opt-inline-census-absorb-class
   [index : (& index OptFunctionIndex)]
   [census : (& census OptInlineCensus)]
@@ -105475,14 +105080,13 @@
 ;; wrappers from a doubly nested loop weighs what its two wrapper call sites
 ;; weigh, which is the same as if `main` called it twice.
 ;;
-;; Measured on callgraph_scc, whose three hashmap accessors are 458M of its 790M
-;; instructions and which clang inlines outright: `cg-map-probe` is reached as
+;; callgraph_scc's hashmap probe is the shape: `cg-map-probe` is reached as
 ;; `cg-census-blocks` (a depth-2 site, weight 64) -> `cg-census-add-ref` ->
 ;; `cg-census-bump-map` -> `cg-map-get-value-or` -> `cg-map-probe`, and the
-;; composite frequency the tier read at that last site was FOUR -- below its
-;; floor of one census weight -- so a callee running a third of the program was
-;; refused as cold. Nothing about the site is wrong; the count simply stops one
-;; level above it.
+;; composite frequency the tier reads at that last site is below its floor of
+;; one census weight, so a callee running a large share of the program reads
+;; as cold. Nothing about the site is wrong; the count simply stops one level
+;; above it.
 ;;
 ;; So the count is propagated over the call graph, which is the construction
 ;; every production inliner uses for this reading (LLVM's
@@ -105500,7 +105104,7 @@
 ;; The recurrence is the census's own count with the caller's count folded in,
 ;; so it is never smaller than the census's: with every count at least one,
 ;; `sum w(s) * synth(G) >= sum w(s)`, and that sum IS hotcount(F). No site that
-;; cleared a frequency floor on the old reading stops clearing it on this one.
+;; clears a frequency floor on the census reading fails to clear it on this one.
 ;;
 ;; THE ORDER IS THE CALL GRAPH'S OWN. opt-scc-compute condenses the graph into
 ;; SCCs bottom-up (Tarjan pops a callee's component first), so walking that
@@ -105683,7 +105287,7 @@
               (deref rest)
               (+ position 1)))])]
     ;; Read-only: scan the sequence instead of materialising a block cons chain
-    ;; to walk once (refs #5729).
+    ;; to walk once.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -105900,7 +105504,7 @@
       (ir.CompilerIrInstr.TailCall name args ty)]
     [_ instr]))
 
-;; Keep the common literal-only case on the old allocation-free one-pass path.
+;; Keep the common literal-only case on an allocation-free one-pass path.
 ;; This scan rewrites those sites in place while reporting whether this function
 ;; contains even one local alias that needs definition tables.
 (define (opt-devirt-prepare-instrs! [instrs : ir.CompilerIrInstrSeq]) : bool
@@ -106105,31 +105709,30 @@
 ;; INL-11. The self-tail-call rewrite, applied to every function before the
 ;; program-level inline stage. Run per function AFTER inlining, a
 ;; self tail-recursive helper (a list `contains?`, a `next-child-from` scan, a
-;; heap's `sift-down!`) reached the inliner as a recursive body -- never
+;; heap's `sift-down!`) would reach the inliner as a recursive body -- never
 ;; call-free, refused at every site-depth reading, and a caller whose sites
 ;; all read as straight-line -- although one pass later it is a plain loop.
 ;; Running the rewrite first lets the inliner read the loop it will see anyway.
 ;; The rewrite is a no-op on a function without a convertible self tail call.
-;; This is the only tailrec run: the per-function pipeline no longer repeats it.
+;; This is the only tailrec run: the per-function pipeline does not repeat it.
 ;;
 ;; The functions it rewrote are recorded by slot (opt-inline-tailrec-converted)
 ;; for one refusal: a converted callee is never inlined. Written as recursion,
 ;; such a body was never inlinable, and a corpus of fixtures relies on exactly
 ;; that ("never-taken self-recursion blocks inlining so the named bodies
-;; survive"). Admitting the rewritten loop at an in-loop site was measured as a
-;; loss too: every such import adds a loop nest. The wins come from converted
-;; CALLERS whose own sites now read in-loop, and refusing converted callees does
-;; not touch those sites.
+;; survive"). Admitting the rewritten loop at an in-loop site is a loss too:
+;; every such import adds a loop nest. The wins come from converted CALLERS
+;; whose own sites now read in-loop, and refusing converted callees does not
+;; touch those sites.
 ;;
-;; INL-11X: one measured exception. regalloc_greedy's `rg-call-set-in-range-words?`
+;; INL-11X: one exception. regalloc_greedy's `rg-call-set-in-range-words?`
 ;; walks the clobber words of a call set and asks `rg-call-word-in-range?` about
 ;; each one -- both written as self tail recursion, both converted here, so the
-;; inner one stayed a call: 1.0M calls per run, each paying the argument moves,
-;; the transfer, the callee's descriptor loads and the return, and the caller
-;; paying five callee-saved push/pop pairs on every one of its own 712K calls
-;; only because it held live ranges across that call. Absorbing it takes the
-;; caller to two pushes and a nested loop: regalloc_greedy -10,351,747
-;; (-1.78%), every other row byte identical.
+;; inner one would stay a call, each paying the argument moves, the transfer,
+;; the callee's descriptor loads and the return, and the caller paying extra
+;; callee-saved push/pop pairs on every one of its own calls only because it
+;; held live ranges across that call. Absorbing it leaves the caller a nested
+;; loop with a smaller callee-saved set.
 ;;
 ;; The exception is the absorption shape and nothing wider: the converted
 ;; callee has exactly one static reference (the body moves, the program does
@@ -106145,7 +105748,7 @@
 ;; caller's own inline, which a converted caller can never have, and at inline
 ;; time such a caller reads as a bounds-free single-site function anyway (its
 ;; bounds check still sits inside the accessor it absorbs later), so the clause
-;; would refuse exactly the measured shape for an inline that does not exist.
+;; would refuse exactly this shape for an inline that does not exist.
 (define opt-inline-tailrec-converted : (__tl_dyn-array bool)
   (__tl_make-array bool 0))
 
@@ -106305,8 +105908,8 @@
 ;; The growth bound is opt-inline-cost-inline-with-block-weight?, not this cap.
 ;; The single-block path passes added-blocks 0, so raw = callee-instrs and
 ;; net = callee-instrs - min(callee-instrs, 3 * const-args) - 6, admitted at
-;; net <= 4. With no constant arguments that prices bodies up to 10, so the old
-;; cap of 8 was strictly tighter than the priced bound and refused bodies 9 and
+;; net <= 4. With no constant arguments that prices bodies up to 10, so a cap
+;; of 8 would be strictly tighter than the priced bound and refuse bodies 9 and
 ;; 10 the cost model had already accepted -- at every call site, since the cap
 ;; is a property of the callee.
 ;;
@@ -106404,69 +106007,14 @@
     ;; remaps the value and keeps the symbol, and the write was already
     ;; summarised on the caller by P18's per-global call mod-ref.
     ;;
-    ;; INL-5 admitted it only below and recorded a measured refusal here:
-    ;; admitting it at multiblock size gave gvn_table -1.154%, read_sexpr
-    ;; -1.713%, callgraph_scc -1.454% and ssa_construct -0.500% -- against
-    ;; asm_render +3.843%, the row that packet existed to move, moving the
-    ;; wrong way by more than the single-block admission won.
-    ;;
-    ;; That loss was never this whitelist's. `asm-render-chunk` is a
-    ;; 142-instruction body carrying a 512-trip loop with a call, whose
-    ;; `(set! asm-cursor ...)` was the only thing this clause refused. The
-    ;; measured tier priced it as revert at its first site (`caller=asm-round`,
-    ;; depth 1, `saving=-55`) and as KEEP at the rescan site `asm-round`'s own
-    ;; keep created inside `asm-bench` (`gen=2`, depth 2, `saving=599` against
-    ;; `boundary=576`) -- and that keep also committed the rescan generation's
-    ;; whole band walk, which had absorbed `asm-fold-text`'s byte loop into the
-    ;; same caller. In the merged frame the fold accumulator stopped holding a
-    ;; register across the calls: `asm-bench` went from 9 frame-slot references
-    ;; to 74, +33.5M on the row.
-    ;;
-    ;; INL-6 closed that off at the band that did the damage: a rescan
-    ;; generation may not absorb a LOOP-BEARING callee into a loop of a caller
-    ;; this tier merged (opt-inline-checked-rescan-loop-import?, which carries
-    ;; the argument, the two pricing fixes that were measured first and why
-    ;; neither pays). `asm-fold-text` stays out of line, `asm-render-chunk` is
-    ;; kept on its own, and the accumulator keeps its register.
-    ;;
-    ;; MEASURED with that clause in the tree (base = 30cfbd21,
-    ;; `--benchmarks-only`, 23 rows): read_sexpr -1.717%, callgraph_scc
-    ;; -1.454%, gvn_table -1.154%, ssa_construct -0.500%, and asm_render DOWN,
-    ;; 832,842,937 -> 832,341,109 (-0.060%), against sccp_lattice +0.263% and
-    ;; regalloc_greedy +0.049%; every other row within eight instructions of
-    ;; base. The four winners are what this admission is for: each is a
-    ;; multi-block helper that advances a cursor or bumps a counter and was
-    ;; refused by SHAPE before any band priced its site.
-    ;;
-    ;; The two rows that rise are ONE site apiece and neither is this
-    ;; whitelist's either.
-    ;;
-    ;; INL-6 read sccp_lattice's as the measured tier's keep of
-    ;; `sccp-state-mark-executable` into `sccp-mark-switch-targets`'s loop
-    ;; (`saving=78` against `boundary=56`, a loop merged into a loop) and left
-    ;; it to a packet that could price that class. INL-7 measured the class and
-    ;; the site, and the reading was WRONG in both directions. Refusing the
-    ;; class in the tier reproduces INL-6's own ablation -- hashmap_get +15.82%,
-    ;; intern_table +10.44%, ssa_construct +1.36%, callgraph_scc +2.34% -- and
-    ;; moves sccp_lattice the wrong way, to +0.024%, because that keep is a WIN
-    ;; of 174,272 (`sccp_state_mark_executable` -591,296 against
-    ;; `sccp_mark_switch_targets` +417,024). Pricing the class instead, with a
-    ;; term for the frame traffic the merged plan puts inside the nest read off
-    ;; the plan proxy's own spill set, does not move that site at all: the proxy
-    ;; prices the merged caller at four callee-saved registers and NO spills
-    ;; (`aalloc=8`, in-nest spill traffic zero), so the term is identically zero
-    ;; where it was proposed, and charging it costs lex_source +1.65%,
-    ;; intern_table +1.15% and asm_render +0.06%.
-    ;;
-    ;; The site this admission actually cost the row is a BAND import:
-    ;; `sccp-rewrite-phi` -- 102 instructions in 26 blocks, one static
-    ;; reference, its own phi loop, and the `(set! sccp-subs ...)` this clause
-    ;; used to refuse -- taken by the hot-loop-leaf band into
-    ;; `sccp-rewrite-rows`, whose self tail-call `opt-tailrec-function` turns
-    ;; into a loop one pass later. See opt-inline-caller-loop-free?, which is
-    ;; the clause that refuses it and carries the callgrind split; with it in
-    ;; the tree this admission's sccp_lattice reads -0.330% against base rather
-    ;; than +0.264%.
+    ;; What this admission is for: multi-block helpers that advance a cursor
+    ;; or bump a counter, which would otherwise be refused by SHAPE before any
+    ;; band priced their site. Two neighbouring clauses keep the bodies it
+    ;; newly exposes from losing elsewhere: a rescan generation may not absorb
+    ;; a LOOP-BEARING callee into a loop of a caller the measured tier merged
+    ;; (opt-inline-checked-rescan-loop-import?), and the hot-loop-leaf band's
+    ;; loop-free tier does not read a self-recursive caller as loop-free
+    ;; (opt-inline-caller-loop-free?).
     [(ir.CompilerIrInstr.Store _ _ _) true]
     [_ false]))
 
@@ -106492,9 +106040,7 @@
     [(ir.CompilerIrInstr.CopyBytes _ _ _) true]
     ;; INL-5: the write to a module global CELL -- the lowering of
     ;; `(set! <global> v)`, and the SINGLE-BLOCK tier's admission of it. (The
-    ;; multiblock whitelist above carries the same admission since INL-6, and
-    ;; the measurement that first split the two and then rejoined them is
-    ;; recorded there.)
+    ;; multiblock whitelist above carries the same admission.)
     ;;
     ;; Nothing about the instruction is frame-relative. `Store <symbol>
     ;; <value> <type>` names its destination by SYMBOL, which the backend
@@ -106513,17 +106059,11 @@
     ;; was summarised, which is strictly more precise for the global_cell pass
     ;; and for the loop-scope global-cell promotion.
     ;;
-    ;; What refusing it cost: every helper that bumps a counter, advances a
-    ;; cursor, sets a flag or records a trace cell was refused by SHAPE,
-    ;; before any band priced a site. asm_render's `asm-tok-next` is thirteen
-    ;; instructions in one block -- two global-cell loads, a descriptor load,
-    ;; a bounds check, an element load, an add, the cursor store and a return
-    ;; -- called 7,478,930 times per run from twenty sites, and 89.7M Ir of
-    ;; the row (10.3%) was the call boundary and the global reloads the caller
-    ;; would otherwise have kept in registers. Admitting it retires all
-    ;; nineteen calls and the out-of-line body with them: asm_render
-    ;; 872,029,237 -> 832,842,937, -4.494%, with `asm-tok-next`'s 89.7M
-    ;; becoming 50.6M inside `asm-next-operand` and `asm-render-line`.
+    ;; Refusing it would refuse by SHAPE every helper that bumps a counter,
+    ;; advances a cursor, sets a flag or records a trace cell, before any band
+    ;; priced a site: a one-block cursor accessor such as asm_render's
+    ;; `asm-tok-next` would keep paying the call boundary and the global
+    ;; reloads the caller would otherwise have kept in registers.
     [(ir.CompilerIrInstr.Store _ _ _) true]
     [_ false]))
 
@@ -106545,10 +106085,10 @@
 ;; the wrapper would have jumped to, made directly by the caller, with the
 ;; wrapper's own frame, argument moves, call and return all gone. That is the
 ;; whole content of the "forwarder / defaulted-argument wrapper" shape, and it
-;; is the reason this clause exists: a one-block body whose only terminator is
-;; a tail call used to be refused outright, so a wrapper such as
-;; `(define (mark-may-alias v) (facts-insert v -4))` paid a full call boundary
-;; per call for a body of one Mov.
+;; is the reason this clause exists: without it a one-block body whose only
+;; terminator is a tail call would be refused outright, so a wrapper such as
+;; `(define (mark-may-alias v) (facts-insert v -4))` would pay a full call
+;; boundary per call for a body of one Mov.
 ;;
 ;; The multiblock path already converts a cloned direct tail call exactly this
 ;; way (opt-inline-clone-multiblock-instr-seq-with-spans-from's TailCall arm,
@@ -106661,21 +106201,21 @@
             (or has-bounds (ir.compiler-ir-instr-bounds-check? instr)))
           false)))))
 
-;; The admitted body band is 1..opt-inline-bounds-leaf-max-body. The band used
-;; to start above opt-inline-max-body, which inverted the cost argument: a
-;; 9..48 instruction bounds leaf inlined while a smaller one fell through to
-;; the generic single-block path, where opt-inline-bounds-inline-ok? refuses
-;; every has-bounds callee that is neither absorbable nor called with
-;; all-constant arguments. The smallest bounds leaves have the highest
-;; call-overhead ratio, so they were exactly the wrong class to refuse.
+;; The admitted body band is 1..opt-inline-bounds-leaf-max-body. Starting it
+;; above opt-inline-max-body would invert the cost argument: a larger bounds
+;; leaf would inline while a smaller one fell through to the generic
+;; single-block path, where opt-inline-bounds-inline-ok? refuses every
+;; has-bounds callee that is neither absorbable nor called with all-constant
+;; arguments. The smallest bounds leaves have the highest call-overhead ratio,
+;; so they are exactly the wrong class to refuse.
 ;;
 ;; Duplicating a bounds check is a static cost, not a dynamic one: the check
 ;; runs once per call whether it sits in the callee or in the expanded copy, so
 ;; the executed check count is unchanged. What disappears is the call boundary
 ;; itself -- the argument moves, call, and return, roughly 4-6 executed
-;; instructions per call. Static growth stays bounded by the same
-;; opt-inline-bounds-leaf-cost-inline? admission the 9..48 band uses
-;; (callee-instrs cap, heavy gate, block fuel).
+;; instructions per call. Static growth stays bounded by the
+;; opt-inline-bounds-leaf-cost-inline? admission (callee-instrs cap, heavy
+;; gate, block fuel).
 (define (opt-inline-bounds-leaf-seq-ok?
   [seq : ir.CompilerIrInstrSeq]
   [np : i64]) : bool
@@ -106809,7 +106349,7 @@
             (deref rest)
             (opt-inline-instr-seq-phi-labels-add-from instrs 0 labels))])]
     ;; Read-only: scan the sequence instead of materialising a block cons
-    ;; chain to walk once (refs #5729).
+    ;; chain to walk once.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -106865,10 +106405,10 @@
 ;; every other code names the clause that refused, and a refusal on an
 ;; instruction the whitelist does not carry is reported as
 ;; `other-instr:<kind>` by adding the instruction's kind code to
-;; opt-inline-shape-other-base. The codes exist because this refusal used to be
-;; invisible: a body the gate turned down produced no trace line at all, in
-;; either mode, so a whole accessor chain could sit un-inlinable for the life of
-;; the tier with nothing in any trace saying so.
+;; opt-inline-shape-other-base. The codes exist so that no refusal is
+;; invisible: without them a body the gate turned down would produce no trace
+;; line at all, and a whole accessor chain could sit un-inlinable with nothing
+;; in any trace saying so.
 (define (opt-inline-shape-ok) : i64
   0)
 
@@ -106995,9 +106535,9 @@
     ;; A callee that builds an aggregate value locally. `alloc T` reserves a
     ;; frame word for the var it defines and `addr_of` turns a run of them into
     ;; the address of one aggregate; every function whose body constructs a
-    ;; struct has both, so refusing them refused the whole struct-building
-    ;; class -- and refused it silently, before any band or the measured tier
-    ;; priced a single one of its sites.
+    ;; struct has both, so refusing them would refuse the whole struct-building
+    ;; class -- silently, before any band or the measured tier priced a single
+    ;; one of its sites.
     ;;
     ;; The clone rebases both like any other def (opt-inline-clone-instr, where
     ;; the lifetime argument and the storage-run invariant are recorded), so
@@ -107031,18 +106571,13 @@
     ;; already produces (opt-inline-clone-multiblock-instr-seq-with-spans-from).
     ;; Nothing downstream ever sees a tail call inside a merged caller, and the
     ;; exit is wired by the mechanism the multiblock path already owns.
-    ;;
-    ;; What refusing it cost: this clause alone, not any pricing band, held
-    ;; whole bodies out of their single call site whenever ONE arm ended in
-    ;; `(helper ...)`. lex_source's `ls-negative-number-start?`,
-    ;; `ls-colon-token-end` and `ls-number-float?` are each absorbable by every
-    ;; other measure and were refused here.
+    ;; Refusing it would hold whole bodies out of their single call site
+    ;; whenever ONE arm ended in `(helper ...)`.
     ;;
     ;; `TailCallIndirect` stays refused. Its target is a computed value, so the
-    ;; converted form would be a `CallIndirect` -- expressible, but not a shape
-    ;; any measurement on this tree asks for, and the census cannot see through
-    ;; a computed target to price the site. The admission stops at the direct
-    ;; form the measurement covers.
+    ;; converted form would be a `CallIndirect` -- expressible, but the census
+    ;; cannot see through a computed target to price the site. The admission
+    ;; stops at the direct form.
     [(ir.CompilerIrInstr.TailCall _ _ _) (opt-inline-shape-ok)]
     [(ir.CompilerIrInstr.Phi dst _ _)
       (if (>= dst 0)
@@ -107063,13 +106598,10 @@
 
 ;; --- INL-5: the single-block tier's shape reasons ---------------------------
 ;;
-;; The multiblock tier has reported its refusals by clause since INL-3; the
-;; single-block tier reported nothing at all, and the only `--trace-passes`
-;; line a one-block callee got was the MULTIBLOCK tier's `structure` -- which
-;; says "not that tier's shape", not why the tier that does handle one-block
-;; bodies turned it down. asm_render's `asm-tok-next` is exactly that case: it
-;; was refused by the per-instruction clause below for its cursor `Store` and
-;; nothing in any trace said so.
+;; The multiblock tier reports its refusals by clause. Without these reasons
+;; the only `--trace-passes` line a one-block callee would get is the
+;; MULTIBLOCK tier's `structure` -- which says "not that tier's shape", not why
+;; the tier that does handle one-block bodies turned it down.
 ;;
 ;; These mirror opt-inline-multiblock-instr-reason / -blocks-reason /
 ;; -callee-shape-reason clause for clause, so the two tracers report the same
@@ -107169,24 +106701,17 @@
 ;; caller, and the multiblock structural gate (opt-inline-body-instr-op-ok?)
 ;; admits Call, CallIndirect and CallIndirectC on purpose -- so the ordinary
 ;; cost model already clones call-carrying multiblock bodies in production, and
-;; compiler-optimize-inline-multiblock-nonleaf-ok? has pinned exactly that shape
-;; for as long as the gate has existed. The historical claim that this path
-;; "miscompiles call-carrying clones (#6307)" does not survive re-triage: #6307
-;; was closed against the INLINER and re-attributed to a Linux opt2 scalar
-;; register allocation pressure bug (#6288), its trigger was bounds-loop
-;; widening rather than calls, and relaxing this clause in every band at once
-;; still bootstraps to a stage2.s == stage3.s fixpoint and passes the whole
-;; inline suite.
+;; compiler-optimize-inline-multiblock-nonleaf-ok? pins exactly that shape.
 ;;
 ;; What the clause actually buys a static band is the cost it CANNOT see. These
 ;; bands price a callee by its instruction and block counts; a callee's own
 ;; calls carry costs those counts do not carry -- a caller that was a leaf stops
 ;; being one, every value the caller holds across the imported call now has to
 ;; survive a caller-saved clobber, and a duplicated body brings a whole second
-;; call sequence to each site it lands at. Measured on this tree: dropping the
-;; clause from every band at once moves gvn_table only -0.197% and takes
-;; borrowed_disjoint_store from 1,300,000,258 to 2,050,000,218, +57.69%. So the
-;; bands keep it, and a body they duplicate stays a leaf by construction.
+;; call sequence to each site it lands at. Dropping the clause from every band
+;; at once gains little and loses badly where those costs land in a hot loop,
+;; so the bands keep it, and a body they duplicate stays a leaf by
+;; construction.
 ;;
 ;; The measured-plan tier (opt-inline-checked-ok?) does not carry this clause,
 ;; because it does not have to guess: it re-plans the merged caller through a
@@ -107197,7 +106722,7 @@
 ;; caller's values surviving a clobber it did not have -- is paid once per
 ;; caller invocation, so it only outweighs the retired boundary where that
 ;; boundary is also retired once per caller invocation. See clause 5 of the
-;; header at opt-inline-single-site-absorb-ok? for the measurement on each side.
+;; single-site header above opt-inline-single-site-min-params for each side.
 (define (opt-inline-instr-call? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Call _ _ _ _) true]
@@ -107222,8 +106747,8 @@
 ;; result, and the clone allocates those slots positionally (one per cloned
 ;; block, since a tail call is a terminator and a block holds at most one).
 ;; Asking this question first is what keeps a tail-call-free callee's frame
-;; growth byte-for-byte what it was before the admission existed: no tail call,
-;; no reserved slots, no change to `vars2` at any site.
+;; growth untouched by the admission: no tail call, no reserved slots, no
+;; change to `vars2` at any site.
 (define (opt-inline-instr-tail-call? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.TailCall _ _ _) true]
@@ -107408,9 +106933,7 @@
       ;; tier's cap (opt-inline-max-body, read the way that tier reads it: the
       ;; instructions before the terminator). Past the cap it is priced here,
       ;; on the checked tier's measured plan, instead of falling between the
-      ;; two tiers -- which is where `rg-heap-swap!` (17 instructions per
-      ;; execution) and `cg-scc-discover!` (37) sat, refused for size by one
-      ;; tier and for structure by the other.
+      ;; two tiers, refused for size by one and for structure by the other.
       [(and
           (<=
             (ir.compiler-ir-block-list-count
@@ -107558,9 +107081,8 @@
 ;; Blocks imported into the current caller by the hot-loop-leaf gate alone.
 ;; Kept out of `added-so-far` on purpose: a hot-loop-leaf copy must not spend
 ;; the caller's shared block fuel, because that fuel is what the caller's own
-;; banked absorptions draw on -- spending it evicted pl-globl-line?'s
-;; single-reference absorption out of pl-run-chunk when pl-line-end's copy
-;; landed first, +8.4% on peephole_lines. The gate has its own fuel below, and
+;; banked absorptions draw on, and a copy that landed first would evict one of
+;; them. The gate has its own fuel below, and
 ;; opt-inline-function-with-spans-walk adds this back when it decides whether
 ;; SSA reconstruction has anything new to rebuild.
 (define opt-inline-caller-hot-loop-blocks : i64
@@ -107568,8 +107090,7 @@
 
 ;; Blocks imported into the current caller by the dominant-reference tier of
 ;; the shared-accessor gate alone, on the same terms and for the same reason.
-;; The tier below the dominant floor keeps spending the shared fuel exactly as
-;; it always did.
+;; The tier below the dominant floor spends the shared fuel.
 (define opt-inline-caller-accessor-blocks : i64
   0)
 
@@ -107591,17 +107112,10 @@
 ;; caller, so its blocks are not growth, and charging them to a GROWTH budget
 ;; is a category error.
 ;;
-;; It is a measured one. The shared fuel is 32 blocks and it is what the
-;; ordinary cost model and the single-block bounds-leaf path spend on cheap
-;; accessors; one 41-block absorption exhausts it outright and every accessor
-;; the caller would have inlined afterwards stays behind a call. Measured on
-;; intern_table with the loop-site clause lifted so the absorption reaches
-;; `it-bench`: `it-i64-ref` and `it-bucket` were left out of line at the sites
-;; the absorption had not already covered, 24.1M and 3.2M of callgrind self
-;; cost that the base tree does not pay at all. Charging the move here instead
-;; restores them, and on the corpus it is worth cfg_domloops -52.2M,
-;; lex_source -23.0M, liveness_scan -4.3M, peephole_lines -4.4M and gvn_table
-;; -1.7M against the same tree with the blocks charged to the shared fuel.
+;; It is a costly one. The shared fuel is 32 blocks and it is what the ordinary
+;; cost model and the single-block bounds-leaf path spend on cheap accessors;
+;; one large absorption would exhaust it outright and leave every accessor the
+;; caller would have inlined afterwards behind a call.
 ;;
 ;; The heavy gate still sees these blocks: opt-inline-single-site-absorb-ok?
 ;; asks it about `added-so-far` PLUS this accumulator, so the block count past
@@ -108328,12 +107842,10 @@
     ;; `Store g, %v` would leave the CALLEE's var id inside the caller -- the
     ;; same class of miscompile the Pack/Word arms above were added for.
     ;;
-    ;; It is written for BOTH tiers, and since INL-6 both admit stores
-    ;; (opt-inline-body-instr-op-ok? records the measurement that first split
-    ;; them and then rejoined them). The multiblock clone reaches every
+    ;; It is written for BOTH tiers, and both admit stores (see
+    ;; opt-inline-body-instr-op-ok?). The multiblock clone reaches every
     ;; non-terminator instruction through this function
-    ;; (opt-inline-clone-multiblock-instr's fall-through), which is why lifting
-    ;; that refusal was a gate change and nothing else.
+    ;; (opt-inline-clone-multiblock-instr's fall-through).
     [(ir.CompilerIrInstr.Store name value ty)
       (ir.CompilerIrInstr.Store
         (ir.compiler-ir-symbol-clone name)
@@ -109078,7 +108590,7 @@
     true))
 
 ;; Keep loop-bearing bounds callees behind the general acyclic gate. `vm-run`
-;; is the one measured exception: eliminating its hot dispatch-call boundary
+;; is the one exception: eliminating its hot dispatch-call boundary
 ;; wins without changing the static bounds-check count. Match the exact IR leaf
 ;; so similarly shaped package functions (notably `qs-partition`) stay refused.
 (define (opt-inline-vm-run-bounds-loop-exception? [callee-name : i64]) : bool
@@ -109088,24 +108600,20 @@
 
 ;; --- loop-bearing bounds callee admission -----------------------------------
 ;;
-;; A bounds-carrying callee whose body contains a loop used to be refused
-;; outright, with the single measured `vm-run` name exception above. That
-;; refusal is what keeps `intern_table`'s `it-load-word` behind a call: an
-;; eight-iteration byte-compose loop that the constant-trip unroll and the
+;; A bounds-carrying callee whose body contains a loop is refused outside this
+;; admission and the `vm-run` name exception above. The shape the admission
+;; exists for is `intern_table`'s `it-load-word`: an eight-iteration
+;; byte-compose loop that the constant-trip unroll and the
 ;; byte-compose-to-wide-load fold both rewrite into one 8-byte load as soon as
-;; they can see it inside its caller. Retiring that one call boundary is worth
-;; -6.6% on the row, and it lowers pressure rather than raising it: the callee
-;; that absorbs it loses fourteen frame operations because the absorbed loop
-;; stops existing.
+;; they can see it inside its caller. Retiring that call boundary lowers
+;; pressure rather than raising it, because the absorbed loop stops existing.
 ;;
 ;; The same admission applied to every absorbable callee loses badly. What it
 ;; also absorbs is once-called `init`/`fill` setup helpers, into whichever
 ;; function holds the benchmark's hot loop. That trade buys a single call
-;; boundary and pays the caller's whole allocation for it: spmd_scan's inner
-;; loop went from seven to thirteen executed instructions per element -- four
-;; frame operations plus a push/pop scratch pair -- to retire a call that runs
-;; once per program. Three conditions separate the measured win from the
-;; measured loss:
+;; boundary and pays the caller's whole allocation for it: the hot loop gains
+;; frame operations and a push/pop scratch pair to retire a call that runs
+;; once per program. Three conditions separate the win from the loss:
 ;;
 ;;   1. the census proves the callee absorbable, so the program does not grow;
 ;;   2. the callee is small, by opt-inline-bounds-loop-max-body and
@@ -109116,23 +108624,21 @@
 ;; A fourth, caller-side condition is owned by
 ;; opt-inline-bounds-loop-cascade-safe? below.
 ;;
-;; The band is set from the measured leaf and the next size class above it.
-;; `it-load-word` presents here as 26 instructions in 4 blocks; the smallest
-;; corpus callees that lose are 30 instructions in 7 blocks and 51 in 15. 32
-;; and 6 sit above the admitted shape and below both, so a body that needs a
-;; second nesting level or a second working set is refused on structure rather
-;; than on a count that happens to land right.
+;; The band admits the byte-compose leaf and stops below the next shapes up in
+;; block count, so a body that needs a second nesting level or a second working
+;; set is refused on structure rather than on a count that happens to land
+;; right.
 (define (opt-inline-bounds-loop-max-body) : i64
   32)
 
 (define (opt-inline-bounds-loop-max-blocks) : i64
   6)
 
-;; INL-11X's band, in the cost model's units (opt-inline-multiblock-cost-instrs
-;; charges a 35-instruction body as 62). The measured leaf presents as 62 in 12
-;; blocks at the round the inliner sees it; 72 and 12 sit just above it, below
-;; the smallest converted bodies the census carries that are not leaves of this
-;; shape (`rg-first-free` at 145, `rg-heap-sift-down!` at 246).
+;; INL-11X's band, in the cost model's units (opt-inline-multiblock-cost-instrs).
+;; 72 and 12 sit just above the converted clobber-word leaf
+;; (`rg-call-word-in-range?`) as the inliner sees it, and well below the
+;; converted bodies that are not leaves of this shape (`rg-first-free`,
+;; `rg-heap-sift-down!`).
 (define (opt-inline-converted-leaf-max-body) : i64
   72)
 
@@ -109152,8 +108658,8 @@
 ;; caller, but the two that cost real work -- the natural-loop label set and
 ;; the bounds-check scan -- are computed on first demand and only when a small
 ;; absorbable loop-bearing candidate has already passed the free tests above.
-;; Computing them for every function instead is +0.36% of the opt2 self-compile
-;; spent on facts that almost no caller reads.
+;; Computing them for every function instead spends compile time on facts that
+;; almost no caller reads.
 (define opt-inline-caller-facts-blocks : (__tl_dyn-array ir.CompilerIrBlockList)
   (__tl_make-array (ir.CompilerIrBlockList.Nil)))
 
@@ -109276,15 +108782,14 @@
         (set! opt-inline-caller-recursion-known? true)))
     opt-inline-caller-recursion?))
 
-;; The one measured way a hot-site, small, absorbable import still loses.
+;; The one way a hot-site, small, absorbable import still loses.
 ;; opt_quicksort's `qs-bench` is itself a single-reference function carrying no
 ;; bounds checks, so it inlines into `main` for free. Importing `qs-fill` --
-;; 24 instructions at a genuine in-loop site -- gives `qs-bench` its first
+;; a small body at a genuine in-loop site -- gives `qs-bench` its first
 ;; bounds-carrying loop, and this very gate then refuses `qs-bench` at its own
 ;; call site. The caller stops being absorbed, is emitted standalone, and
-;; allocates worse: four frame operations inside `main` became thirty-six in
-;; the evicted `qs-bench`, +0.285% on the row to retire a boundary worth far
-;; less. The import is admissible; what it costs is the caller's own inline.
+;; allocates worse, to retire a boundary worth far less. The import is
+;; admissible; what it costs is the caller's own inline.
 ;;
 ;; So an import that would hand a bounds-free single-reference caller its first
 ;; bounds check is refused. A caller that already carries one is already
@@ -109296,8 +108801,8 @@
 ;; difference is the size of the import being weighed against the caller's lost
 ;; inline. Here the import is capped at 32 instructions and its boundary may be
 ;; as narrow as the 3-parameter `qs-fill` above -- worth little even once per
-;; iteration, which is why the measured answer at an in-loop site is still to
-;; refuse. That band's arity floor admits only boundaries of eight parameters or
+;; iteration, which is why the answer at an in-loop site is still to refuse.
+;; That band's arity floor admits only boundaries of eight parameters or
 ;; more, where the marshalling alone is real, so its in-loop imports outweigh a
 ;; caller inline that retires once per caller invocation. Same clause, two
 ;; populations.
@@ -109328,20 +108833,15 @@
 ;; The admission above requires the callee to have exactly one static reference,
 ;; because absorption is what pays for it: the body moves, and the program does
 ;; not grow. A leaf with two references cannot be absorbed, only copied -- and
-;; the measured population of two-reference callees that reach an in-loop site
-;; is a family of character-class predicates, nine instructions in five blocks,
-;; sitting one per element inside a scan loop. Copying nine instructions twice
-;; to retire a call per character is the same trade the single-reference gate
-;; already makes, and it measures the same way: gvn_table -1.356%, liveness_scan
-;; -1.098%, cfg_domloops -0.680%, with no other row moving anywhere and the
-;; corpus binaries 160 bytes SMALLER in total, because the retired call sequence
-;; costs more static bytes than the duplicated body.
+;; the two-reference callees that reach an in-loop site are character-class
+;; predicates, nine instructions in five blocks, sitting one per element inside
+;; a scan loop. Copying nine instructions twice to retire a call per character
+;; is the same trade the single-reference gate already makes, and the retired
+;; call sequence can cost more static bytes than the duplicated body.
 ;;
-;; The autopsy signature is the opposite of the inlining pathology this gate
-;; exists to avoid: ln-fill-tokens goes from ten frame operations to one and
-;; from five reloads to none, and cfg-scan-ints keeps its instruction count
-;; exactly and loses two calls. Nine-instruction bodies do not move the
-;; allocator.
+;; This is the opposite of the inlining pathology this gate exists to avoid:
+;; the scan loop that takes the copy sheds frame operations and reloads rather
+;; than gaining them. Nine-instruction bodies do not move the allocator.
 ;;
 ;; Everything the single-reference admission asks is asked here unchanged --
 ;; size, in-loop site, cascade -- through the same predicate, plus one condition
@@ -109371,14 +108871,13 @@
 ;; these leaves. The single-reference bonus is what admits them, and a
 ;; duplication that has cleared the clauses above is the same bet.
 ;;
-;; The 32/6 band this borrows from opt-inline-bounds-loop-absorb-ok? has been
-;; re-measured against the widest band any gate in this file copies at
-;; (opt-inline-hot-loop-leaf-max-body / -max-blocks, 120 and 32), on top of the
-;; allocator's call-hole live-range splitting. It loses: gvn_table 1,052,171,264
-;; -> 1,069,824,014, +16.0M, with no row improving anywhere on the corpus. The
-;; measured population this band serves really is the nine-instruction
-;; character-class predicate, and a copy an order larger than that moves the
-;; allocator exactly as the comment above says it does not. The band stays.
+;; The 32/6 band this borrows from opt-inline-bounds-loop-absorb-ok? stays.
+;; Widening it to the widest band any gate in this file copies at
+;; (opt-inline-hot-loop-leaf-max-body / -max-blocks) loses even with the
+;; allocator's call-hole live-range splitting: the population this band serves
+;; is the nine-instruction character-class predicate, and a copy an order
+;; larger than that moves the allocator exactly as the paragraph above says it
+;; does not.
 (define (opt-inline-dup-absorb-ok?
   [absorb-class : i64]
   [callee-instrs : i64]
@@ -109394,11 +108893,9 @@
 ;; callee by one question: does its call site lie in a natural loop of the
 ;; caller? That is what makes the retired boundary repay per iteration instead
 ;; of once per program. A natural loop is not the only construction that
-;; repeats a site. opt_quicksort's `qs-sort` reaches `qs-partition` from a body
-;; with no CFG loop at all when the inliner looks at it -- the site repeats by
-;; RECURSION, once per pivot, 4.1M times on the measured row -- and the
-;; loop-label test cannot see that. The tail-recursion-to-loop rewrite that
-;; would make it visible runs after this decision.
+;; repeats a site. opt_quicksort's `qs-sort` reaches `qs-partition` from a site
+;; that repeats by RECURSION, once per pivot, and the loop-label test cannot
+;; see that.
 ;;
 ;; So this tier asks the same question in the currency the shape actually
 ;; carries: the CALLER calls itself, so its whole body, this site included, is
@@ -109424,23 +108921,15 @@
 ;; single-reference absorb bonus) to admit the site, so the growth budgets and
 ;; the heavy gate are exactly the ones every absorption already answers to.
 ;;
-;; The band is set from the measured shape and the structure that makes it
-;; safe. `qs-partition` presents here as 105 instructions in 7 blocks: one
-;; scan loop, two swaps, no calls. 128 and 8 sit above it with room for the
-;; same shape carrying one more block, and far below anything that would bring
-;; a second working set into a recursive frame.
+;; The band is set from the shape and the structure that makes it safe: one
+;; scan loop, two swaps, no calls (`qs-partition`). 128 and 8 leave room for
+;; the same shape carrying one more block, and sit far below anything that
+;; would bring a second working set into a recursive frame.
 ;;
-;; The admitted population is what the clauses above predict it to be. Across
-;; the whole benchmark corpus this tier claims exactly one callee --
-;; `qs-partition` -- and across a full opt2 self-compile exactly two:
-;; `compiler-ir-function-seq-var-count` and `opt-bit-test-plans-slot`.
-;; Measured: opt_quicksort -5.369% on top of the divmod change (436,307,717 ->
-;; 409,002,574 with both), every other instruction-count row byte identical,
-;; opt1 self-compile -2,230 instructions. The prologue question the recursive
-;; caller raises answers the right way on the measured shape: absorbing
-;; `qs-partition` takes `qs-sort` from four callee-saved pushes and a
-;; 72-byte frame to three and 64, because the absorbed leaf held no live
-;; range across a call and the retired argument setup freed a register.
+;; The prologue question the recursive caller raises answers the right way on
+;; this shape: absorbing `qs-partition` shrinks `qs-sort`'s callee-saved set
+;; and frame, because the absorbed leaf holds no live range across a call and
+;; the retired argument setup frees a register.
 (define (opt-inline-recursive-site-max-body) : i64
   128)
 
@@ -109477,29 +108966,22 @@
 ;; run. There is no growth to bound, so a growth budget is the wrong instrument,
 ;; and the ceilings it imposes refuse the one class of absorption that is free.
 ;;
-;; What the ceilings were costing is a whole benchmark row. liveness_scan's
-;; `ln-recompute!` and `ln-live-out-into!` have exactly one call site each, and
-;; clang absorbs both into the fixpoint loop. This compiler kept them out of
-;; line, because both carry bounds checks inside loops and are far past the
-;; loop tier's 32 and the recursive tier's 128 -- 368 and 217 instructions. They
-;; are 14- and 10-parameter functions, so what the boundary costs is not one
-;; call: it is 88 instructions of prologue per entry over 140,905 entries, plus
-;; the argument marshalling, plus every value in the trio living in a frame slot
-;; because it crosses a call boundary that the absorbed form does not have.
+;; What the ceilings cost is the wide single-site helper: liveness_scan's
+;; `recompute!` has exactly one call site, in the fixpoint loop, and clang
+;; absorbs it there. It carries bounds checks inside loops and is far past the
+;; loop tier's 32 and the recursive tier's 128, and it is a 14-parameter
+;; function, so what its boundary costs is not one call: it is a long prologue
+;; per entry, plus the argument marshalling, plus every value live across the
+;; call living in a frame slot because it crosses a call boundary that the
+;; absorbed form does not have.
 ;;
-;; The size ceiling comes off. Other clauses go on in its place, and every one
-;; of them was put there by measurement, not by symmetry -- the first version of
-;; this band asked the reference count and nothing else, and it LOST:
-;; liveness_scan 620,776,020 -> 726,936,390, +17.10%, with both target callees
-;; confirmed absorbed. The prologue arithmetic that motivated the band is real
-;; and it is not the whole account. What it left out is that a body absorbed
-;; into a LOOP put its entire working set inside that loop, where the allocator
-;; then had to keep the loop's own live values across it: absorbing the
-;; benchmark's `ln-recompute!` into its fixpoint worklist loop cost far more in
-;; spills inside that loop than the 14-argument boundary ever cost in
-;; marshalling. That was an ALLOCATOR fact carried by an INLINER clause, and the
-;; allocator has since been taught it. Clause 3 below carries what is left of
-;; the argument, and what the same absorption measures now.
+;; The size ceiling comes off. Other clauses go on in its place, because the
+;; reference count alone is not enough: the prologue arithmetic that motivates
+;; the band is real and it is not the whole account. A body absorbed into a
+;; LOOP puts its entire working set inside that loop, where the allocator then
+;; has to keep the loop's own live values across it. That is an ALLOCATOR fact,
+;; and the allocator now carries it; clause 3 below carries what is left of the
+;; argument.
 ;;
 ;; That is the trade this band makes explicit. The loop tier bounds the body
 ;; and demands an in-loop site: a small body is safe inside a loop, and only an
@@ -109531,9 +109013,9 @@
 ;;      pays for the wider callee-saved prologue the imported calls force at
 ;;      the merged entry, and a narrow one does not. So the narrow class enters
 ;;      this band at exactly the loop tier's size, call-free, at an in-loop
-;;      site, and nowhere else; see the note at
-;;      opt-inline-single-site-min-params for the measured variants of the
-;;      split;
+;;      site, and nowhere else; see the note after
+;;      opt-inline-single-site-min-params for the variants of the split that
+;;      lose;
 ;;   3. the site is NOT in a natural loop of the caller -- and where it IS,
 ;;      this clause and clauses 5 and 6 all come off together, because all
 ;;      three are settled by the same comparison. Every cost they stand for is
@@ -109556,41 +109038,20 @@
 ;;      makes a per-invocation tax outrun a per-iteration saving, so the
 ;;      clauses that exist for the straight-line case do not gate this one.
 ;;
-;;      MEASURED on this tree, waiving all three at in-loop sites only:
-;;      intern_table 570,249,745 -> 522,058,963 (-8.451%), `it-intern-slice`
-;;      (9 parameters, 332 instructions in 41 blocks, 1.72M calls) absorbed
-;;      into `it-bench`'s per-line loop -- the shape clang's `it_pass` has had
-;;      all along; liveness_scan 408,504,323 -> 403,959,683 (-1.113%),
-;;      `recompute!` (14 parameters, 384 instructions in 45 blocks) absorbed
-;;      into `fixpoint!`'s worklist loop. Every other row byte-identical.
+;;      The in-loop shapes this admits are `it-intern-slice` (9 parameters)
+;;      absorbed into `it-bench`'s per-line loop -- the shape clang's
+;;      `it_pass` has -- and `recompute!` (14 parameters) absorbed into
+;;      `fixpoint!`'s worklist loop. What makes that merge pay is the
+;;      allocator, not an inliner clause: its loop-depth weight ladders in
+;;      src/compiler_regalloc.tl keep the merged loop's bases out of the
+;;      spill set. The call-hole live-range splitting there
+;;      (compiler-reg-call-hole-*) does not reach this shape, because the
+;;      import REMOVES the call and leaves no hole to split.
 ;;
-;;      This clause's own history is that same merge measured before the
-;;      allocator could hold it: liveness_scan +17.10% with no site clause at
-;;      all, and +13.3% re-measured over the regallocator's call-hole
-;;      live-range splitting (compiler-reg-call-hole-* in
-;;      src/compiler_regalloc.tl), which does not reach this shape because the
-;;      import REMOVES the call and leaves no hole to split. Both were real,
-;;      and what retired them is not an inliner clause but the two allocator
-;;      packets under this one -- the flag-exit rounding and the loop-depth
-;;      ladders in src/compiler_regalloc.tl. Before the ladders the same waiver
-;;      still lost on intern_table (+2.1%): the merged kernel's byte loop
-;;      spilled its bases, and the ladders alone moved that experiment from
-;;      581.8M to 532.4M. (The old liveness numbers name `ln-recompute!` /
-;;      `ln-fixpoint!`; the benchmark's live pair is now `recompute!` /
-;;      `fixpoint!` in liveness_storage.tl, the same shape.)
-;;
-;;      The rest of the old evidence was never about in-loop sites: cfg_domloops
-;;      +5.4% and lex_source +5.9% are STRAIGHT-LINE merges into `cfg-function`
-;;      and `ls-tokenize`, which this clause still refuses -- and on this tree
-;;      those bodies no longer even reach it, since clause 2's arity floor
-;;      stops them first (lex_source presents no candidate to this band at
-;;      all). The straight-line half is not theory either. Waiving these three
-;;      clauses for EVERY site, on this tree, absorbs `cfg-stamp-euler` (8
-;;      parameters, 207 instructions in 16 blocks) into `cfg-function` at its
-;;      straight-line site and costs cfg_domloops 701,851,308 -> 702,906,528
-;;      (+0.150%), callgrind putting the merged function at 113.3M against
-;;      95.3M for the pair. That single row is the whole difference between the
-;;      rule this band carries and the rule it refuses;
+;;      The straight-line half is not theory either. Waiving these three
+;;      clauses for EVERY site absorbs `cfg-stamp-euler` (8 parameters) into
+;;      `cfg-function` at its straight-line site, and the merged function
+;;      costs more than the pair did;
 ;;   4. the heavy gate is kept. It is not a growth budget -- it is the block
 ;;      count past which the whole-function passes downstream stop running --
 ;;      so a merged function that would cross it is refused here for the same
@@ -109602,33 +109063,24 @@
 ;;   5. AT A STRAIGHT-LINE SITE the body is call-free, the same clause the
 ;;      duplication and recursive-site tiers carry, for the same reason: this
 ;;      band's model cannot price a callee's own calls (see
-;;      opt-inline-blocks-call-free?). RE-MEASURED with call-hole splitting in
-;;      place: dropping it at a straight-line site still loses, and the
-;;      mechanism is not spilling at all. It is the PROLOGUE. hashmap_insert
-;;      28,941,253 -> 36,161,477 (+24.9%): `grow!` (18 blocks, calls
-;;      tl_alloc/tl_array_zero) is absorbed into `insert-ref!` at the
-;;      straight-line `(if (needs-grow? map) (grow! map) unit)` that opens
-;;      every insert, and `insert-ref!`'s callee-saved prologue goes from two
-;;      pushes and two pops to six and six -- eight extra instructions on EVERY
-;;      insert, about 900k of them, for a body that runs on the rare rehash.
-;;      8 * 900k is the +7.2M the row moves. hashmap_grow +18.8% and
-;;      hashmap_churn +9.6% are the same absorption on the same shape. A
-;;      callee's own calls raise the merged function's callee-saved demand at
-;;      its entry, which is paid per CALLER entry while the imported body runs
-;;      on a colder path, and no live-range mechanism can refund that.
+;;      opt-inline-blocks-call-free?). Even with call-hole splitting, dropping
+;;      it at a straight-line site loses, and the mechanism is not spilling at
+;;      all. It is the PROLOGUE: absorbing `grow!` (which calls the allocator)
+;;      into `insert-ref!` at the straight-line
+;;      `(if (needs-grow? map) (grow! map) unit)` that opens every insert
+;;      widens `insert-ref!`'s callee-saved prologue on EVERY insert, for a
+;;      body that runs on the rare rehash. A callee's own calls raise the
+;;      merged function's callee-saved demand at its entry, which is paid per
+;;      CALLER entry while the imported body runs on a colder path, and no
+;;      live-range mechanism can refund that. (`grow!` itself takes ONE
+;;      parameter, so clause 2's arity floor now refuses it first.)
 ;;
 ;;      That accounting is clause 3's frequency argument stated in prologue
 ;;      instructions, and it is also why the clause cannot survive an in-loop
 ;;      site: there the imported body and its calls run once per iteration, the
 ;;      same rate as the boundary being retired, while the wider prologue is
-;;      still paid once per invocation. The measured in-loop case is
-;;      `it-intern-slice`, which calls `it-hash-words`, `it-grow!` and
-;;      `it-map-insert-from` and is the -8.451% in clause 3. (The hashmap
-;;      numbers also predate clause 2: `grow!` takes ONE parameter, so the
-;;      arity floor now refuses it before this clause is ever reached, which is
-;;      why hashmap_insert, hashmap_grow and hashmap_churn stay byte-identical
-;;      even under the widest experiment -- none of them presents a candidate
-;;      to this band at all.);
+;;      still paid once per invocation. The in-loop case is `it-intern-slice`,
+;;      which calls `it-hash-words`, `it-grow!` and `it-map-insert-from`;
 ;;   6. AT A STRAIGHT-LINE SITE the cascade clause, asked only when the callee
 ;;      actually carries bounds checks, because that is the only thing it
 ;;      protects against: handing a bounds-free single-reference CALLER its
@@ -109638,34 +109090,22 @@
 ;;      caller's site -- so clause 3's frequencies apply to it just as
 ;;      literally. The caller's own boundary retires once per caller
 ;;      invocation; at a straight-line site so does the import, and the two are
-;;      then close enough that the measured answer decides. `cfg-stamp-euler`
-;;      is refused by exactly this clause (`cfg-function` is itself a
-;;      bounds-free single-reference caller) and admitting it is the +0.150%
-;;      above. At an in-loop site the import retires per ITERATION against a
-;;      caller inline worth one boundary per invocation, and clause 2
-;;      guarantees the import is a WIDE boundary rather than a token one:
-;;      `it-intern-slice` is refused by this clause as well -- `it-bench` being
-;;      bounds-free and single-reference in the same way -- and absorbing it is
-;;      the -8.451%.
+;;      then close enough that measurement decides: `cfg-stamp-euler` is
+;;      refused by exactly this clause (`cfg-function` is itself a bounds-free
+;;      single-reference caller), and admitting it loses. At an in-loop site
+;;      the import retires per ITERATION against a caller inline worth one
+;;      boundary per invocation, and clause 2 guarantees the import is a WIDE
+;;      boundary rather than a token one: `it-intern-slice` would be refused by
+;;      this clause as well -- `it-bench` being bounds-free and
+;;      single-reference in the same way -- and absorbing it wins.
 ;;
-;;      The loop tier keeps the clause at BOTH sites, and its own measured
-;;      case (`qs-fill` into `qs-bench`, at opt-inline-bounds-loop-cascade-safe?
-;;      below) is an in-loop site where refusing won when it was measured.
-;;      Clause 2 now reaches that size class at in-loop sites, so the same
-;;      question is put again on this tree and comes back the other way:
-;;      absorbing `qs-checksum` (2 parameters, 28 instructions in 4 blocks)
-;;      into `qs-bench` past the cascade clause is -128,009 on opt_quicksort,
-;;      and the same waiver on the generated `set-ref!` accessor is -0.590% on
-;;      cfg_domloops and -1.291% on gvn_table. The two verdicts differ in what
-;;      the clause is asked ABOUT: here the callee has exactly one reference
-;;      and the import is a MOVE, while the loop tier's copy of the clause
-;;      also governs its two-reference sites, where the caller's lost inline
-;;      buys a duplicate. This band's own re-measurement of the clause was
-;;      opt_crc32 324,500,336 -> 324,560,322 (+59,986) with no row improving;
-;;      the candidate opt_crc32 presents today, `crc-update` at 3 parameters
-;;      and 44 instructions, is refused by clause 2's size class rather than
-;;      by this one, so the straight-line half of the clause now rests on
-;;      `cfg-stamp-euler` rather than on that number;
+;;      The loop tier keeps the clause at BOTH sites (see
+;;      opt-inline-bounds-loop-cascade-safe? below), while this band waives it
+;;      at an in-loop site even in that tier's size class. The two verdicts
+;;      differ in what the clause is asked ABOUT: here the callee has exactly
+;;      one reference and the import is a MOVE, while the loop tier's copy of
+;;      the clause also governs its two-reference sites, where the caller's
+;;      lost inline buys a duplicate;
 ;;   7. a pathological-case backstop on the callee's size,
 ;;      opt-inline-single-site-max-body and -max-blocks. This is NOT a growth
 ;;      budget -- absorption does not grow the program and no measured callee
@@ -109684,10 +109124,7 @@
 ;; registers and Windows x64 passes four, so at eight parameters BOTH ABIs store
 ;; surplus arguments to the stack at the call and reload them in the callee --
 ;; traffic that exists only because the boundary exists, that no body-size
-;; budget can see, and that absorption retires completely. The measured
-;; population starts above it: the liveness callees this band was built for
-;; present at 10 and 14 parameters, and the only compiler function it claims
-;; across a whole self-compile has exactly 8.
+;; budget can see, and that absorption retires completely.
 (define (opt-inline-single-site-min-params) : i64
   8)
 
@@ -109695,62 +109132,30 @@
 ;; STRAIGHT-LINE site the narrow class stays out of this band entirely; at an
 ;; IN-LOOP site it enters at the loop tier's size class and no wider
 ;; (opt-inline-bounds-loop-small?, 32 instructions in 6 blocks), and call-free.
-;; Four variants of that split were measured against this tree.
+;; The other splits lose:
 ;;
-;; Removing the floor at EVERY site admits the whole narrow class and costs
-;; peephole_lines 602,719,795 -> 610,515,468 (+1.29%), with no row improving:
-;; `pl-token-len` (27 blocks), `pl-movq-prefix?` (66) and `pl-mnemonic-call?`
-;; (40) merge into `pl-parse-line`, taking it from 127 blocks to 249;
-;; `pl-stack-parens` (54) into `pl-operand-flags` (66 -> 120);
-;; `pl-indexed-rsp?` (51) into `pl-record-sweep` (197 -> 249). All five of
-;; those sites are straight-line, which is why the in-loop half of the clause
-;; leaves them refused. Admitting the narrow class only into a SMALL caller
-;; (<= 64 blocks) left every instruction-count row byte-identical -- it bought
-;; nothing in the corpus -- while merging the single-site functions of every
-;; small program into `main`, which is the shape the codegen fixtures under
-;; tests/integration inspect by name (switch_dispatch_scavenge,
-;; const_global_mask_unroll, ...). A relief that measures nothing and reshapes
-;; small programs is not kept.
+;;   - removing the floor at EVERY site merges narrow straight-line predicates
+;;     into their callers (`pl-parse-line` roughly doubles in blocks) and buys
+;;     nothing. Admitting the narrow class only into a SMALL caller buys
+;;     nothing in the corpus either, while merging the single-site functions of
+;;     every small program into `main`, which is the shape the codegen fixtures
+;;     under tests/integration inspect by name. A relief that measures nothing
+;;     and reshapes small programs is not kept.
+;;   - waiving the floor at IN-LOOP sites with no size class at all loses where
+;;     the hot loop belongs to the caller (`cfg-natural-loops`, `ls-tokenize`):
+;;     the caller's loop already holds more live values than the callee-saved
+;;     set, and an import lands its whole working set inside that loop. A wide
+;;     boundary can still pay for that; a narrow one cannot, which is the
+;;     entire content of clause 2.
+;;   - widening the in-loop class past the loop tier's own moves the lexer's
+;;     scan helpers into `ls-tokenize` and loses there. The loop tier's own
+;;     class is where the corpus stops paying, so it is where the waiver stops.
 ;;
-;; Waiving the floor at IN-LOOP sites with no size class at all loses on the
-;; two rows whose hot loop belongs to the caller: cfg_domloops 701,677,745 ->
-;; 748,383,265 (+6.656%) and lex_source 540,540,835 -> 562,870,483 (+4.131%),
-;; against gvn_table -1.272%, peephole_lines -0.954%, intern_table -0.476%,
-;; opt_crc32 -0.203% and opt_quicksort -0.032%. Callgrind splits both losers
-;; the same way. cfg_domloops: `cfg-idom-iterate` (7 parameters, 236
-;; instructions in 40 blocks) moves into `cfg-function` and the pair's 169.9M
-;; becomes 198.0M; `cfg-loop-body` (7, 201, 22) and `cfg-loop-preheader`
-;; (7, 177, 30) move into `cfg-natural-loops` and its 119.1M becomes 145.5M.
-;; lex_source: six callees move into `ls-tokenize`, whose 224.0M becomes
-;; 258.3M. This is P18's register-pressure reading of `cfg-natural-loops`
-;; arriving as an instruction count -- the caller's loop already holds more
-;; live values than the callee-saved set, and an import lands its whole
-;; working set inside that loop. A wide boundary can still pay for that; a
-;; narrow one cannot, which is the entire content of clause 2.
-;;
-;; Widening the in-loop class to 64 instructions in 16 blocks buys
-;; intern_table -0.148% (`it-slice-eq?` into `it-intern-slice`) and opt_crc32
-;; -0.203% (`crc-update` into `crc-bench`) and costs lex_source 540,540,835 ->
-;; 549,226,451 (+1.607%): `ls-scan-comment-end` (37 instructions in 10 blocks)
-;; and `ls-scan-str-end` (56 in 16) move into `ls-tokenize`, whose 224.0M
-;; becomes 244.6M. The loop tier's own class is where the corpus stops paying,
-;; so it is where the waiver stops.
-;;
-;; What the class as landed admits is three imports in the whole corpus, and
-;; they are what the two rows below measure: the generated
-;; `stdlib.vector.generated.i64/set-ref!` (3 parameters, 22 instructions in 6
-;; blocks) into `cfg-scan-ints` for cfg_domloops 701,677,745 -> 697,540,921
-;; (-0.590%) and into `gvn-scan-ints` for gvn_table 986,691,676 -> 973,957,482
-;; (-1.291%), and `qs-checksum` (2, 28, 4) into `qs-bench` for opt_quicksort
-;; -128,009 (-0.032%). All three are refused today by the loop tier's cascade
-;; clause and by nothing else. The other fourteen rows are byte-identical in
-;; the emitted assembly, not merely in the count.
-;; The pathological-case backstop of clause 7. 1024 instructions is nearly
-;; three times the largest measured absorption (`ln-recompute!`, 368) and eight
-;; times the largest band ceiling anywhere else in this file; 128 blocks is
-;; four times the largest shape any other band copies. Both sit far below the
-;; heavy gate's 1024 blocks, which is the limit that actually governs the
-;; merged caller.
+;; The pathological-case backstop of clause 7. 1024 instructions is far above
+;; any real absorption and well above the largest band ceiling anywhere else in
+;; this file; 128 blocks is four times the largest shape any other band copies.
+;; Both sit far below the heavy gate's 1024 blocks, which is the limit that
+;; actually governs the merged caller.
 (define (opt-inline-single-site-max-body) : i64
   1024)
 
@@ -109764,10 +109169,9 @@
 ;; prologue, and only an import that costs little can be bought with it.
 ;;
 ;; What the narrow half does NOT keep is the loop phi-predecessor suppression
-;; (#5193, opt-inline-current-phi-predecessor?), and that is load-bearing:
-;; both corpus imports this clause admits sit in a loop latch that feeds a
-;; header phi, and adding the suppression here puts cfg_domloops and gvn_table
-;; straight back on their base numbers. What the suppression stops is the cost
+;; (opt-inline-current-phi-predecessor?), and that is load-bearing: the
+;; imports this clause exists for sit in a loop latch that feeds a header phi,
+;; so the suppression would refuse them. What the suppression stops is the cost
 ;; model's single-reference absorb BONUS buying an admission whose live ranges
 ;; the split then lengthens; the body this band takes is not bought with that
 ;; bonus and is not copied.
@@ -109794,7 +109198,7 @@
 ;; 6 -- and such a cost is only worth pricing where the boundary it buys is also
 ;; retired once per caller invocation. That is a straight-line site. At an
 ;; in-loop site the boundary retires per iteration and all three come off; the
-;; numbered list above carries the argument and the measurements.
+;; numbered list above carries the argument.
 ;;
 ;; Ordered so the site question runs first. It forces the memoized caller facts
 ;; the cascade clause needs anyway, and an in-loop answer retires the scan over
@@ -109812,10 +109216,7 @@
 ;;
 ;; The band above prices a single-reference callee against the boundary it
 ;; retires, and asks for a WIDE boundary (>= 8 parameters) or an in-loop site,
-;; plus a call-free body at a straight-line site and a 1024/128 backstop. Every
-;; one of those clauses is a measured refusal, and every one was measured
-;; against an allocator whose per-value intervals came from a CONSERVATIVE
-;; LOOP-CARRY HULL.
+;; plus a call-free body at a straight-line site and a 1024/128 backstop.
 ;;
 ;; This tier states the other half of the same fact, the half LLVM states as
 ;; `isSoleCallToLocalFunction` (InlineCost.cpp:1250-1254, applied in
@@ -109828,63 +109229,33 @@
 ;; but PRESSURE -- whether the merged body's live values fit the pool.
 ;;
 ;; So this tier drops the arity floor, the body ceiling and the block ceiling
-;; outright, and carries exactly two clauses, both of them pressure clauses,
-;; both measured on the corpus after LP-1 landed edge-precise intervals:
+;; outright, and carries exactly two clauses, both of them pressure clauses:
 ;;
 ;;   1. the callee's body is ACYCLIC, and
-;;   2. the site is not inside a natural loop of the caller -- or, since
-;;      INL-13, it is inside one at control-dependence depth <= 2, a site the
-;;      loop runs on (nearly) every iteration; see
-;;      opt-inline-sole-call-loop-site-shallow? for the measure and the rows.
+;;   2. the site is not inside a natural loop of the caller -- or it is inside
+;;      one at control-dependence depth <= 2, a site the loop runs on (nearly)
+;;      every iteration; see opt-inline-sole-call-max-loop-depth for the
+;;      measure.
 ;;
 ;; Together they say: the merged body gains no loop the caller did not already
 ;; have, and gains nothing inside a loop the caller already has unless the
-;; loop's work IS the callee. Everything the corpus measured as a loss violates
-;; one of the two, and everything it measured as a win satisfies both.
+;; loop's work IS the callee.
 ;;
-;; What clause 1 refuses, with the per-absorption numbers (callgrind, per
-;; function, against tl-i3base):
-;;   cfg-idom-iterate (236 instructions, 40 blocks) and cfg-stamp-euler
-;;     (207, 16) into cfg-function: the trio 212.8M -> 237.3M, +24.5M;
-;;   cfg-loop-body (201, 22) and cfg-loop-preheader (177, 30) into
-;;     cfg-natural-loops: the trio 74.2M -> 110.7M, +36.5M;
-;;   cfg-build-csr (353, 13) and cfg-build-euler-tree (277, 37) into the
-;;     already-merged cfg-function: 390.6M -> 415.9M, +25.2M;
-;;   gvn-scan-ints (233, 69) into gvn-bench: 51.6M -> 74.7M, +23.0M;
-;;   ls-scan-comment-end (37, 10) and ls-scan-str-end (56, 16) into
-;;     ls-tokenize: +8.4M on the row;
-;;   it-count-lines (34, 7) and it-index-lines (64, 7) into it-bench: +67.4M
-;;     on the row.
-;; That is the nine-helper absorption target of the phase-3 cfg report,
-;; measured on the post-LP-1 allocator and rejected by it: the report's
-;; argument was that the helpers absorb SEQUENTIALLY into cfg-function and
-;; their descriptors die at each helper's last loop, so only the conservative
-;; hull made them look simultaneously live. Edge-precise intervals landed and
-;; the absorptions still cost +89.2M on the row (+16.0%). The residue is not
-;; interval precision; it is that each imported loop adds its own working set
-;; to a function whose CSR set, frame and spill weights are chosen once for the
+;; Clause 1 refuses loop-bearing helpers such as the cfg helpers of
+;; `cfg-function`. That they would absorb SEQUENTIALLY, each helper's
+;; descriptors dying at its last loop, does not make them pay even with
+;; edge-precise intervals: each imported loop adds its own working set to a
+;; function whose CSR set, frame and spill weights are chosen once for the
 ;; whole body.
 ;;
-;; What clause 2 refuses: the same acyclic bodies at in-loop sites.
-;; ls-tokenize's imports (ls-apostrophe-char-end 164/46, ls-negative-number-
-;; start? 38/5, ls-number-float? 6/3) cost lex_source +5.7M with clause 1
-;; alone; with clause 2 the row is flat. It costs pl-run-chunk <- pl-pair-action
-;; (-5.0M) and crc-bench <- crc-update (-0.7M), and the corpus is still ahead:
-;; the two-clause rule nets -14.9M against clause 1's -12.8M, with no row up.
+;; Clause 2 refuses the same acyclic bodies at in-loop sites, such as the
+;; lexer's per-arm helpers inside `ls-tokenize`'s one hot loop.
 ;;
-;; What the rule ADMITS, which nothing in this file admitted before:
-;;   gvn-kinds-invalidate-def (60 instructions, 16 blocks, ONE parameter, and
-;;     it makes calls) into gvn-kinds-step: 83.6M -> 72.8M, -10.9M. The arity
-;;     floor refused it on one parameter and the frame-tax clause refused it a
-;;     second time on its calls;
-;;   gvn-survives-location? (112, 21, six parameters, makes calls) into
-;;     gvn-survives-store?: -3.1M;
-;;   peephole_lines' straight-line predicate chain (pl-mnemonic-call? 214/75,
-;;     pl-redundant-zext? 222/69, pl-suffix-abort? 191/63, pl-access-width
-;;     74/23, pl-rsp-displacement 9/5), -0.9M net on the row.
-;; Rows: gvn_table -13,994,382 (-1.810%), peephole_lines -904,124 (-0.210%),
-;; nineteen rows within 8 Ir, opt1 self-compile 88,402,050,506 ->
-;; 86,714,041,228 (-1.910%).
+;; What the rule admits that no size band does: a narrow or call-carrying
+;; single-reference callee (`gvn-kinds-invalidate-def`, ONE parameter and it
+;; makes calls, into `gvn-kinds-step`), which the arity floor and the frame-tax
+;; clause both refuse, and straight-line predicate chains like peephole_lines'
+;; `pl-mnemonic-call?`.
 ;;
 ;; Ordering. This tier is asked BEFORE the size-band clauses because within one
 ;; SCC pass the callees of an SCC are rewritten before their callers
@@ -109900,53 +109271,46 @@
 ;; optimizer pass.
 ;;
 ;; TailCall sites are not absorbed. The multiblock rewrite matches
-;; ir.CompilerIrInstr.Call only, so a callee reached in tail position -- the
-;; measured case is cfg-natural-loops, tail-called from cfg-function -- keeps
-;; its boundary. Extending the rewrite to tail position is a separate change to
-;; the clone plumbing, not an admission clause, and clause 1 would refuse
+;; ir.CompilerIrInstr.Call only, so a callee reached in tail position (such as
+;; cfg-natural-loops, tail-called from cfg-function) keeps its boundary.
+;; Extending the rewrite to tail position is a separate change to the clone
+;; plumbing, not an admission clause, and clause 1 would refuse
 ;; cfg-natural-loops anyway.
 ;;
-;; No raw-size cap. The staged ladder measured 64 / 256 / 512 / 1024 /
-;; unlimited under this rule: only peephole_lines moves, and it moves smoothly
-;; rather than at a threshold, because the cost is the CALLER's growth and not
-;; the callee's size. pl-parse-line takes pl-mnemonic-call? at 256 for
-;; -910,630; adding pl-movq-prefix? (337) and pl-cmp-or-test? (410) at 512
-;; leaves -257,652; adding pl-single-dest? (708) leaves +770, the caller having
-;; gone from 127 blocks to 249. A cap anywhere in that range buys at most
-;; 910,630 Ir on one row and states nothing true about the transformation, so
-;; the tier ships without one and the caller-growth question is left to the
-;; heavy gate, where it belongs.
+;; No raw-size cap. The cost moves smoothly with the size admitted rather than
+;; at a threshold, because the cost is the CALLER's growth and not the callee's
+;; size, so a cap states nothing true about the transformation; the
+;; caller-growth question is left to the heavy gate, where it belongs.
 ;;
 ;; The structural form of that same question -- a per-caller block fuel for this
 ;; tier, which is what the hot-loop-leaf (32), branch-chain (128) and shared-
-;; accessor (160) tiers each carry -- was measured too and is WORSE than either:
-;; at 128 blocks peephole_lines is +503,522, because a per-caller budget admits
-;; whatever prefix of the caller's sites the walk reaches first rather than the
-;; subset that pays. A budget that picks its members by walk order is not a
-;; statement about the program, so none ships.
-;; The two pressure clauses, ordered so the free one runs first: the site
-;; question reads memoized caller facts, and a straight-line answer is needed
-;; before the scan over the callee's blocks is worth paying for. The acyclic
-;; scan runs in the inliner's scratch arena and rewinds it, so a refused
-;; candidate leaves no allocation behind.
-;; INL-13. Clause 2 as it ships: an in-loop site is admitted when the site runs
-;; on (nearly) every iteration of its innermost loop, and refused when it is a
-;; conditional arm the loop takes now and then.
+;; accessor (160) tiers each carry -- is WORSE than either, because a
+;; per-caller budget admits whatever prefix of the caller's sites the walk
+;; reaches first rather than the subset that pays. A budget that picks its
+;; members by walk order is not a statement about the program, so none ships.
 ;;
-;; The clause as first measured -- "the site is not inside a natural loop of
-;; the caller" -- refuses the one site shape where a sole call is most worth
-;; retiring: a loop whose body IS the call. `asm-render-line` is the whole body
-;; of `asm-render-chunk`'s per-line loop, `pl-pair-action` sits one branch
-;; below `pl-run-chunk`'s per-line loop test; both are single-reference,
-;; acyclic callees the flat clause kept out of line, and their boundaries
-;; retire per iteration. Dropping the clause outright is the other wrong
-;; answer: it re-admits `ls-apostrophe-char-end` into `ls-tokenize` -- a
-;; 164-instruction body at the sixth arm of the lexer's dispatch, inside its
-;; one hot loop -- and lex_source pays +7.2M (+1.5%) for a boundary the loop
-;; retires on a handful of iterations. So the question is not "is the site in a
-;; loop" but "does the loop run the site": the drivers' sites are the loop body
-;; itself (or one branch below the loop's own test), the lexer's arm is six
-;; branches below it.
+;; opt-inline-sole-call-pressure-ok? asks the two pressure clauses, ordered so
+;; the free one runs first: the site question reads memoized caller facts, and
+;; a straight-line answer is needed before the scan over the callee's blocks is
+;; worth paying for. The acyclic scan runs in the inliner's scratch arena and
+;; rewinds it, so a refused candidate leaves no allocation behind.
+;;
+;; INL-13. Clause 2: an in-loop site is admitted when the site runs on (nearly)
+;; every iteration of its innermost loop, and refused when it is a conditional
+;; arm the loop takes now and then.
+;;
+;; The flat clause -- "the site is not inside a natural loop of the caller" --
+;; refuses the one site shape where a sole call is most worth retiring: a loop
+;; whose body IS the call. `asm-render-line` is the whole body of
+;; `asm-render-chunk`'s per-line loop, `pl-pair-action` sits one branch below
+;; `pl-run-chunk`'s per-line loop test; both are single-reference, acyclic
+;; callees whose boundaries retire per iteration. Dropping the clause outright
+;; is the other wrong answer: it admits `ls-apostrophe-char-end` into
+;; `ls-tokenize` -- a large body at the sixth arm of the lexer's dispatch,
+;; inside its one hot loop -- for a boundary the loop retires on a handful of
+;; iterations. So the question is not "is the site in a loop" but "does the
+;; loop run the site": the drivers' sites are the loop body itself (or one
+;; branch below the loop's own test), the lexer's arm is six branches below it.
 ;;
 ;; The measure is the site's CONTROL-DEPENDENCE DEPTH within its innermost
 ;; loop: the number of conditional blocks on the dominator chain from the site
@@ -109962,16 +109326,6 @@
 ;; DFS per counted branch over the CFG index, both built in the inliner's
 ;; scratch arena and rewound; the whole thing is asked only of a class-1 site
 ;; the loop-label test has already placed inside a loop.
-;;
-;; A self-tail-recursive caller still reads as loop-free here, because the
-;; tailrec rewrite runs one pass later (see opt-inline-caller-loop-free? for
-;; that reading); its sites keep the straight-line verdict they had.
-;;
-;; MEASURED (23 rows + the heavy rows, one cachegrind run each, against the
-;; tree before): asm_render 782,060,344 -> 764,666,274 (-2.22%, asm-render-line
-;; into asm-render-chunk's loop), peephole_lines 429,714,007 -> 425,768,373
-;; (-0.92%, pl-pair-action into pl-run-chunk); lex_source flat; every other
-;; row byte-identical.
 (define (opt-inline-sole-call-max-loop-depth) : i64
   2)
 
@@ -110251,12 +109605,10 @@
 ;;
 ;; So the clause is not "staged arguments do not pay". It is "the clone's staged
 ;; path is not proven at this tier's shapes, so this tier does not go there".
-;; It costs the corpus NOTHING measurable -- all twenty-one rows carry the same
-;; instruction count with and without it, gvn_table -13,994,382 and
-;; peephole_lines -904,124 either way
-;; -- because the bodies this tier profits from return scalars and leave their
-;; parameters alone. Removing it must wait for the underlying defect to be found
-;; and fixed, and re-measuring it is a one-line change plus the reproducer above.
+;; It costs the corpus nothing measurable, because the bodies this tier profits
+;; from return scalars and leave their parameters alone. Removing it must wait
+;; for the underlying defect to be found and fixed, and re-measuring it is a
+;; one-line change plus the reproducer above.
 (define (opt-inline-single-site-absorb-ok?
   [absorb-class : i64]
   [stage-args? : bool]
@@ -110312,34 +109664,29 @@
 ;;
 ;; Everything above decides whether a callee BELONGS to its call sites: one
 ;; reference is absorbed, two are duplicated, and past that the census stops
-;; answering. That leaves an entire measured class outside every gate here --
-;; the per-element accessor, referenced from everywhere, which C compiles to a
-;; single load and which this compiler was keeping behind a call at every one of
-;; its sites. peephole_lines spent 431.7M instructions, 40.8% of the row, inside
-;; one 27-instruction function reached from 146 call sites.
+;; answering. That leaves an entire class outside every gate here -- the
+;; per-element accessor, referenced from everywhere, which C compiles to a
+;; single load and which would otherwise stay behind a call at every one of its
+;; sites.
 ;;
-;; Such an accessor is refused today by exactly one clause. It is acyclic, so
-;; the loop gate above already passes it; it carries a bounds check, so
-;; opt-inline-bounds-inline-ok? demands that it be absorbable or called with
-;; all-constant arguments, and at 146 references it is neither. The cost model
-;; would refuse it a second time: block weight 6 prices a nine-block body at
-;; 27 + 6 * 10 = 87 against a threshold of 4.
+;; Outside this gate such an accessor is refused by exactly one clause. It is
+;; acyclic, so the loop gate above already passes it; it carries a bounds
+;; check, so opt-inline-bounds-inline-ok? demands that it be absorbable or
+;; called with all-constant arguments, and with many references it is neither.
+;; The cost model would refuse it a second time: block weight 6 prices a
+;; nine-block body at 27 + 6 * 10 = 87 against a threshold of 4.
 ;;
 ;; Admission is a dedicated disjunct and a cost-gate bypass, NOT an extension of
 ;; the absorb credit. The distinction is semantic, not stylistic: this callee is
 ;; not absorbed. It keeps its own body and stays out of line at every site this
-;; gate does not take -- 12 of 146 on the measured row -- so claiming the
-;; single-reference bonus would assert something false, and that bonus is read
-;; by opt-inline-bounds-inline-ok? and by the phi-predecessor suppression as
-;; well as by the cost model. A separate predicate states exactly what is true:
-;; this shape is admitted on its own terms. It keeps the two structural budgets
-;; that bound the growth -- the heavy gate and the per-caller block fuel, the
-;; same pair opt-inline-bounds-leaf-cost-inline? keeps -- and those budgets are
-;; what turn 146 references into 12 admitted sites and 4104 bytes.
-;;
-;; Measured: peephole_lines -12.264%, lex_source -0.178%, every other row byte
-;; identical, opt2 self-compile -0.0289% (an improvement, on 60 admissions per
-;; compile), and no banked duplication evicted anywhere.
+;; gate does not take, so claiming the single-reference bonus would assert
+;; something false, and that bonus is read by opt-inline-bounds-inline-ok? and
+;; by the phi-predecessor suppression as well as by the cost model. A separate
+;; predicate states exactly what is true: this shape is admitted on its own
+;; terms. It keeps the two structural budgets that bound the growth -- the
+;; heavy gate and the per-caller block fuel, the same pair
+;; opt-inline-bounds-leaf-cost-inline? keeps -- and those budgets are what hold
+;; a callee with a hundred references to a bounded number of admitted sites.
 (define (opt-inline-shared-accessor-max-body) : i64
   28)
 
@@ -110348,21 +109695,9 @@
 
 ;; What separates the accessors that win from the ones that lose is how often
 ;; they run, and nothing here can see that. The reference count is the available
-;; proxy, and the measured split is wide enough to act on: pl-byte-at is
-;; referenced 146 times and pays -12.3% on its row, while cfg-byte-at and
-;; gvn-byte-at -- the same shape, same class, same in-loop sites -- are
-;; referenced 4 times each and cost +0.771% and +1.571%, because importing a
-;; bounds check into the one scan loop that uses them takes cfg-scan-ints from
-;; six frame operations to twenty-three and evicts a banked duplication on the
-;; way. This floor sits one above that measured loser, the same construction the
-;; instruction band uses.
-;;
-;; The sensitivity curve is flat in both directions and the corpus fixes the
-;; number exactly: 3 and 4 admit the two byte-at losers, 5 admits both winners,
-;; and 6 through 146 drop ls-digit? (referenced 5 times) and with it the
-;; lex_source win, while the opt2 self-compile stays within 0.01% across the
-;; whole range. 5 is the only value that takes every measured win and no
-;; measured loss.
+;; proxy. The floor takes a byte predicate referenced five times (`ls-digit?`);
+;; an accessor with fewer, hotter sites enters through the dominant tier's
+;; loop-weighted entrance below.
 ;;
 ;; This is the opposite end of the same census the rest of this file uses:
 ;; absorption wants a callee referenced once, duplication twice, and this path
@@ -110377,54 +109712,47 @@
 ;;   - the in-loop clause. It is the right question for an import that must
 ;;     repay one caller's boundary: repaid per iteration, or once per program.
 ;;     But `pl-byte-at` is not imported for one caller -- it is a single load
-;;     behind a call at 146 references, and most of its dynamic weight arrives
-;;     through straight-line byte predicates (`pl-movq-prefix?`, `pl-single-dest?`,
-;;     `pl-mnemonic-call?`, `pl-record-sweep`'s fourteen unrolled probes) that
-;;     are themselves called from loops one level up. Measured on
-;;     benchmark/typelisp/peephole_lines: 15,308,593 dynamic calls, 186.7M
-;;     instructions of self cost, and the sites carrying it are refused by this
-;;     clause and nothing else.
+;;     behind a call at over a hundred references, and most of its dynamic
+;;     weight arrives through straight-line byte predicates (`pl-movq-prefix?`,
+;;     `pl-single-dest?`, `pl-mnemonic-call?`, `pl-record-sweep`'s unrolled
+;;     probes) that are themselves called from loops one level up, and the
+;;     sites carrying that weight are refused by this clause and nothing else.
 ;;   - the cascade clause. It stops an import handing a bounds-free
 ;;     single-reference caller its first bounds check, so that the caller keeps
 ;;     its own absorption. That trade is priced in absorptions: one boundary
-;;     retired against one caller inline lost. `pl-indexed-rsp?` is a
-;;     single-reference bounds-free caller whose in-loop sites call pl-byte-at
-;;     4,631,694 times -- the largest single site group on the row -- and the
-;;     clause refuses all six of them to protect one absorption.
+;;     retired against one caller inline lost. A single-reference bounds-free
+;;     caller such as `pl-indexed-rsp?` can hold a hot accessor's largest site
+;;     group, and the clause refuses all of them to protect one absorption.
 ;;
 ;; So both clauses are conditioned on the callee's total weight, for which the
 ;; reference count is the same proxy the floor above uses. Above the dominant
 ;; floor the callee's own dynamic weight is the whole argument and neither
-;; per-site question changes the verdict; below it, both stand exactly as they
-;; were.
+;; per-site question changes the verdict; below it, both stand.
 (define (opt-inline-shared-accessor-dominant-min-refcount) : i64
   64)
 
-;; The floor above is a floor on DYNAMIC weight, and the raw reference count was
-;; only ever the available proxy for it. `pl-byte-at` clears 64 because it is
-;; named 146 times; `gvn-byte-at` and `cfg-byte-at` are the identical shape --
-;; one guarded load, three blocks, fourteen instructions -- reached from four
-;; sites each, and they run just as often because every one of those sites is
-;; inside a scan loop and three of the four are inside a nested one. The static
-;; count says 4 and 146; the dynamic counts are 5.0M and 15.3M calls. The proxy
-;; is what is wrong, not the floor.
+;; The floor above is a floor on DYNAMIC weight, and the raw reference count is
+;; only the available proxy for it. An accessor of the identical shape -- one
+;; guarded load, three blocks -- reached from only a few sites (`gvn-byte-at`,
+;; `cfg-byte-at`) runs just as often as one named a hundred times when every one
+;; of those sites is inside a scan loop. The proxy is what is wrong, not the
+;; floor.
 ;;
-;; So the tier gains a second entrance on the loop-depth-weighted count
+;; So the tier has a second entrance on the loop-depth-weighted count
 ;; (opt-inline-census-hot-refcount): the SAME 64, in a currency that counts a
 ;; reference by how often it is reached rather than by how many times it was
 ;; typed. Because a depth-0 site still weighs 1, the weighted count is never
-;; below the raw one, so every callee that used to enter this tier still enters
-;; it on the raw count alone and nothing that was admitted becomes refused.
+;; below the raw one, so the second entrance only ever widens the first.
 ;;
-;; Two clauses keep the new entrance inside the class it was measured on:
+;; Two clauses keep the weighted entrance inside the accessor class:
 ;;
-;;   - the size ceilings above are untouched. This tier only ever admits a body
+;;   - the size ceilings above apply to it. This tier only ever admits a body
 ;;     of at most opt-inline-shared-accessor-max-body instructions in
 ;;     opt-inline-shared-accessor-max-blocks blocks, so a hot-by-depth callee
-;;     that is not accessor-shaped is refused exactly as before. The tiny leaf
-;;     is the class where inlining does not grow the caller's live set enough
-;;     to cost a callee-saved push/pop pair per invocation, which is how a
-;;     bigger import net-regresses a row.
+;;     that is not accessor-shaped is refused. The tiny leaf is the class
+;;     where inlining does not grow the caller's live set enough to cost a
+;;     callee-saved push/pop pair per invocation, which is how a bigger import
+;;     costs more than it saves.
 ;;   - opt-inline-shared-accessor-dominant-min-refs: the callee must still be
 ;;     genuinely SHARED, at least two static references. A single-reference
 ;;     callee belongs to absorption, which moves its body instead of copying it;
@@ -110432,81 +109760,39 @@
 ;;     are hot" would claim something false and would spend this tier's fuel on
 ;;     a case the absorb band already owns.
 ;;
-;; A THIRD CLAUSE STOOD HERE AND IS NOW GONE: the estimated entrance used to
-;; additionally require the callee to carry NO bounds check. The argument was
-;; the difference between the two counts. A raw reference count is a COUNTED
-;; FACT; a depth weight is an ESTIMATE, and its error is unbounded in one
-;; direction -- a loop that runs once weighs the same as a loop that runs a
-;; million times. So the estimated entrance was granted only where a wrong
-;; estimate is cheap, and an imported bounds check was the opposite of cheap:
-;; it adds a length load, a compare, a branch and a trap edge inside the
-;; caller's hottest loop, and it lengthens the live ranges there. That was not
-;; taste, it was measured (#6461): both accessors that reach this tier on
-;; weight alone while carrying a bounds check REGRESSED their rows even though
-;; every one of their sites is inside a loop -- `gvn-byte-at` (4 references,
-;; weight 200) cost gvn_table +1.329% and `cfg-byte-at` (the identical shape)
-;; cost cfg_domloops +0.733%. `pl-byte-at` carries a bounds check too and won
-;; -12.3% there, but it enters on 146 COUNTED references, not on an estimate,
-;; which is exactly why the clause was written against the estimate alone.
+;; The weighted entrance does NOT require the callee to be free of bounds
+;; checks, although a raw reference count is a COUNTED FACT and a depth weight
+;; is an ESTIMATE whose error is unbounded in one direction -- a loop that runs
+;; once weighs the same as a loop that runs a million times. An imported bounds
+;; check adds a length load, a compare, a branch and a trap edge inside the
+;; caller's hottest loop, and it lengthens the live ranges there. Three
+;; mechanisms elsewhere keep that import cheap:
 ;;
-;; That autopsy named three mechanisms, and every one of them has since been
-;; repaired by work with no connection to this gate:
-;;
-;;   1. THE IMPORTED GUARD DE-FUSED. The copy's bounds compare was CSE'd with
-;;      the caller's own loop test; the shared boolean then had two readers, and
-;;      a compare with two readers could not fold into either branch, so the
-;;      caller materialised a byte and tested it where it used to branch on
-;;      flags. The compare-duplication and flags-reuse branch-emission packets
+;;   1. THE IMPORTED GUARD STAYS FUSED. The copy's bounds compare is CSE'd with
+;;      the caller's own loop test, and a compare with two readers cannot fold
+;;      into either branch. Compare duplication and flags-reuse branch emission
 ;;      rematerialise the compare at each branch and emit the branch off the
 ;;      live flags (compiler-backend-emit-flags-reuse-branch-rest and the
-;;      window rule above it), so a second reader no longer costs the first one
+;;      window rule above it), so a second reader does not cost the first one
 ;;      its fusion.
-;;   2. THE IMPORTED CHECK SURVIVED. The copy landed among checks that already
-;;      proved its condition, but the eliminator could only retire a check
-;;      against a syntactically identical one. The guard-fact implication
-;;      algebra (#6480) folds a dominated compare whose true-set a dominating
-;;      fact narrows into, so an equal-or-stronger dominating check now retires
-;;      a dominated one; cross-array check-domain fusion (#6485, the section
-;;      below) then transfers one array's proven index fact to a second array
-;;      under a single loop-entry `Lj <=u Lk`, which is precisely the shape a
-;;      byte-at import produces inside a scan loop.
-;;   3. THE BASE AND LENGTH SPILLED. The live ranges the import opened across
-;;      the loop pushed the caller past its register budget -- cfg-scan-ints
-;;      went from six frame operations to twenty-three. The caller-saved rescue
-;;      now generalises to whole natural-loop regions (#6485) and the
-;;      loop-region eviction machinery extends it to loops whose pool is fully
-;;      held, so a loop-carried base or length is split and rescued instead of
-;;      left spilled; segment-precise live intervals keep the rescued homes
-;;      from being handed out under a hole that is not really dead.
+;;   2. THE IMPORTED CHECK RETIRES. The copy lands among checks that already
+;;      prove its condition. The guard-fact implication algebra folds a
+;;      dominated compare whose true-set a dominating fact narrows into, so an
+;;      equal-or-stronger dominating check retires a dominated one; cross-array
+;;      check-domain fusion (the section below) then transfers one array's
+;;      proven index fact to a second array under a single loop-entry
+;;      `Lj <=u Lk`, which is precisely the shape a byte-at import produces
+;;      inside a scan loop.
+;;   3. THE BASE AND LENGTH DO NOT STAY SPILLED. The caller-saved rescue covers
+;;      whole natural-loop regions and the loop-region eviction machinery
+;;      extends it to loops whose pool is fully held, so a loop-carried base or
+;;      length is split and rescued instead of left spilled; segment-precise
+;;      live intervals keep the rescued homes from being handed out under a
+;;      hole that is not really dead.
 ;;
-;; With all three repaired the sign flips, and the two callees that the clause
-;; was written to exclude are what pay it back. Re-measured on this tree,
-;; dropping the clause buys
-;;
-;;     gvn_table    1,204,946,707 -> 1,185,741,272  (-19,205,435, -1.594%)
-;;     cfg_domloops   812,522,536 ->   806,167,611  ( -6,354,925, -0.782%)
-;;
-;; with the other 20 rows of the corpus byte-identical. The admitted population
-;; is exactly the two callees the clause was written against and nothing else:
-;; `gvn-byte-at` and `cfg-byte-at`, four sites each, all four taken, and with
-;; the last reference gone both leaves are deleted outright. Their callers are
-;; the two scan loops the old autopsy indicted, and both now come out AHEAD on
-;; allocation -- `cfg-scan-ints` and `gvn-scan-ints` each go from six
-;; callee-saved push/pop pairs to five while absorbing four bounds checks, with
-;; no stack-slot traffic on either side of the change. No other benchmark in
-;; the corpus moves a single call site.
-;;
-;; Across a full opt2 self-compile the same tier claims four more leaves, all of
-;; them one guarded element read: `compiler-reg-remap-id` (20 of its 41 sites),
-;; `compiler-live-label-set-ref` (all 11), `ast-decl-list-module-id-at` (all 8)
-;; and `opt-scc-set-low-min!` (both). Three of the four lose their last
-;; reference and are deleted.
-;;
-;; The estimate is still an estimate; what changed is that being wrong about one
-;; no longer costs anything, because the three mechanisms that made a wrong
-;; estimate expensive are gone. The clauses that remain are the ones that bound
-;; what a WRONG estimate can drag in -- body size, block count, and genuine
-;; sharing -- and those are counted facts, not estimates.
+;; So being wrong about the estimate costs little. The clauses that remain are
+;; the ones that bound what a WRONG estimate can drag in -- body size, block
+;; count, and genuine sharing -- and those are counted facts, not estimates.
 (define (opt-inline-shared-accessor-dominant-min-refs) : i64
   2)
 
@@ -110524,16 +109810,15 @@
 ;; taken here must not spend the fuel the caller's banked single-reference
 ;; absorptions draw on. It also must not be RATIONED by it. The shared fuel is
 ;; 32 blocks and this accessor is 10, so a caller could take three copies and
-;; no more -- and the measured callers are byte predicates that probe a fixed
-;; window: `pl-record-sweep` holds fifteen sites, `pl-single-dest?` eleven,
-;; `pl-tail-is-rsp?` four consecutive indices. Stopping at three is the worst
-;; of both: the caller pays the growth and still keeps the call, and the
+;; no more -- and the callers this tier exists for are byte predicates that
+;; probe a fixed window: `pl-record-sweep` holds fifteen sites, `pl-single-dest?`
+;; eleven, `pl-tail-is-rsp?` four consecutive indices. Stopping at three is the
+;; worst of both: the caller pays the growth and still keeps the call, and the
 ;; consecutive probes never end up in one block where GVN can fold their
 ;; bounds checks and their two global loads together.
 ;;
 ;; 160 blocks is sixteen copies of the widest admitted accessor, which covers
-;; every measured caller's full window. It is spent only above the dominant
-;; floor, so nothing at five references moves.
+;; such a caller's full window. It is spent only above the dominant floor.
 (define (opt-inline-shared-accessor-block-fuel) : i64
   160)
 
@@ -110589,14 +109874,13 @@
 ;;
 ;; The duplication band above prices a callee at `instructions + 6 * blocks`
 ;; and caps it at 32 instructions in 6 blocks. Block count is the wrong
-;; currency for one measured shape: the byte classifier. `ls-space?` is a
-;; four-way `or` over one register -- 17 instructions in 9 blocks, every block
-;; a compare and a branch -- and `ls-symbol-char?` is the same construction
-;; thirteen arms wide, 118 instructions in 57 blocks. Both are refused by the
-;; block cap alone, and both run per input byte: 9,377,680 and 12,909,128 calls
-;; on benchmark/typelisp/lex_source, where the retired boundary is not just the
-;; call and the return but the bool the callee materialises into a register for
-;; the site to immediately test. C compiles these to inline bitmask tests.
+;; currency for one shape: the byte classifier. `ls-space?` is a four-way `or`
+;; over one register, every block a compare and a branch, and
+;; `ls-symbol-char?` is the same construction thirteen arms wide. Both are
+;; refused by the block cap alone, and both run per input byte, where the
+;; retired boundary is not just the call and the return but the bool the callee
+;; materialises into a register for the site to immediately test. C compiles
+;; these to inline bitmask tests.
 ;;
 ;; What the block cap is protecting against is a body whose blocks each do
 ;; work: a merge web brings a second working set into the caller and taxes its
@@ -110613,9 +109897,7 @@
 ;;   2. the body carries no bounds check. This is what lets the gate omit the
 ;;      cascade clause rather than widen it: opt-inline-bounds-loop-cascade-safe?
 ;;      exists to stop an import handing a bounds-free single-reference caller
-;;      its first bounds check, and a bounds-free callee cannot do that. Both
-;;      of the measured lex_source sites are refused today by that clause and
-;;      by nothing else it can be read as protecting;
+;;      its first bounds check, and a bounds-free callee cannot do that;
 ;;   3. the body is call-free -- the pricing clause documented at
 ;;      opt-inline-blocks-call-free?, which this band needs most of all: it
 ;;      copies one body into every one of a shared accessor's sites;
@@ -110629,12 +109911,9 @@
 (define (opt-inline-branch-chain-max-block-instrs) : i64
   3)
 
-;; The chain band, in instructions. The measured shapes are `ls-space?` at 17
-;; instructions in 9 blocks and `ls-symbol-char?` at 118 in 57; 128 sits above
-;; the wider one. The per-block cap is what keeps a 128-instruction body from
-;; being anything other than a decision chain, and the corpus population it
-;; admits is small and entirely of that shape: `doc-html-syntax-space?`,
-;; `ctfe-reduce-op-eq`, `lsp-uri-safe-code?`, `doc-render-anchor-char?`.
+;; The chain band, in instructions: wide enough for a thirteen-arm byte
+;; classifier like `ls-symbol-char?`. The per-block cap is what keeps a
+;; 128-instruction body from being anything other than a decision chain.
 (define (opt-inline-branch-chain-max-body) : i64
   128)
 
@@ -110721,66 +110000,23 @@
 ;; --- hot loop leaves: the call-free cyclic leaf band -------------------------
 ;;
 ;; A call-free callee whose body holds a loop, admitted where the bands above
-;; refuse it. The measured occupant is gvn_table's hashmap probe,
-;; `gvn-facts-slot`: 114 instructions in 29 blocks as the inline stage sees it,
-;; call-free, one linear-probe loop, referenced from seven sites in six callers.
-;; C inlines the whole chain into one blob; this compiler kept the boundary at
-;; all seven, and the row prices the callee at 248.6M dynamic instructions,
-;; 18.4% of the benchmark, before any cross-boundary hoisting the barrier
-;; blocks.
+;; refuse it. The shape is a hashmap probe like gvn_table's `gvn-facts-slot`:
+;; call-free, one linear-probe loop, referenced from several sites in several
+;; callers, where keeping the boundary also blocks any cross-boundary hoisting.
 ;;
 ;; Admission asks, in cost order:
 ;;
 ;;   1. the census knows the callee -- at least one reference.
 ;;
-;;      THIS CLAUSE USED TO READ `> opt-inline-dup-max-refcount`: three
-;;      references and up, so that absorption (one reference) and duplication
-;;      (two) kept the class to themselves and this band began past them. That
-;;      was not taste, it was measured. Widening the band to single- and
-;;      two-reference callees absorbed the 53-88 instruction loop leaves into
-;;      their loop callers -- `it-slice-eq?` and `it-hash-words` into
-;;      `it-intern-slice`, the peephole scanner leaves, `qs-checksum` into
-;;      `main` -- and regressed intern_table +22%, peephole_lines +14%,
-;;      opt_quicksort +6% and cfg_domloops +2%. The mechanism the autopsy named
-;;      was CALLER ALLOCATION CHURN: the imported loop brings its own working
-;;      set into a caller loop that is already allocating tightly, and what the
-;;      copy costs in spills exceeds the boundary it retires.
-;;
-;;      That mechanism has since been repaired by work with no connection to
-;;      this gate, which is why the ceiling is gone:
-;;
-;;        - LOOP-REGION RESCUE AND SEGMENT-PRECISE INTERVALS (#6485) attack the
-;;          named cost directly: an interval that used to hold a register
-;;          across a whole loop region is now described by the segments it is
-;;          really live in, so a second working set inside a caller loop no
-;;          longer prices as if it were live throughout;
-;;        - SINGLE-USE LOAD SINKING and DOMINATING-LOAD SUBSTITUTION shorten the
-;;          ranges an imported body opens in the first place, which is the same
-;;          pressure measured from the other end;
-;;        - GUARD-FACT IMPLICATION (#6480) and CHECK-DOMAIN FUSION (#6485)
-;;          retire the dominated checks a copied loop lands among, and COMPARE
-;;          DUPLICATION with FLAGS-REUSE branch emission keeps the survivors
-;;          folded into their branches instead of materialising booleans -- the
-;;          de-fusion that used to make an imported guard cost more than it
-;;          reads;
-;;        - EXIT-JOIN PHI-ESCAPE VERSIONING (6264441d6) lets the versioner keep
-;;          an imported loop's checks out of the loop body rather than giving
-;;          up on the escape.
-;;
-;;      Re-measured on this tree, not one of the four historical regressions
-;;      reproduces. All 22 rows are non-regressing and five improve:
-;;      liveness_scan -1,363,343 (-0.244%), peephole_lines -51,197,
-;;      hashmap_grow -647, opt_crc32 -10, opt_quicksort -10; the other 17 rows
-;;      are byte-identical. The named historical callees are NOT what moves:
-;;      intern_table's assembly is unchanged to the byte, and neither
-;;      `qs-checksum` nor the peephole scanner leaves appear in the diff. The
-;;      bands below still claim those first, and this band only ever sees the
-;;      single- and two-reference sites those bands REFUSE, which is why the
-;;      newly BAND-admitted population is four callees across the whole corpus:
-;;      `ln-set-count` (liveness_scan), `get-value-or` (hashmap_grow),
-;;      `pl-owners-find-reg` (peephole_lines) and stdlib's `>int` (crc32,
-;;      quicksort, peephole). Compiler-wide a self-compile retires 62 more call
-;;      instructions and absorbs 74 more callees outright.
+;;      Single- and two-reference callees are admitted here too, not left to
+;;      absorption and duplication. The risk of absorbing a loop leaf into a
+;;      loop caller is CALLER ALLOCATION CHURN: the imported loop brings its
+;;      own working set into a caller loop that is already allocating tightly.
+;;      Segment-precise intervals, load sinking and substitution, check
+;;      fusion with flags-reuse branch emission, and exit-join phi-escape
+;;      versioning shorten and retire what such an import keeps live, and the
+;;      bands below still claim their own shapes first: this band only sees
+;;      the single- and two-reference sites those bands REFUSE.
 ;;
 ;;      `>= 1` rather than dropping the clause outright: a zero from the census
 ;;      means it has no entry for the callee at all (no slot in the function
@@ -110788,94 +110024,71 @@
 ;;      is a widening nothing has measured, so the clause keeps the floor it can
 ;;      justify -- the same floor the measured tier below already asks for
 ;;      (opt-inline-checked-ok?'s own `>= refs 1`). opt-inline-dup-max-refcount
-;;      itself is untouched and still classifies absorption against duplication
-;;      for the census, which is the only other thing that reads it.
+;;      is not read here; it classifies absorption against duplication for the
+;;      census.
 ;;
-;;      One interaction is worth recording because it is where the corpus win
-;;      comes from. The measured tier is asked only about sites NO band takes,
-;;      so every site this clause newly admits leaves that tier's candidate
-;;      pool -- and the tier is budgeted in VERDICTS. On liveness_scan the base
-;;      tree spent liveness's verdict pricing `ln-set-count` and rejected it;
-;;      with `ln-set-count` band-admitted, the freed verdict reaches
-;;      `ln-fold-live-in`, which is accepted at both its sites. The row's
-;;      -0.244% is that reallocation, not the newly admitted body itself;
+;;      The measured tier is asked only about sites NO band takes, so every
+;;      site this clause admits leaves that tier's candidate pool -- and the
+;;      tier is budgeted in VERDICTS, so a freed verdict reaches another site;
 ;;   2. the body is not address-taken;
 ;;   3. the caller does not balloon: the copy spends the gate's OWN per-caller
 ;;      block fuel (opt-inline-hot-loop-leaf-block-fuel), and the heavy gate
 ;;      is asked about total caller growth. The shared block fuel is
 ;;      deliberately NOT spent: it is what the caller's banked single-reference
-;;      absorptions draw on, and spending it evicted pl-globl-line?'s
-;;      absorption out of pl-run-chunk when pl-line-end's copy landed first,
-;;      +8.4% on peephole_lines -- an import must never evict a banked inline;
+;;      absorptions draw on, and an import that landed first would evict one
+;;      of them -- an import must never evict a banked inline;
 ;;   4. the body is call-free -- the pricing clause documented at
 ;;      opt-inline-blocks-call-free?. This band copies the biggest bodies of
 ;;      any, into loop sites, so the costs that clause covers land where they
-;;      cost most. It is also what separates the admitted leaf from the
-;;      historical wide-gate population: ln-live-out-into!, ln-fill-tokens,
-;;      ln-count-tokens and byte-buf-copy-slots-range-into all carry calls;
+;;      cost most;
 ;;   5. the retired boundary is repaid AND the import does not tax a caller
-;;      loop's allocation. Measured, those are not the same thing: an in-loop
-;;      site repays per iteration, but a body this size brings its own working
-;;      set into the caller's loop -- pl-line-end (55 instructions, 20 blocks)
-;;      copied into pl-run-chunk's per-line loop (a 34-block caller) nested the
-;;      line scan inside it and churned the loop's allocation, +8.4% on
-;;      peephole_lines. So the site rule has three tiers: inside the legacy
-;;      32/6 band (whose bodies add no second working set, the same shapes the
-;;      duplicating gate copies at two references) an in-loop site admits;
-;;      above it, an in-loop site admits only into a caller small enough that
-;;      the imported loop effectively replaces the caller's body -- the
-;;      measured pair is gvn-facts-grow, 13 blocks, whose reinsert loop takes
-;;      the probe and wins ~35M, against pl-run-chunk, 34, above; and anywhere
-;;      else only a caller with no loop of its own admits, where the imported
-;;      loop becomes the caller's only one. gvn-facts-slot's five
-;;      straight-line sites are the measured win for the loop-free tier;
+;;      loop's allocation. Those are not the same thing: an in-loop site
+;;      repays per iteration, but a body this size brings its own working set
+;;      into the caller's loop -- a line scan copied into a per-line loop
+;;      nests inside it and churns the loop's allocation. So the site rule has
+;;      three tiers: inside the legacy 32/6 band (whose bodies add no second
+;;      working set, the same shapes the duplicating gate copies at two
+;;      references) an in-loop site admits; above it, an in-loop site admits
+;;      only into a caller small enough that the imported loop effectively
+;;      replaces the caller's body (opt-inline-hot-loop-leaf-max-caller-blocks);
+;;      and anywhere else only a caller with no loop of its own admits, where
+;;      the imported loop becomes the caller's only one;
 ;;   6. the cascade clause, unchanged: an import must not hand a bounds-free
 ;;      single-reference caller its first bounds check;
 ;;   7. the body is genuinely cyclic: acyclic callees belong to the gates
 ;;      above, and the forward-edge scan is the same one they run.
 ;;
-;; The big tier's band is set from the measured leaf and the next shapes above
-;; it. 120 and 32 take `gvn-facts-slot` (114 instructions in 29 blocks); the
-;; shapes just refused are `gvn-scan-ints` (148 in 46, a switch-per-byte
-;; scanner whose body is a different working set from its caller's), stdlib
-;; `int->string-negative-digit-count` (92 in 37, over on blocks alone), and
-;; `ln-live-out-into!` (138, the historical wide-gate size class). A callee
-;; copied into some
-;; of its sites keeps its own body and stays reachable from the rest: the
-;; census is built before the pass and only read during it, so no absorption
-;; bookkeeping is needed and none is claimed.
+;; The big tier's band takes the probe-loop leaf and stops below the next
+;; shapes up, such as a switch-per-byte scanner (`gvn-scan-ints`) whose body is
+;; a different working set from its caller's. A callee copied into some of its
+;; sites keeps its own body and stays reachable from the rest: the census is
+;; built before the pass and only read during it, so no absorption bookkeeping
+;; is needed and none is claimed.
 (define (opt-inline-hot-loop-leaf-max-body) : i64
   120)
 
 (define (opt-inline-hot-loop-leaf-max-blocks) : i64
   32)
 
-;; Largest caller that may take a big-tier import at an in-loop site. Set from
-;; the measured pair: gvn-facts-grow (13 blocks, the whole caller is the loops
-;; the import joins) wins, pl-run-chunk (34 blocks, the import joins a working
-;; set an order larger) loses. 16 sits above the winner and below the loser.
+;; Largest caller that may take a big-tier import at an in-loop site. In a
+;; caller this small the loops the import joins are the whole caller; in a
+;; larger one (`pl-run-chunk`'s per-line loop taking `pl-line-end`) the import
+;; joins a working set an order larger, and the copy inside the loop costs more
+;; than the boundary it retires.
 ;;
-;; Re-measured at 64 on top of the allocator's call-hole live-range splitting,
-;; which was expected to retire the pl-run-chunk failure: it does not, and the
-;; loser reproduces to the same shape and nearly the same size. peephole_lines
-;; 602,719,795 -> 649,469,685, +7.76%, every other row byte-identical, and the
-;; whole delta is one import -- `pl-line-end` (20 blocks) copied into
-;; `pl-run-chunk`, 44 blocks to 55. Callgrind splits it exactly: pl_run_chunk
-;; 22.5M -> 106.0M while pl_line_end drops 91.8M -> 55.1M, so the copy inside
-;; the per-line loop executes 61.0M more instructions than the 36.7M of
-;; boundary it retires. Call-hole splitting cannot reach this: the import
-;; REMOVES the call, so there is no call hole left to split, and the caller's
-;; loop-carried values are live across straight-line code instead. 16 stays.
+;; The allocator's call-hole live-range splitting does not change this: the
+;; import REMOVES the call, so there is no call hole left to split, and the
+;; caller's loop-carried values are live across straight-line code instead.
 (define (opt-inline-hot-loop-leaf-max-caller-blocks) : i64
   16)
 
 ;; The per-caller import budget, spent from the gate's own accumulator
 ;; (opt-inline-caller-hot-loop-blocks), not from the shared block fuel: see
-;; that variable's comment for the pl-run-chunk eviction it exists to prevent.
+;; that variable's comment for the eviction it exists to prevent.
 ;; 32 blocks is one copy of the largest admitted shape; a caller holding two
-;; sites of the same leaf takes the first and keeps the second's call. 64 was
-;; measured for root-of-var's second probe copy and loses +0.17% on gvn_table:
-;; the second copy's allocation churn exceeds a cold site's boundary saving.
+;; sites of the same leaf takes the first and keeps the second's call. A budget
+;; for a second probe copy loses: the second copy's allocation churn exceeds a
+;; cold site's boundary saving.
 (define (opt-inline-hot-loop-leaf-block-fuel) : i64
   32)
 
@@ -110885,53 +110098,23 @@
 ;; than once per invocation. The natural-loop set is read off the same lazy
 ;; caller facts the site clause forces, so a candidate only pays for them once.
 ;;
-;; INL-7. The natural-loop set alone did not answer that question, because the
-;; inliner ran BEFORE `tailrec` (opt-tailrec-function, then the first pass of
-;; the per-function pipeline; INL-11 now runs it ahead of the inliner). That
-;; pass rewrites a SELF TAIL-CALL
-;; into a back edge to the entry block. A self-tail-recursive caller therefore
-;; presents to this band with an empty natural-loop set and leaves the pipeline
-;; with a loop around its whole body -- and an import admitted here on the
-;; strength of the empty set lands INSIDE that loop, which is the shape clause
-;; 5's middle tier refuses above sixteen caller blocks.
+;; INL-7. The natural-loop set alone does not answer that question: a caller
+;; that calls itself is a loop too. `tailrec` (opt-tailrec-function, which
+;; INL-11 runs ahead of the inliner) rewrites a SELF TAIL-CALL into a back edge
+;; to the entry block, and an import admitted into such a caller lands INSIDE
+;; that loop, which is the shape clause 5's middle tier refuses above sixteen
+;; caller blocks.
 ;;
 ;; A self-call that is NOT in tail position is refused by the same clause and
 ;; for the neighbouring reason, which the recursive-site tier states in its own
 ;; clause 2: a recursive caller re-enters its frame at every node of the
 ;; recursion, so an import that costs it a register costs it that once per node.
-;; Either way a caller that calls itself is a loop -- one this pipeline is about
-;; to build, or one the machine runs on the stack -- and the tier's premise is
-;; false for it. So the fact this asks is the memoized self-call scan
+;; Either way a caller that calls itself is a loop -- one this pipeline builds,
+;; or one the machine runs on the stack -- and the tier's premise is false for
+;; it. So the fact this asks is the memoized self-call scan
 ;; (opt-inline-caller-recursive?), which the recursive-site tier already
 ;; forces on this population and which is asked LAST, after the empty-loop-set
 ;; test that costs nothing extra.
-;;
-;; MEASURED on this tree (base = 6793511c, `--benchmarks-only`, 23 rows + the 5
-;; heavy rows). sccp_lattice 711,646,330 -> 709,300,106 (-2,346,224, -0.330%),
-;; regalloc_greedy -138,852 (-0.019%), and every other row byte-identical.
-;;
-;; The sccp_lattice loser this recovers is one import. `sccp-rewrite-rows` is
-;; the tail-recursive per-instruction rewrite driver -- no natural loop at
-;; inline time, 26 blocks -- and INL-6's multiblock `Store` admission made
-;; `sccp-rewrite-phi` (102 instructions, 26 blocks, one static reference, its
-;; own phi loop, a `(set! sccp-subs ...)` that was refused by SHAPE before)
-;; eligible for this band at its single straight-line site. Callgrind splits the
-;; trade exactly: `sccp_rewrite_rows` 32,885,952 -> 39,790,784 while
-;; `sccp_rewrite_phi` retires 4,558,608, so the copy inside the tail-recursion's
-;; loop executes 2,346,224 instructions more than the boundary it removes, and
-;; the merged frame goes from five callee-saved pushes and ten frame references
-;; to eight and seventeen. regalloc_greedy's -138,852 is the same shape twice
-;; over: `rg-forbidden?` imported into `rg-first-free` and `rg-first-evictable`,
-;; both of them self-tail-recursive register scans.
-;;
-;; That import is what INL-6 recorded at opt-inline-body-instr-op-ok? as the
-;; measured tier's loop-into-loop keep. It is not: the keep of
-;; `sccp-state-mark-executable` into `sccp-mark-switch-targets`'s loop is a WIN
-;; of 174,272 on this tree, which refusing it measures directly
-;; (sccp_state_mark_executable -591,296 against sccp_mark_switch_targets
-;; +417,024). See opt-inline-checked-verdict for the two pricing terms that were
-;; built and measured for that keep before this clause was found, and why
-;; neither is the answer.
 (define (opt-inline-caller-loop-free?) : bool
   (begin
     (opt-inline-caller-facts-ensure!)
@@ -110987,15 +110170,10 @@
 
 ;; --- the measured-plan check: inline, re-optimize, measure, keep or revert ---
 ;;
-;; Every band above is PREDICTIVE. Each one names a shape, argues from a
-;; measured population why that shape's inline pays, and admits it. The
-;; campaign's history of inlining regressions is the history of that prediction
-;; being wrong in a way no cheap clause could see: the single-site band's first
-;; version asked the reference count and nothing else and cost liveness_scan
-;; +17.10%, because absorbing a body into a LOOP puts its working set inside
-;; that loop; the hot-loop-leaf band's reference clause exists because widening
-;; it to one- and two-reference callees cost intern_table +22%, peephole_lines
-;; +14% and opt_quicksort +6%.
+;; Every band above is PREDICTIVE. Each one names a shape, argues why that
+;; shape's inline pays, and admits it. The prediction can be wrong in a way no
+;; cheap clause can see: absorbing a body into a LOOP puts its working set
+;; inside that loop.
 ;;
 ;; This tier stops predicting. It admits one site per caller from the class the
 ;; bands refuse -- a multi-block, loop-bearing, call-free callee past every size
@@ -111006,27 +110184,20 @@
 ;; verifier-gated rollback idiom of opt-inline-function-with-spans-walk, keyed
 ;; on the measured plan instead of on structural verification.
 ;;
-;; WHAT THE PLAN PRICES, and why all three terms are needed. Re-measured on this
-;; tree, admitting this class predictively costs intern_table +16.3%
-;; (616,947,863 -> 717,296,251), lex_source +1.82% and opt_quicksort +1.99%, and
-;; pays liveness_scan -0.21%. The autopsy of the intern_table loss is NOT the
-;; allocation churn the older bands document: `it-intern-slice` keeps exactly
-;; six callee-saved pushes with `it-slice-eq?` absorbed and grows its frame by
-;; 16 bytes. What it loses is the MONOTONE-FLAG CONVERSION, and the rotation
+;; WHAT THE PLAN PRICES, and why all three terms are needed. Admitting this
+;; class predictively can lose without any allocation churn: absorbing
+;; `it-slice-eq?` into `it-intern-slice` keeps the caller's callee-saved pushes
+;; unchanged. What it loses is the MONOTONE-FLAG CONVERSION, and the rotation
 ;; that rides on it. `it-slice-eq?`'s `(and (< i len) ok)` loop is multi-exit.
 ;; Standalone, `flag_exit` turns the flag's clearing arm into a direct exit and
 ;; `rotate_ssa` then takes the single-exit remainder bottom-tested, so the
-;; callee runs seven instructions per byte and leaves on the FIRST mismatch.
-;; Absorbed into `it-intern-slice` neither pass fires: the merged body keeps
-;; the flag, tests it every trip, jumps back unconditionally, and scans the
-;; whole slice at ten. The multi-exit rotation added above does not rescue it
-;; either -- the merged body reads the loop's counter past BOTH exits with a
-;; NON-PHI instruction at the join where they meet, and that is the one shape
-;; `opt-rotate-ssa-apply`'s classified exit placement still refuses. Measured
-;; with that placement in the tree, the merged plan prices identically (after =
-;; 5232 either way) and this site still refuses. (An earlier reading of the same
-;; loss blamed lost BCE versioning; that is disproven -- the merged copy IS
-;; versioned.) A callee-saved/spill proxy alone reads that inline as free.
+;; callee leaves on the FIRST mismatch. Absorbed into `it-intern-slice` neither
+;; pass fires: the merged body keeps the flag, tests it every trip, jumps back
+;; unconditionally, and scans the whole slice. The multi-exit rotation does not
+;; rescue it either -- the merged body reads the loop's counter past BOTH exits
+;; with a NON-PHI instruction at the join where they meet, and that is the one
+;; shape `opt-rotate-ssa-apply`'s classified exit placement still refuses. A
+;; callee-saved/spill proxy alone reads that inline as free.
 ;;
 ;; So the plan is priced in three terms, each measured on the RE-OPTIMIZED body:
 ;;
@@ -111119,29 +110290,21 @@
 
 ;; ...and the site must be in a natural loop OF THE CALLER, not merely reached
 ;; through one. This is clause 3 of the loop tier and clause 5 of the hot-loop
-;; tier, kept here for the reason those bands keep it and re-confirmed by
-;; measurement: a once-per-call setup helper absorbed into a caller that HOLDS a
-;; hot loop pays that caller's whole allocation to retire a boundary worth one
-;; execution. The measured case is `cfg-build-csr` into `cfg-function` -- a
-;; seven-parameter builder at a straight-line site, admitted by the plan model
-;; with a modelled saving of 23 against a boundary of 13, and costing
-;; cfg_domloops +1.085%. The plan model cannot see it: the tax lands on the
-;; caller's LOOPS, whose register pressure the merged body raises, and the plan
-;; prices an allocation once per invocation.
+;; tier, kept here for the reason those bands keep it: a once-per-call setup
+;; helper absorbed into a caller that HOLDS a hot loop pays that caller's whole
+;; allocation to retire a boundary worth one execution. The plan model cannot
+;; see it: the tax lands on the caller's LOOPS, whose register pressure the
+;; merged body raises, and the plan prices an allocation once per invocation.
 ;;
 ;; The frequency floor above is subsumed by this clause on the caller's own
 ;; loops (a depth-1 site already weighs 8), and remains the clause that
 ;; disqualifies an in-loop site inside a caller nothing ever reaches.
 ;;
-;; WHY THE FLOOR NOW STANDS DOWN, AND EXACTLY WHERE. The autopsy above is an
-;; argument about EVIDENCE, not about depth: a depth-0 site was refused because
-;; nothing told the check how often the site ran or what the merged body would
-;; do to the caller. Both of those are now askable, and where all three answers
-;; are available the verdict -- a real re-plan -- is a better judge than a shape
-;; clause. `cfg-build-csr` into `cfg-function` is the proof: re-measured on this
-;; tree it is offered to the verdict and REFUSED BY COST, at a modelled saving
-;; of -47 against a boundary of 13, which the tier's `--trace-passes` line
-;; shows. The clause it used to die on is not what was protecting cfg_domloops.
+;; WHERE THE FLOOR STANDS DOWN. The argument above is about EVIDENCE, not about
+;; depth: a depth-0 site is refused when nothing tells the check how often the
+;; site runs or what the merged body would do to the caller. Where all three
+;; answers below are available the verdict -- a real re-plan -- is a better
+;; judge than a shape clause.
 ;;
 ;; The three answers, and why each is required:
 ;;
@@ -111154,20 +110317,18 @@
 ;;     exactly once against that. So the block has to be one the caller runs
 ;;     exactly once per invocation; a depth-0 site in a conditional arm runs
 ;;     some unknown fraction of the time, and crediting it a whole boundary is
-;;     the same mistake the frequency floor exists to stop. Measured: `grow!`
-;;     into `insert-ref!` at a cold `if_then` arm of hashmap_insert prices as a
-;;     free inline (saving 8 against a boundary of 7) and costs that row +13.6%.
-;;     The ENTRY block is the reading of that guarantee which costs nothing to
-;;     check, and three more block shapes carry it just as well -- a block that
+;;     the same mistake the frequency floor exists to stop. The ENTRY block is
+;;     the reading of that guarantee which costs nothing to check, and three
+;;     more block shapes carry it just as well -- a block that
 ;;     post-dominates the entry, an arm of the entry branch whose sibling
 ;;     leaves the function, and an arm of a DISPATCH whose spine does no work.
 ;;     The first two are admitted only where the caller's plan cost is quoted
 ;;     in the same currency as the boundary -- a loop-free caller, or a
 ;;     wrapper-shaped one; the third carries a clause on the CALLEE instead.
 ;;     See opt-inline-checked-position-class for all four readings,
-;;     opt-inline-checked-wrapper-shaped? for the two rows that clause costs
-;;     when it is left out, opt-inline-checked-depth0-caller-ok? for what the
-;;     count was standing in for, and opt-inline-checked-dispatch-callee-ok?
+;;     opt-inline-checked-wrapper-shaped? for why that clause is needed,
+;;     opt-inline-checked-depth0-caller-ok? for what the count was standing
+;;     in for, and opt-inline-checked-dispatch-callee-ok?
 ;;     for the dispatch reading's own.
 ;;   * THE CALLEE IS CALL-FREE. This tier deliberately carries no call-free
 ;;     clause (see opt-inline-checked-ok?) because at depth 1 and below the
@@ -111177,11 +110338,7 @@
 ;;     check ever compares -- and the one thing a depth-0 inline can win beyond
 ;;     it is the caller's LEAF FRAME, which an imported call makes impossible.
 ;;     So the clause the tier can afford to omit where the measurement has
-;;     resolution is required where it does not. Measured: `gvn-table-lookup`,
-;;     which carries a call to `gvn-key-matches?`, prices into `gvn-table-bind`
-;;     as an exactly free inline (after == banked + callee, saving 6 against a
-;;     boundary of 6 -- the model found nothing at all) and costs gvn_table
-;;     +0.294%.
+;;     resolution is required where it does not.
 ;;
 ;; Below any of the three the floor stands, and the site never reaches a
 ;; verdict.
@@ -111189,7 +110346,7 @@
 ;; A site admitted by this relaxation is a RELAXED candidate: it is ranked
 ;; behind every candidate that cleared the unrelaxed floor and it spends the
 ;; relaxations' own reserve, never the budget those candidates read. See
-;; opt-inline-checked-relaxed-program-budget for the regression that rule is.
+;; opt-inline-checked-relaxed-program-budget for that rule.
 (define (opt-inline-checked-min-site-depth) : i64
   1)
 
@@ -111216,11 +110373,11 @@
 ;; costs nothing to check, and it is not the only one. Two more block shapes
 ;; carry the same guarantee, and this family answers which of the three -- if
 ;; any -- a site's block is, so the floor above can be asked ENTRY-EQUIVALENT
-;; where it used to be asked ENTRY.
+;; rather than only ENTRY.
 ;;
 ;;   entry  the caller's entry block (opt-inline-checked-site-position = 0),
-;;          which is the reading the clause has always had. Its admission is
-;;          untouched by everything below, including the caller clause.
+;;          the plain reading. Its admission is untouched by everything
+;;          below, including the caller clause.
 ;;   post   the site's block POST-DOMINATES the entry. Delete it from the
 ;;          caller's CFG and run reachability from the entry to a fixpoint: it
 ;;          qualifies when no reachable block other than the deleted one leaves
@@ -111247,7 +110404,7 @@
 ;; test. All three refuse conservatively -- a caller wider than
 ;; opt-inline-checked-pos-max-blocks, or a fixpoint that has not settled inside
 ;; opt-inline-checked-pos-max-rounds (opt-inline-checked-dispatch-max-rounds for
-;; the spine), keeps the floor it has today.
+;; the spine), keeps the plain floor.
 (define (opt-inline-checked-pos-none) : i64
   0)
 
@@ -111783,7 +110940,7 @@
 ;; SW-SPINE. The reading's argument is that reaching an arm costs nothing the
 ;; caller did not already pay: every block between the entry and the arm is
 ;; call-free and only routes. Nothing in that argument turns on the spelling
-;; of the routing, and the two spellings the branch-only reading refused are
+;; of the routing, and the two spellings a branch-only reading would refuse are
 ;; both what the front end emits for one `cond`. A `switch` is the selector
 ;; itself, which the `switch` pass makes of a chain of literal compares on one
 ;; value; a `jump` block is the phi feeder an `(or ...)` test lowers to --
@@ -111791,14 +110948,13 @@
 ;; `sccp-normalize-const` has both: its class test is `(or sint uint)` over a
 ;; loaded class, so the chain from the entry to the arm that calls
 ;; `sccp-normalize-int-to-i64` runs entry -> jump block -> phi merge -> branch
-;; -> branch -> arm, and the arm read `none` at the one point the tier looks,
-;; which is before the `switch` pass has folded the test. A jump block that
-;; does work of its own (stores, arithmetic) is walked through as well: the
-;; arm below it still runs at most once per invocation, which is the only
-;; property the reading asserts, and the verdict prices what the path costs.
-;; A block that leaves the function -- a return or a tail call -- is where
-;; the walk stops, and that block is the arm. Measured on this tree: see the
-;; log entry SW-SPINE.
+;; -> branch -> arm, and a branch-only reading sees `none` at the one point the
+;; tier looks, which is before the `switch` pass has folded the test. A jump
+;; block that does work of its own (stores, arithmetic) is walked through as
+;; well: the arm below it still runs at most once per invocation, which is the
+;; only property the reading asserts, and the verdict prices what the path
+;; costs. A block that leaves the function -- a return or a tail call -- is
+;; where the walk stops, and that block is the arm.
 (define (opt-inline-checked-spine-instrs?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
   (and
@@ -111952,8 +111108,8 @@
           any?))]))
 
 ;; How many ARMS the dispatch the last question walked has: marked blocks that
-;; are not spine blocks. Published for the census only -- see the arm-count
-;; clause the corpus refused at opt-inline-checked-dispatch-callee-ok?.
+;; are not spine blocks. Published for the census only -- see why an arm-count
+;; clause does not ship at opt-inline-checked-dispatch-callee-ok?.
 (define opt-inline-checked-dispatch-arms : i64
   0)
 
@@ -112037,44 +111193,22 @@
 ;; function whose callee-saved set, frame size and spill weights are chosen once
 ;; for the body, and that is paid at EVERY entry while the arm runs on a
 ;; fraction of them. It is the sole-call band's clause 1 -- "the callee's body
-;; is ACYCLIC", measured there at +89.2M on cfg_domloops for nine helpers --
-;; stated at a dispatch arm, where the frequency argument is sharper still
-;; because the arm is not even on every path.
+;; is ACYCLIC" -- stated at a dispatch arm, where the frequency argument is
+;; sharper still because the arm is not even on every path.
 ;;
-;; MEASURED, on this tree, at the dispatch reading with no callee clause at all:
+;; Without the clause, the losers are all loop-bearing bodies at arms: a table
+;; clear whose count and free-list helpers were absorbed into it before it is
+;; offered, so it reaches this tier call-free and LOOP-BEARING and prices as a
+;; free inline; a rehash loop at a grow guard whose sibling arm does the insert
+;; (the `grow!`-into-`insert-ref!` shape the depth floor records, reached
+;; through the dispatch reading); a byte-copy loop at an arm. What the clause
+;; gives up is a handful of small table scans with a loop in them.
 ;;
-;;   * `gvn-table-clear` into `gvn-dispatch`'s `if_then.8`. Its two helpers
-;;     (`gvn-table-len`'s count loop and `gvn-node-release`'s free-list loop)
-;;     are absorbed into it before it is offered, so it reaches this tier
-;;     call-free at 70 instructions and LOOP-BEARING. It prices as a free
-;;     inline -- a modelled saving of 6 against a boundary of 6, `after` 259
-;;     against `banked` 44 -- and costs gvn_table +8,031,268;
-;;   * `gvn-facts-grow` into `gvn-facts-insert`'s grow guard: a rehash loop at
-;;     a two-arm site whose sibling does the insert, priced at a saving of 12
-;;     against a boundary of 11 and kept. With the entry-site keep of the grown
-;;     `gvn-facts-insert` it exposes, and a second `gvn-table-clear` at
-;;     `gvn-step-call`'s two-arm site, that is a further gvn_table +8,091,622.
-;;     It is `grow!` into `insert-ref!` -- the hashmap_insert +13.6% the depth
-;;     floor records -- reached through the dispatch reading instead of the arm
-;;     one;
-;;   * `stdlib.text_buf/copy-chunk-into` into `fill-rev-into`: a byte-copy loop
-;;     at an arm, asm_render +41,790.
-;;
-;; With the clause all of them go away and the row that pays for it is
-;; peephole_lines, which gives up -199,122: six keeps, `pl-owners-empty` at
-;; four arms of `pl-clobber-owners`' seven-arm dispatch plus
-;; `pl-owners-clear-slot` and `pl-ranges-eq?`, every one of them a table scan
-;; with a loop in it. Net on the corpus: gvn_table -1,499,050 instead of
-;; +14,623,840, and asm_render and peephole_lines byte-identical.
-;;
-;; AN ARM-COUNT CLAUSE WAS MEASURED AND DOES NOT SHIP. "A dispatch has at least
-;; three arms, and a two-arm split is a GUARD the reading above already
-;; governs" is a true statement and it refuses `gvn-facts-grow` on its own
-;; (two arms) -- but with the acyclic clause in place all 23 rows and all 5
-;; heavy rows are byte identical with it and without it, because every two-arm
-;; loser the corpus offers is loop-bearing anyway. A clause the corpus does not
-;; choose is not a clause; the arm count is published for the census
-;; (`arms=` on the trace line) and read by nothing.
+;; AN ARM-COUNT CLAUSE DOES NOT SHIP. "A dispatch has at least three arms, and a
+;; two-arm split is a GUARD the reading above already governs" is a true
+;; statement, but with the acyclic clause in place it decides nothing, because
+;; every two-arm loser is loop-bearing anyway. The arm count is published for
+;; the census (`arms=` on the trace line) and read by nothing.
 (define (opt-inline-checked-dispatch-callee-ok?
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (opt-inline-tiny-predicate-acyclic-reclaiming? blocks))
@@ -112091,19 +111225,14 @@
 ;; for: its own, plus the sibling arm's tail call when the two arms are what
 ;; made the site entry-equivalent.
 ;;
-;; Both losers are measured on this tree, and each is why one half of the
-;; clause exists:
+;; Each half of the clause has a loser it exists for:
 ;;
-;;   * WITHOUT IT, POST admits `cfg-stamp-euler` into `cfg-function` at
-;;     `@if_merge.11` -- a merge block that does post-dominate the entry, inside
-;;     a caller that is a whole pass -- and the verdict keeps it at a modelled
-;;     saving of 12 against a boundary of 14. cfg_domloops pays +12,904,068
-;;     (+2.40%), which is exactly the blanket depth-0 relaxation INL-1 recorded
-;;     and refused.
-;;   * WITHOUT IT, ARM admits `ls-number-float?` into `ls-tokenize` at
-;;     `@if_then.60`, whose own copy then displaces the depth-1 keep
-;;     `ls-float-tail?` into `ls-tokenize` (saving 88 against a boundary of 72):
-;;     lex_source +568,664, and the self-compile loses six keeps (44 -> 38) to
+;;   * WITHOUT IT, POST admits a helper at a merge block that does
+;;     post-dominate the entry, inside a caller that is a whole pass, and the
+;;     verdict keeps it -- which is exactly the blanket depth-0 relaxation
+;;     INL-1 refused.
+;;   * WITHOUT IT, ARM admits a site whose own copy then displaces a better
+;;     depth-1 keep in the caller's caller, and the self-compile loses keeps to
 ;;     the same budget race.
 ;;
 ;; With the clause both go away and every wrapper-shaped case stays.
@@ -112138,46 +111267,32 @@
 ;; six-plus-arity is compared against a number that one register-allocation
 ;; decision inside the nest moves by an order of magnitude more; and what the
 ;; merged body actually costs is the pressure it adds to that nest, which the
-;; plan prices once. This file already carries that autopsy in full at
-;; opt-inline-checked-min-site-depth -- `cfg-build-csr` into `cfg-function`,
-;; admitted at a modelled saving of 23 against a boundary of 13 and costing
-;; cfg_domloops +1.085%, where "the tax lands on the caller's LOOPS". The post
-;; loser the call count was measured on is the same shape: `cfg-stamp-euler`
-;; into `cfg-function`, and `cfg-function` is a pass built out of `while`s. Read
-;; the loop and it is refused on its own terms rather than by proxy -- measured,
-;; cfg_domloops is byte identical with the count's reading replaced by this one.
+;; plan prices once -- the same mechanism opt-inline-checked-min-site-depth
+;; records for the site-depth floor, where the tax lands on the caller's LOOPS.
+;; Read the loop and a post site in such a caller is refused on its own terms
+;; rather than by proxy.
 ;;
 ;; The proxy meanwhile refuses a class it never meant to: the STRAIGHT-LINE
-;; caller that happens to hold more than one call. callgraph_scc's hash-map
-;; chain is the case, and the census (`--trace-passes`) names the clause:
+;; caller that happens to hold more than one call. A hash-map insert is the
+;; case: its probe call sits in the merge below the grow guard, which
+;; post-dominates the entry; the caller carries several calls, so `allowed` is
+;; one, `pos` reads `none` and the site dies on the depth floor. Reading the
+;; loop instead takes it.
 ;;
-;;   inline-checked|cg-map-probe|caller=cg-map-insert-ref!|block=if_merge.2
-;;     |depth=0|frequency=20544|pos=none|...|mode=scan|site=call|gen=1|site-depth
-;;
-;; The block is the merge below the grow guard, which post-dominates the entry;
-;; the caller carries eight calls, so `allowed` is one, `pos` reads `none` and
-;; the site dies on the depth floor. It is the one call C's `cg_map_insert_ref`
-;; has inlined and TypeLisp had not -- 85.4M plus 57.5M Ir against C's 66.1M for
-;; the pair -- and reading the loop instead takes it (a modelled saving of 15
-;; against a boundary of 8, margin clear) for callgraph_scc -26,396,594 (-4.04%)
-;; with every other gated row byte identical.
-;;
-;; THE ARM READING KEEPS THE COUNT, and that asymmetry is the measurement.
+;; THE ARM READING KEEPS THE COUNT, and that asymmetry is deliberate.
 ;; A post block runs on EVERY invocation; an arm block runs on some unknown
 ;; fraction of them, and the reading admits it anyway because the sibling arm
 ;; does no work, so the pair together is what the caller pays once. That
 ;; argument is about the SITE's share of the caller, not about the currency the
 ;; caller is priced in -- so what makes it sound is exactly the clause above:
 ;; the caller may hold no call this site does not account for. Standing the
-;; count down for an arm site in a loop-free caller costs lex_source +568,664
-;; (+0.120%), and by the mechanism the count was measured on: `ls-number-float?`
-;; is loop-free and carries four calls, its two arm sites are then kept (savings
-;; 7 and 15 against boundaries of 8 and 9), the caller it grows is no longer
-;; small enough for the band that used to absorb it into `ls-tokenize`, and the
-;; depth-1 keep that absorption exposed -- `ls-float-tail?` at a modelled saving
-;; of 88 against a boundary of 72 -- is never offered. So the widening is the
-;; post reading's alone; every caller the count admits today is still admitted
-;; at either reading, so this adds sites and moves none.
+;; count down for an arm site in a loop-free caller is a loss by the mechanism
+;; the count stands for: a loop-free caller carrying several calls keeps its
+;; arm sites, grows past the size at which a band would absorb it into its own
+;; caller, and the deeper keep that absorption would have exposed is never
+;; offered. So the widening is the post reading's alone; every caller the count
+;; admits is still admitted at either reading, so this adds sites and moves
+;; none.
 (define (opt-inline-checked-depth0-caller-ok?
   [blocks : ir.CompilerIrBlockList]
   [pos : i64]) : bool
@@ -112302,11 +111417,11 @@
 ;; rescan generation -- reaches the same two-arm branch only after the kept
 ;; bodies, so the branch post-dominates the entry without being it. The
 ;; reading is the same two statements: the branch runs once per invocation
-;; (it post-dominates the entry) and the sibling arm does no work. sccp's
-;; `sccp-state-bind` is the measurement: after `sccp-env-lookup-in` and
-;; `sccp-join` are kept in generation one, `sccp-env-set-in!` sits in the
-;; else arm of the value-equality branch below their bodies -- the one call
-;; left in the caller -- and read `pos=none|rawpos=none` in generation two.
+;; (it post-dominates the entry) and the sibling arm does no work. In
+;; `sccp-state-bind`, for example, once two earlier sites are kept in
+;; generation one, the one call left in the caller sits in the else arm of the
+;; value-equality branch below their bodies, where the entry reading cannot
+;; see it in generation two.
 (define (opt-inline-checked-post-arm-site?
   [blocks : ir.CompilerIrBlockList]
   [entry-label : i64]
@@ -112389,28 +111504,18 @@
 ;; caller, three per-function optimizer runs and three allocation plans -- and a
 ;; cap that refunded rejections would leave the work unbounded on a program with
 ;; many candidates. Forty-eight verdicts is the whole tier's budget for one
-;; compilation. No benchmark in the corpus spends them all; a self-compile does,
-;; and that is the point.
-;;
-;; MEASURED at 24, 48 and 96, and the corpus does not choose between them: all
-;; 28 gated rows are byte-identical at all three, because the only program the
-;; budget binds on is ssa_construct and the two extra verdicts it buys there
-;; both revert. The compiler itself chooses. A self-compile spends every core
-;; verdict it is given -- 24 of 24 at the old bound, 48 of 48 at this one, 66
-;; and 132 verdicts in all once the relaxations' reserve scales with it -- and
-;; the compiler that 48 produces runs a self-compile in 156,148,771 fewer
-;; instructions, -0.174%, for +1.53% opt2 self-compile Ir and +1.35% opt2
-;; self-compile wall. The tier's own cost is linear in the verdict, about 64M
-;; Ir apiece at every budget measured, which is what makes 96 refusable: it
-;; spends 96 of 96 (264 verdicts) for only half as much again (-0.270%) and
-;; pays +4.64% opt2 Ir and +6.6% wall for it.
+;; compilation. Small programs rarely spend them all; a self-compile does, and
+;; that is the point: the compiler itself is what the budget is set by. The
+;; tier's own cost is linear in the verdict, so a larger budget buys a slightly
+;; faster compiler for a proportionally slower opt2 self-compile, and a smaller
+;; one gives up keeps the compiler would have made.
 (define (opt-inline-checked-program-budget) : i64
   48)
 
 ;; ...and per CALLER, because the sites are priced in sequence and one caller
 ;; would otherwise be able to drain the program's whole budget: a caller holding
 ;; nine candidates would spend a verdict apiece and leave every later caller
-;; unmeasured. Four is what the measured fusion chains need -- an interner
+;; unmeasured. Four is what the fusion chains need -- an interner
 ;; absorbing a comparison leaf and a hash leaf, each reachable through one
 ;; helper -- with a round to spare.
 (define (opt-inline-checked-max-caller-verdicts) : i64
@@ -112426,17 +111531,10 @@
 ;; right the moment a clause is RELAXED for a candidate, because a relaxation
 ;; admits the MARGINAL case by construction, and a marginal candidate that
 ;; reverts still spends a verdict that a candidate the unrelaxed tier would have
-;; KEPT was going to get.
-;;
-;; That is not a theoretical cost; it is a measured one. ssa_construct offers
-;; this tier exactly twenty-four candidates without the relaxations, which was
-;; exactly the program budget this was measured at, so the entry-site and
-;; second-body admissions -- five extra candidates in the first half of the
-;; program, every one of them a revert -- pushed five candidates off the end of
-;; it, and two of those were keeps: `ssa-instr-dst` into `ssa-verify-defs` (a
-;; modelled saving of 960 against a boundary of 512) and `ssa-instr-next` into
-;; `ssa-verify` (1008 against 512). Both callees then stayed out of line at
-;; every site the bands also refuse, and the row paid +6,495,048.
+;; KEPT was going to get: relaxed candidates early in the walk, every one a
+;; revert, push candidates off the end of the budget, and some of those are
+;; keeps whose callees then stay out of line at every site the bands also
+;; refuse.
 ;;
 ;; So the relaxations get their OWN reserve, which is the construction every
 ;; band in this file already uses for its own imports: a hot-loop, chain,
@@ -112450,19 +111548,14 @@
 ;; adding a relaxation may only ADD verdicts, never move them.
 ;;
 ;; ONE PER BODY THE LOCK ALLOWS BEYOND THE FIRST. A relaxed candidate is a
-;; caller's marginal chance rather than a chain of them, and every relaxed
-;; accept the corpus measured when the lock allowed exactly two bodies was one
-;; caller's one site: `it-map-insert-from` into `it-intern-slice` (intern_table
-;; -719,598), `pl-owners-empty` into `pl-run-chunk` (peephole_lines -9,528),
-;; `ls-digit?` into `ls-hex-digit?` and `ls-colon-symbol-head?` into
-;; `ls-colon-token-end` (lex_source -641,520). The callers that wanted more than
-;; one wanted them for reverts: `ssa-def-blocks` and `ls-tokenize` each offered
-;; three and kept none.
+;; caller's marginal chance rather than a chain of them: the relaxed accepts
+;; that pay are one caller's one site, and the callers that offer several
+;; relaxed candidates offer them for reverts.
 ;;
 ;; The allowance is the lock's own bound less the one body that needs no
-;; relaxation, so it is not a second thing to tune: at the two-body lock it is
-;; the one chance those measurements were taken under, and it widens only
-;; because the lock does (opt-inline-checked-max-callees).
+;; relaxation, so it is not a second thing to tune: at a two-body lock it is
+;; one chance per caller, and it widens only because the lock does
+;; (opt-inline-checked-max-callees).
 (define (opt-inline-checked-max-caller-relaxed-verdicts) : i64
   (- (opt-inline-checked-max-callees) 1))
 
@@ -112503,19 +111596,12 @@
 ;; saw, because the clone is built during the rewrite and the block walk does
 ;; not re-enter it. One generation therefore prices exactly one level of a
 ;; chain: a wrapper absorbed into its caller leaves the wrapper's own callee at
-;; a site nothing has offered a verdict on.
-;;
-;; That is measured, not theoretical. On callgraph_scc `cg-census-add-ref` is
-;; kept in `cg-census-blocks` at depth 2, and the copy exposes
-;; `cg-function-index-slot-id` and two `cg-census-bump-map` sites inside that
-;; caller -- 689,400 and 551,120 calls by callgrind's count -- with no candidate
-;; line for any of them in `--trace-passes`. clang's inliner iterates a caller
-;; bottom-up until it has no more profitable sites; this tier priced one
-;; generation.
+;; a site nothing has offered a verdict on. clang's inliner iterates a caller
+;; bottom-up until it has no more profitable sites.
 ;;
 ;; So after a caller's rounds end with at least one keep, the RESULTING function
 ;; is scanned once more and its candidates get rounds of their own. Everything
-;; else is unchanged and deliberately so: the program budget, the per-caller
+;; else is the same, and deliberately so: the program budget, the per-caller
 ;; verdict caps and the relaxations' reserve are not refunded between
 ;; generations, the callee lock counts distinct bodies across all of them, and
 ;; the block ceiling reads the growth every generation has already banked
@@ -112523,12 +111609,11 @@
 ;; what the first generation left, which is what keeps this a bounded amount of
 ;; extra compile time rather than a fixpoint.
 ;;
-;; TWO GENERATIONS -- one rescan. The ablation is recorded in the packet: at 1
-;; (no rescan) callgraph_scc keeps its second-level sites out of line; at 3 the
-;; corpus rows are identical to 2 and the only difference is compile time, since
-;; a third generation needs a caller that kept a site in a body that was itself
-;; kept in a body it kept -- and the per-caller verdict caps are spent long
-;; before that. The bound is stated here so the cost is one number.
+;; TWO GENERATIONS -- one rescan. Without a rescan, second-level sites stay out
+;; of line; a third generation changes only compile time, since it needs a
+;; caller that kept a site in a body that was itself kept in a body it kept --
+;; and the per-caller verdict caps are spent long before that. The bound is
+;; stated here so the cost is one number.
 (define (opt-inline-checked-max-generations) : i64
   2)
 
@@ -112547,17 +111632,12 @@
 ;; them still fit. Worth per unit of that allowance is the greedy a shared
 ;; ceiling makes correct.
 ;;
-;; Measured twice over. The interner this tier exists for holds three candidates
-;; in one routine that are worth exactly the same by the numerator alone (each
-;; an in-loop site of a six-parameter callee: 96 apiece), so the numerator alone
-;; leaves the order to the block walk -- which put a 35-block, 276-instruction
-;; grow routine first and the 59-instruction comparison leaf last, where 49 of
-;; the 64 blocks were spent and the leaf needed 16. And lex_source's tokenizer
-;; holds four, of which only the 56-instruction digit test repays: by the
-;; numerator alone it ranks last behind three larger scanners, and every one of
-;; those is refused -- under the one-site cap the tokenizer's whole chance was
-;; spent on the first of them. Ranking by worth per instruction copied puts the
-;; digit test first and takes it: lex_source -1.16%.
+;; By the numerator alone, candidates of equal worth -- in-loop sites of callees
+;; with the same arity -- are left in block-walk order, which can put a large
+;; grow routine first and spend the allowance before the small comparison leaf
+;; that repays is reached; and a small digit test that is the one site worth
+;; taking ranks behind larger scanners that are all refused. Ranking by worth
+;; per instruction copied puts the small leaf first and takes it.
 ;;
 ;; The scale keeps the ratio in integers with enough resolution that two sites
 ;; differing only slightly in body size still order.
@@ -112582,34 +111662,22 @@
 ;; got.
 ;;
 ;; EVERY CLAUSE IS TRACED, the tier's own state (disarmed, budget, target key)
-;; included. The reading this had -- those codes are not a property of the
-;; candidate, and on a target walk every site but one answers `not-target`, so a
-;; trace of them is a trace of the walk rather than of the tier -- is true of
-;; the LINE and false of the question the line exists to answer. A site that
-;; never reaches a verdict is refused by exactly one clause, and a census that
-;; prints only the clauses at or above the callee lock reports SILENCE for a
-;; refusal by any clause below it: the reader cannot tell a candidate the tier
-;; never considered from one a budget turned down. INL-8's three hot sites on
-;; callgraph_scc's hash-map chain were read as unpriced for exactly that reason.
-;;
-;; The volume the old reading was protecting against is not there on a
-;; benchmark: the whole checked census of callgraph_scc is 144 lines at the old
-;; reading and 219 at this one, of which 36 are `caller-taken`, 30 `not-target`,
-;; 9 `readmitted` and NONE `disarmed` -- the tier is armed for the whole of a
-;; level-2 whole-program walk, and a walk that never arms it never asks.
+;; included. Those codes are not a property of the candidate, and on a target
+;; walk every site but one answers `not-target` -- but a site that never
+;; reaches a verdict is refused by exactly one clause, and a census that prints
+;; only the clauses at or above the callee lock reports SILENCE for a refusal
+;; by any clause below it: the reader cannot tell a candidate the tier never
+;; considered from one a budget turned down.
 ;;
 ;; On a program that SPENDS the tier's budget the census is dominated by one
-;; clause, and that is the reading rather than a defect: an opt-2 self-compile
-;; goes from 1,259 lines to 50,659, of which 49,113 are `program-budget` --
-;; every candidate the walk passed after the forty-eighth verdict. That is the
-;; single most common refusal in a large program and the old census reported
-;; SILENCE for all of it, which is exactly the reading a budget question has to
-;; ask. Read a census by clause (`| sed 's/.*|//' | sort | uniq -c`) rather than
-;; by line.
+;; clause, `program-budget` -- every candidate the walk passed after the last
+;; verdict -- and that is the reading rather than a defect: it is the single
+;; most common refusal in a large program, and exactly the reading a budget
+;; question has to ask. Read a census by clause
+;; (`| sed 's/.*|//' | sort | uniq -c`) rather than by line.
 ;;
-;; The cost model is unchanged -- the string is still built inside the flag's
-;; guard, so a compile without `--trace-passes` pays one boolean test per
-;; candidate.
+;; The string is built inside the flag's guard, so a compile without
+;; `--trace-passes` pays one boolean test per candidate.
 (define (opt-inline-checked-clause-admitted) : i64
   0)
 
@@ -112759,8 +111827,7 @@
 ;; GENERATION that kept it), room for opt-inline-checked-max-caller-accepts
 ;; rows. That is the per-caller verdict cap plus the relaxations' per-caller
 ;; allowance, so it grows with the lock's bound N: four plus N - 1 rows, and the
-;; table is sized for the largest N the ablation measured (eight, so eleven
-;; rows).
+;; table is sized for N = 8 (opt-inline-checked-max-callees), so eleven rows.
 ;;
 ;; The generation column is what lets the rows mean two things at once. A row of
 ;; the CURRENT generation names a site of the function this generation's rounds
@@ -112841,7 +111908,7 @@
 
 ;; Did the verdict just published deliver the WHOLE modelled saving, or only the
 ;; half the accept window's floor demands? The window keeps a site anywhere in
-;; [boundary/2, 2*boundary]; an accept at the top of that range is one the model
+;; [boundary/2, 5*boundary/2]; an accept at the top of that range is one the model
 ;; and the measurement agree on outright, and an accept near its floor is one
 ;; that only just repaid. The verdict holds every body past the caller's first
 ;; to it, and a fixture reads it back through
@@ -112892,24 +111959,20 @@
 ;;
 ;;   * the CAP: a free inline of such a site saves the boundary AND the fold,
 ;;     so the window's upper bound is read against both
-;;     (opt-inline-checked-window-ok-at?). The measured case is
-;;     `cg-census-bump-map` into `cg-census-blocks`, whose second copy models
-;;     1,472 against a boundary of 576 (2.56x) with a fold of 448, and
-;;     `cg-map-insert-ref!` into the same caller at 2,049 (3.6x) with a fold
-;;     of 768; refusing them costs callgraph_scc +7.9M;
+;;     (opt-inline-checked-window-ok-at?), and a site whose fold is large
+;;     would otherwise be refused on the cap for the very saving it delivers;
 ;;   * the CEILING: a literal-argument site may grow its caller past the base
 ;;     ceiling (opt-inline-checked-max-blocks-for), and past it the verdict
 ;;     keeps only a site whose fold covers half the boundary
-;;     (`fold-carries?` in the verdict): sccp-rewritten-i64 into
-;;     sccp-rewrite-rows folds 16 against 72 and costs sccp_lattice +6.8M when
-;;     the ceiling alone stands down;
+;;     (`fold-carries?` in the verdict): with the ceiling alone standing down,
+;;     a site whose fold is small grows the caller for nothing;
 ;;   * a TAIL-ONLY body -- every exit a direct tail call, no `Return` -- is a
 ;;     candidate only at a literal-argument site (the tail-only clause): the
 ;;     splice converts each tail call into a call plus a continuation, so the
-;;     body retires only its own boundary and its worth is the fold. `cfg-
-;;     function` (no parameters at all) into `cfg-bench` costs cfg_domloops
-;;     +61.4M when the class is admitted unconditionally. The bands never take
-;;     the class: they do not price.
+;;     body retires only its own boundary and its worth is the fold. Admitted
+;;     unconditionally, a parameterless tail-only driver merged into its bench
+;;     loop is a large loss. The bands never take the class: they do not
+;;     price.
 ;;
 ;; The frontend materializes a literal argument as a temp (`t = 1`, then
 ;; `f(t, ...)`), so a var argument the caller defines exactly once by a `Mov`
@@ -113252,12 +112315,11 @@
 ;;   rawpos     the same question asked of the block's SHAPE alone, before the
 ;;              caller and callee clauses. `pos=none|rawpos=post` is a site
 ;;              whose CALLER the clause turned down; `pos=none|rawpos=none` is a
-;;              block that is not entry-equivalent under any reading. INL-8's
-;;              vocabulary said "read `pos` to see which" and `pos` could not
-;;              say: every refusal read `none`. That is how a census reads
-;;              `sccp-process-instr`'s six arms as call-count refusals when the
-;;              arm reading had never seen them at all -- only the FIRST arm of
-;;              a dispatch is a successor of the entry branch.
+;;              block that is not entry-equivalent under any reading. `pos`
+;;              alone cannot say which: every refusal reads `none`, and a
+;;              dispatch's later arms would read as call-count refusals when
+;;              the arm reading never saw them -- only the FIRST arm of a
+;;              dispatch is a successor of the entry branch.
 ;;   arms       the arm count of the dispatch, where the block is a dispatch
 ;;              arm; -1 elsewhere. Read for the census and by no clause.
 ;;   hot        the census's one-level hot reference count for the caller, which
@@ -113347,7 +112409,7 @@
 ;; window fell. `window` names the SIDE it fell on -- `in`, `floor` or `cap`,
 ;; opt-inline-checked-window-text -- because a `revert` with no side named is
 ;; two opposite statements about the model written the same way, and the census
-;; is unreadable without it: 46 of ssa_construct's 50 refusals are `cap`.
+;; is unreadable without it.
 ;; `margin` reports whether the whole modelled saving survived re-optimization
 ;; or only the half the window's floor demands -- the reading every body past
 ;; the caller's first must deliver in its own right, and the reason a
@@ -113699,18 +112761,15 @@
             0))
         (set! opt-inline-checked-scan-count (+ opt-inline-checked-scan-count 1))))))
 
-;; A BOUNDED NUMBER OF CALLEES PER CALLER, and it is a measured rule rather
-;; than a budget.
+;; A BOUNDED NUMBER OF CALLEES PER CALLER.
 ;;
-;; A caller's later sites were once restricted to the callee its first ACCEPT
-;; named, and are now restricted to a bounded number of distinct bodies.
-;; The sequence's wins across the corpus are all one body landing at the several
-;; sites that share it -- a map lookup at two probe sites of one caller
-;; (hashmap_get -11.40%), a line copy at two sites of a chunk runner -- and its
-;; losses are all a caller absorbing DIFFERENT bodies: a sort harness taking a
-;; fill loop and then a checksum loop (opt_quicksort +2.01%), an interner taking
-;; a map insert and then a hash (intern_table +1.60%). The mechanism is the one
-;; the site-depth clause already records: the plan prices an allocation once per
+;; A caller's later sites are restricted to a bounded number of distinct
+;; bodies. The sequence's wins are all one body landing at the several sites
+;; that share it -- a map lookup at two probe sites of one caller, a line copy
+;; at two sites of a chunk runner -- and its losses are all a caller absorbing
+;; DIFFERENT bodies: a sort harness taking a fill loop and then a checksum
+;; loop, an interner taking a map insert and then a hash. The mechanism is the
+;; one the site-depth clause already records: the plan prices an allocation once per
 ;; invocation and cannot see the tax a merged body lays on the caller's OTHER
 ;; loops. Two copies of one body make one demand on the caller's frame twice
 ;; over; two different bodies make two independent demands, and the second is
@@ -113718,44 +112777,35 @@
 ;;
 ;; A refused candidate does not claim the caller: only an accept does.
 ;;
-;; WHY THE LOCK IS NOW A BOUND AND NOT A MARGIN GATE. Both losses the rule was
-;; written for were measured before IT-1, IT-2, LP-1, R3S-1 and R4; re-measured
-;; on this tree the interner's own case has changed sign --
-;; `it-map-insert-from` as a SECOND body in `it-intern-slice` is worth
-;; intern_table -0.20%, where the recorded reading was +1.60%. What has not
-;; changed is the argument: another, different body is another independent
-;; demand on the caller's frame, and the plan prices that demand through an
-;; estimate.
+;; WHY A BOUND AND NOT A MARGIN GATE. Another, different body is another
+;; independent demand on the caller's frame, and the plan prices that demand
+;; through an estimate -- but whether a second body is a loss depends on that
+;; body, not on the caller having one already.
 ;;
 ;; The answer to an estimate that can be wrong is the reading the tier already
-;; has of exactly that. The accept window keeps a site anywhere between half its
-;; modelled saving and twice it; an accept at the window's floor repaid only the
-;; half the floor demands and is exactly the verdict the estimate's error
-;; decided. So EVERY BODY PAST THE FIRST IS HELD TO THE WHOLE MODELLED SAVING IN
-;; ITS OWN RIGHT (see opt-inline-checked-verdict), which is where that discipline
-;; decides something: it decides whether the body is KEPT. Measured on this tree
-;; it is what separates the interner's two second-body candidates:
-;; `it-map-insert-from` clears it and is kept; `it-hash-words` into `it-grow!`
-;; models 62 against a boundary of 72, clears the window's floor and not the
-;; clear margin, and reverts.
+;; has of exactly that. The accept window keeps a site whose modelled saving is
+;; anywhere between half the free-inline prediction and two and a half times
+;; it; an accept at the window's floor repaid only the half the floor demands
+;; and is exactly the verdict the estimate's error decided. So EVERY BODY PAST
+;; THE FIRST IS HELD TO THE WHOLE MODELLED SAVING IN ITS OWN RIGHT (see
+;; opt-inline-checked-verdict), which is where that discipline decides
+;; something: it decides whether the body is KEPT. A second body that clears it
+;; is kept; one that clears the window's floor and not the clear margin
+;; reverts.
 ;;
-;; What the lock itself used to add on top -- that a caller could not even PRICE
-;; another body unless its first accept came out clean -- prices nothing and
-;; refuses by proxy. Two of the corpus's hottest candidates die on it and on
-;; nothing else: `cg-census-add-ref` into `cg-census-blocks` (a depth-2 site at
-;; composite frequency 4,096, richness 166,818) is refused because
-;; `cg-census-add-address` -- the SAME caller's other accessor, ranked one place
-;; ahead of it and worth less -- was kept at saving 384 against a boundary of
-;; 448, and `cg-census-absorb-class` into `cg-program-fold` is refused because
-;; `cg-census-refcount` was kept at 40 against 56. A slim accept is a statement
-;; about the body that was priced, not about the next one.
+;; Gating further bodies on the first -- a caller could not even PRICE another
+;; body unless its first accept came out clean -- prices nothing and refuses by
+;; proxy: a hot accessor site would be refused because the SAME caller's other
+;; accessor, ranked one place ahead of it and worth less, was kept with a slim
+;; saving. A slim accept is a statement about the body that was priced, not
+;; about the next one.
 ;;
 ;; So the lock states what it is for: a BOUND of opt-inline-checked-max-callees
 ;; distinct bodies per caller, which is a compile-time bound and nothing else --
 ;; every body still gets its own full re-plan verdict, and each is still charged
 ;; to the relaxations' reserve and ranked behind every core row. The ranking
 ;; decides WHICH bodies, and with the composite frequency propagated over the
-;; call graph the ranking is now the program's own hotness.
+;; call graph the ranking is the program's own hotness.
 ;;
 ;; A body admitted by this relaxation is a RELAXED candidate on the same terms
 ;; as a below-the-floor site: ranked last, and charged to the relaxations' own
@@ -113814,33 +112864,26 @@
 ;; BOUND on bodies rather than a rule about which body. What decides which of
 ;; them a caller gets is the ranking, and the ranking is the composite
 ;; frequency (opt-inline-checked-richness reads it as the numerator of worth per
-;; instruction copied), which is now the call graph's synthetic count rather
-;; than a count of the caller's own reference sites -- so the bodies a caller
-;; spends its allowance on are the ones the program actually runs.
+;; instruction copied), which is the call graph's synthetic count rather than
+;; a count of the caller's own reference sites -- so the bodies a caller spends
+;; its allowance on are the ones the program actually runs.
 ;;
 ;; Every body past the first is still held to the WHOLE modelled saving by its
-;; own verdict (opt-inline-checked-verdict), which is the reading CB-2 measured:
-;; `it-hash-words` into `it-grow!` models 62 against a boundary of 72, clears
-;; the window's floor and not the clear margin, and reverts. N only says how
-;; many bodies a caller may put to that question.
+;; own verdict (opt-inline-checked-verdict): a body that clears the window's
+;; floor and not the clear margin reverts. N only says how many bodies a caller
+;; may put to that question.
 ;;
 ;; N is therefore a compile-time bound, not a correctness one: every body gets
-;; its own full re-plan verdict, and a caller's bodies are charged to the same
-;; two budgets as before (a body past the first is a RELAXED candidate, ranked
+;; its own full re-plan verdict, and a caller's bodies are charged to the two
+;; program budgets (a body past the first is a RELAXED candidate, ranked
 ;; behind every core row and drawing on the relaxations' reserve, which is
 ;; stated as N - 1 per caller for exactly this reason).
 ;;
-;; MEASURED at N = 2, 4 and 8 (INL-1). The twenty-three instruction-count rows
-;; are identical at 4 and 8 and worse at 2 -- ssa_construct pays +6,643,836
-;; there, because one relaxed verdict per caller is not enough for
-;; `ssa-materialize`, which holds two core sites and then the `ssa-instr-next`
-;; site worth 832 against a boundary of 832. What separates 4 from 8 is the
-;; program the corpus cannot show: a self-compile keeps 23 bodies at 4 and 41 at
-;; 8, and the compiler those verdicts build runs 88,888,952,576 instructions
-;; against 88,714,663,067 -- 0.196% apart, and only 8 is faster than the
-;; unpropagated compiler. The verdict count rises 30 -> 42 -> 66 and the opt2
-;; self-compile costs 22.80s -> 22.79s -> 23.02s, which is what "the budget is
-;; the compile-time bound" is worth in seconds.
+;; Why 8. At N = 2 one relaxed verdict per caller is not enough for a caller
+;; that holds two core sites and then a third worth exactly its boundary.
+;; Small programs decide the same at 4 and 8; a program the size of the
+;; compiler keeps many more bodies at 8 and builds a faster compiler, for a
+;; slightly slower opt2 self-compile, which is the price of the bound.
 (define (opt-inline-checked-max-callees) : i64
   8)
 
@@ -114147,36 +113190,31 @@
 ;; weight of the site's own block. The first factor is the call graph's
 ;; synthetic count (opt-inline-synth-build!) rather than the caller's own
 ;; reference count, which is what lets a site inside a wrapper two levels below
-;; a loop read as the hot site it is; the second is unchanged.
+;; a loop read as the hot site it is; the second is the block's depth weight.
 ;;
 ;; The product saturates for the same reason the counts themselves do -- it is
-;; read as an order and against a floor -- and the census count the propagation
-;; replaced stays available for the trace (opt-inline-checked-trace-hot).
+;; read as an order and against a floor -- and the census count stays available
+;; for the trace (opt-inline-checked-trace-hot).
 ;;
-;; NO SHARE TERM FOR AN ARM, and it is not for want of asking (INL-9 item 3).
-;; The number this computes is the CALLER's count, and where the site sits in a
-;; conditional arm it credits that arm with all of it: `ssa-map-grow!` into
-;; `ssa-map-insert!` reads `frequency=46592` at the grow guard of an insert that
-;; grows on a rehash, and `gvn-facts-grow` into `gvn-facts-insert` reads
-;; `frequency=655360` at the same shape. Both numbers are the caller's.
+;; NO SHARE TERM FOR AN ARM. The number this computes is the CALLER's count,
+;; and where the site sits in a conditional arm it credits that arm with all of
+;; it: the grow guard of an insert that grows on a rehash reads the insert's
+;; whole count.
 ;;
-;; Dividing by the arm count does not reach either of them. The floor this
-;; frequency is compared against is EIGHT (opt-inline-checked-min-frequency,
-;; and the depth relaxation's own rung is the same eight): 46592 over two arms
-;; is 23296 and 655360 over two is 327680, both still four orders above it, so
-;; a share term changes no admission on this corpus and prices nothing. The
-;; frequency leg is simply not the leg these sites turn on --
-;; `ssa-map-grow!`'s block is not entry-equivalent under any reading
-;; (`pos=none|rawpos=none`), and `gvn-facts-grow`'s is a dispatch arm the
-;; CALLEE clause refuses (`pos=none|rawpos=dispatch`).
+;; Dividing by the arm count does not help. The floor this frequency is
+;; compared against is EIGHT (opt-inline-checked-min-frequency, and the depth
+;; relaxation's own rung is the same eight), and a hot caller's count divided
+;; over two arms is still orders of magnitude above it, so a share term changes
+;; no admission and prices nothing. The frequency leg is simply not the leg
+;; such sites turn on -- a grow guard's block is not entry-equivalent under any
+;; reading, and a dispatch arm is refused by the CALLEE clause.
 ;;
-;; What a cold arm actually costs is measured, and it is measured on the
-;; position clause rather than on this one: admitting `gvn-facts-grow` at that
-;; arm prices as a free inline (a modelled saving of 12 against a boundary of
-;; 11) and costs gvn_table +8,091,622. So the over-credit is real and the
-;; instrument for it is opt-inline-checked-dispatch-callee-ok?, not a divisor
-;; here. A `cold-arm` mark read off a preceding compare against a length was
-;; the other candidate and is refused for the same reason plus one more: it
+;; A cold arm's cost shows on the position clause rather than on this one: a
+;; grow helper admitted at such an arm prices as a free inline and is still a
+;; loss. So the over-credit is real and the instrument for it is
+;; opt-inline-checked-dispatch-callee-ok?, not a divisor here. A `cold-arm`
+;; mark read off a preceding compare against a length is refused for the same
+;; reason plus one more: it
 ;; would name the ONE guard shape it was drawn from, where the clause that
 ;; ships refuses every loop-bearing import at every arm, cold or not.
 (define (opt-inline-checked-site-frequency
@@ -114216,21 +113254,18 @@
 ;; measures -- the merged caller's prologue, its callee-saved set and its spill
 ;; traffic all move when an imported call takes the caller's leaf frame away --
 ;; so the clause would only be refusing candidates the check is already able to
-;; refuse. Measured on this tree, dropping it leaves all twenty-two
-;; instruction-count rows byte identical and hands the check thirteen new
-;; candidates across the corpus, of which it accepts five and reverts the rest.
+;; refuse.
 ;;
 ;; The test answers with the CLAUSE, not with a bool: a conjunction that says
-;; only "no" is exactly what left this tier unobservable, and the clause name is
-;; what `--trace-passes` reports and what every later admission question asks
-;; for. The evaluation order is unchanged -- the tier's own state and the target
-;; key, then the integer size clauses, then the growth budgets, and last the
-;; site weight -- so the cost of a refused site is what it was.
+;; only "no" would leave this tier unobservable, and the clause name is what
+;; `--trace-passes` reports and what every later admission question asks for.
+;; The evaluation order is the cheapest-first order above, so naming the clause
+;; costs a refused site nothing.
 ;;
-;; The two site clauses swap places against the reading they had: the composite
-;; FREQUENCY is now tested first because the depth floor is stated in terms of
-;; it (opt-inline-checked-effective-min-site-depth). The conjunction is the
-;; same; only the name the trace reports for a site that fails both changes.
+;; Of the two site clauses, the composite FREQUENCY is tested first because the
+;; depth floor is stated in terms of it
+;; (opt-inline-checked-effective-min-site-depth); the order decides only the
+;; name the trace reports for a site that fails both.
 (define (opt-inline-checked-clause
   [index : (& index OptFunctionIndex)]
   [census : (& census OptInlineCensus)]
@@ -114294,18 +113329,12 @@
           (opt-inline-checked-tail-only-body? blocks)
           (<= opt-inline-checked-current-literal-count 0))
         (opt-inline-checked-clause-tail-only)]
-      ;; INL-17c. INL-7 refused a loop-carrying leaf into a caller whose loop
-      ;; was about to be built from its own self tail call (opt-tailrec ran
-      ;; one pass later, so the site read as straight-line and the import
-      ;; landed inside the loop it could not see). INL-11 runs the rewrite
-      ;; first and the loop is now in view, where the window prices the merge
-      ;; -- and prices it at its edge: sccp-rewrite-phi into sccp-rewrite-rows
-      ;; reads 80 against a boundary of 64 and costs the row 1.93M when kept,
-      ;; the same merge INL-7 measured at +2.35M. The converted caller's loop
-      ;; is its WHOLE body, so a loop imported into it nests under every value
-      ;; the body carries; refuse the class here, as INL-7 did. Measured on
-      ;; the corpus: regalloc_greedy -6.26M and sccp_lattice -1.93M against
-      ;; the window alone, every other row byte-identical.
+      ;; INL-17c. A loop-carrying leaf into a caller whose loop is built from
+      ;; its own self tail call. INL-11 runs the tailrec rewrite first, so the
+      ;; loop is in view and the window prices the merge -- but prices it at
+      ;; its edge, and such a merge is a loss when kept. The converted
+      ;; caller's loop is its WHOLE body, so a loop imported into it nests
+      ;; under every value the body carries; refuse the class here.
       [(and
           (opt-inline-tailrec-converted-slot? index opt-inline-caller-name)
           (not (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
@@ -114391,8 +113420,8 @@
                 ;; the block -- is remembered for
                 ;; opt-inline-checked-shape-changed-sites?. A block a reading
                 ;; did reach and the caller clause then refused is not: that
-                ;; clause's measurements were made against the snapshot, and
-                ;; the rescan re-reads the walk, not the clause.
+                ;; clause was calibrated against the snapshot, and the rescan
+                ;; re-reads the walk, not the clause.
                 (if (and
                   (= site-depth 0)
                   (>= frequency (opt-inline-checked-depth-relaxed-frequency))
@@ -114531,9 +113560,9 @@
 ;; admission verdict feeds codegen, and codegen must not depend on the target.
 ;; The plan is read STANDALONE: this tier runs the allocator on one IR function
 ;; from inside the optimizer, and the backend of this compile has not run yet.
-;; Nominal representation facts now arrive as an explicit job-owned capability,
-;; but this plumbing packet deliberately leaves the checked-inline census
-;; unchanged. The remaining image-scoped compatibility table contains only
+;; Nominal representation facts arrive as an explicit job-owned capability,
+;; which the checked-inline census does not take. The remaining image-scoped
+;; compatibility table contains only
 ;; private-memory C call names. A standalone plan has no image, so that query
 ;; must answer the way it answers in a fresh process: missing.
 ;;
@@ -114541,11 +113570,9 @@
 ;; so on the second entry onward those globals still name the PREVIOUS entry's
 ;; arena, which has been torn down -- and this tier is the first reader in the
 ;; compile that reaches them, arriving before the backend re-installs. Reading
-;; it there dereferences freed storage: it segfaulted the build-invariance
-;; corpus on generated_hashmap_global_mutation, the third entry of its first
-;; opt2 chunk. Suppressing the table for the duration of the measurement gives
-;; every entry the answers the first
-;; entry already gets, so the verdict stops depending on batch position as well.
+;; it there would dereference freed storage. Suppressing the table for the
+;; duration of the measurement gives every entry the answers the first entry
+;; already gets, so the verdict does not depend on batch position either.
 (define (opt-inline-checked-alloc-cost
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -114682,7 +113709,7 @@
 ;; remove; `spec-gain` is the site's specialization gain (INL-18), added to the
 ;; prediction the cap is read against. The floor is half the boundary and the
 ;; cap two and a half times it; see opt-inline-checked-verdict for why the
-;; window is two-sided and for the measurements that put the cap where it is.
+;; window is two-sided and why the cap sits where it does.
 (define (opt-inline-checked-window-ok-at?
   [saving : i64]
   [boundary : i64]
@@ -114691,13 +113718,9 @@
     (>= (* 2 saving) boundary)
     (<= (* 2 saving) (* 5 (+ boundary spec-gain)))))
 
-;; ...and WHICH SIDE of it a verdict fell on, for the trace. A `revert` line
-;; used to report only that the window refused, and the window is two-sided:
-;; `floor` and `cap` are opposite statements about the model and a census that
-;; cannot tell them apart cannot be read at all. INL-9's own first question --
-;; why `ssa-dominates?` into `ssa-dominance-frontier` never lands, at the
-;; hottest site of ssa_construct -- is answered by this one word: `cap`, a
-;; modelled saving of 1034 against a boundary of 512, ten over the bound.
+;; ...and WHICH SIDE of it a verdict fell on, for the trace. The window is
+;; two-sided: `floor` and `cap` are opposite statements about the model and a
+;; census that cannot tell them apart cannot be read at all.
 (define (opt-inline-checked-window-text [saving : i64] [boundary : i64]) : String
   (cond
     [(< (* 2 saving) boundary) "floor"]
@@ -114707,39 +113730,29 @@
 ;; The verdict. Both sides priced per invocation of the caller; see the tier
 ;; comment for the model and the margin.
 ;;
-;; WHAT THIS TIER WAS ACCUSED OF AND DID NOT DO. INL-6 recorded sccp_lattice's
-;; +0.264% at opt-inline-body-instr-op-ok? as a mispricing here: a LOOP merged
-;; into a LOOP -- `sccp-state-mark-executable` into `sccp-mark-switch-targets`
-;; at `depth=1|weight=8|banked=138|callee=1800|after=1916|boundary=56|saving=78`
-;; -- on the argument that both priced sides are dominated by the same nested
-;; term so the verdict turns on a residual. INL-7 measured that, three ways, and
-;; the tier is not where the row was lost:
+;; A LOOP merged into a LOOP is not mispriced here, although both priced sides
+;; are dominated by the same nested term so the verdict turns on a residual.
+;; The fixes that argument suggests are wrong:
 ;;
 ;;   * REFUSING the class (an in-loop site with a cyclic callee, refused in this
-;;     tier) reproduces INL-6's own ablation and then some -- hashmap_get
-;;     +15.82%, intern_table +10.44%, callgraph_scc +2.34%, ssa_construct
-;;     +1.36% -- and sccp_lattice ends at +0.024%, WORSE than leaving the keep
-;;     alone. Callgrind says why: the keep is worth 174,272 to that row
-;;     (`sccp_state_mark_executable` -591,296 against `sccp_mark_switch_targets`
-;;     +417,024). The class is the corpus's best merge, not its worst;
+;;     tier) is a broad loss: the class is among the best merges, not the
+;;     worst;
 ;;   * PRICING it with a term for the frame traffic the merged plan adds inside
 ;;     the nest -- the plan proxy's own spill set, restricted to values whose
 ;;     deepest reference is two loop levels in, weighted by the allocator's
-;;     spill weights and charged to `after` -- is identically ZERO at that site.
-;;     The proxy plans the merged caller at four callee-saved registers and no
-;;     spills at all, while the function the backend finally emits carries six
-;;     callee-saved pushes and thirteen frame references. The proxy is a
-;;     standalone scalar plan and the emitted plan is the product of the
-;;     backend's four-stage replan; where they differ this term cannot see the
-;;     difference. Charged anyway across the corpus it costs lex_source +1.65%,
-;;     intern_table +1.15% and asm_render +0.06% against callgraph_scc -1.86%
-;;     and ssa_construct -0.28%, and leaves sccp_lattice untouched to the byte;
+;;     spill weights and charged to `after` -- sees nothing: the proxy plans the
+;;     merged caller with no spills at all, while the function the backend
+;;     finally emits carries callee-saved pushes and frame references. The
+;;     proxy is a standalone scalar plan and the emitted plan is the product of
+;;     the backend's replan; where they differ this term cannot see the
+;;     difference, and charging it anyway is a net loss;
 ;;   * the same reading disposes of pricing the `after` side with the inner
 ;;     loop's trip weight on the P3 memory-class carriers: the standalone scalar
-;;     plan runs no P3 round and chose no carriers at that site.
+;;     plan runs no P3 round and chooses no carriers.
 ;;
-;; The row was lost one pass earlier, at a PREDICTIVE band, to a caller whose
-;; loop did not exist yet. See opt-inline-caller-loop-free?.
+;; Where such a merge does lose, it is lost one pass earlier, at a PREDICTIVE
+;; band, to a caller whose loop did not exist yet. See
+;; opt-inline-caller-loop-free?.
 ;;
 ;; `banked-cost-in` is the priced state's cost when a previous round in this
 ;; caller already computed it -- the sequence prices site after site against
@@ -114897,35 +113910,27 @@
     ;; A TWO-SIDED window, not a threshold. A free inline -- the copy exactly as
     ;; good as the callee, the boundary gone -- predicts a saving of exactly
     ;; `boundary`. The lower bound is the ordinary demand that at least half
-    ;; that saving survives re-optimization. The UPPER bound is what the
-    ;; measured corpus forced, and it is a statement about the model rather than
-    ;; about inlining: both sides are priced on a STANDALONE plan of each
+    ;; that saving survives re-optimization. The UPPER bound is a statement
+    ;; about the model rather than about inlining: both sides are priced on a
+    ;; STANDALONE plan of each
     ;; function (INL-15), and a merge that lets a hoist or a fold run also
     ;; changes what the merged body's loops keep live -- the values the hoist
     ;; lifts out of an inner loop are live across the outer one, and the inner
     ;; loops spill -- which no standalone plan of the caller prices. A modelled
     ;; saving many times what a free inline can produce is evidence of that,
     ;; not evidence of a brilliant merge -- and every site the upper bound
-    ;; still refuses on the corpus presents that way. `pl-line-end` into
-    ;; `pl-drop-fallthrough`, `pl-run-chunk` and `pl-bench` models 1,065, 1,096
-    ;; and 1,088 against a boundary of 64 -- about 16.6x what a free inline can
-    ;; produce -- and admitting them costs peephole_lines +16.5%; `qs-sort` into
-    ;; `qs-bench` models 6,173 against 72 (86x) and costs opt_quicksort +5.9%;
-    ;; `it-hash-words` into `it-intern-slice` models 89 against 9 (10x) and
-    ;; `sccp-exec-clear-in!` into `sccp-function` 418 against 8 (52x), and
-    ;; with the bound gone intern_table costs +17%.
+    ;; refuses presents that way: a scan loop merged into its drivers, a sort
+    ;; into its bench loop, a hash loop into its interner, each modelled at
+    ;; ten to a hundred times its boundary and each a loss when admitted.
     ;;
-    ;; The bound is two and a half times the prediction, and it is measured at
-    ;; its own edge on BOTH sides. One rung down, at 2x, it refuses
-    ;; `cg-map-probe` into `cg-map-insert-ref!` -- 20 against a boundary of 8,
-    ;; exactly 2.5x, twelve instructions past a free inline at a depth-0 site
-    ;; -- and that one refusal costs callgraph_scc +5.3%, hashmap_insert +20%
-    ;; and regalloc_greedy +0.75%. One rung up, at 3x, it admits the next
-    ;; sites in line and costs intern_table +6.9% and lex_source +1.5%. The
-    ;; window is wide at the top because the prediction is small where the
-    ;; corpus's best depth-0 merges are: a boundary of 6 + np is a handful of
-    ;; instructions, and a merge that folds one branch or retires one reload
-    ;; clears 2x on its own.
+    ;; The bound is two and a half times the prediction, set at its own edge
+    ;; on BOTH sides. One rung down, at 2x, it refuses a hash-map probe merged
+    ;; into its insert at exactly 2.5x -- a few instructions past a free inline
+    ;; at a depth-0 site -- which is a real win lost. One rung up, at 3x, it
+    ;; admits the next sites in line, which lose. The window is wide at the
+    ;; top because the prediction is small where the best depth-0 merges are:
+    ;; a boundary of 6 + np is a handful of instructions, and a merge that
+    ;; folds one branch or retires one reload clears 2x on its own.
     ;;
     ;; So the tier keeps a site only when the model AGREES with the free-inline
     ;; prediction: no less than half of it, no more than two and a half times
@@ -114941,12 +113946,9 @@
     [clear? : bool (>= saving boundary)]
     ;; INL-17: the cap is a statement about the MODEL, and a body of at most
     ;; sixty-four instructions per execution is one the model prices well --
-    ;; every cap-refused site the corpus gains from is such a leaf
-    ;; (seq-overlaps? 58, heap-better? 36, ssa-instr-next 35, ssa-dominates?
-    ;; 54, the sccp type predicates 16 to 27), and every site it loses on is a
-    ;; loop-carrying body of hundreds (it-hash-words 523, it-grow! 624, the
-    ;; cfg loop walkers 184 to 1376). A small body past the cap keeps on the
-    ;; floor alone.
+    ;; the cap-refused sites that gain are such leaves (small predicates and
+    ;; accessors), and the ones that lose are loop-carrying bodies of hundreds
+    ;; of instructions. A small body past the cap keeps on the floor alone.
     [small-body? : bool
       (opt-inline-checked-small-body? callee-cost site-weight)]
     ;; INL-23: a one-block callee reaches this tier past the single-block
@@ -114955,14 +113957,12 @@
     ;; thing the standalone plans do not price: a straight-line body of a
     ;; hundred instructions inside the caller's loop raises the pressure on the
     ;; loop's carried values, and they spill on EVERY iteration, not only the
-    ;; ones that reach the body. `ssa-env-bind` (103 instructions, 65 per
-    ;; execution) into `ssa-rename-block` models a saving of 80 against a
-    ;; boundary of 64 -- squarely in the window -- and costs ssa_construct
-    ;; +1.04%: rename_block's hot-path stack traffic doubles while the body
-    ;; itself runs on a fourteenth of the iterations. The one-block bodies the
-    ;; tier gains from are small ones: `rg-heap-swap!` (17 per execution) into
-    ;; the sift walkers is regalloc_greedy -2.09%, `cg-scc-discover!` (37)
-    ;; into `cg-scc-compute!` callgraph_scc -1.48%. So a one-block body keeps
+    ;; ones that reach the body. A hundred-instruction body merged into a
+    ;; rename walk's loop models a saving squarely in the window and still
+    ;; loses: the loop's hot-path stack traffic doubles while the body itself
+    ;; runs on a small fraction of the iterations. The one-block bodies the
+    ;; tier gains from are small ones, such as a heap swap merged into the
+    ;; sift walkers. So a one-block body keeps
     ;; only as a small body: the same statement about the model INL-17 makes,
     ;; read as a ceiling instead of a floor.
     [one-block? : bool
@@ -115054,8 +114054,8 @@
             np
             banked-cost-in)]
         (begin
-          ;; Arena handles are stable roots after #6285; rewinding cannot
-          ;; require recapturing and republishing a newer physical head.
+          ;; Arena handles are stable roots; rewinding cannot require
+          ;; recapturing and republishing a newer physical head.
           (unsafe
             (arena.rewind mark)
             (arena.set! enclosing))
@@ -115392,18 +114392,15 @@
 ;; generation that keeps nothing is discarded whole. A band admission there is
 ;; therefore both unpriced and conditional on something unrelated to it.
 ;;
-;; One shape in that class costs a row. asm_render: `asm-bench` keeps `asm-round`
-;; in generation one, which moves `asm-round`'s straight-line call of
-;; `asm-fold-text` -- 29 instructions, one static reference, a BYTE LOOP -- into
-;; `asm-bench`'s own loop. `opt-inline-bounds-loop-site-in-loop?` is the clause
-;; that flips: at its original site the body was refused by every band and by the
-;; depth floor, and one generation later the same body is admitted, by the cost
-;; model's absorb credit, at a site that is now inside a loop. The merged frame
-;; then loses the fold accumulator's register -- the unrolled body writes it back
-;; to its home slot after every `xor` and every `imul`, `asm-bench` goes from 9
-;; frame-slot references to 74 -- and the row pays +33.5M. `--trace-passes` shows
-;; it as `inline-band|asm-fold-text|caller=asm-bench|in-loop=1|band=cost|gen=2`,
-;; with no `inline-checked` line of any kind: no tier priced it.
+;; One shape in that class is a loss. A caller keeps a callee in generation one,
+;; which moves that callee's straight-line call of a small single-reference
+;; BYTE LOOP into the caller's own loop. `opt-inline-bounds-loop-site-in-loop?`
+;; is the clause that flips: at its original site the body was refused by every
+;; band and by the depth floor, and one generation later the same body is
+;; admitted, by the cost model's absorb credit, at a site that is now inside a
+;; loop. The merged frame then loses the loop accumulator's register -- the
+;; unrolled body writes it back to its home slot after every operation -- and
+;; no tier priced it.
 ;;
 ;; So this clause refuses exactly that: in a RESCAN generation, no band absorbs
 ;; or copies a LOOP-BEARING callee at a site inside a natural loop of the caller.
@@ -115425,42 +114422,31 @@
 ;;   3. the CALLEE carries a loop, by the same back-edge test the tiny-predicate
 ;;      band uses. A straight-line body absorbed into a loop is the ordinary
 ;;      trade every band above already prices, and refusing it here would retire
-;;      lex_source's two character-class predicates for nothing.
+;;      straight-line character-class predicates for nothing.
 ;;
-;; Measured (base = 30cfbd21 plus the multiblock `Store` admission this packet
-;; lands): the clause is what turns that admission's asm_render from +3.843%
-;; into -0.060% (832,842,937 -> 832,341,109) while read_sexpr, callgraph_scc,
-;; gvn_table and ssa_construct take their -1.72%, -1.45%, -1.15% and -0.50%.
-;; With the clause and WITHOUT the `Store` admission the corpus is byte
-;; identical to base on all 23 rows: no caller in it reaches a rescan holding
-;; this shape until the admission puts one there, which is the narrowest
-;; evidence that the clause refuses what it says and nothing else.
+;; After it, the site becomes an ordinary candidate of the measured tier
+;; instead (`checked?` is asked exactly of the sites no band takes), and the
+;; tier refuses it on the accept window's UPPER bound, which is the window's
+;; own statement that the model has stopped being commensurate. The clause
+;; moves the decision to the tier that can say so; it does not silently drop
+;; the site.
 ;;
-;; What `--trace-passes` shows after it: the site becomes an ordinary candidate
-;; of the measured tier instead (`checked?` is asked exactly of the sites no
-;; band takes), and the tier refuses it on the accept window's UPPER bound --
-;; `inline-checked-verdict|asm-fold-text|...|saving=8232|boundary=64|revert`,
-;; 128x what a free inline could produce, which is the window's own statement
-;; that the model has stopped being commensurate. The clause moves the decision
-;; to the tier that can say so; it does not silently drop the site.
-;;
-;; WHY NOT A PRICING FIX, which is where this began. Making the rescan's verdict
-;; price against the body a revert restores -- so the walk's rewrite is charged
-;; to the keep that commits it -- was implemented and measured. It flips
-;; asm_render's verdict for the right reason and it loses lex_source: that
-;; caller's rescan walk absorbs two acyclic character-class predicates, the plan
-;; model reads them as +152 (almost exactly the instructions they moved in), and
-;; `ls-float-tail?` then models -64 instead of +88 and reverts, for +629,416
-;; (+0.13%) on the row. Charging a keep for its generation's instruction growth
-;; charges it for a term the bands already price and already pay for out of the
-;; boundaries they retire. Splitting the baseline to charge only the ALLOCATION
-;; half of the walk's delta does not separate the two rows either: on `asm-bench`
-;; the whole 1,072 is the instruction term, the two bodies' allocation halves
-;; price identically, and the verdict does not move. The plan model reads a loop
-;; absorbed into a loop as a bargain -- it charges the callee's own cost on the
-;; `before` side at the site's weight, which is the very reading that is wrong
-;; here -- so no baseline built from it can tell asm_render from lex_source. The
-;; difference between them is a SHAPE, and a shape clause is what states it.
+;; WHY NOT A PRICING FIX. Making the rescan's verdict price against the body a
+;; revert restores -- so the walk's rewrite is charged to the keep that commits
+;; it -- flips the byte-loop verdict for the right reason but loses elsewhere:
+;; a caller whose rescan walk absorbs two acyclic character-class predicates
+;; has them read as a cost (almost exactly the instructions they moved in), and
+;; a sibling site then reverts. Charging a keep for its generation's
+;; instruction growth charges it for a term the bands already price and already
+;; pay for out of the boundaries they retire. Splitting the baseline to charge
+;; only the ALLOCATION half of the walk's delta does not separate the two cases
+;; either: the byte-loop delta is all instruction term, the two bodies'
+;; allocation halves price identically, and the verdict does not move. The plan
+;; model reads a loop absorbed into a loop as a bargain -- it charges the
+;; callee's own cost on the `before` side at the site's weight, which is the
+;; very reading that is wrong here -- so no baseline built from it can tell the
+;; two apart. The difference between them is a SHAPE, and a shape clause is
+;; what states it.
 (define (opt-inline-checked-rescan-loop-import?
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (and
@@ -115473,15 +114459,13 @@
 ;; --- what the BANDS decided --------------------------------------------------
 ;;
 ;; INL-6. The measured tier prints a candidate line and a verdict line for every
-;; site it prices, and the callee gate prints its shape refusals; the PREDICTIVE
-;; bands printed nothing at all. A band's admission is invisible in a trace, so
-;; a caller whose final shape is decided by a band -- and every caller the
-;; measured tier reshapes gets its next decisions from the bands -- could only
-;; be read off the emitted assembly.
+;; site it prices, and the callee gate prints its shape refusals; without this
+;; section the PREDICTIVE bands would print nothing at all. A band's admission
+;; would be invisible in a trace, so a caller whose final shape is decided by a
+;; band -- and every caller the measured tier reshapes gets its next decisions
+;; from the bands -- could only be read off the emitted assembly.
 ;;
-;; That is what this packet's cascade needed. `asm-fold-text` moves into
-;; `asm-bench` with no `inline-checked` line of any kind, because no band
-;; announces itself. One line per ADMITTED site closes the gap: the band whose
+;; One line per ADMITTED site closes the gap: the band whose
 ;; fuel the site charges, the numbers that band's clauses read, and whether the
 ;; site is in a natural loop of the caller -- which is the clause that flips
 ;; when a keep moves a site one level deeper.
@@ -115630,8 +114614,7 @@
             ;; reserved above the clone's rebased frame only when needed.
             ;; At a tail-call SITE nothing is converted -- a `TailCall h`
             ;; exit is forwarded as one -- so no slot is reserved and the
-            ;; clone's frame growth is what it was before this class
-            ;; existed.
+            ;; clone's frame does not grow for it.
             [tail-slots : i64
               (if (and
                 (not tail-site?)
@@ -115671,7 +114654,7 @@
                 (not stage-args?)
                 (opt-inline-tiny-predicate-callee? index callee census))]
             ;; Bounds-carrying loops stay acyclic-only except for the exact
-            ;; measured vm-run leaf selected by the shared gate (#5325).
+            ;; vm-run leaf shape selected by the shared gate (#5325).
             [has-bounds? : bool (opt-inline-blocks-have-bounds-check? cblocks)]
             [refs : i64 (opt-inline-census-refcount index census callee-name)]
             [hot-refs : i64
@@ -115778,12 +114761,10 @@
                 added-so-far)]
             ;; The predictive verdict: every band above, unchanged -- and asked
             ;; only about a CALL site. The tail-call site class is the measured
-            ;; tier's alone: the bands never saw it, their models were
-            ;; calibrated without it, and the one thing that changes when they
-            ;; are handed it is measured. gvn_table's `gvn-dispatch` is a cond
-            ;; whose arms are all `(gvn-step-* ...)` in tail position; letting
-            ;; the single-reference absorb band claim two of them costs that row
-            ;; +19,337,616 (+2.59%). So a tail site reaches the verdict or it
+            ;; tier's alone: the bands never saw it and their models were
+            ;; calibrated without it. Letting the single-reference absorb band
+            ;; claim the tail-position arms of a dispatch `cond` is a loss. So
+            ;; a tail site reaches the verdict or it
             ;; reaches nothing, and no band's fuel is charged for it either
             ;; (the import flags below).
             ;; INL-23: a one-block body past the single-block tier's cap is the
@@ -117220,7 +116201,7 @@
 ;;
 ;; WHY THE SEQUENCE. The all-or-nothing alternative -- admit every candidate in
 ;; one walk and price the lot -- can only accept or lose the whole set, and a
-;; caller's sites are not all worth the same: the measured case is an interner
+;; caller's sites are not all worth the same: the motivating case is an interner
 ;; whose two leaves both belong in it and a third caller whose one accepted leaf
 ;; would be dragged out by a sibling that does not repay. Per-site rollback is
 ;; the only shape in which one caller can keep one callee and refuse another.
@@ -117278,17 +116259,13 @@
 ;; refused on the depth floor; in the caller they sit inside the loop that
 ;; absorbed them, and nothing has offered a verdict on them there.
 ;;
-;; sccp_lattice is the measurement. `sccp-process-instr` (390 instructions, 60
-;; blocks, one reference) is absorbed into the loop of
-;; `sccp-process-instr-seq-from`, and its dispatch arms call `sccp-state-bind`
-;; six times, `sccp-value` four times, and `sccp-phi-value` and the three
-;; `mark-*` helpers once each -- 3.9M iterations by callgrind's count, every
-;; arm site at depth 1 in the absorbed loop, and not one `inline-checked` line
-;; for any of them in `--trace-passes`. Forcing the depth floor down by name
-;; instead (the probe recorded in the packet) prices them in the wrong text:
-;; the keeps grow `sccp-process-instr` past the absorb band's size clause, the
-;; body stays out of line, and the row pays +50.2M for the boundary it just
-;; lost. The rescan prices them where they will run.
+;; The shape is a large dispatch function absorbed into its caller's loop: every
+;; arm's helper call then sits at depth 1 in the absorbed loop, and without a
+;; rescan none of them is ever priced. Forcing the depth floor down by name
+;; instead prices them in the wrong text: the keeps grow the absorbed callee
+;; past the absorb band's size clause, the body stays out of line, and the
+;; caller pays for the boundary it just lost. The rescan prices them where they
+;; will run.
 ;;
 ;; The signal is the absorb band's own accumulator, read after the caller's
 ;; first walk: a caller whose bands moved no body in has no exposed sites, and
@@ -117302,10 +116279,10 @@
 ;; call is call-free once the callee's body stands in it, and the position
 ;; reading (opt-inline-checked-position-class) asks exactly that of every block
 ;; between the entry and a site. The sites were scanned against the snapshot
-;; opt-inline-caller-facts-install! took before the walk. `sccp-normalize-const`
-;; is the measurement: its entry still called `sccp-class-of` in that snapshot,
-;; so no spine walk from the entry reached the arm that calls
-;; `sccp-normalize-int-to-i64`, and the arm read `none` -- in a caller whose
+;; opt-inline-caller-facts-install! took before the walk. In
+;; `sccp-normalize-const`, for example, the entry still calls `sccp-class-of` in
+;; that snapshot, so no spine walk from the entry reaches the arm that calls
+;; `sccp-normalize-int-to-i64`, and the arm reads `none` -- in a caller whose
 ;; every block is call-free by the time the walk ends, and whose `switch` the
 ;; later passes fold. The signal is the conjunction of the two facts that make
 ;; the refusal stale: the walk moved a body in (its site count), and a hot
@@ -117319,12 +116296,10 @@
 ;; (opt-inline-checked-depth0-caller-ok?): a block a reading reached in the
 ;; snapshot and that clause refused -- a caller with too many calls of its own
 ;; for the post and arm readings -- stays refused, because the clause was
-;; measured against callers at their snapshot call counts, and re-asking it
+;; calibrated against callers at their snapshot call counts, and re-asking it
 ;; after a walk has moved the accessors in admits the class it exists to
-;; refuse. Measured: with the clause re-read, `cg-map-clear!` (a table-clear
-;; loop) moves into `cg-map-grow!`'s exit block, then with it into
-;; `cg-function-index-fill-from!`, and callgraph_scc pays +428,040 on a
-;; modelled saving of 15.
+;; refuse: a table-clear loop moves into a grow helper's exit block, then with
+;; it into that helper's caller, which pays far more than the modelled saving.
 (define (opt-inline-checked-shape-changed-sites?) : bool
   (and opt-inline-checked-position-refused? (> opt-inline-caller-site-count 0)))
 
@@ -117532,33 +116507,25 @@
 ;; left it: `state`, not the rescan's own walk. The rescan is a search for more
 ;; sites, and finding none must not be a rewrite.
 ;;
-;; AND THAT DISCARD IS WHAT A KEEP CAN OVERTURN. INL-6's diagnosis: a rescan
-;; generation's scan walk is a BAND rewrite of a caller the measured tier
-;; synthesized, and it is committed or thrown away by whether some verdict in
-;; this generation keeps -- so a keep drags in a rewrite that nothing priced.
-;; asm_render's `asm-bench` keeps `asm-round` in generation one; the rescan's
-;; walk then absorbs `asm-fold-text`'s byte loop into the loop that keep created
-;; (opt-inline-checked-rescan-loop-import? names the clause and carries the
-;; measurement); and `asm-render-chunk`'s keep in the same generation is what
-;; commits it, for +33.5M on the row.
+;; AND THAT DISCARD IS WHAT A KEEP CAN OVERTURN. A rescan generation's scan
+;; walk is a BAND rewrite of a caller the measured tier synthesized, and it is
+;; committed or thrown away by whether some verdict in this generation keeps --
+;; so a keep drags in a rewrite that nothing priced: a byte loop the rescan's
+;; walk absorbs into the loop a generation-one keep created, committed by an
+;; unrelated keep in the same generation.
 ;;
-;; The fix is at the BAND, not here, and the reason is that this tier's model
-;; cannot see the loss. Pricing the verdict against the previous survivor
-;; instead of against `banked` was measured and does not pay: it flips
-;; asm_render's verdict for the right reason, but it charges every keep for the
-;; INSTRUCTIONS its generation's band walk moved in -- a term the bands already
-;; price and pay for out of the boundaries they retire -- and lex_source's
-;; `ls-float-tail?`, whose walk absorbs two character-class predicates for +152,
-;; then models -64 instead of +88 and reverts, costing that row +629,416
-;; (+0.13%). Splitting the baseline so only the ALLOCATION half of the walk's
-;; delta is charged does not separate them either: on `asm-bench` the whole
-;; 1,072 is term 1, the allocation halves of the two bodies price the same, and
-;; the verdict does not move at all. The plan model prices a loop absorbed into
-;; a loop as a bargain -- the callee's own cost at the site is charged on the
-;; `before` side at the site's weight -- which is exactly the reading that is
-;; wrong here, so no baseline built out of it can tell the two rows apart.
-;; What separates them is a SHAPE: asm_render's absorbed body carries a loop and
-;; lex_source's two do not.
+;; The fix is at the BAND (opt-inline-checked-rescan-loop-import?), not here,
+;; and the reason is that this tier's model cannot see the loss. Pricing the
+;; verdict against the previous survivor instead of against `banked` does not
+;; pay: it charges every keep for the INSTRUCTIONS its generation's band walk
+;; moved in -- a term the bands already price and pay for out of the
+;; boundaries they retire -- and splitting the baseline so only the ALLOCATION
+;; half of the walk's delta is charged does not move the verdict either. The
+;; plan model prices a loop absorbed into a loop as a bargain -- the callee's
+;; own cost at the site is charged on the `before` side at the site's weight --
+;; which is exactly the reading that is wrong here, so no baseline built out of
+;; it can tell the losing case from a harmless one. What separates them is a
+;; SHAPE: the losing absorbed body carries a loop.
 ;;
 ;; The generation's base is the previous survivor's FUNCTION and the previous
 ;; survivor's SPANS: the spans a round starts from have to be the ones that
@@ -119015,7 +117982,7 @@
 ;; Parameter-write bits 0..53. The six bits above them are the element-write
 ;; class set (opt-call-memory-element-class-bit); a function with more
 ;; checked-reference parameters than this summarizes its writes through the
-;; extra ones as `unknown`, exactly as it always did past the old limit.
+;; extra ones as `unknown`.
 (define (opt-call-memory-param-limit) : i64
   54)
 
@@ -119318,12 +118285,11 @@
 ;; pre-optimization IR, where a global array's data pointer is loaded straight
 ;; off the `Global` operand (only the per-function global_cell pass later routes
 ;; it through a typed `Mov`), so without this table an element write into a
-;; global array's buffer had no element kind at all and fell to `unknown` --
-;; and every loop calling such a helper reloaded every descriptor header on
-;; every trip (`header-load-safe:call` was the whole census of the corpus's
-;; compiler-derived rows). Built once per program from the declared types, so
-;; a struct global whose first word happens to be a pointer keeps its `unknown`
-;; verdict: only a handle's own word 0 is a data slot.
+;; global array's buffer would have no element kind at all and fall to
+;; `unknown` -- and every loop calling such a helper would reload every
+;; descriptor header on every trip. Built once per program from the declared
+;; types, so a struct global whose first word happens to be a pointer keeps its
+;; `unknown` verdict: only a handle's own word 0 is a data slot.
 (define (opt-call-memory-descriptor-globals
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
@@ -119553,7 +118519,7 @@
               ;; it writes no memory the caller can observe afterwards because
               ;; there is no afterwards. The non-call arm below already gives
               ;; ControlFlow this verdict, so a callee whose only "effect" is a
-              ;; bounds/divide abort no longer summarizes as unknown.
+              ;; bounds/divide abort does not summarize as unknown.
               [(ir.CompilerIrEffect.ControlFlow) candidate]
               [_
                 (OptCallMemoryCandidate.Known
@@ -119766,12 +118732,10 @@
 ;; and element-pointer map -- is garbage the moment its verdict is read, and
 ;; the fixed point asks for a candidate per unresolved function per round (a
 ;; round per call-graph depth, then the optimistic rounds). Left in the
-;; caller's arena those environments were the bulk of the inline arena when
-;; CSE-CALL began building this table at the inline stage's start: a compiler
-;; self-build peaked at 9.1G against 3.0G without the table, over the 8 GiB
-;; cap of the embedded-stdlib bounded-resource gate. The builder now owns a
-;; scratch arena for the duration of one build (opt-call-memory-scratch, 0
-;; outside a build), each candidate runs in it and the scratch is reset to
+;; caller's arena those environments would be the bulk of the inline arena,
+;; since CSE-CALL builds this table at the inline stage's start. So the builder
+;; owns a scratch arena for the duration of one build (opt-call-memory-scratch,
+;; 0 outside a build), each candidate runs in it and the scratch is reset to
 ;; where it stood once the verdict is out. The verdict is the summary's bit
 ;; set, or -1 for Unresolved.
 (define opt-call-memory-scratch : i64
@@ -119794,12 +118758,11 @@
 ;;     callees' rows, so a residue row cannot move in a round unless one of its
 ;;     callees' rows moved in the round before. Copying it forward is exact.
 ;;
-;; Without the table each of the 22 pessimistic rounds of a compiler self-build
-;; rebuilt every not-yet-committed function's environments only to reach the
-;; first unresolved call, and each optimistic round rebuilt every residue
-;; function whether or not its inputs had moved: 331k candidate builds for 26k
-;; functions, 22.5G of the opt2 self-compile's 309G instructions and +9.4% on
-;; its wall clock. The table is one walk over the program (callee ids that are
+;; Without the table each pessimistic round would rebuild every
+;; not-yet-committed function's environments only to reach the first
+;; unresolved call, and each optimistic round would rebuild every residue
+;; function whether or not its inputs had moved. The table is one walk over the
+;; program (callee ids that are
 ;; in the function set, one range per function index), built by the builder
 ;; entry into the enclosing arena for the build's duration; the scratch arena
 ;; is reset per candidate and cannot hold it. A driver run without the table
@@ -120412,10 +119375,9 @@
 ;; Prove which globals are compile-time constants so their value can be
 ;; substituted for the global at its uses. The win is twofold: (a) every global
 ;; use otherwise emits a rip-relative load, so substituting the literal removes a
-;; per-iteration memory load (the instruction-count win on opt_crc32/opt_quicksort
-;; mask constants), and (b) a div/mod by such a global becomes a literal divisor
-;; the backend strength-reduces with the existing magic-multiply path (matching
-;; clang).
+;; per-iteration memory load, and (b) a div/mod by such a global becomes a
+;; literal divisor the backend strength-reduces with the existing
+;; magic-multiply path (matching clang).
 ;;
 ;; Soundness: substituting a global's initializer is valid only when the global is
 ;; immutable. A global is mutated by either (1) a direct `CompilerIrInstr.Store name`
@@ -120465,37 +119427,20 @@
 ;; global ONCE in the entry block and keeps the value in a register across the
 ;; loop, which is the optimum. Substituting the literal takes that away, because
 ;; this rewrite runs BEFORE `global_cell` in the iteration and leaves it no
-;; global to hoist. Measured on this tree: admitting wide constants moved the
-;; benchmarks' FNV hash constants (`1469598103934665603` / `1099511628211`) out
-;; of their hoisted register and back into the hash-loop body, costing
-;; peephole_lines +1,863,046 Ir and gvn_table +260,613 Ir against the same tree
-;; with wide constants refused. The imm32 rule is therefore a PROFITABILITY
+;; global to hoist: a wide hash constant moves out of its hoisted register and
+;; back into the hash-loop body. The imm32 rule is therefore a PROFITABILITY
 ;; rule, not a soundness one, and it stays.
 ;;
-;; RE-TESTED (packet T2-2, MF-5 ii), which proposed admitting any-width literals
-;; and keeping this rule "only for operand folding", on the premise that the
-;; allocator would rematerialize a wide immediate at its uses instead of homing
-;; it in a frame slot (benchmarks/peephole_lines compares `pl-none` =
-;; 4611686018427387904 against `0x40(%rsp)`). It does not: this backend's
-;; allocator has no rematerialization of constant definitions, which is the same
-;; allocator capability target/research/patterns/memory-facts.md names as the
-;; prerequisite for the loop-carry packets. Three variants were built and
-;; measured against the same tree, one cachegrind run each:
-;;   (a) wide literals admitted at every `Mov` SOURCE, imm32 kept at the operand
-;;       positions: peephole_lines -507,918 and cfg_domloops -752,835 against
-;;       gvn_table +1,116,250, intern_table +802,254 and graph_dijkstra
-;;       +1,599,899 -- net +2.25M;
-;;   (b) wide literals admitted only at `Mov` sources whose destination feeds a
-;;       COMPARISON, the one operand position that needs a register whatever the
-;;       width: peephole_lines +461,425 and graph_dijkstra +1,599,899, every
-;;       other row unmoved -- `gd-infinity` is the same 4611686018427387904
-;;       constant and its compare sits in the hot loop, so it pays back more
-;;       than `pl-none` saves;
-;;   (c) (b) restricted to literals that do not fit imm32: byte-identical to
-;;       (b), because the early rewrite already substitutes the imm32 ones.
-;; No variant is a net win and each moves a row by more than the 0.05% this
-;; tree gates on, so the rule stays until the allocator can rematerialize a
-;; `movabs`.
+;; Admitting any-width literals and keeping this rule "only for operand
+;; folding" rests on the premise that the allocator would rematerialize a wide
+;; immediate at its uses instead of homing it in a frame slot. It does not:
+;; this backend's allocator has no rematerialization of constant definitions.
+;; The narrower variants lose too: wide literals admitted at every `Mov`
+;; SOURCE (imm32 kept at the operand positions), or only at `Mov` sources whose
+;; destination feeds a COMPARISON (the one operand position that needs a
+;; register whatever the width), trade a win in one loop for a larger loss
+;; where the same kind of constant's compare sits in a hot loop. So the rule
+;; stays until the allocator can rematerialize a `movabs`.
 ;;
 ;; A narrow exception is a positive wide power of two used by a 64-bit multiply:
 ;; consume it as a shift count in [31, 62], so no wide literal is materialized.
@@ -120507,18 +119452,17 @@
 ;; disqualified (stored anywhere / address-taken anywhere) and are
 ;; imm32-encodable or positive powers of two. Wide powers are consumed only by
 ;; the multiply-to-shift rewrite; all ordinary positions retain the imm32 gate.
-;; ZERO is a member like any other value. It used to be
-;; excluded here so a substituted divisor could never become a literal `0`, but
-;; that is a property of the DIVISOR POSITION and not of the global, so the
-;; refusal now lives at the substitution site
+;; ZERO is a member like any other value. A substituted divisor must never
+;; become a literal `0`, but that is a property of the DIVISOR POSITION and not
+;; of the global, so the refusal lives at the substitution site
 ;; (`opt-const-global-subst-divisor-value`): a `% G` keeps its original trapping
 ;; global-load form while every OTHER use of the same G folds. Admitting zero is
 ;; what lets a zero-valued index constant discharge the bounds check it stands
 ;; in -- `bounds_check @G, %len` becomes `bounds_check 0, %len`, which `sccp`
 ;; folds once the length is also known -- and collapse `gep %data, @G` to a
-;; base-only address. That is intern_table's `it-state-capacity`: -6,878,931 Ir
-;; on that row, none of it reachable by the per-function passes, because none of
-;; them can prove a global is never written ANYWHERE in the program.
+;; base-only address. None of that is reachable by the per-function passes,
+;; because none of them can prove a global is never written ANYWHERE in the
+;; program.
 ;;
 ;; Startup-initialised globals cannot reach this table BY CONSTRUCTION, so the
 ;; initialiser-ordering question never arises: a global whose initializer is not
@@ -121248,9 +120192,9 @@
 ;; so it is built separately by the program driver and injected here rather
 ;; than tied to this gate -- see opt-build-program-summaries.
 (define (opt-summary-function-limit) : i64
-  ;; Dotted stdlib imports can leave small programs with more pre-prune reachable
-  ;; functions than the old 64-function gate, even when the final program is still
-  ;; tiny. Keep the fixpoint summary pass bounded, but high enough for those cases.
+  ;; Dotted stdlib imports can leave small programs with many pre-prune reachable
+  ;; functions, even when the final program is still tiny. Keep the fixpoint
+  ;; summary pass bounded, but high enough for those cases.
   1024)
 
 ;; Every function whose call-memory summary is exactly 0 writes no memory at
@@ -121319,11 +120263,10 @@
 ;; again. What such a callee CAN do -- change a cell -- is P18's per-global
 ;; row and `global-write?`, asked separately by every reader of this bit.
 ;;
-;; Measured need: `cg-slot-list-add` writes `cg-node-len` (a cell) and the two
-;; node arrays' elements, and every descriptor word of `cg-tokens` in the loop
-;; that calls it reloaded per iteration -- the call fell to `call-or-unknown?`
-;; on the cell write alone. Same shape for every counter-bumping helper
-;; called from a scan.
+;; The shape it serves: a helper that bumps a counter cell and writes array
+;; elements would otherwise fall to `call-or-unknown?` on the cell write alone,
+;; and every descriptor word in the loop that calls it would reload per
+;; iteration.
 (define (opt-direct-call-clean-header-bit) : i64
   8)
 
@@ -121474,8 +120417,7 @@
 ;; Build the per-program summaries: the function-count-gated call maps
 ;; plus the const-divisor table. The const-divisor table is built only at opt
 ;; level 2 (the only level whose pipeline runs the divisor rewrite), so opt0/opt1
-;; -- and in particular the opt1 self-compile throughput metric -- pay nothing
-;; for it and stay byte-identical. The global-cell summary follows the same
+;; pay nothing for it. The global-cell summary follows the same
 ;; gate: only the level-2 pipeline runs the global_cell pass. Every table is
 ;; built on the same final function seq -- the post-inline, pruned program
 ;; every function is then optimized from, which is the only seq whose call
@@ -121574,12 +120516,11 @@
 
 ;; Substitute a proven constant global with its literal value in
 ;; scalar operand positions. For an ordinary operand this lets the backend fold
-;; the literal instead of emitting a per-use rip-relative load (the
-;; opt_crc32/opt_quicksort mask-load win). For a div/mod divisor it produces a
-;; literal `CompilerIrValue.I64`, which `compiler-backend-binop-literal-divmod-asm`
-;; strength-reduces with the existing magic-multiply path (matching clang).
-;; (The map is named `const-divisors` for historical reasons but now holds every
-;; proven-constant global, not only divisors.)
+;; the literal instead of emitting a per-use rip-relative load. For a div/mod
+;; divisor it produces a literal `CompilerIrValue.I64`, which
+;; `compiler-backend-binop-literal-divmod-asm` strength-reduces with the
+;; existing magic-multiply path (matching clang). (The map is named
+;; `const-divisors` but holds every proven-constant global, not only divisors.)
 (define (opt-const-global-subst-value
   [const-divisors : (& const-divisors opt_i64_i64_map.Map)]
   [v : (& v ir.CompilerIrValue)]) : ir.CompilerIrValue
@@ -121603,7 +120544,7 @@
 ;; literal and buy nothing; leave the global's load form in place instead. Every
 ;; other use of the same global -- including the dividend of the very same
 ;; instruction -- still folds. Non-zero divisors are unaffected and keep the
-;; magic-multiply strength reduction this table was originally built for.
+;; magic-multiply strength reduction.
 (define (opt-const-global-divisor-op? [op : ir.CompilerIrBinOp]) : bool
   (match op
     [(ir.CompilerIrBinOp.Div) true]
@@ -121658,15 +120599,15 @@
 ;; multiplication and a left shift compute the same low 64 bits for every
 ;; input, signed or unsigned. Without this the multiplier is a `movabs` held in
 ;; a register and the product an `imul`, three cycles of latency on a serial
-;; recurrence where the shift is one (benchmarks/mul_wide_power).
+;; recurrence where the shift is one.
 ;;
 ;; WHY THE FINAL SLOT. The early constant-global rewrite keeps a wide literal
 ;; out of every operand, so until here the product is a `Mul` of a Global
 ;; operand: a pure, non-trapping BinOp. An IR `Shl` is not one to the passes
 ;; that ask opt-binop-traps? -- LICM, rotation, DCE, range analysis all treat
-;; every shift as a possible abort -- so rewriting early made them keep an
-;; invariant product in its loop, leave a loop unrotated and a dead product in
-;; place. After unswitch and the derived-counter pass no pass that asks that
+;; every shift as a possible abort -- so rewriting early would make them keep
+;; an invariant product in its loop, leave a loop unrotated and a dead product
+;; in place. After unswitch and the derived-counter pass no pass that asks that
 ;; question runs on the function, and the whole-program inline stage ran
 ;; before any of this, so the shift is never re-examined as a hazard. The count
 ;; is a literal in [31, 62], valid for the 64-bit operand: the shift cannot
@@ -122043,12 +120984,6 @@
 ;;       control never returns from it, so no use of `%g` runs after it and
 ;;       nothing it could write is ever read
 ;;       (opt-global-cell-scan-direct-call, opt-direct-call-noreturn?).
-;;       HISTORY. v1 read: "the function contains no
-;;       Call/TailCall/indirect-call/SpmdCall that can RETURN: any such callee
-;;       could set! G. v1 deliberately treats the whole returning call family
-;;       as opaque; a callgraph refinement (block only callees that may set! G)
-;;       is a later packet." That refinement is this condition, and a program
-;;       without a mod-ref table still answers every query the v1 way.
 ;; A set! in ANOTHER function (the loader pattern) cannot interleave with this
 ;; activation unless (c) admits a call that reaches it, and the
 ;; entry load observes any set! made before this activation -- exactly what a
@@ -122751,16 +121686,15 @@
 ;; P18-2: the packed row, assigned in two pools. A hot loop's cell writes are
 ;; its counters -- `ssa-mt-fill`, `rg-heap-len`, `sccp-changed` -- and what it
 ;; asks the row about are its ARRAYS, whose cells only the setup code ever
-;; writes. Filling the row in declaration order let the two share the overflow
-;; bit once a program stores more than 62 globals (benchmarks/ssa_construct
-;; stores 83): `ssa-materialize`'s bump of `ssa-mt-fill` then read as a write of
-;; `ssa-mt`'s cell, and the descriptor handle reloaded on every instruction
-;; copied. The non-scalar globals take the low bits first, and the scalars take
-;; what is left; when the row overflows, the scalars share ONE bit of their own
-;; (the top one) and the non-scalars past the row share the bit below it, so a
-;; scalar store never reads as an array's cell write whatever the count. Below
-;; the limit the assignment is a permutation of the old one, and no verdict
-;; moves.
+;; writes. Filling the row in declaration order would let the two share the
+;; overflow bit once a program stores more than 62 globals: `ssa-materialize`'s
+;; bump of `ssa-mt-fill` then reads as a write of `ssa-mt`'s cell, and the
+;; descriptor handle is reloaded on every instruction copied. The non-scalar
+;; globals take the low bits first, and the scalars take what is left; when the
+;; row overflows, the scalars share ONE bit of their own (the top one) and the
+;; non-scalars past the row share the bit below it, so a scalar store never
+;; reads as an array's cell write whatever the count. Below the limit every
+;; global has its own bit, so the pooling changes no verdict.
 (define (opt-global-mod-ref-index-build
   [globals : ir.CompilerIrGlobalSeq]
   [stores : (& stores opt_i64_i64_map.Map)]
@@ -122937,8 +121871,8 @@
 ;; and the element buffer that descriptor's data slot points at, are separate
 ;; allocations. Writes into them are NOT attributed here, and no consumer of
 ;; this table may read it as a claim about them: the header hoist this table
-;; licenses moves the cell read alone and leaves the descriptor's length and
-;; data loads inside the loop (opt-licm-global-header-chain-stop?).
+;; licenses moves the cell read alone, and whether the descriptor's length and
+;; data loads follow it is decided by the existing descriptor proofs, not here.
 ;;
 ;; THE POINTER ANALYSIS. A pointer that addresses a word of g's cell can only
 ;; be formed from the value `Global g` (the address itself; `GlobalAddr` is
@@ -122953,7 +121887,7 @@
 ;;          or a parameter whose call sites disagree)
 ;;
 ;; A `&`/`&mut` PARAMETER is the second way such a pointer arrives, and the
-;; only one that crosses a function boundary: `opt-global-obj-param-owners`
+;; only one that crosses a function boundary: `opt-global-obj-param-owners!`
 ;; reads every direct call site positionally and gives parameter k of F the
 ;; single global every site passes there, `-1` when they disagree, and 0 when
 ;; no site ever passes one. That is GAP-1's fact channel, computed here over
@@ -123031,8 +121965,7 @@
 ;; this row asks that row too (opt-licm-global-storage-writable?,
 ;; opt-load-cse-state-direct-call). Contributing nothing for such a global is
 ;; therefore exact, and it is what keeps a program with many scalar globals
-;; inside the packed row -- benchmarks/gvn_table has 66 globals, of which 30
-;; are Vecs.
+;; inside the packed row.
 (define (opt-global-obj-id-mask
   [index : (& index opt_i64_i64_map.Map)]
   [id : i64]) : i64
@@ -123298,7 +122231,7 @@
 ;; Seed a function's owner map from its parameter list. `resolved?` picks the
 ;; pass: the pessimistic pre-pass gives every mutable reference parameter the
 ;; `mixed` owner (it does not yet know what the call sites pass), the resolved
-;; pass gives it the owner opt-global-obj-param-owners computed.
+;; pass gives it the owner opt-global-obj-param-owners! computed.
 (define (opt-global-obj-seed-params
   [type-segment-bases : i64]
   [owners : OptGlobalObjOwners]
@@ -123364,10 +122297,10 @@
         0)]
     (opt-global-obj-owners-fixed seeded blocks (opt-global-obj-owner-round-cap))))
 
-;; The owner lattice has height two per var, so two rounds settle every shape
-;; this pass has been measured on and the cap only bounds a pathological phi
-;; chain. A function whose owners have not settled when it runs out is reported
-;; as writing any storage (opt-global-obj-function-own-mask).
+;; The owner lattice has height two per var, so a few rounds settle ordinary
+;; shapes and the cap only bounds a pathological phi chain. A function whose
+;; owners have not settled when it runs out is reported as writing any storage
+;; (opt-global-obj-own-writes!).
 (define (opt-global-obj-owner-round-cap) : i64
   8)
 
@@ -123812,23 +122745,18 @@
 ;; ("any storage") already applies to the whole global set, applied to a
 ;; NAMED remainder instead of to everything.
 ;;
-;; WHAT IT REPLACES. Overflowing the row used to DECLINE the table outright
-;; (`OptGlobalModRefIndex.No`), which seeds every loop in the program at "may
+;; WHY NOT DECLINE. Declining the table outright on overflow
+;; (`OptGlobalModRefIndex.No`) would seed every loop in the program at "may
 ;; write any storage": opt-licm-global-header-count then answers 0 without
 ;; scanning, the IAG-2 head-of-chain hoist is refused for every loop, and the
 ;; descriptor length and data words behind that head stay in with it. That is
 ;; a whole-program cliff keyed on a number that has nothing to do with the
-;; loop being compiled -- benchmarks/ssa_construct declares 67 non-scalar
-;; globals and loses the hoist for all of them, while gvn_table declares 30 of
-;; 77 and keeps it. The census this packet took over the 28 benchmarks and the
-;; opt2 self-compile reports that cliff as `iag2:no-table` and it is the top
-;; reason class by Ir at stake.
+;; loop being compiled.
 ;;
-;; PRECISION. Below the limit nothing changes: the count decides, so a program
-;; whose non-scalar globals fit assigns exactly the bits it assigned before and
-;; is byte-identical. Above it the first `limit` globals take bits 0 .. limit-1
-;; as before and every later one shares bit limit-1 with the last of them, so
-;; the loss is confined to the tail of the global list.
+;; PRECISION. Below the limit every non-scalar global gets its own bit. Above
+;; it the first `limit` globals take bits 0 .. limit-1 and every later one
+;; shares bit limit-1 with the last of them, so the loss is confined to the
+;; tail of the global list.
 (define (opt-global-obj-overflow-bit [globals : ir.CompilerIrGlobalSeq]) : i64
   (if (> (opt-global-obj-nonscalar-count globals 0 0) (opt-global-obj-limit))
     (- (opt-global-obj-limit) 1)
@@ -126081,27 +125009,22 @@
 ;;
 ;; WHERE IT RUNS. Once, BELOW the level-2 per-function pipeline: on the final
 ;; pruned function sequence, immediately before the late pass list. It is not in
-;; the inline stage's slot, and the reason is measured.
+;; the inline stage's slot, for the following reason.
 ;;
-;; Placed before the summaries (the packet's first choice), the specialized
-;; operands are visible to the pipeline itself, and cfg_domloops REGRESSES by
-;; +36,728,422 Ir (551,773,899 -> 588,502,321). The call boundary still pays
-;; what it should -- cfg-function alone drops 7,367,556 Ir -- but every helper
-;; loses more than that. `--trace-passes` on `cfg-idom-iterate` names the
-;; mechanism exactly: with global-rooted lengths the round-1 `bounds_dom_le`
-;; slot retires four more checks (243 -> 238 instructions instead of 243 ->
-;; 242), which empties the derivation set the round-2 `bce_version` reads, and
-;; the versioner then clones 21 blocks instead of 33 (35 -> 56 instead of 35 ->
-;; 68). The inner loop's guard, hoisted to the function entry in the versioned
-;; form, goes back to running once per OUTER iteration. That is GAP-1's recorded
-;; interaction ("a round-1 retirement starving round-2 bce_version, +5.8M on
-;; cfg") reached through operands rather than through facts, and it is why
-;; GAP-1's own consumer sits below the fixpoint.
+;; Placed before the summaries, the specialized operands are visible to the
+;; pipeline itself: the call boundary still pays what it should, but the loop
+;; helpers lose more than that. With global-rooted lengths the round-1
+;; `bounds_dom_le` slot retires more checks, which empties the derivation set
+;; the round-2 `bce_version` reads, and the versioner then clones fewer blocks.
+;; The inner loop's guard, hoisted to the function entry in the versioned form,
+;; goes back to running once per OUTER iteration. That is GAP-1's recorded
+;; interaction (a round-1 retirement starving round-2 bce_version) reached
+;; through operands rather than through facts, and it is why GAP-1's own
+;; consumer sits below the fixpoint.
 ;;
-;; Below the pipeline the same 47 parameters are specialized, every in-pipeline
-;; decision is taken on the operands the pipeline had before, and cfg_domloops
-;; drops 13,136,520 Ir (551,773,899 -> 538,637,379) with all ten of its
-;; functions improving. The census reads the same shapes there: no pipeline pass
+;; Below the pipeline the same parameters are specialized and every
+;; in-pipeline decision is taken on the operands the pipeline had before. The
+;; census reads the same shapes there: no pipeline pass
 ;; changes a signature or rewrites a `CompilerIrValue.Global` argument into a
 ;; var, so the sites the walk needs are still the ones the front end lowered.
 ;; The late pass list then runs over the specialized bodies, which is where the
@@ -128112,14 +127035,9 @@
 ;; value live from entry to a use the function may not even reach costs a
 ;; callee-saved register (a push/pop pair paid on EVERY call) plus, when the
 ;; use sits behind a branch, an unconditional load where the original was
-;; conditional.
-;;
-;; Measured on benchmarks/gvn_table's `gvn-facts-remove` (1,556,618 calls, of
-;; which 378 take the branch that reads the cells): `gvn-fact-len` and
-;; `gvn-fact-deleted` are each read exactly once, inside that branch. Promoted,
-;; their entry loads run 1,556,618 times and their live ranges pin %rbp and
-;; %rbx, so the prologue grows two pushes and the epilogue two pops. The
-;; single-reference cell is the entire shape.
+;; conditional. A hot function whose cells are each read once, inside a rarely
+;; taken branch, is the shape: promoted, their entry loads run on every call
+;; and their live ranges grow the prologue and epilogue a push/pop pair each.
 ;;
 ;; A single reference INSIDE A LOOP is the case this rule must not lose: there
 ;; the one static read is many dynamic loads, and the entry load replaces all of
@@ -128142,22 +127060,6 @@
 ;; the one shape that repays it, because there the static read is many dynamic
 ;; loads per activation. So a call-bearing function promotes exactly the cells
 ;; the loop set names, whatever N is.
-;;
-;; MEASURED, benchmarks/gvn_table with condition (c) per cell and this rule
-;; withdrawn (`calls?` forced false), against target/wsl/ic-p20.tsv:
-;;   gvn-table-invalidate-var  +7,782,390 Ir. Two straight-line reads of
-;;     `gvn_table` (blocks if_then.12 and while_exit.16, neither in a loop)
-;;     become one entry load; the entry block already held a preheader load of
-;;     the same cell, so the activation pays a second load, one more push/pop
-;;     (%rbp) and an 8-byte realignment -- five instructions x 1,556,478 calls,
-;;     to the instruction.
-;;   gvn-step-load +779,100 Ir (three reads of `gvn_epoch`, all behind
-;;     branches), gvn-run-block +563,444 Ir (three reads of `gvn_hash_prime`,
-;;     all in the loop's EXIT block, which runs once per activation).
-;;   gvn-root-of-var -318,122 Ir and gvn-table-clear -116,186 Ir are the two
-;;     that win, and gvn-root-of-var is exactly the loop shape: its second
-;;     `gvn_fact_cap` read sits in `while_header.0`.
-;; Whole benchmark: 964,017,000 -> 972,707,626 (+0.90%) without the rule.
 ;;
 ;; The index build is paid when some referenced cell has exactly one reference
 ;; or the function contains a returning call, which are the two questions the
@@ -128760,7 +127662,7 @@
             function
             (deref rest))])]
     ;; Read-only walk over the blocks (the spans accumulator is threaded
-    ;; forward exactly as the cons walk threaded it) (refs #5729).
+    ;; forward exactly as the cons walk threads it).
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -128864,7 +127766,7 @@
             ;; carrier, while level 1 must retain it until that optimization
             ;; has escaped its inputs. The checker merges those mutually
             ;; exclusive destroy sites as a possible double move; delaying the
-            ;; level-2 destroy would restore the measured ~460 MiB peak.
+            ;; level-2 destroy would raise the peak memory again.
             [inline-arena : i64 (arena.tl_arena_make)]
             [_enter-inline-arena : unit
               (unsafe
@@ -129170,8 +128072,8 @@
 (define (opt-alias-empty) : OptAliasFacts
   (OptAliasFacts.Facts (opt_i64_i64_map.with-capacity 17)))
 
-;; Unique(epoch) encodes as -(6 + epoch), so -1 is no longer produced by any
-;; kind; a stale -1 (or the unused -5) decodes to the conservative Invalidated.
+;; Unique(epoch) encodes as -(6 + epoch), so -1 is not produced by any kind; a
+;; stale -1 (or the unused -5) decodes to the conservative Invalidated.
 (define (opt-alias-kind-encode [kind : OptAliasKind]) : i64
   (match kind
     [(OptAliasKind.Unique epoch) (- 0 (+ 6 epoch))]
@@ -129586,7 +128488,7 @@
 ;; function/block/loop scope. The result never rewrites IR; compile-profile
 ;; builds only emit deterministic detail rows to stderr.
 ;; Roots are a membership-only set (never traversed), so keyed dense storage
-;; avoids the old linear scan as scopes accumulate allocation candidates.
+;; avoids a linear scan as scopes accumulate allocation candidates.
 (defenum OptScratchRootList
   (Empty)
   (Dense opt_i64_i64_map.Map))
@@ -133983,7 +132885,7 @@
 ;; opt-load-entry-survives-global-cell-store?). The cleared base map means a
 ;; later re-derivation rebuilds its own `GlobalField` key from a fresh
 ;; `Global`/`GlobalAddr` operand, so a kept entry is only ever consulted under a
-;; key the walk re-proved, exactly as before this arm existed.
+;; key the walk re-proved.
 ;; GSF-1: the known cell as a copy environment. The dispatcher applies it to
 ;; Mov and the pure/read/control-flow fallback; dedicated memory and direct-call
 ;; arms keep their original operands while their specialized state transfers
@@ -134213,14 +133115,12 @@
 ;; keep; they are not profitable. A descriptor word or a data-buffer word kept
 ;; across a call becomes a value that must survive the call, and the only
 ;; registers that do are the five callee-saved GP registers this backend plans
-;; against; the same trade lost 2,340,374 Ir on benchmarks/gvn_table when the
-;; loop-header carry admitted call-bearing loops
-;; (opt-load-gvn-loop-safe-instr?), and it loses here for the same reason.
-;; MEASURED on this packet: admitting them moved gvn_table 912,887,915 ->
-;; 916,608,471 (+3,720,556, +0.41%) with every other row unchanged, so the
-;; filter keeps exactly the cell words the packet names. A named CELL word is
-;; different in kind: it is one rip-relative load, not a chain, and the value it
-;; replaces was going to be re-read from the same static address anyway.
+;; against; the same trade loses when the loop-header carry admits
+;; call-bearing loops (opt-load-gvn-loop-safe-instr?), and it loses here for
+;; the same reason, so the filter keeps exactly the cell words. A named CELL
+;; word is different in kind: it is one rip-relative load, not a chain, and the
+;; value it replaces was going to be re-read from the same static address
+;; anyway.
 ;;
 ;; This filter answers for the `Store` half of the callee's writes only. Its
 ;; other write classes are filtered by the two filters that already existed: an
@@ -134245,7 +133145,7 @@
 ;; which after IAG-1 is exactly what a `(&mut g)` helper rewrites in place when
 ;; it grows the vector; the row says which globals that can happen to. The
 ;; other key classes are dropped for the reason the cell filter gives: sound to
-;; keep, measured not to pay.
+;; keep, not profitable.
 (define (opt-load-entry-survives-obj-writes?
   [index : (& index opt_i64_i64_map.Map)]
   [row : i64]
@@ -134291,8 +133191,8 @@
 ;; exactly while g's cell is untouched; without it, at g's own link-time
 ;; address, which nothing can change at all. Both are kept here for a g the
 ;; callee's row excludes, and dropped otherwise -- so a call that provably
-;; writes no cell no longer forces every global-based address in the caller to
-;; be re-derived from a fresh `Global`/`GlobalAddr` operand.
+;; writes no cell does not force every global-based address in the caller to be
+;; re-derived from a fresh `Global`/`GlobalAddr` operand.
 (define (opt-load-global-bases-filter-cell-writes
   [index : (& index opt_i64_i64_map.Map)]
   [row : i64]
@@ -134425,8 +133325,9 @@
         ;; IAG-2. The global STORAGE this call may write: the words of a
         ;; `.comm` cell itself, which after IAG-1 a `(&mut g)` helper rewrites
         ;; in place when it grows the vector. The cell row above answers only
-        ;; for `Store g`, so before this the write reached the table as an
-        ;; unknown-rooted store through a `Global g` argument and emptied it.
+        ;; for `Store g`, so without this row the write would reach the table
+        ;; as an unknown-rooted store through a `Global g` argument and empty
+        ;; it.
         [obj (& cells.obj-mod-ref)]
         [obj-row : i64
           (match (opt_i64_i64_map.get
@@ -134463,13 +133364,13 @@
             (ir.compiler-ir-symbol-id name))
             [(opt_i64_i64_map.LookupFound summary)
               ;; Unknown effects still empty the table: an unknown write can
-              ;; land anywhere. A GLOBAL write no longer does -- MF-4 (i) reads
-              ;; the callee's cell row and keeps every entry the named cell
-              ;; writes provably miss; only an unusable ("any cell") row falls
-              ;; back to clearing. The element bit is the one verdict that names
-              ;; a LAYER instead of an object, so it filters to the descriptor
+              ;; land anywhere. A GLOBAL write does not -- MF-4 (i) reads the
+              ;; callee's cell row and keeps every entry the named cell writes
+              ;; provably miss; only an unusable ("any cell") row falls back to
+              ;; clearing. The element bit is the one verdict that names a
+              ;; LAYER instead of an object, so it filters to the descriptor
               ;; layer rather than clearing (the parameter bits, if any, then
-              ;; filter that result by root as before).
+              ;; filter that result by root).
               (if (or
                 (opt-call-memory-summary-unknown? summary)
                 (and
@@ -136989,19 +135890,13 @@
           ;; A named cell word is NOT carried, even though a loop-safe body (no
           ;; call, no clear-all, no `Store G`, element stores only) provably
           ;; leaves every cell alone, so the key would still name the same
-          ;; location holding the same value. Measured: carrying it is a
+          ;; location holding the same value. Carrying it is a
           ;; register-pressure loss, because the carried handle drags the
           ;; descriptor words derived from it into the same loop-spanning live
-          ;; range. One cachegrind run each, against this tier alone --
-          ;; gvn_table 1,173,199,923 -> 1,169,328,223 (-3,871,700, the post-loop
-          ;; re-derivation in gvn-facts-remove/-insert folding onto the
-          ;; pre-loop walk) but peephole_lines 668,397,310 -> 670,418,364
-          ;; (+2,021,054, +0.30%), all of it in pl_parse_line: its `pl-text`
-          ;; cell, data pointer and length stop being re-derived per scan and
-          ;; start being spilled and reloaded around the loop instead
-          ;; (`movq %r9, 160(%rsp)` / `movq 152(%rsp), %rsi` appear where three
-          ;; rip-relative loads used to be). Same shape as the call-arm carry
-          ;; refusal above: the copy was never the cost, the live range is.
+          ;; range: a cell's data pointer and length stop being re-derived per
+          ;; scan and start being spilled and reloaded around the loop instead.
+          ;; Same shape as the call-arm carry refusal above: the copy was never
+          ;; the cost, the live range is.
           [_ tail]))]))
 
 ;; Find the (single, SSA) instruction defining `var` anywhere in the function.
@@ -137126,34 +136021,22 @@
 ;; A CALL is rejected even when the per-callee summary proves it writes no
 ;; descriptor field (element-only or write-free), which
 ;; opt-load-table-filter-element-call is happy to act on at an ordinary call
-;; site. Measurement is why, and it stayed why after substitution mode landed.
+;; site. Carrying such an entry across a loop is a loss under both rewrite
+;; forms.
 ;;
-;; The first measurement was made against the Mov form of the rewrite. Carrying
-;; a descriptor entry across a loop back edge did not DELETE the loop body's
-;; load, it rewrote it to a copy of a var defined outside the loop -- and that
-;; copy's source stays live around the back edge, so register allocation cannot
-;; coalesce the copy away. LICM already hoists the un-rewritten load into the
-;; preheader, where it runs once per loop ENTRY; the rewrite traded that for one
-;; move per ITERATION. Measured on benchmarks/gvn_table (gvn-scan-ints, whose
-;; outer loop's only call is the element-only vector setter): descriptor-field
-;; loads fell 5,369,431 -> 2,684,716 Ir per round and the function still grew
-;; 80,342,627 -> 82,683,001, because the digit-scan inner loop gained
-;; `mov %r12,%r9` at 2,064,917 executions in exchange for a preheader load at
-;; 1,275,750.
+;; Under the Mov form, carrying a descriptor entry across a loop back edge does
+;; not DELETE the loop body's load, it rewrites it to a copy of a var defined
+;; outside the loop -- and that copy's source stays live around the back edge,
+;; so register allocation cannot coalesce the copy away. LICM already hoists the
+;; un-rewritten load into the preheader, where it runs once per loop ENTRY; the
+;; rewrite trades that for one move per ITERATION of the inner loop.
 ;;
-;; RE-TESTED under substitution mode (opt-load-gvn-subst-pair), which was
-;; expected to rescue the widening by deleting the load instead of copying it.
-;; The rewrite half worked exactly as predicted -- with the call arm admitted,
-;; gvn-scan-ints lost all three carried `gep %0, 8` + `load` pairs outright and
-;; every use read the preheader load directly, the LICM shape with zero copies
-;; -- and the benchmark still LOST. Admitting the call arm on top of
-;; substitution mode moved gvn_table 1,179,567,963 -> 1,181,908,337 Ir
-;; (+2,340,374, +0.20%) and cfg_domloops +834,661 (measured against the
-;; then-current substitution build, before the loop-escape gate below); no other
-;; row moved. +2,340,374 is the SAME delta the Mov form paid, which is the
-;; result: the copy was never the cost. The cost is the carried value's live
-;; range spanning the digit-scan inner loop, and deleting the copy does not
-;; shorten it. The carry stays rejected; substitution mode ships without it.
+;; Substitution mode (opt-load-gvn-subst-pair) deletes the carried loads
+;; outright and every use reads the preheader load directly, the LICM shape with
+;; zero copies -- and the carry still loses by the same amount the Mov form
+;; paid: the copy was never the cost. The cost is the carried value's live range
+;; spanning the inner loop, and deleting the copy does not shorten it. The carry
+;; stays rejected.
 (define (opt-load-gvn-loop-safe-instr?
   [hs : (& hs OptLoadHeaderSet)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -137233,15 +136116,15 @@
 ;; store-free loop every entry of the preheader's table is still true at the
 ;; header -- nothing on the back edge can write the word an entry names -- but
 ;; carrying an entry is not free: its cached VALUE has to stay in a register
-;; (or a frame slot) across the whole loop, and the measured price of carrying
-;; every stable entry was intern_table +11.1% (its byte loops spilled their own
-;; values around carried ones). A value the loop body already reads is live
-;; across the loop whatever the table does, so carrying ITS entry costs nothing
-;; and only spares the code after the loop the re-derivation -- a hash probe's
-;; `base`, the slots length and data pointer an insert reads back after the
-;; probe. That is the rule: keep an entry across a store-free back edge exactly
-;; when its cached value is a literal or a var the body uses. Global-based
-;; entries stay out, as they do for the loop-safe carry.
+;; (or a frame slot) across the whole loop, and carrying every stable entry
+;; makes byte loops spill their own values around carried ones. A value the
+;; loop body already reads is live across the loop whatever the table does, so
+;; carrying ITS entry costs nothing and only spares the code after the loop the
+;; re-derivation -- a hash probe's `base`, the slots length and data pointer an
+;; insert reads back after the probe. That is the rule: keep an entry across a
+;; store-free back edge exactly when its cached value is a literal or a var the
+;; body uses. Global-based entries stay out, as they do for the loop-safe
+;; carry.
 (defstruct OptLoadLoopCarry
   ;; store-free loop headers.
   (headers OptLabelSet)
@@ -137700,7 +136583,7 @@
 ;;     a second use to pay for it.
 ;;
 ;; PRESSURE. A promoted value is one more live value, and every carry decision
-;; in this pass is a measured pressure gate. The gate here is stronger than the
+;; in this pass is a pressure gate. The gate here is stronger than the
 ;; live-in budget opt-licm-global-promote-live-in-budget prices, and needs no
 ;; count: a materialized value may only be reused in a block with the SAME
 ;; natural-loop membership mask as the block that materialized it. So the value
@@ -138049,12 +136932,11 @@
 ;; across a loop competes for the callee-saved file, and a materialized Mov in
 ;; the body is a `Global` operand the ordinary hoist can then take OUT of the
 ;; loop -- turning a refusal into the very promotion the budget refused.
-;; Observed on tests/integration/licm_memclean_global_promote.tl, whose
-;; `pressured_scan` loop is over the budget: without this gate its `gcell_b`
-;; read moved into the preheader and the value spanned the loop, which
-;; tests/codegen/asm-shape.cases gates on. Every measured win of this
-;; promotion is in straight-line code, so the gate costs nothing on the
-;; benchmark corpus (all 20 rows byte-identical with and without it).
+;; tests/integration/licm_memclean_global_promote.tl pins this: its
+;; `pressured_scan` loop is over the budget, and without this gate its
+;; `gcell_b` read moves into the preheader and the value spans the loop, which
+;; tests/codegen/asm-shape.cases gates on. The promotion's wins are in
+;; straight-line code, so the gate gives none of them up.
 ;;
 ;; The one in-loop placement that refusal has no reason to cover: every natural
 ;; loop around the block itself `Store`s the cell. Such a read is not invariant
@@ -138063,10 +136945,8 @@
 ;; which is the only thing the refusal protects -- and no loop pass will ever
 ;; collapse those reads either, so without this they stay one rip-relative load
 ;; each: an append cursor read for `buf[n]`, `buf[n + 1]`, `buf[n + 2]` before
-;; `n` is advanced (#7926; ssa_construct -0.47%, sccp_lattice +0.41% when the
-;; refusal is dropped for every loop instead). The shared overflow bit of loops
-;; past the mask width names no particular loop, so a block in one of those is
-;; never admitted.
+;; `n` is advanced. The shared overflow bit of loops past the mask width names
+;; no particular loop, so a block in one of those is never admitted.
 (define (opt-load-cell-placement-ok?
   [promote : (& promote OptLoadCellPromote)]
   [block-id : i64]
@@ -138170,12 +137050,10 @@
 ;; read for a Mov plus a live register -- and, worse, it takes the operand away
 ;; from the passes that price globals per LOOP: `opt-licm-global-promote` hoists
 ;; a `Global` operand out of a loop under a live-in budget, and it can only do
-;; that to an operand that is still there. MEASURED, materializing on the
-;; whole-function read count alone: peephole_lines 443,963,889 -> 450,939,763
-;; (+1.57%), all of it loops whose `pl_none` / `pl_text` operands stopped being
-;; hoisted and became a per-iteration rip read (pl_first_rsp_read +3,879,268,
-;; pl_record_sweep +2,263,140), and graph_dijkstra +1,041,364 for the same
-;; shape. Requiring the second read to be in the SAME BLOCK makes the reuse
+;; that to an operand that is still there. Materializing on the whole-function
+;; read count alone is a loss: loops whose `Global` operands stop being hoisted
+;; turn them into a per-iteration rip read. Requiring the second read to be in
+;; the SAME BLOCK makes the reuse
 ;; unconditional -- nothing between the two can be a control-flow join -- and
 ;; leaves every operand a loop pass would have hoisted exactly where it was.
 ;; Cross-block reuse of a value that HAS been materialized is unaffected: it
@@ -138212,9 +137090,9 @@
 ;; the load table decides those precisely, and treating them as kills would
 ;; refuse the very regions this promotion is for. They carry a `MemoryWrite`
 ;; effect, so they are named before the clears-all fallthrough rather than left
-;; to it (#7926: the fallthrough used to end every region at a `StorePtr`). The
-;; test is only a price estimate -- a region the table ends anyway simply
-;; leaves the second read alone, at the cost of one materialized Mov.
+;; to it, which would end every region at a `StorePtr`. The test is only a
+;; price estimate -- a region the table ends anyway simply leaves the second
+;; read alone, at the cost of one materialized Mov.
 (define (opt-load-cell-region-kill?
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [cells : (& cells OptGlobalCellSummary)]
@@ -138356,11 +137234,9 @@
         ;; own output. Take its destination as the region's live cell value
         ;; instead of minting a rival one: a second name for one cell splits
         ;; what the passes below match on, and that is a real loss rather than a
-        ;; missed win. MEASURED before this arm existed: peephole_lines
-        ;; 443,963,889 -> 450,939,763, of which pl_first_rsp_read alone was
-        ;; +3,879,268 -- its loop's `result == pl_none` test stopped folding
-        ;; once the entry Mov and the promoted read became two different vars,
-        ;; so the loop kept a compare and the value kept a register.
+        ;; missed win: a loop's `result == pl_none` test stops folding once the
+        ;; entry Mov and the promoted read are two different vars, so the loop
+        ;; keeps a compare and the value keeps a register.
         (OptLoadCellStep.Step
           (begin
             (opt-load-cell-note-def!
@@ -138594,8 +137470,9 @@
 ;;
 ;; PRESSURE, and the budget. The phi lengthens each input's live range to the
 ;; end of its predecessor and adds one value live from the join to its last use.
-;; That is the shape :109700's substitution note prices as a loss when the value
-;; is pinned across a sibling loop, so a join that ENTERS a loop -- it is inside
+;; That is the shape the substitution note at opt-load-gvn-subst-escapes-loop?
+;; prices as a loss when the value is pinned across a sibling loop, so a join
+;; that ENTERS a loop -- it is inside
 ;; one, or a successor of it is a loop header -- is refused when that loop
 ;; already has `opt-licm-chain-live-in-budget` live-ins, measured by the
 ;; unroller's own proxy `opt-unroll-mb-live-in-count`. A loop's count is
@@ -139163,7 +138040,7 @@
 ;; loaded it is bypassed. `count > 0` loop guards, rotated loops' entry tests and
 ;; every "checked accessor returning a sentinel" have this shape, and the
 ;; intersect drops the key at the join, so the next region re-derives the whole
-;; descriptor chain (cfg bucket B2, intern_table B2a, peephole B3).
+;; descriptor chain.
 ;;
 ;; LLVM answers it with `performLoadPRE`: insert the load in the ONE predecessor
 ;; that lacks it, phi the result with the available names. Its cheapest form --
@@ -139196,13 +138073,13 @@
 ;; of an ELEMENT load is not admitted: its address depends on an index the guard
 ;; may be the very thing that bounds.
 ;;
-;; PROFITABILITY. A blind hoist is the P2 experiment, which lost 9.3% on
-;; cfg_domloops by lengthening live ranges no reuse redeemed. Two gates keep this
-;; one to the partially-redundant shape: the value must be RE-DERIVED elsewhere
-;; (another `gep base, k` with the same base and offset exists in the function),
-;; and the destination must not be a loop latch or a block in a loop that is
-;; already at `opt-licm-chain-live-in-budget` live-ins -- the same budget
-;; MF-2 uses, on the same proxy. `A` can never be a loop header (it has one
+;; PROFITABILITY. A blind hoist loses by lengthening live ranges no reuse
+;; redeems. Two gates keep this one to the partially-redundant shape: the value
+;; must be RE-DERIVED elsewhere (another `gep base, k` with the same base and
+;; offset exists in the function), and the destination must not be a loop
+;; latch or a block in a loop that is already at
+;; `opt-licm-chain-live-in-budget` live-ins -- the same budget MF-2 uses, on
+;; the same proxy. `A` can never be a loop header (it has one
 ;; predecessor), so `P` and `A` always sit in the same loops and the hoist can
 ;; only add the executions of the bypass edge itself.
 (define (opt-load-pre-hoist-cap) : i64
@@ -139334,7 +138211,6 @@
 
 ;; Is this descriptor word re-derived after the join the bypass edge lands on,
 ;; often enough to pay for the load the bypass edge now runs?
-;;
 (define (opt-load-pre-witness-ok?
   [doms : (& doms OptDomInfo)]
   [sites : (& sites OptLoadPreSites)]
@@ -139395,12 +138271,11 @@
                       ;; dominates -- so the hoist really does feed a
                       ;; re-derivation, rather than paying a load on the bypass
                       ;; edge for a value only the arm's own subtree wants.
-                      ;; Measured with the count alone as the witness:
-                      ;; gvn_table 840,008,543 -> 840,047,225 (+38,682), five
-                      ;; descriptor words hoisted above one rotated loop's guard
-                      ;; whose re-derivations were all INSIDE the loop, growing
-                      ;; that frame from 152 to 232 bytes and paying five loads
-                      ;; and five spills on every zero-trip entry.
+                      ;; With the count alone as the witness, descriptor words
+                      ;; get hoisted above a rotated loop's guard whose
+                      ;; re-derivations are all INSIDE the loop, growing the
+                      ;; frame and paying loads and spills on every zero-trip
+                      ;; entry.
                       (opt-load-pre-witness-ok?
                         doms
                         sites
@@ -139479,13 +138354,12 @@
       (and
         ;; The destination is budgeted by the same rule MF-2 uses, on the same
         ;; proxy: a guard block INSIDE a loop that already carries as many
-        ;; live-ins as the budget allows gets no more. Two wider readings were
-        ;; measured and reverted, both of which refuse build_csr's
-        ;; multi-descriptor guard (cfg_domloops -3,077,712 -> -2,422,944)
-        ;; without touching the gvn_table row they were aimed at: counting a
-        ;; guard that ENTERS a loop (MF-2's own test, which puts every rotated
-        ;; loop's guard under its loop's budget), and applying the test to the
-        ;; ARM as well.
+        ;; live-ins as the budget allows gets no more. Two wider readings are
+        ;; worse, both of which refuse a multi-descriptor guard the hoist pays
+        ;; on without gaining anything they were aimed at: counting a guard
+        ;; that ENTERS a loop (MF-2's own test, which puts every rotated loop's
+        ;; guard under its loop's budget), and applying the test to the ARM as
+        ;; well.
         (if (opt-natural-loop-body-contains-id? loop dest)
           (<
             (opt-load-loop-live-ins-cached cache loop loop-index)
@@ -139497,10 +138371,9 @@
 ;; destination must be outside EVERY natural loop. The budget prices a
 ;; destination inside a loop against that loop's live-in count; below the
 ;; fixpoint there is no later CSE round to recover from a bad exchange and the
-;; allocator is the next thing that runs, and the measurement is unambiguous --
-;; hoisting into benchmarks/intern_table's `it-bench` round loop spilled the
-;; hoisted words and cost 10,270,782 Ir against the 4,905,960 the same pass
-;; wins in `it-hash-words`, whose destination is the function entry.
+;; allocator is the next thing that runs: hoisting into a round loop spills the
+;; hoisted words and costs more than the same pass wins where the destination
+;; is the function entry.
 (define (opt-load-pre-dest-loop-free?
   [loops : (& loops OptNaturalLoopList)]
   [dest : i64]) : bool
@@ -139612,13 +138485,12 @@
         ;; The bypass edge must land on a JOIN. That is what makes the hoist a
         ;; partial-redundancy fix rather than plain speculation: the value the
         ;; two edges carry meets there, so the block the join dominates is the
-        ;; one that stops re-deriving it. Measured with this condition dropped
-        ;; (any second successor admitted, so a checked accessor's one-block
-        ;; sentinel arm qualifies): peephole_lines 435,518,106 -> 450,313,610
-        ;; (+3.40%), the descriptor words of `pl-text` pinned across all four
-        ;; inlined `pl-byte-at` sites of pl_parse_line instead of being read per
-        ;; guarded arm -- the live-range cost the header of this section prices,
-        ;; on the shape that has the most reuse to offer.
+        ;; one that stops re-deriving it. Without this condition any second
+        ;; successor is admitted, so a checked accessor's one-block sentinel
+        ;; arm qualifies and a descriptor's words get pinned across every
+        ;; inlined accessor site instead of being read per guarded arm -- the
+        ;; live-range cost the header of this section prices, on the shape
+        ;; that has the most reuse to offer.
         (>
           (-
             (array-ref preds.offsets (+ bypass 1))
@@ -139825,13 +138697,13 @@
 ;;
 ;; Two mechanisms, run once per function BELOW the level-2 fixpoint, in the
 ;; final-slot region beside `opt-arg-global-final-sweep` and for the same
-;; measured reason GAP-1 records: a fact consumed anywhere INSIDE the pipeline
+;; reason GAP-1 records: a fact consumed anywhere INSIDE the pipeline
 ;; starves the next round's versioner, and `optimize-function-max-iterations`
 ;; is 2, so there is always a next round to starve. Below the fixpoint there is
 ;; not, and LICM's placement is final -- which is the second thing this slot
 ;; needs, because the shape both mechanisms read is only assembled once LICM
-;; has finished lifting the descriptor pairs to their arm's top (IT-1 measured
-;; the in-pipeline `gvn` slot refusing exactly that: at round 1 the pairs are
+;; has finished lifting the descriptor pairs to their arm's top (the
+;; in-pipeline `gvn` slot refuses exactly that: at round 1 the pairs are
 ;; still inside the inlined inner loop, and at round 2 the bypassed arm still
 ;; leads with the 16-byte `gep %0,0 ; load (__tl_dyn-array u8)` the pair test
 ;; refuses).
@@ -139880,14 +138752,14 @@
 ;;     `opt-cfg-fold-branch`, below in the straighten and thread passes, is
 ;;     what retires the edge.
 ;;
-;;     ALL-OR-NOTHING PER GUARD. CG-1 measured retiring a SUBSET of a
-;;     versioning guard's conjuncts as a net loss (+317,832 on cfg_domloops):
-;;     a chain that still tests something has lost none of its branch cost and
-;;     has gained a shorter live range for the operands the surviving conjuncts
-;;     no longer share. So a conjunct chain -- a maximal run of branches linked
-;;     through their TAKEN successor and sharing one false target, which is
-;;     exactly how `bce_version` and `opt-bool-branch-chain` spell an `and` --
-;;     is retired only when EVERY member is decided.
+;;     ALL-OR-NOTHING PER GUARD. Retiring a SUBSET of a versioning guard's
+;;     conjuncts is a net loss: a chain that still tests something has lost
+;;     none of its branch cost and has gained a shorter live range for the
+;;     operands the surviving conjuncts no longer share. So a conjunct chain
+;;     -- a maximal run of branches linked through their TAKEN successor and
+;;     sharing one false target, which is exactly how `bce_version` and
+;;     `opt-bool-branch-chain` spell an `and` -- is retired only when EVERY
+;;     member is decided.
 ;;
 ;; NOT guard widening. T2-6 was rejected for widening a guard over DIFFERENT
 ;; quantities across sibling loops; nothing here relates two different
@@ -140192,11 +139064,10 @@
 ;; Which `gep` destinations MF-3 just moved. This is what keeps the CSE below a
 ;; PRE completion rather than a general dominator-tree load CSE: only a word the
 ;; bypass-edge insertion put in front of the two sibling guards may retire a
-;; re-derivation. The general form was measured and rejected -- it retires four
-;; intra-block duplicate descriptor loads in benchmarks/intern_table's
-;; `it-bench` (-4 instructions statically) and costs 10,270,782 Ir, because two
-;; short live ranges the allocator could overlap become one long one spanning
-;; both use regions. A word this pass hoisted has no such twin: the arm's copy
+;; re-derivation. The general form is a loss: it retires intra-block duplicate
+;; descriptor loads, but two short live ranges the allocator could overlap
+;; become one long one spanning both use regions. A word this pass hoisted has
+;; no such twin: the arm's copy
 ;; is gone, so nothing but the single moved definition is live either way.
 (define (opt-guard-dedup-gep-blocks-fill!
   [index : (& index OptCfgIndex)]
@@ -140315,15 +139186,13 @@
 ;; keeps ONE definition live from the surviving site to the retired one, and a
 ;; descriptor word is cheap to re-derive (`mov 8(%r)`) and expensive to keep
 ;; live: crossing a loop boundary trades one load per execution for a value the
-;; allocator has to carry through the whole loop, which is the live-range
-;; failure mode P2 and T2-6 both measured. Unambiguous here too -- without this
-;; rule the pass retires four duplicate descriptor loads in
-;; benchmarks/intern_table's `it-bench`, whose surviving definitions then sit in
-;; the round loop's preheader and are read from the deepest inlined region:
-;; -4 instructions statically, +10,270,782 Ir dynamically. Equal membership
-;; still admits the shape the packet targets, whose two sites are both OUTSIDE
-;; every loop of `it-hash-words` even though the path between them runs the
-;; words loop.
+;; allocator has to carry through the whole loop. Without this rule the pass
+;; retires duplicate descriptor loads whose surviving definitions then sit in
+;; a round loop's preheader and are read from the deepest inlined region: fewer
+;; instructions statically, many more dynamically. Equal membership still
+;; admits the shape the packet targets, whose two sites are both OUTSIDE every
+;; loop of `it-hash-words` even though the path between them runs the words
+;; loop.
 (define (opt-guard-dedup-same-loops?
   [loops : (& loops OptNaturalLoopList)]
   [a : i64]
@@ -140616,8 +139485,7 @@
 ;; read the SAME phi var, and the outer latch's taken successor (the outer
 ;; body) dominates the inner header -- so a dominance-only rule retires the
 ;; inner loop's own bound and the `and`'s second conjunct then indexes at
-;; `last == total`. (Measured: the level-2 self-build's stage3 aborted with
-;; `array index out of bounds` inside exactly that function.)
+;; `last == total`.
 ;;
 ;; The fact is valid at the dominated branch when, between the dominating
 ;; branch's taken EDGE and the dominated branch, no leaf var of the condition
@@ -140786,7 +139654,7 @@
 ;; be the taken successor's single entry, dominance is the real dominator tree,
 ;; the fact must still be live -- no leaf of either side redefined between the
 ;; edge and the query, by the region walk (2) documents -- and retirement stays
-;; ALL-OR-NOTHING over the conjunct chain (CG-1's +317,832). Nothing here widens
+;; ALL-OR-NOTHING over the conjunct chain (see (2)). Nothing here widens
 ;; a guard, moves one, or reuses a value across the fold: the decided branch gets
 ;; a `true` literal and both successors, exactly as (2) leaves it.
 (define (opt-guard-imply-offset-max) : i64
@@ -143012,18 +141880,17 @@
 ;; feeds itself, so a substitution that canonicalizes one address exposes a
 ;; second redundant load the Mov form never reached. The shape that loses is a
 ;; dominating def INSIDE a loop feeding a load OUTSIDE it: the value then has to
-;; survive every later block instead of dying at its loop's exit. Measured on
-;; benchmarks/cfg_domloops (cfg-idom-iterate): the `%96 = load` in one inner
-;; loop's header forwarded to the sibling inner loop's header two blocks later,
-;; deleting a gep+load pair per iteration but pinning %96 across the second loop
-;; -- 798,103,345 -> 801,917,881 Ir (+0.48%). The register the second loop lost
-;; pushed its data pointer into %rbp, which the backend cannot spell as a SIB
-;; base (see #rbp-base at compiler-backend-address-base-register-ok?), so each
-;; indexed read grew a `movq %rbp,%rN` -- four of them across the loop's two
-;; clones. So the gate: a substitution may shorten a value's live range or
-;; extend it WITHIN the loops it already lives in, never carry it out of one.
-;; Literals are exempt (no live range at all), which is the store-to-load
-;; forwarded constant that folds a bounds guard away in the spmd rows.
+;; survive every later block instead of dying at its loop's exit. A load in one
+;; inner loop's header forwarded to the sibling inner loop's header deletes a
+;; gep+load pair per iteration but pins the value across the second loop; the
+;; register the second loop lost pushed its data pointer into %rbp, which the
+;; backend cannot spell as a SIB base (see #rbp-base at
+;; compiler-backend-address-base-register-ok?), so each indexed read grew a
+;; `movq %rbp,%rN` and the forward was a net loss. So the gate: a substitution
+;; may shorten a value's live range or extend it WITHIN the loops it already
+;; lives in, never carry it out of one. Literals are exempt (no live range at
+;; all), which is the store-to-load forwarded constant that folds a bounds
+;; guard away.
 (define (opt-load-gvn-subst-escapes-loop?
   [loop-masks : (& loop-masks (__tl_dyn-array i64))]
   [def-blocks : (& def-blocks (__tl_dyn-array i64))]

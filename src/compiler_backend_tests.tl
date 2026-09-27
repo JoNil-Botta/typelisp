@@ -13841,20 +13841,14 @@ g:
   (irt.instrs "%1 = mov 7 : i64
      jump join"))
 
-(define (compiler-backend-single-phi-return-join-instrs) : ir.CompilerIrInstrSeq
-  (irt.instrs "%0 = phi [%1, entry] : i64
-     return %0"))
-
 (define (compiler-backend-single-phi-return-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-backend-single-phi-return-entry-instrs))
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "join")
-        (compiler-backend-single-phi-return-join-instrs))
-      ir.CompilerIrBlockList.Nil)))
+  (irt.blocks
+    "entry:
+       %1 = mov 7 : i64
+       jump join
+     join:
+       %0 = phi [%1, entry] : i64
+       return %0"))
 
 (define (compiler-backend-single-phi-return-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%r12 %1=%r14"))
@@ -13911,22 +13905,15 @@ g:
       "    movl $99, %ebx\n"
       "    jmp .L_tl_test_join\n")))
 
-(define (compiler-backend-phi-return-work-join-instrs) : ir.CompilerIrInstrSeq
-  (irt.instrs
-    "%0 = phi [%1, entry] : i64
-     %2 = mov 99 : i64
-     return %0"))
-
 (define (compiler-backend-phi-return-work-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-backend-single-phi-return-entry-instrs))
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "join")
-        (compiler-backend-phi-return-work-join-instrs))
-      ir.CompilerIrBlockList.Nil)))
+  (irt.blocks
+    "entry:
+       %1 = mov 7 : i64
+       jump join
+     join:
+       %0 = phi [%1, entry] : i64
+       %2 = mov 99 : i64
+       return %0"))
 
 (define (compiler-backend-phi-return-work-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%r12 %1=%r14 %2=%r15"))
@@ -13945,22 +13932,15 @@ g:
   (irt.instrs "%2 = mov 7 : i64
      jump join"))
 
-(define (compiler-backend-mov-phi-copy-join-instrs) : ir.CompilerIrInstrSeq
-  (irt.instrs
-    "%0 = phi [%2, entry] : i64
-     %1 = mov %0 : i64
-     return %1"))
-
 (define (compiler-backend-mov-phi-copy-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-backend-mov-phi-copy-entry-instrs))
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "join")
-        (compiler-backend-mov-phi-copy-join-instrs))
-      ir.CompilerIrBlockList.Nil)))
+  (irt.blocks
+    "entry:
+       %2 = mov 7 : i64
+       jump join
+     join:
+       %0 = phi [%2, entry] : i64
+       %1 = mov %0 : i64
+       return %1"))
 
 (define (compiler-backend-mov-phi-copy-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%r12 %1=%r13 %2=%r14"))
@@ -16003,25 +15983,18 @@ g:
           (= (cdiag.compiler-diagnostic-col (__tl-box-place diag)) want-col))]
       [(backend.ResultCompilerBackend.Ok _) false])))
 
-(define (compiler-backend-switch-test-instr) : ir.CompilerIrInstr
-  (irt.instr "switch %0 base 0 [0:zero, 1:one, 2:two] default other"))
-
 (define (compiler-backend-switch-test-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-backend-test-instr-seq-prepend
-        (compiler-backend-switch-test-instr)
-        (ir.compiler-ir-instr-seq-empty)))
-    (irt.blocks
-      "zero:
-         return 0
-       one:
-         return 1
-       two:
-         return 2
-       other:
-         return 42")))
+  (irt.blocks
+    "entry:
+       switch %0 base 0 [0:zero, 1:one, 2:two] default other
+     zero:
+       return 0
+     one:
+       return 1
+     two:
+       return 2
+     other:
+       return 42"))
 
 (define (compiler-backend-switch-test-program) : ir.CompilerIrProgram
   (ir.CompilerIrProgram.Program
@@ -22823,110 +22796,27 @@ g:
     "%1=%r9 %2=%rcx %3=%rdx %4=%r10 %5=%r11 %6=%r8 %7=%rsi %8=%rdi %9=%rax"))
 
 (define (compiler-backend-gep-load-multi-emergency-instrs) : ir.CompilerIrInstrSeq
-  (let
-    [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
-    (begin
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%38 = mov %9 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%37 = mov %8 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%36 = mov %7 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%35 = mov %6 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%34 = mov %5 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%33 = mov %4 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%32 = mov %3 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%31 = mov %2 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%30 = mov %1 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%21 = load %20 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%20 = gep %0, 24 : u64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%6 = mov 6 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%9 = mov 9 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%8 = mov 8 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%7 = mov 7 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%5 = mov 5 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%4 = mov 4 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%3 = mov 3 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%2 = mov 2 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%1 = mov 1 : i64")
-          instrs))
-      instrs)))
+  (irt.instrs
+    "%1 = mov 1 : i64
+     %2 = mov 2 : i64
+     %3 = mov 3 : i64
+     %4 = mov 4 : i64
+     %5 = mov 5 : i64
+     %7 = mov 7 : i64
+     %8 = mov 8 : i64
+     %9 = mov 9 : i64
+     %6 = mov 6 : i64
+     %20 = gep %0, 24 : u64
+     %21 = load %20 : i64
+     %30 = mov %1 : i64
+     %31 = mov %2 : i64
+     %32 = mov %3 : i64
+     %33 = mov %4 : i64
+     %34 = mov %5 : i64
+     %35 = mov %6 : i64
+     %36 = mov %7 : i64
+     %37 = mov %8 : i64
+     %38 = mov %9 : i64"))
 
 (define (compiler-backend-gep-load-multi-emergency-asm) : backend.ResultCompilerBackend
   (let
@@ -37049,12 +36939,11 @@ b_keep:
 ;; header: %1 = phi ... ; %2 = lt %1, %9 ; branch %2, body, exit
 ;; Variable 9 is defined nowhere, so it is the loop-invariant bound.
 (define (compiler-backend-placement-test-header-block) : ir.CompilerIrBlock
-  (compiler-backend-placement-test-block
-    "header"
-    (ir.compiler-ir-instr-seq3
-      (compiler-backend-placement-test-carry-phi)
-      (irt.instr "%2 = lt %1, %9 : i64")
-      (irt.instr "branch %2, body, exit"))))
+  (irt.block
+    "header:
+       %1 = phi [%0, entry], [%3, latch] : i64
+       %2 = lt %1, %9 : i64
+       branch %2, body, exit"))
 
 ;; body: %4 = %1 ; jump latch  (or, with `terminated?` false, no jump at all)
 (define (compiler-backend-placement-test-body-block [terminated? : bool]) : ir.CompilerIrBlock
@@ -39144,19 +39033,11 @@ b_keep:
   (ir.CompilerIrProgram.Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (ir.CompilerIrFunction.Function
-        (compiler-backend-test-symbol "stdlib/runtime.tl::str-view")
-        (ir.compiler-ir-param-seq-empty)
-        (ast.AstType.I64)
-        0
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (ir.compiler-ir-instr-seq1
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7)))))
-          ir.CompilerIrBlockList.Nil)
-        ir.CompilerIrFunctionAbi.Ordinary)
+      (irt.func
+        "function @stdlib/runtime.tl::str-view() -> i64 vars 0 {
+         entry:
+           return 7
+         }")
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
@@ -39393,19 +39274,11 @@ b_keep:
   (ir.CompilerIrProgram.Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (ir.CompilerIrFunction.Function
-        (compiler-backend-test-symbol "tl_alloc")
-        (ir.compiler-ir-param-seq-empty)
-        (ast.AstType.I64)
-        0
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (ir.compiler-ir-instr-seq1
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7)))))
-          ir.CompilerIrBlockList.Nil)
-        ir.CompilerIrFunctionAbi.Ordinary)
+      (irt.func
+        "function @tl_alloc() -> i64 vars 0 {
+         entry:
+           return 7
+         }")
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main

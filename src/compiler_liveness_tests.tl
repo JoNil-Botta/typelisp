@@ -252,38 +252,16 @@
 ;; id list must too), a two-arg call, a phi input list, a packed value list, a
 ;; raw-var AddrOf operand, and a def-less terminator.
 (define (compiler-live-ids-sample-instrs) : ir.CompilerIrInstrSeq
-  (let
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity 9)]
-    (begin
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (irt.instr "%0 = mov %10 : i64"))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (irt.instr "%1 = add %7, %7 : i64"))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.AddrOf 2 33))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (irt.instr "%3 = gep %40, 8 : i64"))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (irt.instr "%4 = call f(%41, %41) : i64"))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (irt.instr "%5 = pack [%42, %43] : i64"))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (irt.instr "%6 = phi [%44, a], [%44, b] : i64"))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (irt.instr "store_ptr %45, %46 : i64"))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (irt.instr "branch %47, a, b"))
-      (ir.compiler-ir-instr-builder-to-seq builder))))
+  (irt.instrs
+    "%0 = mov %10 : i64
+     %1 = add %7, %7 : i64
+     %2 = addr_of %33
+     %3 = gep %40, 8 : i64
+     %4 = call f(%41, %41) : i64
+     %5 = pack [%42, %43] : i64
+     %6 = phi [%44, a], [%44, b] : i64
+     store_ptr %45, %46 : i64
+     branch %47, a, b"))
 
 ;; The two id-driven scratch steps must leave the row -- and the trimmed active
 ;; count -- exactly where the bitset forms leave them.

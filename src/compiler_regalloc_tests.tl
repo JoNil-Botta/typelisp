@@ -1642,33 +1642,20 @@
 (cfg
   test
   (define (compiler-reg-call-hole-round-entry) : ir.CompilerIrInstrSeq
-    (let
-      [count : i64 (compiler-reg-call-hole-round-values)]
-      [builder : ir.CompilerIrInstrBuilder
-        (ir.compiler-ir-instr-builder-with-capacity (+ count 3))]
-      [index : i64 0]
-      (begin
-        (while (< index count)
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (ir.CompilerIrInstr.BinOp
-                (+ index 1)
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.I64 (+ index 1))
-                (compiler-reg-i64-ty)))
-            (set! index (+ index 1))))
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (irt.instr "%11 = call call_hole_sink() : i64"))
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (irt.instr "%12 = mov 0 : i64"))
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop")))
-        (ir.compiler-ir-instr-builder-to-seq builder)))))
+    (irt.instrs
+      "%1 = add %0, 1 : i64
+       %2 = add %0, 2 : i64
+       %3 = add %0, 3 : i64
+       %4 = add %0, 4 : i64
+       %5 = add %0, 5 : i64
+       %6 = add %0, 6 : i64
+       %7 = add %0, 7 : i64
+       %8 = add %0, 8 : i64
+       %9 = add %0, 9 : i64
+       %10 = add %0, 10 : i64
+       %11 = call call_hole_sink() : i64
+       %12 = mov 0 : i64
+       jump loop")))
 
 (cfg
   test
@@ -3787,179 +3774,53 @@
 (cfg
   test
   (define (compiler-reg-mixed-float-call-arg-function) : ir.CompilerIrFunction
-    (let
-      [args : (__tl_dyn-array ir.CompilerIrValue)
-        (__tl_make-array ir.CompilerIrValue 4)]
-      (begin
-        (set! (array-ref args 0) (ir.CompilerIrValue.Var 0))
-        (set! (array-ref args 1) (ir.CompilerIrValue.Var 1))
-        (set! (array-ref args 2) (ir.CompilerIrValue.Var 2))
-        (set! (array-ref args 3) (ir.CompilerIrValue.Var 3))
-        (ir.CompilerIrFunction.Function
-          (ir.compiler-ir-test-symbol "mixed_float_call_args")
-          (irt.params "i=%0:i64, a=%1:f64, b=%2:f64, c=%3:f64")
-          (ast.AstType.Unit)
-          5
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "entry")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Call
-                  4
-                  (ir.compiler-ir-test-symbol "mixed_float_callee")
-                  (ir.CompilerIrCallArgs.Array args)
-                  (ast.AstType.Unit))
-                (irt.instrs "return")))
-            ir.CompilerIrBlockList.Nil)
-          ir.CompilerIrFunctionAbi.Ordinary)))))
+    (irt.func
+      "function @mixed_float_call_args(i=%0:i64, a=%1:f64, b=%2:f64, c=%3:f64) -> unit vars 5 {
+       entry:
+         %4 = call mixed_float_callee(%0, %1, %2, %3) : unit
+         return
+       }")))
 
 (cfg
   test
   (define (compiler-reg-win64-rsi-rdi-pressure-function) : ir.CompilerIrFunction
-    (let
-      [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
-      [params : ir.CompilerIrParamSeq (ir.compiler-ir-param-seq-empty)]
-      [i : i64 6]
-      (begin
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-            instrs))
-        (while (>= i 0)
-          (begin
-            (set!
-              instrs
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Store
-                  (ir.compiler-ir-test-symbol "g")
-                  (ir.CompilerIrValue.Var i)
-                  (compiler-reg-i64-ty))
-                instrs))
-            (set! i (- i 1))))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%7 = call side_effect() : unit")
-            instrs))
-        (set! i 6)
-        (while (>= i 0)
-          (begin
-            (set!
-              params
-              (ir.compiler-ir-param-seq-prepend
-                (ir.CompilerIrParam.Param
-                  (str_cat.str-cat "p" (string.int->string i))
-                  (compiler-reg-i64-ty)
-                  i)
-                params))
-            (set! i (- i 1))))
-        (ir.CompilerIrFunction.Function
-          (ir.compiler-ir-test-symbol "win64_rsi_rdi_pressure")
-          params
-          (ast.AstType.Unit)
-          8
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-            ir.CompilerIrBlockList.Nil)
-          ir.CompilerIrFunctionAbi.Ordinary)))))
+    (irt.func
+      "function @win64_rsi_rdi_pressure(p0=%0:i64, p1=%1:i64, p2=%2:i64, p3=%3:i64, p4=%4:i64, p5=%5:i64, p6=%6:i64) -> unit vars 8 {
+       entry:
+         %7 = call side_effect() : unit
+         store @g, %0 : i64
+         store @g, %1 : i64
+         store @g, %2 : i64
+         store @g, %3 : i64
+         store @g, %4 : i64
+         store @g, %5 : i64
+         store @g, %6 : i64
+         return
+       }")))
 
 (cfg
   test
   (define (compiler-reg-zero-call-param-conflict-function) : ir.CompilerIrFunction
-    (let
-      [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
-      (begin
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @p5, %5 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @g12, %12 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @g11, %11 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @g10, %10 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @g9, %9 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @g8, %8 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @g7, %7 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @g6, %6 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%12 = mov 12 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%11 = mov 11 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%10 = mov 10 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%9 = mov 9 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%8 = mov 8 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%7 = mov 7 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%6 = mov 6 : i64")
-            instrs))
-        (ir.CompilerIrFunction.Function
-          (ir.compiler-ir-test-symbol "zero_call_param_conflict")
-          (irt.params
-            "a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64")
-          (ast.AstType.Unit)
-          13
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-            ir.CompilerIrBlockList.Nil)
-          ir.CompilerIrFunctionAbi.Ordinary)))))
+    (irt.func
+      "function @zero_call_param_conflict(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> unit vars 13 {
+       entry:
+         %6 = mov 6 : i64
+         %7 = mov 7 : i64
+         %8 = mov 8 : i64
+         %9 = mov 9 : i64
+         %10 = mov 10 : i64
+         %11 = mov 11 : i64
+         %12 = mov 12 : i64
+         store @g6, %6 : i64
+         store @g7, %7 : i64
+         store @g8, %8 : i64
+         store @g9, %9 : i64
+         store @g10, %10 : i64
+         store @g11, %11 : i64
+         store @g12, %12 : i64
+         store @p5, %5 : i64
+         return
+       }")))
 
 (cfg
   test
@@ -4677,32 +4538,12 @@
 (cfg
   test
   (define (compiler-reg-win64-arg-result-pref-function) : ir.CompilerIrFunction
-    (let
-      [args : (__tl_dyn-array ir.CompilerIrValue)
-        (__tl_make-array ir.CompilerIrValue 5)]
-      (begin
-        (set! (array-ref args 0) (ir.CompilerIrValue.Var 0))
-        (set! (array-ref args 1) (ir.CompilerIrValue.Var 1))
-        (set! (array-ref args 2) (ir.CompilerIrValue.Var 2))
-        (set! (array-ref args 3) (ir.CompilerIrValue.Var 3))
-        (set! (array-ref args 4) (ir.CompilerIrValue.Var 4))
-        (ir.CompilerIrFunction.Function
-          (ir.compiler-ir-test-symbol "win64_arg_result_pref")
-          (ir.compiler-ir-param-seq-empty)
-          (ast.AstType.I64)
-          6
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "entry")
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Call
-                  5
-                  (ir.compiler-ir-test-symbol "callee")
-                  (ir.CompilerIrCallArgs.Array args)
-                  (ast.AstType.I64))
-                (irt.instrs "return %5")))
-            ir.CompilerIrBlockList.Nil)
-          ir.CompilerIrFunctionAbi.Ordinary)))))
+    (irt.func
+      "function @win64_arg_result_pref() -> i64 vars 6 {
+       entry:
+         %5 = call callee(%0, %1, %2, %3, %4) : i64
+         return %5
+       }")))
 
 (cfg
   test
@@ -5552,118 +5393,30 @@
     ;; oversubscribe the 5 callee-saved registers. var0 is hot (3 uses), vars 2-5
     ;; are medium (2 uses), var1 is the unique coldest (1 use) and is the
     ;; spill-weight eviction victim.
-    (let
-      [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
-      (begin
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @hot0c, %0 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @hot0b, %0 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @hot0a, %0 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @cold1, %1 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use5b, %5 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use5a, %5 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use4b, %4 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use4a, %4 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use3b, %3 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use3a, %3 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use2b, %2 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use2a, %2 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%6 = syscall(39)")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%5 = mov 5 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%4 = mov 4 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%3 = mov 3 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%2 = mov 2 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%1 = mov 1 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%0 = mov 0 : i64")
-            instrs))
-        (ir.CompilerIrFunction.Function
-          (ir.compiler-ir-test-symbol "spill_weight_eviction")
-          (ir.compiler-ir-param-seq-empty)
-          (ast.AstType.Unit)
-          7
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-            ir.CompilerIrBlockList.Nil)
-          ir.CompilerIrFunctionAbi.Ordinary)))))
+    (irt.func
+      "function @spill_weight_eviction() -> unit vars 7 {
+       entry:
+         %0 = mov 0 : i64
+         %1 = mov 1 : i64
+         %2 = mov 2 : i64
+         %3 = mov 3 : i64
+         %4 = mov 4 : i64
+         %5 = mov 5 : i64
+         %6 = syscall(39)
+         store @use2a, %2 : i64
+         store @use2b, %2 : i64
+         store @use3a, %3 : i64
+         store @use3b, %3 : i64
+         store @use4a, %4 : i64
+         store @use4b, %4 : i64
+         store @use5a, %5 : i64
+         store @use5b, %5 : i64
+         store @cold1, %1 : i64
+         store @hot0a, %0 : i64
+         store @hot0b, %0 : i64
+         store @hot0c, %0 : i64
+         return
+       }")))
 
 (cfg
   test
@@ -6896,85 +6649,62 @@
 (cfg
   test
   (define (compiler-reg-call-spanning-multiblock-local-function) : ir.CompilerIrFunction
-    (let
-      [body-tail : ir.CompilerIrInstrSeq (irt.instrs "jump exit")]
-      [body : ir.CompilerIrInstrSeq
-        (irt.instrs
-          "%0 = mov 0 : i64
-           %1 = mov 1 : i64
-           %2 = mov 2 : i64
-           %3 = mov 3 : i64
-           %4 = mov 4 : i64
-           %5 = mov 5 : i64
-           %6 = mov 6 : i64
-           %7 = call side_effect() : unit
-           store @g0, %0 : i64
-           store @g1, %1 : i64
-           store @g2, %2 : i64
-           store @g3, %3 : i64
-           store @g4, %4 : i64
-           store @g5, %5 : i64
-           store @g6, %6 : i64
-           store @g5b, %5 : i64
-           store @g5c, %5 : i64
-           jump exit")]
-      (ir.CompilerIrFunction.Function
-        (ir.compiler-ir-test-symbol "call_spanning_multiblock_local")
-        (ir.compiler-ir-param-seq-empty)
-        (ast.AstType.Unit)
-        8
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))
-              (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block (ir.compiler-ir-label "body") body)
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))
-        ir.CompilerIrFunctionAbi.Ordinary))))
+    (irt.func
+      "function @call_spanning_multiblock_local() -> unit vars 8 {
+       entry:
+         jump body
+       body:
+         %0 = mov 0 : i64
+         %1 = mov 1 : i64
+         %2 = mov 2 : i64
+         %3 = mov 3 : i64
+         %4 = mov 4 : i64
+         %5 = mov 5 : i64
+         %6 = mov 6 : i64
+         %7 = call side_effect() : unit
+         store @g0, %0 : i64
+         store @g1, %1 : i64
+         store @g2, %2 : i64
+         store @g3, %3 : i64
+         store @g4, %4 : i64
+         store @g5, %5 : i64
+         store @g6, %6 : i64
+         store @g5b, %5 : i64
+         store @g5c, %5 : i64
+         jump exit
+       exit:
+         return
+       }")))
 
 (cfg
   test
   (define (compiler-reg-call-spanning-multiblock-boundary-function) : ir.CompilerIrFunction
-    (let
-      [entry : ir.CompilerIrInstrSeq
-        (irt.instrs
-          "%0 = mov 0 : i64
-           %1 = mov 1 : i64
-           %2 = mov 2 : i64
-           %3 = mov 3 : i64
-           %4 = mov 4 : i64
-           %5 = mov 5 : i64
-           %6 = mov 6 : i64
-           jump body")]
-      [body-tail : ir.CompilerIrInstrSeq (irt.instrs "jump exit")]
-      [body : ir.CompilerIrInstrSeq
-        (compiler-reg-call-spanning-call-before
-          (compiler-reg-call-spanning-post-call-stores body-tail))]
-      (ir.CompilerIrFunction.Function
-        (ir.compiler-ir-test-symbol "call_spanning_multiblock_boundary")
-        (ir.compiler-ir-param-seq-empty)
-        (ast.AstType.Unit)
-        8
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") entry)
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block (ir.compiler-ir-label "body") body)
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "exit")
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))
-        ir.CompilerIrFunctionAbi.Ordinary))))
+    (irt.func
+      "function @call_spanning_multiblock_boundary() -> unit vars 8 {
+       entry:
+         %0 = mov 0 : i64
+         %1 = mov 1 : i64
+         %2 = mov 2 : i64
+         %3 = mov 3 : i64
+         %4 = mov 4 : i64
+         %5 = mov 5 : i64
+         %6 = mov 6 : i64
+         jump body
+       body:
+         %7 = call side_effect() : unit
+         store @g0, %0 : i64
+         store @g1, %1 : i64
+         store @g2, %2 : i64
+         store @g3, %3 : i64
+         store @g4, %4 : i64
+         store @g5, %5 : i64
+         store @g6, %6 : i64
+         store @g5b, %5 : i64
+         store @g5c, %5 : i64
+         jump exit
+       exit:
+         return
+       }")))
 
 (cfg
   test
@@ -11343,29 +11073,14 @@
      }"))
 
 (define (compiler-reg-f64-reuse-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "f64_reuse")
-    (ir.compiler-ir-param-seq-empty)
-    (compiler-reg-f64-ty)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.F64 0x3ff8000000000000)
-            (compiler-reg-f64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @g0, %0 : f64")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.F64 0x4004000000000000)
-                (compiler-reg-f64-ty))
-              (irt.instrs "return %1")))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @f64_reuse() -> f64 vars 2 {
+     entry:
+       %0 = mov float-bits:4609434218613702656 : f64
+       store @g0, %0 : f64
+       %1 = mov float-bits:4612811918334230528 : f64
+       return %1
+     }"))
 
 (define (compiler-reg-overlap-function) : ir.CompilerIrFunction
   (irt.func
@@ -11389,48 +11104,21 @@
      }"))
 
 (define (compiler-reg-f64-overlap-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "f64_overlap")
-    (ir.compiler-ir-param-seq-empty)
-    (ast.AstType.Unit)
-    5
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.F64 0x3fe0000000000000)
-            (compiler-reg-f64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Mov
-              1
-              (ir.CompilerIrValue.F64 0x3ff8000000000000)
-              (compiler-reg-f64-ty))
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.F64 0x4004000000000000)
-                (compiler-reg-f64-ty))
-              (compiler-reg-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Mov
-                  3
-                  (ir.CompilerIrValue.F64 0x400c000000000000)
-                  (compiler-reg-f64-ty))
-                (compiler-reg-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Mov
-                    4
-                    (ir.CompilerIrValue.F64 0x4012000000000000)
-                    (compiler-reg-f64-ty))
-                  (irt.instrs
-                    "store @g0, %0 : f64
-                     store @g1, %1 : f64
-                     store @g2, %2 : f64
-                     store @g3, %3 : f64
-                     store @g4, %4 : f64
-                     return")))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @f64_overlap() -> unit vars 5 {
+     entry:
+       %0 = mov float-bits:4602678819172646912 : f64
+       %1 = mov float-bits:4609434218613702656 : f64
+       %2 = mov float-bits:4612811918334230528 : f64
+       %3 = mov float-bits:4615063718147915776 : f64
+       %4 = mov float-bits:4616752568008179712 : f64
+       store @g0, %0 : f64
+       store @g1, %1 : f64
+       store @g2, %2 : f64
+       store @g3, %3 : f64
+       store @g4, %4 : f64
+       return
+     }"))
 
 (define (compiler-reg-call-live-function) : ir.CompilerIrFunction
   (irt.func
@@ -11443,25 +11131,14 @@
      }"))
 
 (define (compiler-reg-f64-call-live-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "f64_call_live")
-    (ir.compiler-ir-param-seq-empty)
-    (compiler-reg-f64-ty)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.F64 0x4023000000000000)
-            (compiler-reg-f64-ty))
-          (irt.instrs
-            "%1 = call side_effect() : unit
-             %2 = mov %0 : f64
-             return %2")))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @f64_call_live() -> f64 vars 3 {
+     entry:
+       %0 = mov float-bits:4621537642612260864 : f64
+       %1 = call side_effect() : unit
+       %2 = mov %0 : f64
+       return %2
+     }"))
 
 (define (compiler-reg-call-arg-function) : ir.CompilerIrFunction
   (irt.func
@@ -11475,29 +11152,14 @@
      }"))
 
 (define (compiler-reg-f64-call-arg-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (ir.compiler-ir-test-symbol "f64_call_arg")
-    (ir.compiler-ir-param-seq-empty)
-    (compiler-reg-f64-ty)
-    3
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.F64 0x3ff8000000000000)
-            (compiler-reg-f64-ty))
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%1 = call takes_f64(%0) : unit")
-            (compiler-reg-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                2
-                (ir.CompilerIrValue.F64 0x4004000000000000)
-                (compiler-reg-f64-ty))
-              (irt.instrs "return %2")))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+  (irt.func
+    "function @f64_call_arg() -> f64 vars 3 {
+     entry:
+       %0 = mov float-bits:4609434218613702656 : f64
+       %1 = call takes_f64(%0) : unit
+       %2 = mov float-bits:4612811918334230528 : f64
+       return %2
+     }"))
 
 ;; M-A2 fixture: a direct call mixing a HANDLE arg (8-byte Array descriptor
 ;; pointer, var 0, produced by a call so it is not remat-classified) with a
@@ -12700,108 +12362,28 @@
      }"))
 
 (define (compiler-reg-call-spanning-caller-saved-function) : ir.CompilerIrFunction
-  (let
-    [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
-    (begin
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g5c, %5 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g5b, %5 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g6, %6 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g5, %5 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g4, %4 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g3, %3 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g2, %2 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g1, %1 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "store @g0, %0 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "%7 = call side_effect() : unit")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "%6 = mov 6 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "%5 = mov 5 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "%4 = mov 4 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "%3 = mov 3 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "%2 = mov 2 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "%1 = mov 1 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-reg-test-instr-seq-prepend
-          (irt.instr "%0 = mov 0 : i64")
-          instrs))
-      (ir.CompilerIrFunction.Function
-        (ir.compiler-ir-test-symbol "call_spanning_caller_saved")
-        (ir.compiler-ir-param-seq-empty)
-        (ast.AstType.Unit)
-        8
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-          ir.CompilerIrBlockList.Nil)
-        ir.CompilerIrFunctionAbi.Ordinary))))
+  (irt.func
+    "function @call_spanning_caller_saved() -> unit vars 8 {
+     entry:
+       %0 = mov 0 : i64
+       %1 = mov 1 : i64
+       %2 = mov 2 : i64
+       %3 = mov 3 : i64
+       %4 = mov 4 : i64
+       %5 = mov 5 : i64
+       %6 = mov 6 : i64
+       %7 = call side_effect() : unit
+       store @g0, %0 : i64
+       store @g1, %1 : i64
+       store @g2, %2 : i64
+       store @g3, %3 : i64
+       store @g4, %4 : i64
+       store @g5, %5 : i64
+       store @g6, %6 : i64
+       store @g5b, %5 : i64
+       store @g5c, %5 : i64
+       return
+     }"))
 
 (define (compiler-reg-scalar-zero-call-caller-saved-ok?) : bool
   (match (reg.compiler-reg-plan-function-scalar (compiler-reg-overlap-function))
@@ -15528,45 +15110,6 @@
       (not idle-after?)
       restored?)))
 
-;; --- CFG loop nest ----------------------------------------------------------
-;;
-;; The depth analysis used to read the block LAYOUT: a backward edge from index
-;; p to index q <= p made every index in [q, p] one level deeper. These fixtures
-;; are the shapes that encoding gets WRONG -- an in-range block that is not in
-;; the loop, and a backward-in-layout edge that is not a loop edge at all -- and
-;; the shapes both readings must agree on, so a future layout permutation is
-;; measured against a nest that does not move with it.
-(define (compiler-reg-loop-nest-jump [target : String]) : ir.CompilerIrInstrSeq
-  (compiler-reg-test-instr-seq-prepend
-    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label target))
-    (ir.compiler-ir-instr-seq-empty)))
-
-(define (compiler-reg-loop-nest-branch
-  [true-label : String]
-  [false-label : String]) : ir.CompilerIrInstrSeq
-  (compiler-reg-test-instr-seq-prepend
-    (ir.CompilerIrInstr.Branch
-      (ir.CompilerIrValue.Bool false)
-      (ir.compiler-ir-label true-label)
-      (ir.compiler-ir-label false-label))
-    (ir.compiler-ir-instr-seq-empty)))
-
-(define (compiler-reg-loop-nest-return) : ir.CompilerIrInstrSeq
-  (irt.instrs "return"))
-
-;; A block that ends WITHOUT a terminator: control runs on into whatever block
-;; is laid out next, an edge no instruction names.
-(define (compiler-reg-loop-nest-open) : ir.CompilerIrInstrSeq
-  (irt.instrs "%0 = mov 1 : i64"))
-
-(define (compiler-reg-loop-nest-block
-  [label : String]
-  [instrs : ir.CompilerIrInstrSeq]
-  [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block (ir.compiler-ir-label label) instrs)
-    rest))
-
 (define (compiler-reg-loop-nest-depth-at
   [depths : (& depths (__tl_dyn-array i64))]
   [index : i64]) : i64
@@ -15581,25 +15124,19 @@
 ;; never the latch, so it runs at most once per loop ENTRY. The CFG nest leaves
 ;; it at depth 0.
 (define (compiler-reg-loop-nest-early-exit-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-jump "header")
-    (compiler-reg-loop-nest-block
-      "header"
-      (compiler-reg-loop-nest-branch "body" "exit")
-      (compiler-reg-loop-nest-block
-        "body"
-        (compiler-reg-loop-nest-branch "early" "latch")
-        (compiler-reg-loop-nest-block
-          "early"
-          (compiler-reg-loop-nest-jump "exit")
-          (compiler-reg-loop-nest-block
-            "latch"
-            (compiler-reg-loop-nest-jump "header")
-            (compiler-reg-loop-nest-block
-              "exit"
-              (compiler-reg-loop-nest-return)
-              ir.CompilerIrBlockList.Nil)))))))
+  (irt.blocks
+    "entry:
+       jump header
+     header:
+       branch false, body, exit
+     body:
+       branch false, early, latch
+     early:
+       jump exit
+     latch:
+       jump header
+     exit:
+       return"))
 
 (define (compiler-reg-loop-nest-early-exit-ok?) : bool
   (let
@@ -15620,17 +15157,15 @@
 ;; layout. The range encoding reads that as a loop covering [join, cold]; there
 ;; is no cycle in the CFG at all, and the nest says depth 0 everywhere.
 (define (compiler-reg-loop-nest-sunk-cold-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-branch "hot" "cold")
-    (compiler-reg-loop-nest-block
-      "hot"
-      (compiler-reg-loop-nest-jump "join")
-      (compiler-reg-loop-nest-block
-        "join"
-        (compiler-reg-loop-nest-return)
-        (irt.blocks "cold:
-             jump join")))))
+  (irt.blocks
+    "entry:
+       branch false, hot, cold
+     hot:
+       jump join
+     join:
+       return
+     cold:
+       jump join"))
 
 (define (compiler-reg-loop-nest-sunk-cold-ok?) : bool
   (let
@@ -15648,25 +15183,19 @@
 ;; a `continue` arm and the body tail. That is one loop with two latches, not
 ;; two nested loops: every body block stays at depth 1.
 (define (compiler-reg-loop-nest-two-latch-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-jump "header")
-    (compiler-reg-loop-nest-block
-      "header"
-      (compiler-reg-loop-nest-branch "body" "exit")
-      (compiler-reg-loop-nest-block
-        "body"
-        (compiler-reg-loop-nest-branch "cont" "tail")
-        (compiler-reg-loop-nest-block
-          "cont"
-          (compiler-reg-loop-nest-jump "header")
-          (compiler-reg-loop-nest-block
-            "tail"
-            (compiler-reg-loop-nest-jump "header")
-            (compiler-reg-loop-nest-block
-              "exit"
-              (compiler-reg-loop-nest-return)
-              ir.CompilerIrBlockList.Nil)))))))
+  (irt.blocks
+    "entry:
+       jump header
+     header:
+       branch false, body, exit
+     body:
+       branch false, cont, tail
+     cont:
+       jump header
+     tail:
+       jump header
+     exit:
+       return"))
 
 (define (compiler-reg-loop-nest-two-latch-ok?) : bool
   (let
@@ -15686,25 +15215,19 @@
 ;; makes the level count a NEST: `inner-latch` reaches the outer latch through
 ;; the inner header, so it carries both levels.
 (define (compiler-reg-loop-nest-nested-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-jump "outer")
-    (compiler-reg-loop-nest-block
-      "outer"
-      (compiler-reg-loop-nest-branch "inner" "exit")
-      (compiler-reg-loop-nest-block
-        "inner"
-        (compiler-reg-loop-nest-branch "inner-latch" "outer-latch")
-        (compiler-reg-loop-nest-block
-          "inner-latch"
-          (compiler-reg-loop-nest-jump "inner")
-          (compiler-reg-loop-nest-block
-            "outer-latch"
-            (compiler-reg-loop-nest-jump "outer")
-            (compiler-reg-loop-nest-block
-              "exit"
-              (compiler-reg-loop-nest-return)
-              ir.CompilerIrBlockList.Nil)))))))
+  (irt.blocks
+    "entry:
+       jump outer
+     outer:
+       branch false, inner, exit
+     inner:
+       branch false, inner-latch, outer-latch
+     inner-latch:
+       jump inner
+     outer-latch:
+       jump outer
+     exit:
+       return"))
 
 (define (compiler-reg-loop-nest-nested-ok?) : bool
   (let
@@ -15724,25 +15247,19 @@
 ;; terminator. The ONLY edge into `tail` is the unnamed fall-through, so a nest
 ;; built from named successors alone would leave `body` outside its own loop.
 (define (compiler-reg-loop-nest-fallthrough-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-jump "header")
-    (compiler-reg-loop-nest-block
-      "header"
-      (compiler-reg-loop-nest-branch "body" "exit")
-      (compiler-reg-loop-nest-block
-        "body"
-        (compiler-reg-loop-nest-open)
-        (compiler-reg-loop-nest-block
-          "tail"
-          (compiler-reg-loop-nest-jump "latch")
-          (compiler-reg-loop-nest-block
-            "latch"
-            (compiler-reg-loop-nest-jump "header")
-            (compiler-reg-loop-nest-block
-              "exit"
-              (compiler-reg-loop-nest-return)
-              ir.CompilerIrBlockList.Nil)))))))
+  (irt.blocks
+    "entry:
+       jump header
+     header:
+       branch false, body, exit
+     body:
+       %0 = mov 1 : i64
+     tail:
+       jump latch
+     latch:
+       jump header
+     exit:
+       return"))
 
 (define (compiler-reg-loop-nest-fallthrough-ok?) : bool
   (let
@@ -15762,14 +15279,13 @@
 ;; allocated, so the DFS is a forest and ranks it. Parity with the range
 ;; encoding, which never asked about reachability at all.
 (define (compiler-reg-loop-nest-unreachable-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-return)
-    (irt.blocks
-      "dead-header:
-         jump dead-latch
-       dead-latch:
-         jump dead-header")))
+  (irt.blocks
+    "entry:
+       return
+     dead-header:
+       jump dead-latch
+     dead-latch:
+       jump dead-header"))
 
 (define (compiler-reg-loop-nest-unreachable-ok?) : bool
   (let
@@ -15800,22 +15316,17 @@
 ;; unremarkable: {header, body, latch}, entered only at the header, with
 ;; `entry` the header's one predecessor from outside it.
 (define (compiler-reg-loop-nest-rotated-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-jump "header")
-    (compiler-reg-loop-nest-block
-      "body"
-      (compiler-reg-loop-nest-jump "latch")
-      (compiler-reg-loop-nest-block
-        "latch"
-        (compiler-reg-loop-nest-jump "header")
-        (compiler-reg-loop-nest-block
-          "header"
-          (compiler-reg-loop-nest-branch "body" "exit")
-          (compiler-reg-loop-nest-block
-            "exit"
-            (compiler-reg-loop-nest-return)
-            ir.CompilerIrBlockList.Nil))))))
+  (irt.blocks
+    "entry:
+       jump header
+     body:
+       jump latch
+     latch:
+       jump header
+     header:
+       branch false, body, exit
+     exit:
+       return"))
 
 (define (compiler-reg-loop-nest-rotated-ok?) : bool
   (let
@@ -15858,25 +15369,19 @@
 ;; Membership cannot express that refusal -- the member set is the honest loop
 ;; either way -- so the refusal is the predecessor COUNT: two from outside.
 (define (compiler-reg-loop-nest-two-entry-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-branch "header" "second")
-    (compiler-reg-loop-nest-block
-      "header"
-      (compiler-reg-loop-nest-branch "body" "exit")
-      (compiler-reg-loop-nest-block
-        "body"
-        (compiler-reg-loop-nest-jump "latch")
-        (compiler-reg-loop-nest-block
-          "latch"
-          (compiler-reg-loop-nest-jump "header")
-          (compiler-reg-loop-nest-block
-            "second"
-            (compiler-reg-loop-nest-jump "header")
-            (compiler-reg-loop-nest-block
-              "exit"
-              (compiler-reg-loop-nest-return)
-              ir.CompilerIrBlockList.Nil)))))))
+  (irt.blocks
+    "entry:
+       branch false, header, second
+     header:
+       branch false, body, exit
+     body:
+       jump latch
+     latch:
+       jump header
+     second:
+       jump header
+     exit:
+       return"))
 
 ;; entry / header / body / latch / side / exit, where `side` jumps into the
 ;; loop BODY rather than its header. The natural-loop walk stops only at the
@@ -15886,25 +15391,19 @@
 ;; set at all, and the hoist has nowhere to inject -- refused, by the same one
 ;; count, without a second predicate.
 (define (compiler-reg-loop-nest-side-entry-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-branch "header" "side")
-    (compiler-reg-loop-nest-block
-      "header"
-      (compiler-reg-loop-nest-branch "body" "exit")
-      (compiler-reg-loop-nest-block
-        "body"
-        (compiler-reg-loop-nest-jump "latch")
-        (compiler-reg-loop-nest-block
-          "latch"
-          (compiler-reg-loop-nest-jump "header")
-          (compiler-reg-loop-nest-block
-            "side"
-            (compiler-reg-loop-nest-jump "body")
-            (compiler-reg-loop-nest-block
-              "exit"
-              (compiler-reg-loop-nest-return)
-              ir.CompilerIrBlockList.Nil)))))))
+  (irt.blocks
+    "entry:
+       branch false, header, side
+     header:
+       branch false, body, exit
+     body:
+       jump latch
+     latch:
+       jump header
+     side:
+       jump body
+     exit:
+       return"))
 
 (define (compiler-reg-loop-nest-multi-entry-ok?) : bool
   (let
@@ -16148,25 +15647,19 @@
 ;; {header, body, latch}, entered only through `entry`, and the preheader goes
 ;; in where it belongs.
 (define (compiler-reg-preheader-rotated-blocks) : ir.CompilerIrBlockList
-  (compiler-reg-loop-nest-block
-    "entry"
-    (compiler-reg-loop-nest-branch "header" "other")
-    (compiler-reg-loop-nest-block
-      "body"
-      (compiler-reg-loop-nest-jump "latch")
-      (compiler-reg-loop-nest-block
-        "latch"
-        (compiler-reg-loop-nest-jump "header")
-        (compiler-reg-loop-nest-block
-          "header"
-          (compiler-reg-loop-nest-branch "body" "exit")
-          (compiler-reg-loop-nest-block
-            "other"
-            (compiler-reg-loop-nest-jump "exit")
-            (compiler-reg-loop-nest-block
-              "exit"
-              (compiler-reg-loop-nest-return)
-              ir.CompilerIrBlockList.Nil)))))))
+  (irt.blocks
+    "entry:
+       branch false, header, other
+     body:
+       jump latch
+     latch:
+       jump header
+     header:
+       branch false, body, exit
+     other:
+       jump exit
+     exit:
+       return"))
 
 (define (compiler-reg-preheader-label-at
   [blocks : ir.CompilerIrBlockList]

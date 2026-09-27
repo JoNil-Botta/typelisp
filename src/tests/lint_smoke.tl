@@ -7,45 +7,23 @@
 (import compiler_ast_types as ast)
 (import stdlib.io)
 
-(define (lint-smoke-string-append-source) : String
-  "(define (main) : i64 (string.string-length (string.append \"a\" \"b\")))")
-
-(define (lint-smoke-string-concat-source) : String
-  "(define (main) : i64 (string.string-length (string.concat \"a\" \"b\")))")
-
-(define (lint-smoke-string-concat5-source) : String
-  "(define (main) : i64
-  (string.string-length (string.concat5 \"a\" \"b\" \"c\" \"d\" \"e\")))")
-
 (define (lint-smoke-nested-string-append-source) : String
   "(define (main) : i64
   (string.string-length (string.append \"a\" (string.append \"b\" \"c\"))))")
-
-(define (lint-smoke-loop-string-append-source) : String
-  "(define (main) : i64
-  (let
-    [i : i64 0]
-    [out : String \"\"]
-    (begin
-      (while (< i 3)
-        (begin
-          (set! out (string.append out \"x\"))
-          (set! i (+ i 1))))
-      (string.string-length out))))")
 
 (define (lint-smoke-deprecated-string-concat-self-test) : i64
   (begin
     (if (=
       (lint_core.lint-findings-count
         (lint_core.lint-deprecated-string-concat-scan
-          (lint-smoke-string-append-source)
+          "(define (main) : i64 (string.string-length (string.append \"a\" \"b\")))"
           (lint_core.lint-findings-empty)))
       1)
       unit
       (io.panic "lint: string-append call should be flagged"))
     (match (lint_core_tests.lint-findings-get
       (lint_core.lint-deprecated-string-concat-scan
-        (lint-smoke-string-concat-source)
+        "(define (main) : i64 (string.string-length (string.concat \"a\" \"b\")))"
         (lint_core.lint-findings-empty))
       0)
       [(lint_core.LintMaybeFinding.Some finding)
@@ -61,7 +39,8 @@
     (if (=
       (lint_core.lint-findings-count
         (lint_core.lint-deprecated-string-concat-scan
-          (lint-smoke-string-concat5-source)
+          "(define (main) : i64
+  (string.string-length (string.concat5 \"a\" \"b\" \"c\" \"d\" \"e\")))"
           (lint_core.lint-findings-empty)))
       1)
       unit
@@ -87,7 +66,16 @@
         (io.panic "lint: nested string append should produce a chain finding")])
     (match (lint_core_tests.lint-findings-get
       (lint_core.lint-deprecated-string-concat-scan
-        (lint-smoke-loop-string-append-source)
+        "(define (main) : i64
+  (let
+    [i : i64 0]
+    [out : String \"\"]
+    (begin
+      (while (< i 3)
+        (begin
+          (set! out (string.append out \"x\"))
+          (set! i (+ i 1))))
+      (string.string-length out))))"
         (lint_core.lint-findings-empty))
       0)
       [(lint_core.LintMaybeFinding.Some finding)

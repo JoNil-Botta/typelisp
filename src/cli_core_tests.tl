@@ -306,8 +306,9 @@
         (string.contains (& source) (& canonical-newline-call))]
       [(repl.ResultReplString.Err _) false])))
 
-(define (repl-scratch-source-stdlib-imports-ok?) : bool
-  (let
+(test
+  repl-scratch-source-stdlib-imports
+  (if (let
     [io-import : String "(import stdlib.io)\n"]
     [string-import : String "(import stdlib.string)\n"]
     [legacy-tl-import : String "stdlib/tl"]
@@ -324,11 +325,7 @@
           (repl-scratch-source-canonical-output-ok?
             "\"hi\""
             (ast.AstType.String)))]
-      [(repl.ResultReplString.Err _) false])))
-
-(test
-  repl-scratch-source-stdlib-imports
-  (if (repl-scratch-source-stdlib-imports-ok?)
+      [(repl.ResultReplString.Err _) false]))
     unit
     (io.panic "repl: scratch source stdlib imports mismatch")))
 

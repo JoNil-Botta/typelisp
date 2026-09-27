@@ -9,51 +9,6 @@
 (define (main) : i64
   (doc-extract-smoke))
 
-(define (doc-extract-smoke-source) : String
-  ";# Module title
-;# second module line
-
-;; ordinary comment ignored
-;: answer doc
-;: still answer
-(define answer : i64 42)
-
-;: lost before ordinary comment
-;; ordinary comment clears pending docs
-(define missed : i64 0)
-(define ignored-quote-char : char '\"')
-(define ignored-paren-char : char '(')
-;: function doc
-(define (main [argc : i64]) : i64
-  answer)
-; ordinary comment clears pending docs
-;: enum doc
-(defenum Maybe (None) (Some i64))
-
-;# later module
-;: external doc
-(extern (io.emit [arg0 : String]) : unit)
-;: struct doc
-(defstruct Point (x i64) (y i64))
-;: macro doc
-(defmacro (guard [condition : bool] [body : unit]) : unit
-  `(if ,condition ,body unit))
-;: EOF unattached")
-
-(define (doc-extract-legacy-smoke-source) : String
-  ";# Legacy module
-;: legacy item
-(define legacy : i64 1)")
-
-(define (doc-extract-declaration-smoke-source) : String
-  ";: box doc
-(defstruct Box_String
-  (value String))
-
-;: helper doc
-(define (box-string-value [value : Box_String]) : String
-  value.value)")
-
 (define (doc-item-ok?
   [item : doc_extract.DocItem]
   [kind-tag : i64]
@@ -134,7 +89,14 @@
       "(defmacro (guard")))
 
 (define (doc-extract-declaration-smoke-ok?) : bool
-  (match (doc_extract.doc-extract-source (doc-extract-declaration-smoke-source))
+  (match (doc_extract.doc-extract-source
+    ";: box doc
+(defstruct Box_String
+  (value String))
+
+;: helper doc
+(define (box-string-value [value : Box_String]) : String
+  value.value)")
     [(doc_extract.DocExtraction.Extraction _ items)
       (and
         (=
@@ -170,7 +132,36 @@
           2))]))
 
 (define (doc-extract-smoke) : i64
-  (match (doc_extract.doc-extract-source (doc-extract-smoke-source))
+  (match (doc_extract.doc-extract-source
+    ";# Module title
+;# second module line
+
+;; ordinary comment ignored
+;: answer doc
+;: still answer
+(define answer : i64 42)
+
+;: lost before ordinary comment
+;; ordinary comment clears pending docs
+(define missed : i64 0)
+(define ignored-quote-char : char '\"')
+(define ignored-paren-char : char '(')
+;: function doc
+(define (main [argc : i64]) : i64
+  answer)
+; ordinary comment clears pending docs
+;: enum doc
+(defenum Maybe (None) (Some i64))
+
+;# later module
+;: external doc
+(extern (io.emit [arg0 : String]) : unit)
+;: struct doc
+(defstruct Point (x i64) (y i64))
+;: macro doc
+(defmacro (guard [condition : bool] [body : unit]) : unit
+  `(if ,condition ,body unit))
+;: EOF unattached")
     [(doc_extract.DocExtraction.Extraction module-doc items)
       (begin
         (unless
@@ -194,7 +185,9 @@
           (doc-extract-source-line-smoke-ok?)
           (return (io.panic "doc-extract: declaration source line mismatch")))
         (match (doc_extract.doc-extract-source
-          (doc-extract-legacy-smoke-source))
+          ";# Legacy module
+;: legacy item
+(define legacy : i64 1)")
           [(doc_extract.DocExtraction.Extraction legacy-module legacy-items)
             (begin
               (unless

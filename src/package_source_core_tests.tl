@@ -11,69 +11,64 @@
 (cfg test (import stdlib.str_cat_runtime as str_cat))
 (cfg test (import compiler_load))
 (cfg test (import tlci_core as tlci))
-(import package_source_core as package_source)
-
-(define (package-source-fetched-boundary-lexical-smoke-ok?) : bool
-  (and
-    (string.eq
-      (package_source.package-source-fetched-boundary-message
-        "dep"
-        "entry"
-        "../outside.tl"
-        "cache/checkout")
-      "build: fetched package `dep` field `entry` path `../outside.tl` is not confined to locked checkout `cache/checkout`")
-    (match (package_source.package-source-confined-existing-file
-      "dep"
-      "entry"
-      "../outside.tl"
-      "cache/checkout")
-      [(package_source.ResultPackageSourceConfinedPath.Err message)
-        (string.eq
-          message
-          "build: fetched package `dep` field `entry` path `../outside.tl` is not confined to locked checkout `cache/checkout`")]
-      [_ false])
-    (match (package_source.package-source-confined-existing-file
-      "dep"
-      "entry"
-      "C:outside.tl"
-      "cache/checkout")
-      [(package_source.ResultPackageSourceConfinedPath.Err _) true]
-      [_ false])
-    (match (package_source.package-source-confined-existing-file
-      "dep"
-      "entry"
-      "\\\\server\\share\\outside.tl"
-      "cache/checkout")
-      [(package_source.ResultPackageSourceConfinedPath.Err _) true]
-      [_ false])))
+(import package_source_core as pkgsrc)
 
 (test
   package-source-fetched-boundary-rejects-lexical-escapes-before-io
   (unless
-    (package-source-fetched-boundary-lexical-smoke-ok?)
+    (and
+      (string.eq
+        (pkgsrc.package-source-fetched-boundary-message
+          "dep"
+          "entry"
+          "../outside.tl"
+          "cache/checkout")
+        "build: fetched package `dep` field `entry` path `../outside.tl` is not confined to locked checkout `cache/checkout`")
+      (match (pkgsrc.package-source-confined-existing-file
+        "dep"
+        "entry"
+        "../outside.tl"
+        "cache/checkout")
+        [(pkgsrc.ResultPackageSourceConfinedPath.Err message)
+          (string.eq
+            message
+            "build: fetched package `dep` field `entry` path `../outside.tl` is not confined to locked checkout `cache/checkout`")]
+        [_ false])
+      (match (pkgsrc.package-source-confined-existing-file
+        "dep"
+        "entry"
+        "C:outside.tl"
+        "cache/checkout")
+        [(pkgsrc.ResultPackageSourceConfinedPath.Err _) true]
+        [_ false])
+      (match (pkgsrc.package-source-confined-existing-file
+        "dep"
+        "entry"
+        "\\\\server\\share\\outside.tl"
+        "cache/checkout")
+        [(pkgsrc.ResultPackageSourceConfinedPath.Err _) true]
+        [_ false]))
     (io.panic "package-source: fetched boundary lexical smoke failed")))
-
-(define (package-source-skip-dir-self-test?) : bool
-  (and
-    (package_source.package-source-skip-dir? "target")
-    (package_source.package-source-skip-dir? ".git")
-    (package_source.package-source-skip-dir? "tests")
-    (not (package_source.package-source-skip-dir? "tests_extra"))
-    (not (package_source.package-source-skip-dir? "src"))))
 
 (test
   package-source-skips-package-test-directories
-  (if (package-source-skip-dir-self-test?)
+  (if (and
+    (pkgsrc.package-source-skip-dir? "target")
+    (pkgsrc.package-source-skip-dir? ".git")
+    (pkgsrc.package-source-skip-dir? "tests")
+    (not (pkgsrc.package-source-skip-dir? "tests_extra"))
+    (not (pkgsrc.package-source-skip-dir? "src")))
     unit
     (io.panic "package-source: skip-dir self-test mismatch")))
 
-(define (package-source-vec-insert-self-test?) : bool
-  (let
+(test
+  package-source-vector-insert-sorts-and-dedups
+  (if (let
     [items : svec.Vec
-      (package_source.package-source-vec-insert
-        (package_source.package-source-vec-insert
-          (package_source.package-source-vec-insert
-            (package_source.package-source-vec-insert (svec.new) "src/z.tl")
+      (pkgsrc.package-source-vec-insert
+        (pkgsrc.package-source-vec-insert
+          (pkgsrc.package-source-vec-insert
+            (pkgsrc.package-source-vec-insert (svec.new) "src/z.tl")
             "src/a.tl")
           "src/m.tl")
         "src/a.tl")]
@@ -81,16 +76,13 @@
       (= (svec.len (& items)) 3)
       (string.eq (svec.get (& items) 0 "") "src/a.tl")
       (string.eq (svec.get (& items) 1 "") "src/m.tl")
-      (string.eq (svec.get (& items) 2 "") "src/z.tl"))))
-
-(test
-  package-source-vector-insert-sorts-and-dedups
-  (if (package-source-vec-insert-self-test?)
+      (string.eq (svec.get (& items) 2 "") "src/z.tl")))
     unit
     (io.panic "package-source: vector insert self-test mismatch")))
 
-(define (package-source-vector-growth-self-test?) : bool
-  (let
+(test
+  package-source-generated-vector-grows-past-initial-capacity
+  (if (let
     [items : svec.Vec (svec.new)]
     (begin
       (svec.push-ref! (&mut items) "src/a.tl")
@@ -101,34 +93,27 @@
       (and
         (= (svec.len (& items)) 5)
         (string.eq (svec.get (& items) 0 "") "src/a.tl")
-        (string.eq (svec.get (& items) 4 "") "src/e.tl")))))
-
-(test
-  package-source-generated-vector-grows-past-initial-capacity
-  (if (package-source-vector-growth-self-test?)
+        (string.eq (svec.get (& items) 4 "") "src/e.tl"))))
     unit
     (io.panic "package-source: generated vector growth self-test mismatch")))
 
-(define (package-source-sort-entries-self-test?) : bool
-  (let
+(test
+  package-source-sorts-directory-entries-before-scanning
+  (if (let
     [entries : fs.FsStringVector (fs.string-vector-new)]
     [items : svec.Vec
       (begin
         (fs.string-vector-push! (&mut entries) "zeta")
         (fs.string-vector-push! (&mut entries) "alpha")
         (fs.string-vector-push! (&mut entries) "middle")
-        (package_source.package-source-sort-entries entries))]
+        (pkgsrc.package-source-sort-entries entries))]
     (match (& items)
       [_
         (and
           (= (svec.len (& items)) 3)
           (string.eq (svec.get (& items) 0 "") "alpha")
           (string.eq (svec.get (& items) 1 "") "middle")
-          (string.eq (svec.get (& items) 2 "") "zeta"))])))
-
-(test
-  package-source-sorts-directory-entries-before-scanning
-  (if (package-source-sort-entries-self-test?)
+          (string.eq (svec.get (& items) 2 "") "zeta"))]))
     unit
     (io.panic "package-source: entry sort self-test mismatch")))
 
@@ -136,15 +121,12 @@
   [command : String]
   [manifest-path : String]
   [has-manifest : bool]
-  [rodata : (__tl_dyn-array u8)]) : package_source.PackageSourceBindingVerification
-  (match (package_source.package-source-discover-for
-    command
-    manifest-path
-    has-manifest)
-    [(package_source.ResultPackageSourceSet.Err message)
-      (package_source.PackageSourceBindingVerification.Unreadable message)]
-    [(package_source.ResultPackageSourceSet.Ok source-set)
-      (package_source.package-source-verify-binding source-set rodata)]))
+  [rodata : (__tl_dyn-array u8)]) : pkgsrc.PackageSourceBindingVerification
+  (match (pkgsrc.package-source-discover-for command manifest-path has-manifest)
+    [(pkgsrc.ResultPackageSourceSet.Err message)
+      (pkgsrc.PackageSourceBindingVerification.Unreadable message)]
+    [(pkgsrc.ResultPackageSourceSet.Ok source-set)
+      (pkgsrc.package-source-verify-binding source-set rodata)]))
 
 (cfg
   test
@@ -216,9 +198,9 @@
   test
   (define (package-source-binding-test-source-set-from-sources
     [root : String]
-    [sources : svec.Vec]) : package_source.PackageSourceSet
-    (package_source.PackageSourceSet
-      (package_source.package-source-root-join root "typelisp.pkg")
+    [sources : svec.Vec]) : pkgsrc.PackageSourceSet
+    (pkgsrc.PackageSourceSet
+      (pkgsrc.package-source-root-join root "typelisp.pkg")
       root
       (package-source-binding-test-manifest)
       sources)))
@@ -227,20 +209,20 @@
   test
   (define (package-source-binding-test-source-set
     [root : String]
-    [extra : bool]) : package_source.PackageSourceSet
+    [extra : bool]) : pkgsrc.PackageSourceSet
     (let
       [sources : svec.Vec (svec.new)]
       (begin
         (svec.push-ref!
           (&mut sources)
-          (package_source.package-source-root-join root "a.tl"))
+          (pkgsrc.package-source-root-join root "a.tl"))
         (svec.push-ref!
           (&mut sources)
-          (package_source.package-source-root-join root "b.tl"))
+          (pkgsrc.package-source-root-join root "b.tl"))
         (if extra
           (svec.push-ref!
             (&mut sources)
-            (package_source.package-source-root-join root "c.tl"))
+            (pkgsrc.package-source-root-join root "c.tl"))
           unit)
         (package-source-binding-test-source-set-from-sources root sources)))))
 
@@ -278,11 +260,10 @@
 (cfg
   test
   (define (package-source-binding-test-digest
-    [source-set : package_source.PackageSourceSet]) : i64
-    (match (package_source.package-source-set-digest source-set)
-      [(package_source.ResultPackageSourceDigest.Ok digest) digest]
-      [(package_source.ResultPackageSourceDigest.Err message)
-        (io.panic message)])))
+    [source-set : pkgsrc.PackageSourceSet]) : i64
+    (match (pkgsrc.package-source-set-digest source-set)
+      [(pkgsrc.ResultPackageSourceDigest.Ok digest) digest]
+      [(pkgsrc.ResultPackageSourceDigest.Err message) (io.panic message)])))
 
 (cfg
   test
@@ -290,9 +271,9 @@
     package-source-binding-transcript-and-admission
     (let
       [root : String (string.copy (& package-source-binding-test-root))]
-      [a : String (package_source.package-source-root-join root "a.tl")]
-      [b : String (package_source.package-source-root-join root "b.tl")]
-      [c : String (package_source.package-source-root-join root "c.tl")]
+      [a : String (pkgsrc.package-source-root-join root "a.tl")]
+      [b : String (pkgsrc.package-source-root-join root "b.tl")]
+      [c : String (pkgsrc.package-source-root-join root "c.tl")]
       [setup : bool
         (and
           (package-source-binding-test-ensure-root root)
@@ -301,39 +282,39 @@
       (if (not setup)
         (io.panic "package-source: unable to create digest fixture")
         (let
-          [source-set : package_source.PackageSourceSet
+          [source-set : pkgsrc.PackageSourceSet
             (package-source-binding-test-source-set
               (owned_view.compiler-owned-shared-view root)
               false)]
-          [alternate : package_source.PackageSourceSet
+          [alternate : pkgsrc.PackageSourceSet
             (package-source-binding-test-source-set
               (string.copy (& package-source-binding-test-alternate-root))
               false)]
           [baseline : i64 0]
           [binding : (__tl_dyn-array u8) (tlci.tlci-empty-bytes)]
           (begin
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (owned_view.compiler-owned-shared-view source-set))
-              [(package_source.ResultPackageSourceDigest.Ok digest)
+              [(pkgsrc.ResultPackageSourceDigest.Ok digest)
                 (set! baseline digest)]
-              [(package_source.ResultPackageSourceDigest.Err message)
+              [(pkgsrc.ResultPackageSourceDigest.Err message)
                 (io.panic message)])
             (if (not (= baseline 1959683407))
               (io.panic "package-source: pinned digest mismatch")
               unit)
-            (match (package_source.package-source-set-digest alternate)
-              [(package_source.ResultPackageSourceDigest.Ok digest)
+            (match (pkgsrc.package-source-set-digest alternate)
+              [(pkgsrc.ResultPackageSourceDigest.Ok digest)
                 (if (not (= digest baseline))
                   (io.panic
                     "package-source: alternate root spelling changed digest")
                   unit)]
-              [(package_source.ResultPackageSourceDigest.Err message)
+              [(pkgsrc.ResultPackageSourceDigest.Err message)
                 (io.panic message)])
             (set! binding (package-source-binding-test-bound-pack baseline))
-            (match (package_source.package-source-verify-binding
+            (match (pkgsrc.package-source-verify-binding
               (owned_view.compiler-owned-shared-view source-set)
               (owned_view.compiler-owned-shared-view binding))
-              [(package_source.PackageSourceBindingVerification.Match digest)
+              [(pkgsrc.PackageSourceBindingVerification.Match digest)
                 (if (not (= digest baseline))
                   (io.panic "package-source: bound digest did not match")
                   unit)]
@@ -341,14 +322,14 @@
             (if (not (package-source-binding-test-write a "(changed)\n"))
               (io.panic "package-source: unable to mutate digest fixture")
               unit)
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (owned_view.compiler-owned-shared-view source-set))
-              [(package_source.ResultPackageSourceDigest.Ok digest)
+              [(pkgsrc.ResultPackageSourceDigest.Ok digest)
                 (if (= digest baseline)
                   (io.panic
                     "package-source: content mutation did not change digest")
                   unit)]
-              [(package_source.ResultPackageSourceDigest.Err message)
+              [(pkgsrc.ResultPackageSourceDigest.Err message)
                 (io.panic message)])
             (if (not (package-source-binding-test-write a "(a)\n"))
               (io.panic "package-source: unable to restore digest fixture")
@@ -356,18 +337,18 @@
             (if (not (package-source-binding-test-write c "(c)\n"))
               (io.panic "package-source: unable to add digest fixture")
               unit)
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (package-source-binding-test-source-set root true))
-              [(package_source.ResultPackageSourceDigest.Ok digest)
+              [(pkgsrc.ResultPackageSourceDigest.Ok digest)
                 (if (= digest baseline)
                   (io.panic "package-source: add source did not change digest")
                   unit)]
-              [(package_source.ResultPackageSourceDigest.Err message)
+              [(pkgsrc.ResultPackageSourceDigest.Err message)
                 (io.panic message)])
-            (match (package_source.package-source-verify-binding
+            (match (pkgsrc.package-source-verify-binding
               (owned_view.compiler-owned-shared-view source-set)
               (package-source-binding-test-bound-pack 12345))
-              [(package_source.PackageSourceBindingVerification.Mismatch
+              [(pkgsrc.PackageSourceBindingVerification.Mismatch
                   expected
                   actual)
                 (if (and (= expected baseline) (= actual 12345))
@@ -375,18 +356,17 @@
                   (io.panic
                     "package-source: mismatch did not preserve expected/actual order"))]
               [_ (io.panic "package-source: mismatch admission failed")])
-            (match (package_source.package-source-verify-binding
+            (match (pkgsrc.package-source-verify-binding
               (owned_view.compiler-owned-shared-view source-set)
               (tlci.tlci-empty-bytes))
-              [(package_source.PackageSourceBindingVerification.MissingOrLegacy)
-                unit]
+              [(pkgsrc.PackageSourceBindingVerification.MissingOrLegacy) unit]
               [_ (io.panic "package-source: missing binding admission failed")])
-            (match (package_source.package-source-verify-binding
+            (match (pkgsrc.package-source-verify-binding
               (owned_view.compiler-owned-shared-view source-set)
               (package-source-binding-test-pack
                 2
                 (tlci.tlci-string->bytes "future")))
-              [(package_source.PackageSourceBindingVerification.UnsupportedSchema
+              [(pkgsrc.PackageSourceBindingVerification.UnsupportedSchema
                   schema)
                 (if (= schema 2)
                   unit
@@ -394,19 +374,18 @@
               [_
                 (io.panic
                   "package-source: unsupported binding admission failed")])
-            (match (package_source.package-source-verify-binding
+            (match (pkgsrc.package-source-verify-binding
               (owned_view.compiler-owned-shared-view source-set)
               (package-source-binding-test-pack
                 tlci.tlci-package-source-binding-schema-version
                 (__tl_make-array u8 7)))
-              [(package_source.PackageSourceBindingVerification.Malformed _)
-                unit]
+              [(pkgsrc.PackageSourceBindingVerification.Malformed _) unit]
               [_
                 (io.panic "package-source: malformed binding admission failed")])
-            (match (package_source.package-source-verify-binding
+            (match (pkgsrc.package-source-verify-binding
               (owned_view.compiler-owned-shared-view source-set)
               (owned_view.compiler-owned-shared-view binding))
-              [(package_source.PackageSourceBindingVerification.Match _) unit]
+              [(pkgsrc.PackageSourceBindingVerification.Match _) unit]
               [_ (io.panic "package-source: restore did not recover digest")])
             (if (not (package-source-binding-test-write a "(a)\n"))
               (io.panic
@@ -416,11 +395,8 @@
               [(io.OkIoUnit) unit]
               [(io.ErrIoUnit _)
                 (io.panic "package-source: unable to delete fixture")])
-            (match (package_source.package-source-verify-binding
-              source-set
-              binding)
-              [(package_source.PackageSourceBindingVerification.Unreadable _)
-                unit]
+            (match (pkgsrc.package-source-verify-binding source-set binding)
+              [(pkgsrc.PackageSourceBindingVerification.Unreadable _) unit]
               [_ (io.panic "package-source: deleted source was not unreadable")])
             ;; Leave the ignored fixture in a restorable state for a rerun.
             (package-source-binding-test-write a "(a)\n")
@@ -433,16 +409,15 @@
     package-source-binding-order-framing-and-rename
     (let
       [root : String (string.copy (& package-source-binding-test-root))]
-      [a : String (package_source.package-source-root-join root "a.tl")]
-      [b : String (package_source.package-source-root-join root "b.tl")]
-      [renamed : String
-        (package_source.package-source-root-join root "renamed.tl")]
+      [a : String (pkgsrc.package-source-root-join root "a.tl")]
+      [b : String (pkgsrc.package-source-root-join root "b.tl")]
+      [renamed : String (pkgsrc.package-source-root-join root "renamed.tl")]
       [collision-root : String
-        (package_source.package-source-root-join root "collision")]
+        (pkgsrc.package-source-root-join root "collision")]
       [collision-a : String
-        (package_source.package-source-root-join collision-root "a.tl")]
+        (pkgsrc.package-source-root-join collision-root "a.tl")]
       [collision-b : String
-        (package_source.package-source-root-join collision-root "a.tlb.tl")]
+        (pkgsrc.package-source-root-join collision-root "a.tlb.tl")]
       [setup : bool
         (and
           (package-source-binding-test-ensure-root root)
@@ -469,40 +444,40 @@
           (begin
             (svec.push-ref! (&mut reversed) (string.copy (& b)))
             (svec.push-ref! (&mut reversed) (string.copy (& a)))
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)
                 reversed))
-              [(package_source.ResultPackageSourceDigest.Err _) unit]
+              [(pkgsrc.ResultPackageSourceDigest.Err _) unit]
               [_ (io.panic "package-source: reversed source list was accepted")])
             (svec.push-ref! (&mut duplicate) (string.copy (& a)))
             (svec.push-ref! (&mut duplicate) (string.copy (& a)))
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)
                 duplicate))
-              [(package_source.ResultPackageSourceDigest.Err _) unit]
+              [(pkgsrc.ResultPackageSourceDigest.Err _) unit]
               [_
                 (io.panic "package-source: duplicate source list was accepted")])
             (svec.push-ref! (&mut collision-left) collision-a)
             (svec.push-ref! (&mut collision-right) collision-b)
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view collision-root)
                 collision-left))
-              [(package_source.ResultPackageSourceDigest.Ok left)
-                (match (package_source.package-source-set-digest
+              [(pkgsrc.ResultPackageSourceDigest.Ok left)
+                (match (pkgsrc.package-source-set-digest
                   (package-source-binding-test-source-set-from-sources
                     collision-root
                     collision-right))
-                  [(package_source.ResultPackageSourceDigest.Ok right)
+                  [(pkgsrc.ResultPackageSourceDigest.Ok right)
                     (if (= left right)
                       (io.panic
                         "package-source: framed collision was not distinguished")
                       unit)]
-                  [(package_source.ResultPackageSourceDigest.Err message)
+                  [(pkgsrc.ResultPackageSourceDigest.Err message)
                     (io.panic message)])]
-              [(package_source.ResultPackageSourceDigest.Err message)
+              [(pkgsrc.ResultPackageSourceDigest.Err message)
                 (io.panic message)])
             (package-source-binding-test-remove renamed)
             (match (fs.try-rename (& b) (& renamed))
@@ -511,15 +486,15 @@
                 (io.panic "package-source: rename fixture failed")])
             (svec.push-ref! (&mut renamed-sources) (string.copy (& a)))
             (svec.push-ref! (&mut renamed-sources) (string.copy (& renamed)))
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)
                 renamed-sources))
-              [(package_source.ResultPackageSourceDigest.Ok changed)
+              [(pkgsrc.ResultPackageSourceDigest.Ok changed)
                 (if (= changed baseline)
                   (io.panic "package-source: rename did not change digest")
                   unit)]
-              [(package_source.ResultPackageSourceDigest.Err message)
+              [(pkgsrc.ResultPackageSourceDigest.Err message)
                 (io.panic message)])
             (match (fs.try-rename (& renamed) (& b))
               [(io.OkIoUnit) unit]
@@ -544,19 +519,17 @@
           (string.copy (& package-source-binding-test-root))
           "/discover")]
       [manifest-path : String
-        (package_source.package-source-root-join root "typelisp.pkg")]
-      [a : String (package_source.package-source-root-join root "a.tl")]
-      [b : String (package_source.package-source-root-join root "b.tl")]
-      [target-root : String
-        (package_source.package-source-root-join root "target")]
+        (pkgsrc.package-source-root-join root "typelisp.pkg")]
+      [a : String (pkgsrc.package-source-root-join root "a.tl")]
+      [b : String (pkgsrc.package-source-root-join root "b.tl")]
+      [target-root : String (pkgsrc.package-source-root-join root "target")]
       [target-source : String
-        (package_source.package-source-root-join target-root "ignored.tl")]
-      [nested-root : String
-        (package_source.package-source-root-join root "nested")]
+        (pkgsrc.package-source-root-join target-root "ignored.tl")]
+      [nested-root : String (pkgsrc.package-source-root-join root "nested")]
       [nested-manifest : String
-        (package_source.package-source-root-join nested-root "typelisp.pkg")]
+        (pkgsrc.package-source-root-join nested-root "typelisp.pkg")]
       [nested-source : String
-        (package_source.package-source-root-join nested-root "ignored.tl")]
+        (pkgsrc.package-source-root-join nested-root "ignored.tl")]
       [setup : bool
         (and
           (package-source-binding-test-ensure-root
@@ -590,7 +563,7 @@
           [nested-sources : svec.Vec (svec.new)]
           [outside-sources : svec.Vec (svec.new)]
           [outside : String
-            (package_source.package-source-root-join root "../outside.tl")]
+            (pkgsrc.package-source-root-join root "../outside.tl")]
           (begin
             (svec.push-ref!
               (&mut target-sources)
@@ -599,37 +572,36 @@
               (&mut nested-sources)
               (string.copy (& nested-source)))
             (svec.push-ref! (&mut outside-sources) outside)
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)
                 empty-sources))
-              [(package_source.ResultPackageSourceDigest.Err _) unit]
+              [(pkgsrc.ResultPackageSourceDigest.Err _) unit]
               [_ (io.panic "package-source: empty source set was accepted")])
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)
                 target-sources))
-              [(package_source.ResultPackageSourceDigest.Err _) unit]
+              [(pkgsrc.ResultPackageSourceDigest.Err _) unit]
               [_ (io.panic "package-source: target source was accepted")])
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)
                 nested-sources))
-              [(package_source.ResultPackageSourceDigest.Err _) unit]
+              [(pkgsrc.ResultPackageSourceDigest.Err _) unit]
               [_ (io.panic "package-source: nested source was accepted")])
-            (match (package_source.package-source-set-digest
+            (match (pkgsrc.package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 root
                 outside-sources))
-              [(package_source.ResultPackageSourceDigest.Err _) unit]
+              [(pkgsrc.ResultPackageSourceDigest.Err _) unit]
               [_ (io.panic "package-source: outside source was accepted")])
-            (match (package_source.package-source-discover-for
+            (match (pkgsrc.package-source-discover-for
               "test"
               (owned_view.compiler-owned-shared-view manifest-path)
               true)
-              [(package_source.ResultPackageSourceSet.Err message)
-                (io.panic message)]
-              [(package_source.ResultPackageSourceSet.Ok discovered)
+              [(pkgsrc.ResultPackageSourceSet.Err message) (io.panic message)]
+              [(pkgsrc.ResultPackageSourceSet.Ok discovered)
                 (begin
                   (set!
                     baseline
@@ -643,7 +615,7 @@
               (owned_view.compiler-owned-shared-view manifest-path)
               true
               (owned_view.compiler-owned-shared-view binding))
-              [(package_source.PackageSourceBindingVerification.Match digest)
+              [(pkgsrc.PackageSourceBindingVerification.Match digest)
                 (if (= digest baseline)
                   unit
                   (io.panic "package-source: discovered binding did not match"))]
@@ -665,7 +637,7 @@
               (owned_view.compiler-owned-shared-view manifest-path)
               true
               (owned_view.compiler-owned-shared-view binding))
-              [(package_source.PackageSourceBindingVerification.Match _) unit]
+              [(pkgsrc.PackageSourceBindingVerification.Match _) unit]
               [_ (io.panic "package-source: excluded source changed digest")])
             (match (fs.try-remove-file (& b))
               [(io.OkIoUnit) unit]
@@ -676,7 +648,7 @@
               (owned_view.compiler-owned-shared-view manifest-path)
               true
               (owned_view.compiler-owned-shared-view binding))
-              [(package_source.PackageSourceBindingVerification.Mismatch
+              [(pkgsrc.PackageSourceBindingVerification.Mismatch
                   expected
                   actual)
                 (if (and (not (= expected actual)) (= actual baseline))
@@ -692,5 +664,5 @@
               manifest-path
               true
               binding)
-              [(package_source.PackageSourceBindingVerification.Match _) unit]
+              [(pkgsrc.PackageSourceBindingVerification.Match _) unit]
               [_ (io.panic "package-source: restored discovery did not match")])))))))

@@ -11,7 +11,7 @@
 (import build_run_core)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
-(import compiler_backend)
+(import compiler_backend as backend)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
 (import compiler_driver_core as driver)
@@ -37,19 +37,16 @@
     (cbi.compiler-builtin-refresh!)
     cbi.compiler-builtin-id-fix-string))
 
-(define (tltest-batch-paths-from-text-self-test?) : bool
-  (let
+(test
+  test-batch-paths-vector-preserves-order
+  (if (let
     [paths : cli_svec.Vec
       (tltest.tltest-batch-paths-from-text "a.tl\n\nb.tl\r\nc.tl")]
     (and
       (= (cli_svec.len (& paths)) 3)
       (string.eq (cli_svec.get (& paths) 0 "") "a.tl")
       (string.eq (cli_svec.get (& paths) 1 "") "b.tl")
-      (string.eq (cli_svec.get (& paths) 2 "") "c.tl"))))
-
-(test
-  test-batch-paths-vector-preserves-order
-  (if (tltest-batch-paths-from-text-self-test?)
+      (string.eq (cli_svec.get (& paths) 2 "") "c.tl")))
     unit
     (io.panic "test: batch path vector self-test mismatch")))
 
@@ -81,8 +78,9 @@
         (= (array-ref items 3) 4)
         (= (array-ref items 4) 1)))))
 
-(define (tltest-seed-and-selection-self-test?) : bool
-  (and
+(test
+  test-cli-replayable-shuffle-and-selection
+  (if (and
     (match (tltest.tltest-parse-seed "0")
       [(tltest.ResultTestSeed.Ok value) (= value (cast 0 : u64))]
       [_ false])
@@ -122,11 +120,7 @@
       true
       true)
       [(tltest.InlineTestSelection.Run) true]
-      [_ false])))
-
-(test
-  test-cli-replayable-shuffle-and-selection
-  (if (tltest-seed-and-selection-self-test?)
+      [_ false]))
     unit
     (io.panic "test CLI replayable shuffle/selection self-test mismatch")))
 
@@ -166,8 +160,9 @@
         true
         (tltest-decl-list-has-name? rest name))]))
 
-(define (tltest-import-alias-call-retained-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-alias-qualified-base
+  (if (let
     [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [span : ast.AstSourceSpan (ast.ast-source-span 1 1 1 1)]
     [dep-path : String "stdlib/string.tl"]
@@ -229,16 +224,13 @@
               (= count 1)
               (tltest-decl-list-has-name?
                 (ast.ast-decl-list-box-shared-view harness-decls-box)
-                "eq"))])])))
-
-(test
-  test-cli-inline-harness-keeps-alias-qualified-base
-  (if (tltest-import-alias-call-retained-self-test?)
+                "eq"))])]))
     unit
     (io.panic "test CLI alias-qualified reachability mismatch")))
 
-(define (tltest-vector-builders-self-test?) : bool
-  (let
+(test
+  test-cli-vector-builders-preserve-order
+  (if (let
     [helper-name : String "__tl_fixture_helper"]
     [helper-id : i64
       (ci.intern-generated-name
@@ -353,16 +345,13 @@
                     (owned_view.compiler-owned-shared-view harness-paths)
                     6)
                   "driver.tl")
-                (string.eq (tltest-path-at harness-paths 7) "driver.tl")))])])))
-
-(test
-  test-cli-vector-builders-preserve-order
-  (if (tltest-vector-builders-self-test?)
+                (string.eq (tltest-path-at harness-paths 7) "driver.tl")))])]))
     unit
     (io.panic "test CLI vector builder order mismatch")))
 
-(define (tltest-global-field-reachability-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-global-field-roots
+  (if (let
     [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [seed : i64 (ci.intern "field-root-seed")]
     [owner : i64 (ci.intern "field-root-owner")]
@@ -411,16 +400,13 @@
                 (tltest-decl-list-has-name?
                   (owned_view.compiler-owned-shared-view kept)
                   "field-root-seed")
-                (not (tltest-decl-list-has-name? kept "field-root-unrelated"))))])])))
-
-(test
-  test-cli-inline-harness-keeps-global-field-roots
-  (if (tltest-global-field-reachability-self-test?)
+                (not (tltest-decl-list-has-name? kept "field-root-unrelated"))))])]))
     unit
     (io.panic "test CLI global field root reachability mismatch")))
 
-(define (tltest-structural-field-reachability-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-structural-global-field-roots
+  (if (let
     [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [owner-state : ci.InternCompatState (ci.intern-compat-state-new)]
     [root-id : i64
@@ -465,16 +451,13 @@
       (= (tltest.tltest-reach-name-source-base-id session pair-id) field-id)
       (= (tltest.tltest-reach-name-source-base-id session triple-id) pair-id)
       (tltest.tltest-reachable-name-marked? session (& marked) owner-id)
-      (not (tltest.tltest-reachable-name-marked? session (& marked) dead-id)))))
-
-(test
-  test-cli-inline-harness-keeps-structural-global-field-roots
-  (if (tltest-structural-field-reachability-self-test?)
+      (not (tltest.tltest-reachable-name-marked? session (& marked) dead-id))))
     unit
     (io.panic "test CLI structural field owner reachability mismatch")))
 
-(define (tltest-inactive-field-owner-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-normalizes-inactive-field-owner
+  (if (let
     [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
     [decoy : ci.InternCompatState (ci.intern-compat-state-new)]
     [decoy-id : i64
@@ -510,16 +493,13 @@
             field-id)]
         (begin
           (ci.intern-compat-state-install! home)
-          valid)))))
-
-(test
-  test-cli-inline-harness-normalizes-inactive-field-owner
-  (if (tltest-inactive-field-owner-self-test?)
+          valid))))
     unit
     (io.panic "test CLI field owner normalization consulted the installed pool")))
 
-(define (tltest-generated-runtime-reachability-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-lowered-runtime-helpers
+  (if (let
     [unit-expr : i64
       (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
     [substring-id : i64 cbi.compiler-builtin-id-runtime-substring]
@@ -599,16 +579,13 @@
                   "str-view")
                 (string.eq
                   (tltest-decl-name-at harness-decls 2)
-                  "__tl_generated_runtime_helper")))])])))
-
-(test
-  test-cli-inline-harness-keeps-lowered-runtime-helpers
-  (if (tltest-generated-runtime-reachability-self-test?)
+                  "__tl_generated_runtime_helper")))])]))
     unit
     (io.panic "test CLI inline harness dropped lowered runtime helper")))
 
-(define (tltest-generated-runtime-lambda-reachability-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-lambda-runtime-helper
+  (if (let
     [unit-expr : i64
       (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
     [substring-id : i64 cbi.compiler-builtin-id-runtime-substring]
@@ -671,16 +648,13 @@
                   "substring")
                 (string.eq
                   (tltest-decl-name-at harness-decls 1)
-                  "__tl_generated_lambda_helper")))])])))
-
-(test
-  test-cli-inline-harness-keeps-lambda-runtime-helper
-  (if (tltest-generated-runtime-lambda-reachability-self-test?)
+                  "__tl_generated_lambda_helper")))])]))
     unit
     (io.panic "test CLI inline harness dropped lambda runtime helper")))
 
-(define (tltest-generated-runtime-substring-reachability-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-substring-runtime-helper
+  (if (let
     [unit-expr : i64
       (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
     [substring-id : i64 cbi.compiler-builtin-id-runtime-substring]
@@ -740,16 +714,13 @@
                   "substring")
                 (string.eq
                   (tltest-decl-name-at harness-decls 1)
-                  "__tl_generated_substring_helper")))])])))
-
-(test
-  test-cli-inline-harness-keeps-substring-runtime-helper
-  (if (tltest-generated-runtime-substring-reachability-self-test?)
+                  "__tl_generated_substring_helper")))])]))
     unit
     (io.panic "test CLI inline harness dropped substring runtime helper")))
 
-(define (tltest-imported-tests-skipped-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-skips-imported-tests
+  (if (let
     [helper-name : String "__tl_imported_skip_helper"]
     [helper-id : i64
       (ci.intern-generated-name
@@ -846,11 +817,7 @@
                     (owned_view.compiler-owned-shared-view harness-paths)
                     4)
                   "driver.tl")
-                (string.eq (tltest-path-at harness-paths 5) "driver.tl")))])])))
-
-(test
-  test-cli-inline-harness-skips-imported-tests
-  (if (tltest-imported-tests-skipped-self-test?)
+                (string.eq (tltest-path-at harness-paths 5) "driver.tl")))])]))
     unit
     (io.panic "test CLI inline harness kept imported test")))
 
@@ -869,8 +836,9 @@
         (string.eq (ci.intern-str alias) "core"))]
     [_ false]))
 
-(define (tltest-import-alias-preserved-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-preserves-import-aliases
+  (if (let
     [module-id : i64 (ci.intern-generated-name "stdlib.core_macros")]
     [alias-id : i64 (ci.intern-generated-name "core")]
     [test-id : i64 (ci.intern-generated-name "uses-qualified-macro-alias")]
@@ -905,16 +873,13 @@
               (ast.ast-decl-list-box-shared-view harness-decls-box))
               [(ast.AstDeclListStep.Cons first _)
                 (and (= count 1) (tltest-import-alias-preserved? first))]
-              [_ false])])])))
-
-(test
-  test-cli-inline-harness-preserves-import-aliases
-  (if (tltest-import-alias-preserved-self-test?)
+              [_ false])])]))
     unit
     (io.panic "test CLI inline harness dropped import alias")))
 
-(define (tltest-runtime-string-helper-roots-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-runtime-string-helper-roots
+  (if (let
     [dep-name : String "__tl_runtime_helper_dep"]
     [helper-name : String "substring"]
     [eq-dep-name : String "__tl_runtime_eq_dep"]
@@ -1000,16 +965,13 @@
                 (tltest-decl-list-has-name?
                   (owned_view.compiler-owned-shared-view harness-decls)
                   eq-name)
-                (tltest-decl-list-has-name? harness-decls eq-dep-name)))])])))
-
-(test
-  test-cli-inline-harness-keeps-runtime-string-helper-roots
-  (if (tltest-runtime-string-helper-roots-self-test?)
+                (tltest-decl-list-has-name? harness-decls eq-dep-name)))])]))
     unit
     (io.panic "test CLI inline harness pruned runtime string helper root")))
 
-(define (tltest-runtime-atomic-helper-reachability-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-required-atomic-runtime-helper
+  (if (let
     [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [unit-expr : i64
       (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
@@ -1081,11 +1043,7 @@
                   (tltest-decl-list-has-name?
                     (owned_view.compiler-owned-shared-view harness-decls)
                     load-name))
-                (tltest-decl-list-has-name? harness-decls wrapper-name)))])])))
-
-(test
-  test-cli-inline-harness-keeps-required-atomic-runtime-helper
-  (if (tltest-runtime-atomic-helper-reachability-self-test?)
+                (tltest-decl-list-has-name? harness-decls wrapper-name)))])]))
     unit
     (io.panic "test CLI inline harness atomic runtime reachability mismatch")))
 
@@ -1098,8 +1056,9 @@
       "tltest")
     decl))
 
-(define (tltest-generated-reachability-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-prunes-generated-wrappers
+  (if (let
     [dep-name : String "__tl_generated_reachable_dep"]
     [live-name : String "__tl_generated_reachable_live"]
     [dead-name : String "__tl_generated_reachable_dead"]
@@ -1176,16 +1135,13 @@
                 (tltest-decl-list-has-name?
                   (owned_view.compiler-owned-shared-view harness-decls)
                   dep-name)
-                (not (tltest-decl-list-has-name? harness-decls dead-name))))])])))
-
-(test
-  test-cli-inline-harness-prunes-generated-wrappers
-  (if (tltest-generated-reachability-self-test?)
+                (not (tltest-decl-list-has-name? harness-decls dead-name))))])]))
     unit
     (io.panic "test CLI inline harness generated reachability mismatch")))
 
-(define (tltest-imported-generated-retained-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-imported-generated-wrappers
+  (if (let
     [dead-name : String "__tl_imported_generated_dead"]
     [ordinary-name : String "__tl_imported_ordinary_dead"]
     [dead-id : i64
@@ -1239,16 +1195,13 @@
                 (tltest-decl-list-has-name?
                   (owned_view.compiler-owned-shared-view harness-decls)
                   dead-name)
-                (not (tltest-decl-list-has-name? harness-decls ordinary-name))))])])))
-
-(test
-  test-cli-inline-harness-keeps-imported-generated-wrappers
-  (if (tltest-imported-generated-retained-self-test?)
+                (not (tltest-decl-list-has-name? harness-decls ordinary-name))))])]))
     unit
     (io.panic "test CLI inline harness pruned imported generated wrapper")))
 
-(define (tltest-macro-quasiquote-deps-self-test?) : bool
-  (let
+(test
+  test-cli-inline-harness-keeps-macro-quasiquote-deps
+  (if (let
     [helper-name : String "__tl_macro_generated_helper"]
     [macro-name : String "__tl_macro_generated_call"]
     [helper-id : i64
@@ -1329,16 +1282,129 @@
                     (owned_view.compiler-owned-shared-view harness-decls)
                     5)
                   "")
-                (string.eq (tltest-decl-name-at harness-decls 6) "main")))])])))
-
-(test
-  test-cli-inline-harness-keeps-macro-quasiquote-deps
-  (if (tltest-macro-quasiquote-deps-self-test?)
+                (string.eq (tltest-decl-name-at harness-decls 6) "main")))])]))
     unit
     (io.panic "test CLI inline harness dropped macro quasiquote dependency")))
 
-(define (tltest-nested-module-macro-vector-source) : String
-  "(import stdlib.vector)
+(define (tltest-nested-module-macro-vector-typecheck-ok?
+  [program : ast.AstProgram]
+  [harness-paths : ast.AstDeclPathList]
+  [roots : cli_svec.Vec]
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [legacy-roots : cli_svec.Vec (clone roots)]
+    (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
+      (tltest.tltest-program-with-print-runtime program target)
+      (tltest.tltest-paths-with-print-runtime target harness-paths)
+      (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest.tltest-cfgs target)
+      (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
+        "typecheck-prefix-test-cli"
+        legacy-roots
+        (tltest.tltest-cfgs target)))
+      [(ResultCompilerTypecheck.Ok _) true]
+      [(ResultCompilerTypecheck.Err diag)
+        (begin
+          (io.print-error
+            (driver.compiler-driver-render-source-diagnostic
+              (cdiag.compiler-diagnostic-list-first (deref diag))))
+          false)])))
+
+(define (tltest-function-base-defined?
+  [funcs : ir.CompilerIrFunctionSeq]
+  [base : String]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index funcs.len) (not found))
+        (begin
+          (match (array-ref funcs.slots index)
+            [(ir.CompilerIrFunction.Function name _ _ _ _ _)
+              (let
+                [name-text : String (ir.compiler-ir-symbol-text name)]
+                (if (string.contains (& name-text) (& base))
+                  (set! found true)
+                  unit))])
+          (set! index (+ index 1))))
+      found)))
+
+(define (tltest-nested-module-macro-vector-lower-roots-ok?
+  [source : String]
+  [program : ast.AstProgram]
+  [harness-paths : ast.AstDeclPathList]
+  [roots : cli_svec.Vec]
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [legacy-roots : cli_svec.Vec (clone roots)]
+    (match (lower.lower-compiler-program-with-decl-paths-mode-cache
+      source
+      (tltest.tltest-program-with-print-runtime program target)
+      (tltest.tltest-paths-with-print-runtime target harness-paths)
+      (lower.CompilerLowerMode.Scalar)
+      (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest.tltest-cfgs target)
+      (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
+        "typecheck-prefix-test-cli"
+        legacy-roots
+        (tltest.tltest-cfgs target)))
+      [(lower.ResultCompilerLower.Ok lowered _)
+        (match lowered
+          [(ir.CompilerIrProgram.Program _ functions _)
+            (tltest-function-base-defined? functions "clone$Pair")])]
+      [(lower.ResultCompilerLower.Err _) false])))
+
+(define (tltest-nested-module-macro-vector-loaded-ok?
+  [source : String]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [roots : cli_svec.Vec]
+  [target : backend.CompilerBackendTarget]) : bool
+  (match (tltest.tltest-build-harness
+    (owned_view.compiler-owned-shared-view source)
+    decls
+    paths)
+    [(tltest.InlineHarness.Harness program harness-paths count)
+      (begin
+        (unless (= count 3) (return false))
+        (unless
+          (tltest-nested-module-macro-vector-typecheck-ok?
+            (owned_view.compiler-owned-shared-view program)
+            (owned_view.compiler-owned-shared-view harness-paths)
+            (owned_view.compiler-owned-shared-view roots)
+            target)
+          (begin
+            (io.print-error
+              "nested module macro vector fixture failed typecheck")
+            (return false)))
+        (unless
+          (tltest-nested-module-macro-vector-lower-roots-ok?
+            source
+            program
+            harness-paths
+            roots
+            target)
+          (begin
+            (io.print-error
+              "nested module macro vector fixture did not emit clone$Pair")
+            (return false)))
+        true)]))
+
+(define (tltest-nested-module-macro-vector-self-test?) : bool
+  (match (build_run_core.source-tool-create-temp-dir
+    "tltest-nested-module-macro-vector")
+    [(build_run_core.ResultSourceToolString.Err _) false]
+    [(build_run_core.ResultSourceToolString.Ok dir)
+      (let
+        [source : String
+          (build_run_core.source-tool-fs-path-join dir "nested_vector.tl")]
+        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
+        [target : backend.CompilerBackendTarget
+          (backend.CompilerBackendTarget.Linux)]
+        (begin
+          (tltest-write-text
+            source
+            "(import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 
 (defstruct Pair
@@ -1386,124 +1452,6 @@
   (test
     generated-module-body-file-cfg-enabled
     unit))")
-
-(define (tltest-nested-module-macro-vector-typecheck-ok?
-  [program : ast.AstProgram]
-  [harness-paths : ast.AstDeclPathList]
-  [roots : cli_svec.Vec]
-  [target : compiler_backend.CompilerBackendTarget]) : bool
-  (let
-    [legacy-roots : cli_svec.Vec (clone roots)]
-    (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
-      (tltest.tltest-program-with-print-runtime program target)
-      (tltest.tltest-paths-with-print-runtime target harness-paths)
-      (owned_view.compiler-owned-shared-view legacy-roots)
-      (tltest.tltest-cfgs target)
-      (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
-        "typecheck-prefix-test-cli"
-        legacy-roots
-        (tltest.tltest-cfgs target)))
-      [(ResultCompilerTypecheck.Ok _) true]
-      [(ResultCompilerTypecheck.Err diag)
-        (begin
-          (io.print-error
-            (driver.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-list-first (deref diag))))
-          false)])))
-
-(define (tltest-function-base-defined?
-  [funcs : ir.CompilerIrFunctionSeq]
-  [base : String]) : bool
-  (let
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (< index funcs.len) (not found))
-        (begin
-          (match (array-ref funcs.slots index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _ _)
-              (let
-                [name-text : String (ir.compiler-ir-symbol-text name)]
-                (if (string.contains (& name-text) (& base))
-                  (set! found true)
-                  unit))])
-          (set! index (+ index 1))))
-      found)))
-
-(define (tltest-nested-module-macro-vector-lower-roots-ok?
-  [source : String]
-  [program : ast.AstProgram]
-  [harness-paths : ast.AstDeclPathList]
-  [roots : cli_svec.Vec]
-  [target : compiler_backend.CompilerBackendTarget]) : bool
-  (let
-    [legacy-roots : cli_svec.Vec (clone roots)]
-    (match (lower.lower-compiler-program-with-decl-paths-mode-cache
-      source
-      (tltest.tltest-program-with-print-runtime program target)
-      (tltest.tltest-paths-with-print-runtime target harness-paths)
-      (lower.CompilerLowerMode.Scalar)
-      (owned_view.compiler-owned-shared-view legacy-roots)
-      (tltest.tltest-cfgs target)
-      (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
-        "typecheck-prefix-test-cli"
-        legacy-roots
-        (tltest.tltest-cfgs target)))
-      [(lower.ResultCompilerLower.Ok lowered _)
-        (match lowered
-          [(ir.CompilerIrProgram.Program _ functions _)
-            (tltest-function-base-defined? functions "clone$Pair")])]
-      [(lower.ResultCompilerLower.Err _) false])))
-
-(define (tltest-nested-module-macro-vector-loaded-ok?
-  [source : String]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [roots : cli_svec.Vec]
-  [target : compiler_backend.CompilerBackendTarget]) : bool
-  (match (tltest.tltest-build-harness
-    (owned_view.compiler-owned-shared-view source)
-    decls
-    paths)
-    [(tltest.InlineHarness.Harness program harness-paths count)
-      (begin
-        (unless (= count 3) (return false))
-        (unless
-          (tltest-nested-module-macro-vector-typecheck-ok?
-            (owned_view.compiler-owned-shared-view program)
-            (owned_view.compiler-owned-shared-view harness-paths)
-            (owned_view.compiler-owned-shared-view roots)
-            target)
-          (begin
-            (io.print-error
-              "nested module macro vector fixture failed typecheck")
-            (return false)))
-        (unless
-          (tltest-nested-module-macro-vector-lower-roots-ok?
-            source
-            program
-            harness-paths
-            roots
-            target)
-          (begin
-            (io.print-error
-              "nested module macro vector fixture did not emit clone$Pair")
-            (return false)))
-        true)]))
-
-(define (tltest-nested-module-macro-vector-self-test?) : bool
-  (match (build_run_core.source-tool-create-temp-dir
-    "tltest-nested-module-macro-vector")
-    [(build_run_core.ResultSourceToolString.Err _) false]
-    [(build_run_core.ResultSourceToolString.Ok dir)
-      (let
-        [source : String
-          (build_run_core.source-tool-fs-path-join dir "nested_vector.tl")]
-        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
-        [target : compiler_backend.CompilerBackendTarget
-          (compiler_backend.CompilerBackendTarget.Linux)]
-        (begin
-          (tltest-write-text source (tltest-nested-module-macro-vector-source))
           (match (driver.compiler-driver-load-file-with-runtime
             (owned_view.compiler-owned-shared-view source)
             (owned_view.compiler-owned-shared-view roots)
@@ -1523,8 +1471,37 @@
     unit
     (io.panic "test CLI nested module macro vector import mismatch")))
 
-(define (tltest-nested-generated-result-helper-source) : String
-  "(module test.nested_result_user)
+(define (tltest-nested-generated-result-helper-loaded-ok?
+  [source : String]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [roots : cli_svec.Vec]
+  [target : backend.CompilerBackendTarget]) : bool
+  (match (tltest.tltest-build-harness source decls paths)
+    [(tltest.InlineHarness.Harness program harness-paths count)
+      (begin
+        (unless (= count 1) (return false))
+        (tltest-nested-module-macro-vector-typecheck-ok?
+          program
+          harness-paths
+          roots
+          target))]))
+
+(define (tltest-nested-generated-result-helper-self-test?) : bool
+  (match (build_run_core.source-tool-create-temp-dir
+    "tltest-nested-generated-result-helper")
+    [(build_run_core.ResultSourceToolString.Err _) false]
+    [(build_run_core.ResultSourceToolString.Ok dir)
+      (let
+        [source : String
+          (build_run_core.source-tool-fs-path-join dir "nested_result.tl")]
+        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
+        [target : backend.CompilerBackendTarget
+          (backend.CompilerBackendTarget.Linux)]
+        (begin
+          (tltest-write-text
+            source
+            "(module test.nested_result_user)
 
 (import stdlib.comptime)
 (import stdlib.result)
@@ -1554,38 +1531,6 @@
       (user.value-or (result_i64_string.ok 21) 0)
       21
       \"nested generated result helper should stay rooted\")))")
-
-(define (tltest-nested-generated-result-helper-loaded-ok?
-  [source : String]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [roots : cli_svec.Vec]
-  [target : compiler_backend.CompilerBackendTarget]) : bool
-  (match (tltest.tltest-build-harness source decls paths)
-    [(tltest.InlineHarness.Harness program harness-paths count)
-      (begin
-        (unless (= count 1) (return false))
-        (tltest-nested-module-macro-vector-typecheck-ok?
-          program
-          harness-paths
-          roots
-          target))]))
-
-(define (tltest-nested-generated-result-helper-self-test?) : bool
-  (match (build_run_core.source-tool-create-temp-dir
-    "tltest-nested-generated-result-helper")
-    [(build_run_core.ResultSourceToolString.Err _) false]
-    [(build_run_core.ResultSourceToolString.Ok dir)
-      (let
-        [source : String
-          (build_run_core.source-tool-fs-path-join dir "nested_result.tl")]
-        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
-        [target : compiler_backend.CompilerBackendTarget
-          (compiler_backend.CompilerBackendTarget.Linux)]
-        (begin
-          (tltest-write-text
-            source
-            (tltest-nested-generated-result-helper-source))
           (match (driver.compiler-driver-load-file-with-runtime
             (owned_view.compiler-owned-shared-view source)
             (owned_view.compiler-owned-shared-view roots)
@@ -1617,62 +1562,63 @@
       (cli_svec.push-ref! (&mut roots) "src")
       roots)))
 
-(define (tltest-package-cfg-inline-load-self-test?) : bool
-  (match (build_run_core.source-tool-create-temp-dir "tltest-package-cfg")
-    [(build_run_core.ResultSourceToolString.Err _) false]
-    [(build_run_core.ResultSourceToolString.Ok dir)
-      (let
-        [source : String
-          (build_run_core.source-tool-fs-path-join dir "cfg_inline.tl")]
-        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
-        (begin
-          (tltest-write-text
-            source
-            "(cfg test (test package-cfg-inline unit))\n")
-          (let
-            [legacy-roots : cli_svec.Vec (clone roots)]
-            (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
-              (owned_view.compiler-owned-shared-view source)
-              (owned_view.compiler-owned-shared-view legacy-roots)
-              "."
-              "tltest"
-              (compiler_load.compiler-pkg-deps-empty)
-              true
-              (tltest.tltest-cfgs
-                (compiler_backend.CompilerBackendTarget.Linux)))
-              [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]
-              [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-                (let
-                  [owned-source : String
-                    (compiler_load.compiler-load-package-owned-path
-                      "tltest"
-                      "."
-                      legacy-roots
-                      source)]
-                  (match (tltest.tltest-build-harness owned-source decls paths)
-                    [(tltest.InlineHarness.Harness _ _ count) (= count 1)]))]))))]))
-
 (test
   test-cli-package-loader-enables-test-cfg
   (unless
-    (tltest-package-cfg-inline-load-self-test?)
+    (match (build_run_core.source-tool-create-temp-dir "tltest-package-cfg")
+      [(build_run_core.ResultSourceToolString.Err _) false]
+      [(build_run_core.ResultSourceToolString.Ok dir)
+        (let
+          [source : String
+            (build_run_core.source-tool-fs-path-join dir "cfg_inline.tl")]
+          [roots : cli_svec.Vec (tltest-roots-for-self-test)]
+          (begin
+            (tltest-write-text
+              source
+              "(cfg test (test package-cfg-inline unit))\n")
+            (let
+              [legacy-roots : cli_svec.Vec (clone roots)]
+              (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
+                (owned_view.compiler-owned-shared-view source)
+                (owned_view.compiler-owned-shared-view legacy-roots)
+                "."
+                "tltest"
+                (compiler_load.compiler-pkg-deps-empty)
+                true
+                (tltest.tltest-cfgs (backend.CompilerBackendTarget.Linux)))
+                [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]
+                [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+                  (let
+                    [owned-source : String
+                      (compiler_load.compiler-load-package-owned-path
+                        "tltest"
+                        "."
+                        legacy-roots
+                        source)]
+                    (match (tltest.tltest-build-harness
+                      owned-source
+                      decls
+                      paths)
+                      [(tltest.InlineHarness.Harness _ _ count) (= count 1)]))]))))])
     (io.panic "test CLI package loader did not enable test cfg")))
 
-(define (tltest-stdlib-io-bytes-surface-lower-self-test?) : bool
-  (match (build_run_core.source-tool-create-temp-dir "tltest-stdlib-io-lower")
-    [(build_run_core.ResultSourceToolString.Err _) false]
-    [(build_run_core.ResultSourceToolString.Ok dir)
-      (let
-        [source : String
-          (build_run_core.source-tool-fs-path-join dir "io_run.tl")]
-        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
-        [target : compiler_backend.CompilerBackendTarget
-          (compiler_backend.CompilerBackendTarget.Linux)]
-        (begin
-          (tltest.tltest-inline-reset-load-state!)
-          (tltest-write-text
-            source
-            "(import stdlib.io)
+(test
+  test-cli-stdlib-io-import-lowers-bytes-surface
+  (unless
+    (match (build_run_core.source-tool-create-temp-dir "tltest-stdlib-io-lower")
+      [(build_run_core.ResultSourceToolString.Err _) false]
+      [(build_run_core.ResultSourceToolString.Ok dir)
+        (let
+          [source : String
+            (build_run_core.source-tool-fs-path-join dir "io_run.tl")]
+          [roots : cli_svec.Vec (tltest-roots-for-self-test)]
+          [target : backend.CompilerBackendTarget
+            (backend.CompilerBackendTarget.Linux)]
+          (begin
+            (tltest.tltest-inline-reset-load-state!)
+            (tltest-write-text
+              source
+              "(import stdlib.io)
 (import stdlib.byte_buf)
 
 (define (main) : i64
@@ -1682,44 +1628,39 @@
       (io.stdout-write (byte_buf.str-as-bytes (& text))))
     0))
 ")
-          (match (driver.compiler-driver-load-file-with-runtime
-            (owned_view.compiler-owned-shared-view source)
-            (owned_view.compiler-owned-shared-view roots)
-            (tltest.tltest-cfgs target))
-            [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-              (begin
-                (io.print-error
-                  (driver.compiler-driver-render-source-diagnostic
-                    (cdiag.compiler-diagnostic-box-shared-view diag)))
-                false)]
-            [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-              (match (lower.lower-compiler-program-with-decl-paths-mode-cache
-                (owned_view.compiler-owned-shared-view source)
-                (ast.ast-program decls)
-                paths
-                (lower.CompilerLowerMode.Scalar)
-                (owned_view.compiler-owned-shared-view roots)
-                (tltest.tltest-cfgs target)
-                (tltest-typecheck-cache-scope roots target))
-                [(lower.ResultCompilerLower.Ok _ _) true]
-                [(lower.ResultCompilerLower.Err diag)
-                  (begin
-                    (io.print-error
-                      (driver.compiler-driver-render-source-diagnostic
-                        (tltest.tltest-diagnostic-with-source-fallback
-                          source
-                          (cdiag.compiler-diagnostic-box-shared-view diag))))
-                    false)])])))]))
-
-(test
-  test-cli-stdlib-io-import-lowers-bytes-surface
-  (unless
-    (tltest-stdlib-io-bytes-surface-lower-self-test?)
+            (match (driver.compiler-driver-load-file-with-runtime
+              (owned_view.compiler-owned-shared-view source)
+              (owned_view.compiler-owned-shared-view roots)
+              (tltest.tltest-cfgs target))
+              [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+                (begin
+                  (io.print-error
+                    (driver.compiler-driver-render-source-diagnostic
+                      (cdiag.compiler-diagnostic-box-shared-view diag)))
+                  false)]
+              [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+                (match (lower.lower-compiler-program-with-decl-paths-mode-cache
+                  (owned_view.compiler-owned-shared-view source)
+                  (ast.ast-program decls)
+                  paths
+                  (lower.CompilerLowerMode.Scalar)
+                  (owned_view.compiler-owned-shared-view roots)
+                  (tltest.tltest-cfgs target)
+                  (tltest-typecheck-cache-scope roots target))
+                  [(lower.ResultCompilerLower.Ok _ _) true]
+                  [(lower.ResultCompilerLower.Err diag)
+                    (begin
+                      (io.print-error
+                        (driver.compiler-driver-render-source-diagnostic
+                          (tltest.tltest-diagnostic-with-source-fallback
+                            source
+                            (cdiag.compiler-diagnostic-box-shared-view diag))))
+                      false)])])))])
     (io.panic "stdlib/io imported stdout-write failed to lower string helper")))
 
 (define (tltest-typecheck-cache-scope
   [roots : cli_svec.Vec]
-  [backend-target : compiler_backend.CompilerBackendTarget]) : String
+  [backend-target : backend.CompilerBackendTarget]) : String
   (let
     [legacy-roots : cli_svec.Vec (clone roots)]
     (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
@@ -1758,11 +1699,11 @@
     (not (tltest.tltest-stdlib-env-fixture-source? "stdlib/process.tl"))
     (string.eq
       (tltest.tltest-stdlib-env-fixture-path
-        (compiler_backend.CompilerBackendTarget.Windows))
+        (backend.CompilerBackendTarget.Windows))
       "one;two;three")
     (string.eq
       (tltest.tltest-stdlib-env-fixture-path
-        (compiler_backend.CompilerBackendTarget.Linux))
+        (backend.CompilerBackendTarget.Linux))
       "one:two:three")))
 
 (test
@@ -1858,51 +1799,51 @@
         (not
           (tltest-maybe-string-some?
             (tltest.tltest-host-isa-refusal
-              (compiler_backend.CompilerBackendMode.Scalar)
+              (backend.CompilerBackendMode.Scalar)
               false
               false)))
         (tltest-maybe-string-some?
           (tltest.tltest-host-isa-refusal
-            (compiler_backend.CompilerBackendMode.Avx2)
+            (backend.CompilerBackendMode.Avx2)
             false
             true))
         (not
           (tltest-maybe-string-some?
             (tltest.tltest-host-isa-refusal
-              (compiler_backend.CompilerBackendMode.Avx2)
+              (backend.CompilerBackendMode.Avx2)
               true
               false)))
         (tltest-maybe-string-some?
           (tltest.tltest-host-isa-refusal
-            (compiler_backend.CompilerBackendMode.Avx512)
+            (backend.CompilerBackendMode.Avx512)
             true
             false))
         (not
           (tltest-maybe-string-some?
             (tltest.tltest-host-isa-refusal
-              (compiler_backend.CompilerBackendMode.Avx512)
+              (backend.CompilerBackendMode.Avx512)
               true
               true))))
       (io.panic "test CLI host-ISA refusal policy mismatch"))
     (unless
       (and
         (tltest.tltest-backend-mode-executes?
-          (compiler_backend.CompilerBackendMode.Avx512)
+          (backend.CompilerBackendMode.Avx512)
           tltest.TestMode.Run
           false)
         (not
           (tltest.tltest-backend-mode-executes?
-            (compiler_backend.CompilerBackendMode.Avx512)
+            (backend.CompilerBackendMode.Avx512)
             tltest.TestMode.Check
             false))
         (not
           (tltest.tltest-backend-mode-executes?
-            (compiler_backend.CompilerBackendMode.Avx512)
+            (backend.CompilerBackendMode.Avx512)
             tltest.TestMode.Run
             true))
         (not
           (tltest.tltest-backend-mode-executes?
-            (compiler_backend.CompilerBackendMode.Scalar)
+            (backend.CompilerBackendMode.Scalar)
             tltest.TestMode.Run
             false)))
       (io.panic "test CLI backend-mode execution policy mismatch"))))
@@ -1925,37 +1866,37 @@
       (=
         (tltest-lower-mode-tag
           (tltest.tltest-harness-lower-mode
-            (compiler_backend.CompilerBackendTarget.Linux)
-            (compiler_backend.CompilerBackendMode.Scalar)))
+            (backend.CompilerBackendTarget.Linux)
+            (backend.CompilerBackendMode.Scalar)))
         5)
       (=
         (tltest-lower-mode-tag
           (tltest.tltest-harness-lower-mode
-            (compiler_backend.CompilerBackendTarget.Windows)
-            (compiler_backend.CompilerBackendMode.Scalar)))
+            (backend.CompilerBackendTarget.Windows)
+            (backend.CompilerBackendMode.Scalar)))
         6)
       (=
         (tltest-lower-mode-tag
           (tltest.tltest-harness-lower-mode
-            (compiler_backend.CompilerBackendTarget.Linux)
-            (compiler_backend.CompilerBackendMode.Avx2)))
+            (backend.CompilerBackendTarget.Linux)
+            (backend.CompilerBackendMode.Avx2)))
         1)
       (=
         (tltest-lower-mode-tag
           (tltest.tltest-harness-lower-mode
-            (compiler_backend.CompilerBackendTarget.Windows)
-            (compiler_backend.CompilerBackendMode.Avx2)))
+            (backend.CompilerBackendTarget.Windows)
+            (backend.CompilerBackendMode.Avx2)))
         2)
       (=
         (tltest-lower-mode-tag
           (tltest.tltest-harness-lower-mode
-            (compiler_backend.CompilerBackendTarget.Linux)
-            (compiler_backend.CompilerBackendMode.Avx512)))
+            (backend.CompilerBackendTarget.Linux)
+            (backend.CompilerBackendMode.Avx512)))
         3)
       (=
         (tltest-lower-mode-tag
           (tltest.tltest-harness-lower-mode
-            (compiler_backend.CompilerBackendTarget.Windows)
-            (compiler_backend.CompilerBackendMode.Avx512)))
+            (backend.CompilerBackendTarget.Windows)
+            (backend.CompilerBackendMode.Avx512)))
         4))
     (io.panic "test CLI backend mode did not select its paired lower mode")))

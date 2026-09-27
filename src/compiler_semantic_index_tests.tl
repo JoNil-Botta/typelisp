@@ -1379,39 +1379,6 @@
           false)]
       [(sem.ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
-(define (compiler-check-semantic-index-macro-source) : String
-  "(module semantic.macro.entry)
-(import semantic.index.macro_dep as dep)
-;: Local macro documentation.
-(defmacro (local-wrap [value : Expr]) : Expr
-  `(+ ,value 1))
-(defmacro (outer-wrap [value : Expr]) : Expr
-  `(local-wrap ,value))
-(defmacro (imported-wrap [value : Expr]) : Expr
-  `(+ ,value 10))
-(defmacro (unused-template) : Expr
-  `(local-wrap 99))
-(defmacro (emit-one) : Decls
-  `(define generated-from-macro : i64 (local-wrap 5)))
-(defmacro (make-module [key : String]) : Module
-  `(begin
-    (module semantic.generated.module)
-    (define generated-key : String ,key)))
-(emit-one)
-(import (make-module \"one\") as made)
-(define same-text : String \"local-wrap\")
-; local-wrap in a comment is not a call.
-(define (plain [value : i64]) : i64 value)
-(define (ordinary-shadow) : i64
-  (let [local-wrap : i64 4] local-wrap))
-(define (run) : i64
-  (+ (local-wrap 1)
-    (+ (local-wrap (local-wrap 2))
-      (+ (imported-wrap 3)
-        (+ (dep.imported-wrap 4)
-          (+ (outer-wrap 5) (plain 6)))))))
-")
-
 (define (compiler-check-semantic-index-macro-records-ok?
   [index : (& index sem.CompilerSemanticSourceIndex)]
   [path : String]
@@ -1621,7 +1588,38 @@
 (define (compiler-check-semantic-index-macro-call-sites-ok?) : bool
   (let
     [path : String "src/tests/semantic_macro_entry.tl"]
-    [source : String (compiler-check-semantic-index-macro-source)]
+    [source : String
+      "(module semantic.macro.entry)
+(import semantic.index.macro_dep as dep)
+;: Local macro documentation.
+(defmacro (local-wrap [value : Expr]) : Expr
+  `(+ ,value 1))
+(defmacro (outer-wrap [value : Expr]) : Expr
+  `(local-wrap ,value))
+(defmacro (imported-wrap [value : Expr]) : Expr
+  `(+ ,value 10))
+(defmacro (unused-template) : Expr
+  `(local-wrap 99))
+(defmacro (emit-one) : Decls
+  `(define generated-from-macro : i64 (local-wrap 5)))
+(defmacro (make-module [key : String]) : Module
+  `(begin
+    (module semantic.generated.module)
+    (define generated-key : String ,key)))
+(emit-one)
+(import (make-module \"one\") as made)
+(define same-text : String \"local-wrap\")
+; local-wrap in a comment is not a call.
+(define (plain [value : i64]) : i64 value)
+(define (ordinary-shadow) : i64
+  (let [local-wrap : i64 4] local-wrap))
+(define (run) : i64
+  (+ (local-wrap 1)
+    (+ (local-wrap (local-wrap 2))
+      (+ (imported-wrap 3)
+        (+ (dep.imported-wrap 4)
+          (+ (outer-wrap 5) (plain 6)))))))
+"]
     [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
     (match (compiler-check-source-index-with-roots
       (owned_view.compiler-owned-shared-view path)

@@ -10,29 +10,6 @@
 (define (main) : i64
   (doc-render-smoke))
 
-(define (doc-render-smoke-source) : String
-  ";# Module docs with `code`, [links], <tag>, & amp.
-
-;; ignored ordinary comment
-;: Global docs for answer.
-(define answer : i64 42)
-
-;: Function docs with `tick` and [arg].
-(define (add-one [x : i64]) : i64 (+ x 1))
-
-;: Extern docs for host-log.
-(extern (host-log [arg0 : String]) : unit)
-
-;: Enum docs mention variants.
-(defenum MaybeNumber
-  (No)
-  (Some i64))
-
-;: Struct docs mention fields.
-(defstruct Point
-  (x i64)
-  (y i64))")
-
 (define (doc-render-smoke-expected) : String
   "# TypeLisp Documentation
 
@@ -120,7 +97,28 @@ _No documented declarations._
   (let
     [rendered : String
       (doc_render.doc-render-markdown
-        (doc_extract.doc-extract-source (doc-render-smoke-source)))]
+        (doc_extract.doc-extract-source
+          ";# Module docs with `code`, [links], <tag>, & amp.
+
+;; ignored ordinary comment
+;: Global docs for answer.
+(define answer : i64 42)
+
+;: Function docs with `tick` and [arg].
+(define (add-one [x : i64]) : i64 (+ x 1))
+
+;: Extern docs for host-log.
+(extern (host-log [arg0 : String]) : unit)
+
+;: Enum docs mention variants.
+(defenum MaybeNumber
+  (No)
+  (Some i64))
+
+;: Struct docs mention fields.
+(defstruct Point
+  (x i64)
+  (y i64))"))]
     [empty-rendered : String
       (doc_render.doc-render-markdown
         (doc_extract.doc-extract-source "(define hidden : i64 1)\n"))]

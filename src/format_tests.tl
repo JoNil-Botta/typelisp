@@ -385,20 +385,11 @@
     [(rules.ResultFormatString.Err err)
       (io.panic (tokens.format-source-error-message err))]))
 
-(define (format-rules-decls-source) : String
-  "(import std) (import ffi) (extern (io.emit-string [arg0 : String]) : unit (:abi c) (:symbol \"external_emit_string\")) (extern (print-int [arg0 : i64]) : unit) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64)) (define KEY_A : i64 1) (define KEY_B : i64 2)")
-
 (define (format-rules-decls-expected) : String
   "(import std)\n(import ffi)\n\n(extern (io.emit-string [arg0 : String]) : unit (:abi c) (:symbol \"external_emit_string\"))\n(extern (print-int [arg0 : i64]) : unit)\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))\n\n(define KEY_A : i64\n  1)\n(define KEY_B : i64\n  2)")
 
-(define (format-rules-flow-source) : String
-  "(define (main [x : i64]) : i64 (begin (let ([y : i64 1]) (if (< x y) (while (< x 10) (set! x (+ x 1))) x)) (match (Some x) [(Some v) v] [None 0])))")
-
 (define (format-rules-flow-expected) : String
   "(define (main [x : i64]) : i64\n  (begin\n    (let\n      [y : i64 1]\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))")
-
-(define (format-rules-empty-let-source) : String
-  "(define (main) : i64 (let () 1 2))")
 
 (define (format-rules-empty-let-expected) : String
   "(define (main) : i64
@@ -406,16 +397,6 @@
     []
     1
     2))")
-
-(define (format-rules-comments-source) : String
-  ";; module header
-;; keeps adjacent lines
-(import std)
-;; item docs
-;; stay attached
-(define answer : i64 42)
-(begin ; keep
- (io.emit-string \"x\"))")
 
 (define (format-rules-comments-expected) : String
   ";; module header
@@ -431,9 +412,6 @@
   ; keep
   (io.emit-string \"x\"))")
 
-(define (format-rules-quote-source) : String
-  "(define (mk [e : Expr]) : Expr `(if ,e true false)) (define (body [xs : ExprList]) : Expr `(begin ,@xs))")
-
 (define (format-rules-quote-expected) : String
   "(define (mk [e : Expr]) : Expr
   `(if ,e
@@ -444,9 +422,6 @@
   `(begin
     ,@xs))")
 
-(define (format-rules-unsafe-source) : String
-  "(define (main [p : (Ptr i64)]) : i64 (unsafe (ptr-read p))) (unsafe (define (danger [x : i64]) : i64 x))")
-
 (define (format-rules-unsafe-expected) : String
   "(define (main [p : (Ptr i64)]) : i64
   (unsafe
@@ -456,25 +431,16 @@
   (define (danger [x : i64]) : i64
     x))")
 
-(define (format-rules-define-metadata-source) : String
-  "(define (probe-fn [x : i64]) (:export-symbol \"probe_sym\") : unit unit)")
-
 (define (format-rules-define-metadata-expected) : String
   "(define (probe-fn [x : i64])
   (:export-symbol \"probe_sym\") : unit
   unit)")
-
-(define (format-rules-define-metadata-long-source) : String
-  "(define (probe-long [x : i64]) (:export-symbol \"probe_long\") : (Tuple i64 i64 i64 i64 i64 i64 i64 i64) unit)")
 
 (define (format-rules-define-metadata-long-expected) : String
   "(define (probe-long [x : i64])
   (:export-symbol \"probe_long\")
   : (Tuple i64 i64 i64 i64 i64 i64 i64 i64)
   unit)")
-
-(define (format-rules-spmd-callable-source) : String
-  "(define (helper [x : i64] [scale : i64]) (:spmd-callable (specialization (lanes 8) (args varying uniform) (result varying) (index-param 0))) : i64 (+ x scale))")
 
 (define (format-rules-spmd-callable-expected) : String
   "(define (helper [x : i64] [scale : i64])
@@ -487,15 +453,9 @@
   : i64
   (+ x scale))")
 
-(define (format-rules-variadic-macro-source) : String
-  "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
-
 (define (format-rules-variadic-macro-expected) : String
   "(defmacro (all [first : bool] [rest : bool ...]) : bool
   first)")
-
-(define (format-rules-projection-suffix-source) : String
-  "(define (main) : i64 (begin (array-ref items 0).value (tuple-ref items 0).value (deref item).inner.value))")
 
 (define (format-rules-projection-suffix-expected) : String
   "(define (main) : i64
@@ -536,40 +496,61 @@
 (define (format-rules-self-test) : i64
   (let
     [decls : String
-      (format-rules-render-source-width (format-rules-decls-source) 80)]
+      (format-rules-render-source-width
+        "(import std) (import ffi) (extern (io.emit-string [arg0 : String]) : unit (:abi c) (:symbol \"external_emit_string\")) (extern (print-int [arg0 : i64]) : unit) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64)) (define KEY_A : i64 1) (define KEY_B : i64 2)"
+        80)]
     [flow : String
-      (format-rules-render-source-width (format-rules-flow-source) 80)]
+      (format-rules-render-source-width
+        "(define (main [x : i64]) : i64 (begin (let ([y : i64 1]) (if (< x y) (while (< x 10) (set! x (+ x 1))) x)) (match (Some x) [(Some v) v] [None 0])))"
+        80)]
     [flow-fixpoint : String
       (format-rules-render-source-width
         (owned_view.compiler-owned-shared-view flow)
         80)]
     [empty-let : String
-      (format-rules-render-source-width (format-rules-empty-let-source) 80)]
+      (format-rules-render-source-width "(define (main) : i64 (let () 1 2))" 80)]
     [empty-let-fixpoint : String
       (format-rules-render-source-width
         (owned_view.compiler-owned-shared-view empty-let)
         80)]
     [comments : String
-      (format-rules-render-source-width (format-rules-comments-source) 80)]
+      (format-rules-render-source-width
+        ";; module header
+;; keeps adjacent lines
+(import std)
+;; item docs
+;; stay attached
+(define answer : i64 42)
+(begin ; keep
+ (io.emit-string \"x\"))"
+        80)]
     [quote : String
-      (format-rules-render-source-width (format-rules-quote-source) 80)]
+      (format-rules-render-source-width
+        "(define (mk [e : Expr]) : Expr `(if ,e true false)) (define (body [xs : ExprList]) : Expr `(begin ,@xs))"
+        80)]
     [unsafe : String
-      (format-rules-render-source-width (format-rules-unsafe-source) 80)]
+      (format-rules-render-source-width
+        "(define (main [p : (Ptr i64)]) : i64 (unsafe (ptr-read p))) (unsafe (define (danger [x : i64]) : i64 x))"
+        80)]
     [metadata : String
       (format-rules-render-source-width
-        (format-rules-define-metadata-source)
+        "(define (probe-fn [x : i64]) (:export-symbol \"probe_sym\") : unit unit)"
         80)]
     [metadata-long : String
       (format-rules-render-source-width
-        (format-rules-define-metadata-long-source)
+        "(define (probe-long [x : i64]) (:export-symbol \"probe_long\") : (Tuple i64 i64 i64 i64 i64 i64 i64 i64) unit)"
         48)]
     [spmd-callable : String
-      (format-rules-render-source-width (format-rules-spmd-callable-source) 80)]
+      (format-rules-render-source-width
+        "(define (helper [x : i64] [scale : i64]) (:spmd-callable (specialization (lanes 8) (args varying uniform) (result varying) (index-param 0))) : i64 (+ x scale))"
+        80)]
     [variadic : String
-      (format-rules-render-source-width (format-rules-variadic-macro-source) 80)]
+      (format-rules-render-source-width
+        "(defmacro (all [first : bool] [rest : bool ...]) : bool first)"
+        80)]
     [projection-suffix : String
       (format-rules-render-source-width
-        (format-rules-projection-suffix-source)
+        "(define (main) : i64 (begin (array-ref items 0).value (tuple-ref items 0).value (deref item).inner.value))"
         80)]
     (begin
       (unless (string.eq decls (format-rules-decls-expected)) (return 1))

@@ -5,7 +5,7 @@
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
-(import compiler_load)
+(import compiler_load as load)
 (import compiler_load_tests as load_tests)
 (import compiler_cfg_core as cfg)
 (import compiler_ast_types as ast)
@@ -21,8 +21,8 @@
 
 (define (lazy-unused-dotted-import-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_dotted")
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_dotted/nested")
+    (load.compiler-load-test-mkdir "target/cl_lazy_dotted")
+    (load.compiler-load-test-mkdir "target/cl_lazy_dotted/nested")
     (lazy-write-text
       "target/cl_lazy_dotted/nested/dep.tl"
       "(module nested.dep)
@@ -39,7 +39,7 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_dotted/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 1)
           (= (load_tests.compiler-load-decl-list-count decls) 3)
@@ -51,12 +51,12 @@
             seen
             "lazy.dotted.entry")
           (not (load_tests.compiler-load-test-seen-contains? seen "nested.dep")))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-used-dotted-import-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_dotted_used")
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_dotted_used/nested")
+    (load.compiler-load-test-mkdir "target/cl_lazy_dotted_used")
+    (load.compiler-load-test-mkdir "target/cl_lazy_dotted_used/nested")
     (lazy-write-text
       "target/cl_lazy_dotted_used/nested/dep.tl"
       "(module nested.dep)
@@ -69,18 +69,18 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_dotted_used/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.dotted.used.entry")
           (load_tests.compiler-load-test-seen-contains? seen "nested.dep"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-removed-array-module-rejected?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_removed_array_module")
+    (load.compiler-load-test-mkdir "target/cl_removed_array_module")
     (lazy-write-text
       "target/cl_removed_array_module/entry.tl"
       (str_cat.str-cat
@@ -89,20 +89,20 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_removed_array_module/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ _) false]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diagnostic)
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ _) false]
+      [(load.ResultCompilerLoadWithPaths.Err diagnostic)
         (let
           [message : String
             (cdiag.compiler-diagnostic-message (__tl-box-place diagnostic))]
           (and
-            (compiler_load.compiler-load-string-contains?
+            (load.compiler-load-string-contains?
               message
               "compiler-load: cannot read import stdlib/")
-            (compiler_load.compiler-load-string-contains? message "array.tl")))])))
+            (load.compiler-load-string-contains? message "array.tl")))])))
 
 (define (lazy-stdlib-result-macro-import-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_stdlib_result")
+    (load.compiler-load-test-mkdir "target/cl_lazy_stdlib_result")
     (lazy-write-text
       "target/cl_lazy_stdlib_result/entry.tl"
       "(module lazy.stdlib.result.entry)
@@ -112,7 +112,7 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_stdlib_result/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-decl-list-has-import-alias?
@@ -123,11 +123,11 @@
             seen
             "lazy.stdlib.result.entry")
           (load_tests.compiler-load-test-seen-contains? seen "stdlib.result"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-direct-module-macro-demand-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_module_macro")
+    (load.compiler-load-test-mkdir "target/cl_lazy_module_macro")
     (lazy-write-text
       "target/cl_lazy_module_macro/entry.tl"
       "(module lazy.module.macro.entry)
@@ -137,19 +137,18 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_module_macro/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.module.macro.entry")
           (load_tests.compiler-load-test-seen-contains? seen "stdlib.option"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-unused-module-macro-import-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_unused_module_macro")
+    (load.compiler-load-test-mkdir "target/cl_lazy_unused_module_macro")
     (lazy-write-text
       "target/cl_lazy_unused_module_macro/entry.tl"
       "(module lazy.unused.module.macro.entry)
@@ -158,7 +157,7 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_unused_module_macro/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 1)
           (load_tests.compiler-load-test-seen-contains?
@@ -166,15 +165,14 @@
             "lazy.unused.module.macro.entry")
           (not
             (load_tests.compiler-load-test-seen-contains? seen "stdlib.option")))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-aliased-module-macro-demand-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_aliased_module_macro")
-    (compiler_load.compiler-load-test-mkdir
+    (load.compiler-load-test-mkdir "target/cl_lazy_aliased_module_macro")
+    (load.compiler-load-test-mkdir
       "target/cl_lazy_aliased_module_macro/generic")
-    (compiler_load.compiler-load-test-mkdir
+    (load.compiler-load-test-mkdir
       "target/cl_lazy_aliased_module_macro/generic/macro")
     (lazy-write-text
       "target/cl_lazy_aliased_module_macro/generic/macro/dep.tl"
@@ -189,7 +187,7 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_aliased_module_macro/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
@@ -198,15 +196,14 @@
           (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.macro.dep"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-qualified-module-macro-demand-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_qualified_module_macro")
-    (compiler_load.compiler-load-test-mkdir
+    (load.compiler-load-test-mkdir "target/cl_lazy_qualified_module_macro")
+    (load.compiler-load-test-mkdir
       "target/cl_lazy_qualified_module_macro/generic")
-    (compiler_load.compiler-load-test-mkdir
+    (load.compiler-load-test-mkdir
       "target/cl_lazy_qualified_module_macro/generic/macro")
     (lazy-write-text
       "target/cl_lazy_qualified_module_macro/generic/macro/dep.tl"
@@ -221,7 +218,7 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_qualified_module_macro/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
@@ -230,12 +227,11 @@
           (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.macro.dep"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-stdlib-vector-qualified-module-macro-demand-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_stdlib_vector_module_macro")
+    (load.compiler-load-test-mkdir "target/cl_lazy_stdlib_vector_module_macro")
     (lazy-write-text
       "target/cl_lazy_stdlib_vector_module_macro/entry.tl"
       "(module lazy.stdlib.vector.module.macro.entry)
@@ -244,24 +240,24 @@
 (define (main) : i64 42)")
     (let
       [cfgs : sym_i64_env.SymI64Env (cfg.compiler-cfg-empty)]
-      (match (compiler_load.compiler-load-file-with-paths-and-roots-cfg
+      (match (load.compiler-load-file-with-paths-and-roots-cfg
         "target/cl_lazy_stdlib_vector_module_macro/entry.tl"
         (sym_i64_env.sym-i64-empty)
         (svec.new)
         cfgs)
-        [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
             (= (load_tests.compiler-load-lazy-import-skip-count) 0)
             (load_tests.compiler-load-test-seen-contains?
               seen
               "lazy.stdlib.vector.module.macro.entry")
             (load_tests.compiler-load-test-seen-contains? seen "stdlib.vector"))]
-        [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]))))
+        [(load.ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (package-lazy-unused-dotted-import-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_pkg_lazy_dotted")
-    (compiler_load.compiler-load-test-mkdir "target/cl_pkg_lazy_dotted/nested")
+    (load.compiler-load-test-mkdir "target/cl_pkg_lazy_dotted")
+    (load.compiler-load-test-mkdir "target/cl_pkg_lazy_dotted/nested")
     (lazy-write-text
       "target/cl_pkg_lazy_dotted/nested/dep.tl"
       "(module nested.dep)
@@ -276,8 +272,8 @@
       (sym_i64_env.sym-i64-empty)
       (svec.new)
       "target/cl_pkg_lazy_dotted"
-      (compiler_load.compiler-pkg-deps-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
+      (load.compiler-pkg-deps-empty))
+      [(load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 1)
           (= (load_tests.compiler-load-decl-list-count decls) 3)
@@ -289,13 +285,12 @@
             seen
             "pkg.lazy.dotted.entry")
           (not (load_tests.compiler-load-test-seen-contains? seen "nested.dep")))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (package-lazy-used-dotted-import-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_pkg_lazy_dotted_used")
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_pkg_lazy_dotted_used/nested")
+    (load.compiler-load-test-mkdir "target/cl_pkg_lazy_dotted_used")
+    (load.compiler-load-test-mkdir "target/cl_pkg_lazy_dotted_used/nested")
     (lazy-write-text
       "target/cl_pkg_lazy_dotted_used/nested/dep.tl"
       "(module nested.dep)
@@ -310,23 +305,21 @@
       (sym_i64_env.sym-i64-empty)
       (svec.new)
       "target/cl_pkg_lazy_dotted_used"
-      (compiler_load.compiler-pkg-deps-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+      (load.compiler-pkg-deps-empty))
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
             seen
             "pkg.lazy.dotted.used.entry")
           (load_tests.compiler-load-test-seen-contains? seen "nested.dep"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-local-alias-does-not-demand-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_local_alias")
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_local_alias/generic")
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_local_alias/generic/local")
+    (load.compiler-load-test-mkdir "target/cl_lazy_local_alias")
+    (load.compiler-load-test-mkdir "target/cl_lazy_local_alias/generic")
+    (load.compiler-load-test-mkdir "target/cl_lazy_local_alias/generic/local")
     (lazy-write-text
       "target/cl_lazy_local_alias/generic/local/dep.tl"
       "(module generic.local.dep)
@@ -342,7 +335,7 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_local_alias/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 1)
           (load_tests.compiler-load-test-seen-contains?
@@ -352,14 +345,13 @@
             (load_tests.compiler-load-test-seen-contains?
               seen
               "generic.local.dep")))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-generic-qualified-surface-demand-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_generic_surface")
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_generic_surface/generic")
-    (compiler_load.compiler-load-test-mkdir
+    (load.compiler-load-test-mkdir "target/cl_lazy_generic_surface")
+    (load.compiler-load-test-mkdir "target/cl_lazy_generic_surface/generic")
+    (load.compiler-load-test-mkdir
       "target/cl_lazy_generic_surface/generic/surface")
     (lazy-write-text
       "target/cl_lazy_generic_surface/generic/surface/dep.tl"
@@ -379,7 +371,7 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_generic_surface/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
@@ -388,14 +380,13 @@
           (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.surface.dep"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-generic-direct-surface-demand-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_generic_direct")
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_generic_direct/generic")
-    (compiler_load.compiler-load-test-mkdir
+    (load.compiler-load-test-mkdir "target/cl_lazy_generic_direct")
+    (load.compiler-load-test-mkdir "target/cl_lazy_generic_direct/generic")
+    (load.compiler-load-test-mkdir
       "target/cl_lazy_generic_direct/generic/direct")
     (lazy-write-text
       "target/cl_lazy_generic_direct/generic/direct/dep.tl"
@@ -409,7 +400,7 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_lazy_generic_direct/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+      [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (load_tests.compiler-load-lazy-import-skip-count) 0)
           (load_tests.compiler-load-test-seen-contains?
@@ -418,15 +409,13 @@
           (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.direct.dep"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-cfg-selected-surface-demand-ok?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_cfg_surface")
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_cfg_surface/generic")
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_cfg_surface/generic/cfg")
+    (load.compiler-load-test-mkdir "target/cl_lazy_cfg_surface")
+    (load.compiler-load-test-mkdir "target/cl_lazy_cfg_surface/generic")
+    (load.compiler-load-test-mkdir "target/cl_lazy_cfg_surface/generic/cfg")
     (lazy-write-text
       "target/cl_lazy_cfg_surface/generic/cfg/dep.tl"
       "(module generic.cfg.dep)
@@ -439,12 +428,12 @@
     (let
       [cfgs : sym_i64_env.SymI64Env
         (cfg.compiler-cfg-enable (cfg.compiler-cfg-empty) "feature")]
-      (match (compiler_load.compiler-load-file-with-paths-and-roots-cfg
+      (match (load.compiler-load-file-with-paths-and-roots-cfg
         "target/cl_lazy_cfg_surface/entry.tl"
         (sym_i64_env.sym-i64-empty)
         (svec.new)
         cfgs)
-        [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        [(load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
             (= (load_tests.compiler-load-lazy-import-skip-count) 0)
             (load_tests.compiler-load-test-seen-contains?
@@ -453,10 +442,10 @@
             (load_tests.compiler-load-test-seen-contains?
               seen
               "generic.cfg.dep"))]
-        [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]))))
+        [(load.ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (structural-member-demand-source [source : String] [alias : i64]) : load_tests.CompilerLoadStructuralMemberDemand
-  (match (compiler_load.compiler-load-parse-source-diagnostic-escaping
+  (match (load.compiler-load-parse-source-diagnostic-escaping
     "src/structural_member_demand.tl"
     source
     (cfg.compiler-cfg-empty))
@@ -545,7 +534,7 @@
         cbi.compiler-builtin-id-fix-same))))
 
 (define (structural-member-demand-unknown-ok?) : bool
-  (match (compiler_load.compiler-load-parse-source-diagnostic-escaping
+  (match (load.compiler-load-parse-source-diagnostic-escaping
     "src/structural_member_demand_unknown.tl"
     "(module demand.unknown)
 (defstruct Aggregate (value i64))"
@@ -559,26 +548,26 @@
     [(ResultAstProgramDiagnostic.Err _) false]))
 
 (define (lazy-preload-observer-state-isolation-ok?) : bool
-  (match (compiler_load.compiler-load-parse-source-diagnostic-escaping
+  (match (load.compiler-load-parse-source-diagnostic-escaping
     "src/lazy_preload_observer_state_isolation.tl"
     "(module demand.isolation)
 (define (main) : i64 (subject.same))"
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
       (let
-        [previous-state : compiler_load.CompilerLoadSessionState
-          (compiler_load.compiler-load-active-session-state-shared-view)]
-        [state-a : compiler_load.CompilerLoadSessionState
-          (compiler_load.compiler-load-session-state-new)]
-        [state-b : compiler_load.CompilerLoadSessionState
-          (compiler_load.compiler-load-session-state-new)]
+        [previous-state : load.CompilerLoadSessionState
+          (load.compiler-load-active-session-state-shared-view)]
+        [state-a : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
+        [state-b : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
         [alias : i64 cbi.compiler-builtin-id-fix-subject]
         [member : i64 cbi.compiler-builtin-id-fix-same]
         [pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         [_select-b : unit
-          (compiler_load.compiler-load-session-state-use!
-            (compiler_load.compiler-load-session-state-shared-view (& state-b)))]
+          (load.compiler-load-session-state-use!
+            (load.compiler-load-session-state-shared-view (& state-b)))]
         [_begin-a : unit
           (load_tests.compiler-load-session-state-lazy-qualified-observer-begin-pair!
             (& state-a)
@@ -589,9 +578,9 @@
             (& state-b)
             alias
             cbi.compiler-builtin-id-fix-empty)]
-        [demand : compiler_load.CompilerLoadLazyAliasDemand
-          (compiler_load.compiler-load-session-state-lazy-import-preload-demand
-            (compiler_load.compiler-load-session-state-shared-view (& state-a))
+        [demand : load.CompilerLoadLazyAliasDemand
+          (load.compiler-load-session-state-lazy-import-preload-demand
+            (load.compiler-load-session-state-shared-view (& state-a))
             true
             (ast.AstMaybeImportAlias.Some alias)
             (deref decls)
@@ -600,7 +589,7 @@
           (load_tests.compiler-load-session-state-lazy-qualified-observer-end-pair!
             (& state-a))]
         [b-still-active : bool
-          (compiler_load.compiler-load-session-state-lazy-qualified-observer-active?
+          (load.compiler-load-session-state-lazy-qualified-observer-active?
             (& state-b))]
         [observed-b : load_tests.CompilerLoadLazyQualifiedObserverResult
           (load_tests.compiler-load-session-state-lazy-qualified-observer-end-pair!
@@ -617,7 +606,7 @@
                 observed-b.primary-members
                 member)))]
         (begin
-          (compiler_load.compiler-load-session-state-use! previous-state)
+          (load.compiler-load-session-state-use! previous-state)
           ok))]
     [(ResultAstProgramDiagnostic.Err _) false]))
 
@@ -694,9 +683,9 @@
       (match (load_tests.compiler-load-file-with-paths
         "target/cl_semantic_origin_entry.tl"
         (sym_i64_env.sym-i64-empty))
-        [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
+        [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (set! ok (= (lazy-semantic-origin-same-count decls 0) 2))]
-        [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
+        [(load.ResultCompilerLoadWithPaths.Err _) unit])
       (reader.sp-node-pool-truncate! mark)
       (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))

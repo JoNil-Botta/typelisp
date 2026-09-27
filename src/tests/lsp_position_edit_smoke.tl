@@ -6,7 +6,7 @@
 (import stdlib.string)
 (import stdlib.json)
 (import stdlib.vector)
-(import lsp_frame_core)
+(import lsp_frame_core as lsp)
 (import lsp_frame_core_tests as lsp_tests)
 (import format_tests)
 (import compiler_owned_view as owned_view)
@@ -18,10 +18,8 @@
 (define (lsp-find-form-at-offset-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
-    [foo-start : i64
-      (lsp_frame_core.lsp-find-form-at-offset (string.copy (& text)) 5)]
-    [bar-start : i64
-      (lsp_frame_core.lsp-find-form-at-offset (string.copy (& text)) 28)]
+    [foo-start : i64 (lsp.lsp-find-form-at-offset (string.copy (& text)) 5)]
+    [bar-start : i64 (lsp.lsp-find-form-at-offset (string.copy (& text)) 28)]
     (and
       (= foo-start 0)
       (= bar-start 23)
@@ -29,7 +27,7 @@
       (string.eq (string.substring text bar-start 22) "(define (bar) : i64 2)"))))
 
 (define (lsp-find-form-end-at-offset-ok?) : bool
-  (= (lsp_frame_core.lsp-find-form-end-at-offset "(define (foo) : i64 1)" 0) 22))
+  (= (lsp.lsp-find-form-end-at-offset "(define (foo) : i64 1)" 0) 22))
 
 ;; --------------------------------------------------------------------------
 ;; lsp-find-outer-form-start
@@ -37,24 +35,15 @@
 (define (lsp-find-outer-form-start-ok?) : bool
   (let
     [text : String "(define (foo (x i64)) : i64 (+ x 1))"]
-    [inner-start : i64
-      (lsp_frame_core.lsp-find-form-at-offset (string.copy (& text)) 15)]
+    [inner-start : i64 (lsp.lsp-find-form-at-offset (string.copy (& text)) 15)]
     ; on "x i64"
     (and
       (=
-        (lsp_frame_core.lsp-find-outer-form-start
-          (string.copy (& text))
-          inner-start
-          0)
+        (lsp.lsp-find-outer-form-start (string.copy (& text)) inner-start 0)
         inner-start)
-      (=
-        (lsp_frame_core.lsp-find-outer-form-start
-          (string.copy (& text))
-          inner-start
-          1)
-        8)
+      (= (lsp.lsp-find-outer-form-start (string.copy (& text)) inner-start 1) 8)
       ; "(foo (x i64))"
-      (= (lsp_frame_core.lsp-find-outer-form-start text inner-start 2) 0))))
+      (= (lsp.lsp-find-outer-form-start text inner-start 2) 0))))
 
 ; "(define ...)"
 ;; --------------------------------------------------------------------------
@@ -63,19 +52,19 @@
 (define (lsp-read-form-inner-ok?) : bool
   (let
     [text : String "(define (foo) : i64 (+ 1 2))"]
-    [form : String (lsp_frame_core.lsp-read-form-at-position text 0 24 0)]
+    [form : String (lsp.lsp-read-form-at-position text 0 24 0)]
     ; cursor on "(+ 1 2)"
     (string.eq form "(+ 1 2)")))
 
 (define (lsp-read-form-outer-ok?) : bool
   (let
     [text : String "(define (foo) : i64 (+ 1 2))"]
-    [form : String (lsp_frame_core.lsp-read-form-at-position text 0 24 1)]
+    [form : String (lsp.lsp-read-form-at-position text 0 24 1)]
     ; outer=1
     (string.eq form "(define (foo) : i64 (+ 1 2))")))
 
 (define (lsp-read-form-missing-ok?) : bool
-  (string.eq (lsp_frame_core.lsp-read-form-at-position "   " 0 1 0) ""))
+  (string.eq (lsp.lsp-read-form-at-position "   " 0 1 0) ""))
 
 ;; --------------------------------------------------------------------------
 ;; lsp-is-whitespace
@@ -121,25 +110,18 @@
   (let
     [text : String
       "(define (foo) : i64 1)\n\n(define (bar) : i64 2)\n\n(define (baz) : i64 3)"]
-    [decls : lsp_decl_vec.Vec
-      (lsp_frame_core.lsp-scan-decls (string.copy (& text)))]
-    [foo-idx : i64 (lsp_frame_core.lsp-decl-list-find-name (& decls) "foo")]
-    [baz-idx : i64 (lsp_frame_core.lsp-decl-list-find-name decls "baz")]
+    [decls : lsp_decl_vec.Vec (lsp.lsp-scan-decls (string.copy (& text)))]
+    [foo-idx : i64 (lsp.lsp-decl-list-find-name (& decls) "foo")]
+    [baz-idx : i64 (lsp.lsp-decl-list-find-name decls "baz")]
     (if (and (= foo-idx 0) (= baz-idx 2))
       (let
         [foo-entry : LspDeclEntry
-          (lsp_decl_vec.get
-            (& decls)
-            foo-idx
-            (lsp_frame_core.lsp-decl-entry-fallback))]
+          (lsp_decl_vec.get (& decls) foo-idx (lsp.lsp-decl-entry-fallback))]
         [baz-entry : LspDeclEntry
-          (lsp_decl_vec.get
-            (& decls)
-            baz-idx
-            (lsp_frame_core.lsp-decl-entry-fallback))]
+          (lsp_decl_vec.get (& decls) baz-idx (lsp.lsp-decl-entry-fallback))]
         [moved : String
           (format_tests.format-rules-render-source-width
-            (lsp_frame_core.lsp-move-form-after text foo-entry baz-entry)
+            (lsp.lsp-move-form-after text foo-entry baz-entry)
             80)]
         [expected : String
           "(define (bar) : i64\n  2)\n\n(define (baz) : i64\n  3)\n\n(define (foo) : i64\n  1)"]
@@ -150,28 +132,25 @@
   (let
     [text : String
       "(define (foo) : i64\n  ;; )\n  (let [s : String \")\"]\n    (+ 1 2)))\n(define (bar) : i64 3)"]
-    [decls : lsp_decl_vec.Vec
-      (lsp_frame_core.lsp-scan-decls (string.copy (& text)))]
+    [decls : lsp_decl_vec.Vec (lsp.lsp-scan-decls (string.copy (& text)))]
     [params : json.Json
-      (lsp_frame_core.lsp-json-object1
-        "position"
-        (lsp_frame_core.lsp-position 3 6))]
+      (lsp.lsp-json-object1 "position" (lsp.lsp-position 3 6))]
     [name : String
-      (lsp_frame_core.lsp-structural-move-name-with-decls
+      (lsp.lsp-structural-move-name-with-decls
         params
         (owned_view.compiler-owned-shared-view text)
         (owned_view.compiler-owned-shared-view decls))]
-    (match (lsp_frame_core.lsp-replace-form-at-position-with-decls
+    (match (lsp.lsp-replace-form-at-position-with-decls
       text
       decls
       3
       6
       "(define (baz) : i64 4)")
-      [(lsp_frame_core.LspEditResult.Ok replaced)
+      [(lsp.LspEditResult.Ok replaced)
         (and
           (string.eq name "foo")
           (string.eq replaced "(define (baz) : i64 4)\n(define (bar) : i64 3)"))]
-      [(lsp_frame_core.LspEditResult.Err _) false])))
+      [(lsp.LspEditResult.Err _) false])))
 
 (define (main) : i64
   (begin

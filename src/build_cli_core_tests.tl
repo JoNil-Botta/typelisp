@@ -31,66 +31,60 @@
 (import build_cli_core as build)
 (cfg test (import compiler_object_elf))
 
-(define (build-package-profile-opt-level-smoke-ok?) : bool
-  (and
-    (= (build.build-profile-default-opt-level (build.BuildProfile.Release)) 2)
-    (= (build.build-profile-default-opt-level (build.BuildProfile.Dev)) 0)
-    (= (build.build-package-default-opt-level) 2)))
-
 (test
   build-package-profile-opt-level-smoke
   (unless
-    (build-package-profile-opt-level-smoke-ok?)
+    (and
+      (= (build.build-profile-default-opt-level (build.BuildProfile.Release)) 2)
+      (= (build.build-profile-default-opt-level (build.BuildProfile.Dev)) 0)
+      (= (build.build-package-default-opt-level) 2))
     (io.panic "build package profile opt-level smoke failed")))
-
-(define (build-package-path-layout-smoke-ok?) : bool
-  (and
-    (string.eq
-      (build.build-package-output-dir-profile
-        "root/app"
-        "pkg"
-        (build.BuildProfile.Release))
-      "root/app/target/release")
-    (string.eq
-      (build.build-package-asm-path-profile
-        "root/app"
-        "pkg"
-        (build.BuildProfile.Dev))
-      "root/app/target/dev/pkg.s")
-    (string.eq
-      (build.build-package-bin-path-profile
-        "root/app"
-        "pkg"
-        (build.BuildProfile.Release)
-        (backend.CompilerBackendTarget.Windows))
-      "root/app/target/release/pkg.exe")
-    (string.eq
-      (build.build-package-lib-path-profile
-        "root/app"
-        "pkg"
-        (build.BuildProfile.Release)
-        (backend.CompilerBackendTarget.Linux))
-      "root/app/target/release/libpkg.a")
-    (string.eq
-      (build.build-package-tlci-path-profile
-        "root/app"
-        "pkg"
-        (build.BuildProfile.Dev))
-      "root/app/target/dev/pkg.tlci")
-    (string.eq
-      (build.build-package-host-tlci-artifact-path
-        (build.build-package-artifact-paths
-          "root/app"
-          "pkg"
-          (CompilerPkgKindBin)
-          (build.BuildProfile.Dev)
-          (backend.CompilerBackendTarget.Windows)))
-      "root/app/target/dev/pkg.tlci")))
 
 (test
   build-package-path-layout-smoke
   (unless
-    (build-package-path-layout-smoke-ok?)
+    (and
+      (string.eq
+        (build.build-package-output-dir-profile
+          "root/app"
+          "pkg"
+          (build.BuildProfile.Release))
+        "root/app/target/release")
+      (string.eq
+        (build.build-package-asm-path-profile
+          "root/app"
+          "pkg"
+          (build.BuildProfile.Dev))
+        "root/app/target/dev/pkg.s")
+      (string.eq
+        (build.build-package-bin-path-profile
+          "root/app"
+          "pkg"
+          (build.BuildProfile.Release)
+          (backend.CompilerBackendTarget.Windows))
+        "root/app/target/release/pkg.exe")
+      (string.eq
+        (build.build-package-lib-path-profile
+          "root/app"
+          "pkg"
+          (build.BuildProfile.Release)
+          (backend.CompilerBackendTarget.Linux))
+        "root/app/target/release/libpkg.a")
+      (string.eq
+        (build.build-package-tlci-path-profile
+          "root/app"
+          "pkg"
+          (build.BuildProfile.Dev))
+        "root/app/target/dev/pkg.tlci")
+      (string.eq
+        (build.build-package-host-tlci-artifact-path
+          (build.build-package-artifact-paths
+            "root/app"
+            "pkg"
+            (CompilerPkgKindBin)
+            (build.BuildProfile.Dev)
+            (backend.CompilerBackendTarget.Windows)))
+        "root/app/target/dev/pkg.tlci"))
     (io.panic "build package path layout smoke failed")))
 
 (cfg
@@ -579,109 +573,6 @@
   (process.args-single
     (build-package-graph-node-tlci-path node (build.BuildProfile.Release))))
 
-(define (build-package-graph-vector-smoke-ok?) : bool
-  (let
-    [first : build.BuildPackageGraphNode
-      (build-package-graph-test-node "root/first/typelisp.pkg" "first")]
-    [second : build.BuildPackageGraphNode
-      (build-package-graph-test-node "root/second/typelisp.pkg" "second")]
-    [third : build.BuildPackageGraphNode
-      (build-package-graph-test-node "root/third/typelisp.pkg" "third")]
-    [nodes : build.BuildPackageGraphNodeVec
-      (build.build-package-graph-node-vec-push
-        (build.build-package-graph-node-vec-push
-          (build.build-package-graph-node-vec-push
-            (build.build-package-graph-node-vec-with-capacity 1)
-            (owned_view.compiler-owned-shared-view first))
-          (owned_view.compiler-owned-shared-view second))
-        (owned_view.compiler-owned-shared-view third))]
-    [libs : process.ProcessStringList
-      (build.build-package-graph-link-libs
-        (owned_view.compiler-owned-shared-view nodes)
-        (build.BuildProfile.Release)
-        (backend.CompilerBackendTarget.Linux))]
-    [windows-libs : process.ProcessStringList
-      (build.build-package-graph-link-libs
-        (owned_view.compiler-owned-shared-view nodes)
-        (build.BuildProfile.Release)
-        (backend.CompilerBackendTarget.Windows))]
-    [tlcis : process.ProcessStringList
-      (build-package-graph-tlci-paths
-        (owned_view.compiler-owned-shared-view nodes)
-        (build.BuildProfile.Release))]
-    [catalog-deps : load.CompilerPkgDepList
-      (build.build-package-graph-catalog-deps
-        (owned_view.compiler-owned-shared-view nodes)
-        "root"
-        (load.compiler-pkg-dep-list-empty))]
-    [direct-catalog-deps : load.CompilerPkgDepList
-      (load.compiler-pkg-dep-list-push
-        (load.compiler-pkg-dep-list-push
-          (load.compiler-pkg-dep-list-empty)
-          (load.CompilerPkgDep "first-a" "first"))
-        (load.CompilerPkgDep "first-b" "first/."))]
-    [merged-catalog-deps : load.CompilerPkgDepList
-      (build.build-package-graph-catalog-deps
-        (owned_view.compiler-owned-shared-view nodes)
-        "root"
-        direct-catalog-deps)]
-    [expected : process.ProcessStringList
-      (process.args-append
-        (process.args-append
-          (build-package-graph-test-link-arg
-            (owned_view.compiler-owned-shared-view third))
-          (build-package-graph-test-link-arg
-            (owned_view.compiler-owned-shared-view second)))
-        (build-package-graph-test-link-arg
-          (owned_view.compiler-owned-shared-view first)))]
-    [expected-tlcis : process.ProcessStringList
-      (process.args-append
-        (process.args-append
-          (build-package-graph-test-tlci-arg
-            (owned_view.compiler-owned-shared-view first))
-          (build-package-graph-test-tlci-arg
-            (owned_view.compiler-owned-shared-view second)))
-        (build-package-graph-test-tlci-arg
-          (owned_view.compiler-owned-shared-view third)))]
-    [expected-windows : process.ProcessStringList
-      (process.args-append
-        (process.args-append
-          (build-package-graph-test-link-arg-target
-            third
-            (backend.CompilerBackendTarget.Windows))
-          (build-package-graph-test-link-arg-target
-            second
-            (backend.CompilerBackendTarget.Windows)))
-        (build-package-graph-test-link-arg-target
-          first
-          (backend.CompilerBackendTarget.Windows)))]
-    (and
-      (= (build.build-package-graph-node-vec-len nodes) 3)
-      (string.eq
-        (__tl-project-field
-          (build.build-package-graph-node-vec-at nodes 0)
-          manifest-path)
-        "root/first/typelisp.pkg")
-      (build_run_tests.source-tool-string-list-eq? libs expected)
-      (build_run_tests.source-tool-string-list-eq?
-        windows-libs
-        expected-windows)
-      (build_run_tests.source-tool-string-list-eq? tlcis expected-tlcis)
-      (= (load.compiler-pkg-dep-list-count catalog-deps) 3)
-      (string.eq (load.compiler-pkg-dep-list-at catalog-deps 0).alias "first")
-      (load.compiler-load-absolute-path?
-        (load.compiler-pkg-dep-list-at catalog-deps 0).path)
-      (= (load.compiler-pkg-dep-list-count merged-catalog-deps) 4)
-      (string.eq
-        (load.compiler-pkg-dep-list-at merged-catalog-deps 0).alias
-        "first-a")
-      (string.eq
-        (load.compiler-pkg-dep-list-at merged-catalog-deps 1).alias
-        "first-b")
-      (string.eq
-        (load.compiler-pkg-dep-list-at merged-catalog-deps 2).alias
-        "second"))))
-
 (cfg
   test
   (define (build-package-graph-artifact-paths-smoke-ok?) : bool
@@ -727,79 +618,179 @@
           (build.build-package-host-tlci-artifact-path dep-artifacts)
           "root/dep/target/release/dep.tlci")))))
 
-(define (build-package-graph-scheduler-no-progress-smoke-ok?) : bool
-  (let
-    [dep : load.CompilerPkgDep (load.CompilerPkgDep "dep" "../dep")]
-    [deps : load.CompilerPkgDepList
-      (load.compiler-pkg-dep-list-push (load.compiler-pkg-dep-list-empty) dep)]
-    [node : build.BuildPackageGraphNode
-      (build.BuildPackageGraphNode
-        "root/app/typelisp.pkg"
-        (build-package-graph-test-manifest-with-deps "app" deps)
-        (build.BuildPackageSourceProvenance.Local))]
-    [nodes : build.BuildPackageGraphNodeVec
-      (build.build-package-graph-node-vec-push
-        (build.build-package-graph-node-vec-new)
-        node)]
-    (match (build.build-package-schedule-pass
-      nodes
-      (build_string_i64_map.with-capacity 4)
-      (build_string_i64_map.with-capacity 4)
-      (backend.CompilerBackendTarget.Linux)
-      0
-      (build.BuildProfile.Release)
-      (backend.CompilerBackendMode.Scalar)
-      (build.BuildPackageLockPolicy.Default)
-      (cli_svec.new))
-      [(build.ResultBuildPackageSchedulePass.Err _) false]
-      [(build.ResultBuildPackageSchedulePass.Ok pass)
-        (and
-          (build.build-package-graph-worker-list-empty? (& pass.workers))
-          (not
-            (build.build-package-node-scheduled?
-              pass.scheduled
-              "root/app/typelisp.pkg")))])))
-
-(define (build-package-library-dependency-policy-smoke-ok?) : bool
-  (let
-    [dep : load.CompilerPkgDep (load.CompilerPkgDep "runtime" "../runtime")]
-    [deps : load.CompilerPkgDepList
-      (load.compiler-pkg-dep-list-push (load.compiler-pkg-dep-list-empty) dep)]
-    [resolve-manifest : load.CompilerPkgManifest
-      (build-package-graph-test-manifest-with-deps "layer" (clone deps))]
-    [graph-node : build.BuildPackageGraphNode
-      (build.BuildPackageGraphNode
-        "acquired/layer/typelisp.pkg"
-        (build-package-graph-test-manifest-with-deps "layer" deps)
-        (build.BuildPackageSourceProvenance.Local))]
-    [state : build.BuildPackageGraphState
-      (build.BuildPackageGraphState
-        (build_string_i64_map.with-capacity 4)
-        (build.build-package-graph-node-vec-new))]
-    (and
-      (match (build.build-package-resolve-manifest-deps
-        "unreadable/typelisp.pkg"
-        resolve-manifest
-        (build.BuildPackageLockPolicy.Locked))
-        [(build.ResultBuildManifest.Err message)
-          (string.eq
-            message
-            "build: library package `layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")]
-        [(build.ResultBuildManifest.Ok _) false])
-      (match (build.build-package-graph-add-node graph-node state)
-        [(build.ResultBuildPackageGraphState.Err message)
-          (string.eq
-            message
-            "build: acquired manifest at acquired/layer/typelisp.pkg: library package `layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")]
-        [(build.ResultBuildPackageGraphState.Ok _) false]))))
-
 (test
   build-package-graph-vector-smoke
   (unless
     (and
-      (build-package-graph-vector-smoke-ok?)
-      (build-package-graph-scheduler-no-progress-smoke-ok?)
-      (build-package-library-dependency-policy-smoke-ok?))
+      (let
+        [first : build.BuildPackageGraphNode
+          (build-package-graph-test-node "root/first/typelisp.pkg" "first")]
+        [second : build.BuildPackageGraphNode
+          (build-package-graph-test-node "root/second/typelisp.pkg" "second")]
+        [third : build.BuildPackageGraphNode
+          (build-package-graph-test-node "root/third/typelisp.pkg" "third")]
+        [nodes : build.BuildPackageGraphNodeVec
+          (build.build-package-graph-node-vec-push
+            (build.build-package-graph-node-vec-push
+              (build.build-package-graph-node-vec-push
+                (build.build-package-graph-node-vec-with-capacity 1)
+                (owned_view.compiler-owned-shared-view first))
+              (owned_view.compiler-owned-shared-view second))
+            (owned_view.compiler-owned-shared-view third))]
+        [libs : process.ProcessStringList
+          (build.build-package-graph-link-libs
+            (owned_view.compiler-owned-shared-view nodes)
+            (build.BuildProfile.Release)
+            (backend.CompilerBackendTarget.Linux))]
+        [windows-libs : process.ProcessStringList
+          (build.build-package-graph-link-libs
+            (owned_view.compiler-owned-shared-view nodes)
+            (build.BuildProfile.Release)
+            (backend.CompilerBackendTarget.Windows))]
+        [tlcis : process.ProcessStringList
+          (build-package-graph-tlci-paths
+            (owned_view.compiler-owned-shared-view nodes)
+            (build.BuildProfile.Release))]
+        [catalog-deps : load.CompilerPkgDepList
+          (build.build-package-graph-catalog-deps
+            (owned_view.compiler-owned-shared-view nodes)
+            "root"
+            (load.compiler-pkg-dep-list-empty))]
+        [direct-catalog-deps : load.CompilerPkgDepList
+          (load.compiler-pkg-dep-list-push
+            (load.compiler-pkg-dep-list-push
+              (load.compiler-pkg-dep-list-empty)
+              (load.CompilerPkgDep "first-a" "first"))
+            (load.CompilerPkgDep "first-b" "first/."))]
+        [merged-catalog-deps : load.CompilerPkgDepList
+          (build.build-package-graph-catalog-deps
+            (owned_view.compiler-owned-shared-view nodes)
+            "root"
+            direct-catalog-deps)]
+        [expected : process.ProcessStringList
+          (process.args-append
+            (process.args-append
+              (build-package-graph-test-link-arg
+                (owned_view.compiler-owned-shared-view third))
+              (build-package-graph-test-link-arg
+                (owned_view.compiler-owned-shared-view second)))
+            (build-package-graph-test-link-arg
+              (owned_view.compiler-owned-shared-view first)))]
+        [expected-tlcis : process.ProcessStringList
+          (process.args-append
+            (process.args-append
+              (build-package-graph-test-tlci-arg
+                (owned_view.compiler-owned-shared-view first))
+              (build-package-graph-test-tlci-arg
+                (owned_view.compiler-owned-shared-view second)))
+            (build-package-graph-test-tlci-arg
+              (owned_view.compiler-owned-shared-view third)))]
+        [expected-windows : process.ProcessStringList
+          (process.args-append
+            (process.args-append
+              (build-package-graph-test-link-arg-target
+                third
+                (backend.CompilerBackendTarget.Windows))
+              (build-package-graph-test-link-arg-target
+                second
+                (backend.CompilerBackendTarget.Windows)))
+            (build-package-graph-test-link-arg-target
+              first
+              (backend.CompilerBackendTarget.Windows)))]
+        (and
+          (= (build.build-package-graph-node-vec-len nodes) 3)
+          (string.eq
+            (__tl-project-field
+              (build.build-package-graph-node-vec-at nodes 0)
+              manifest-path)
+            "root/first/typelisp.pkg")
+          (build_run_tests.source-tool-string-list-eq? libs expected)
+          (build_run_tests.source-tool-string-list-eq?
+            windows-libs
+            expected-windows)
+          (build_run_tests.source-tool-string-list-eq? tlcis expected-tlcis)
+          (= (load.compiler-pkg-dep-list-count catalog-deps) 3)
+          (string.eq
+            (load.compiler-pkg-dep-list-at catalog-deps 0).alias
+            "first")
+          (load.compiler-load-absolute-path?
+            (load.compiler-pkg-dep-list-at catalog-deps 0).path)
+          (= (load.compiler-pkg-dep-list-count merged-catalog-deps) 4)
+          (string.eq
+            (load.compiler-pkg-dep-list-at merged-catalog-deps 0).alias
+            "first-a")
+          (string.eq
+            (load.compiler-pkg-dep-list-at merged-catalog-deps 1).alias
+            "first-b")
+          (string.eq
+            (load.compiler-pkg-dep-list-at merged-catalog-deps 2).alias
+            "second")))
+      (let
+        [dep : load.CompilerPkgDep (load.CompilerPkgDep "dep" "../dep")]
+        [deps : load.CompilerPkgDepList
+          (load.compiler-pkg-dep-list-push
+            (load.compiler-pkg-dep-list-empty)
+            dep)]
+        [node : build.BuildPackageGraphNode
+          (build.BuildPackageGraphNode
+            "root/app/typelisp.pkg"
+            (build-package-graph-test-manifest-with-deps "app" deps)
+            (build.BuildPackageSourceProvenance.Local))]
+        [nodes : build.BuildPackageGraphNodeVec
+          (build.build-package-graph-node-vec-push
+            (build.build-package-graph-node-vec-new)
+            node)]
+        (match (build.build-package-schedule-pass
+          nodes
+          (build_string_i64_map.with-capacity 4)
+          (build_string_i64_map.with-capacity 4)
+          (backend.CompilerBackendTarget.Linux)
+          0
+          (build.BuildProfile.Release)
+          (backend.CompilerBackendMode.Scalar)
+          (build.BuildPackageLockPolicy.Default)
+          (cli_svec.new))
+          [(build.ResultBuildPackageSchedulePass.Err _) false]
+          [(build.ResultBuildPackageSchedulePass.Ok pass)
+            (and
+              (build.build-package-graph-worker-list-empty? (& pass.workers))
+              (not
+                (build.build-package-node-scheduled?
+                  pass.scheduled
+                  "root/app/typelisp.pkg")))]))
+      (let
+        [dep : load.CompilerPkgDep (load.CompilerPkgDep "runtime" "../runtime")]
+        [deps : load.CompilerPkgDepList
+          (load.compiler-pkg-dep-list-push
+            (load.compiler-pkg-dep-list-empty)
+            dep)]
+        [resolve-manifest : load.CompilerPkgManifest
+          (build-package-graph-test-manifest-with-deps "layer" (clone deps))]
+        [graph-node : build.BuildPackageGraphNode
+          (build.BuildPackageGraphNode
+            "acquired/layer/typelisp.pkg"
+            (build-package-graph-test-manifest-with-deps "layer" deps)
+            (build.BuildPackageSourceProvenance.Local))]
+        [state : build.BuildPackageGraphState
+          (build.BuildPackageGraphState
+            (build_string_i64_map.with-capacity 4)
+            (build.build-package-graph-node-vec-new))]
+        (and
+          (match (build.build-package-resolve-manifest-deps
+            "unreadable/typelisp.pkg"
+            resolve-manifest
+            (build.BuildPackageLockPolicy.Locked))
+            [(build.ResultBuildManifest.Err message)
+              (string.eq
+                message
+                "build: library package `layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")]
+            [(build.ResultBuildManifest.Ok _) false])
+          (match (build.build-package-graph-add-node graph-node state)
+            [(build.ResultBuildPackageGraphState.Err message)
+              (string.eq
+                message
+                "build: acquired manifest at acquired/layer/typelisp.pkg: library package `layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")]
+            [(build.ResultBuildPackageGraphState.Ok _) false]))))
     (io.panic "build package graph vector smoke failed")))
 
 (cfg
@@ -1519,42 +1510,39 @@
           [_ false]))
       (io.panic "strict direct-object route failed"))))
 
-(define (build-package-worker-resolved-deps-args-smoke-ok?) : bool
-  (let
-    [remote : load.CompilerPkgDep
-      (load.CompilerPkgDep "remote" "target/typelisp/git-deps/remote")]
-    [local : load.CompilerPkgDep (load.CompilerPkgDep "local" "../local")]
-    [deps : load.CompilerPkgDepList
-      (load.compiler-pkg-dep-list-push
-        (load.compiler-pkg-dep-list-push
-          (load.compiler-pkg-dep-list-empty)
-          remote)
-        local)]
-    [actual : process.ProcessStringList
-      (build.build-package-worker-append-resolved-deps
-        (process.args-empty)
-        deps
-        0)]
-    [expected0 : process.ProcessStringList
-      (build_run_core.source-tool-args-append
-        (process.args-empty)
-        "--resolved-dep")]
-    [expected1 : process.ProcessStringList
-      (build_run_core.source-tool-args-append expected0 "remote")]
-    [expected2 : process.ProcessStringList
-      (build_run_core.source-tool-args-append
-        expected1
-        "target/typelisp/git-deps/remote")]
-    [expected3 : process.ProcessStringList
-      (build_run_core.source-tool-args-append expected2 "--resolved-dep")]
-    [expected4 : process.ProcessStringList
-      (build_run_core.source-tool-args-append expected3 "local")]
-    [expected : process.ProcessStringList
-      (build_run_core.source-tool-args-append expected4 "../local")]
-    (build_run_tests.source-tool-string-list-eq? actual expected)))
-
 (test
   build-package-worker-resolved-deps-args-smoke
   (unless
-    (build-package-worker-resolved-deps-args-smoke-ok?)
+    (let
+      [remote : load.CompilerPkgDep
+        (load.CompilerPkgDep "remote" "target/typelisp/git-deps/remote")]
+      [local : load.CompilerPkgDep (load.CompilerPkgDep "local" "../local")]
+      [deps : load.CompilerPkgDepList
+        (load.compiler-pkg-dep-list-push
+          (load.compiler-pkg-dep-list-push
+            (load.compiler-pkg-dep-list-empty)
+            remote)
+          local)]
+      [actual : process.ProcessStringList
+        (build.build-package-worker-append-resolved-deps
+          (process.args-empty)
+          deps
+          0)]
+      [expected0 : process.ProcessStringList
+        (build_run_core.source-tool-args-append
+          (process.args-empty)
+          "--resolved-dep")]
+      [expected1 : process.ProcessStringList
+        (build_run_core.source-tool-args-append expected0 "remote")]
+      [expected2 : process.ProcessStringList
+        (build_run_core.source-tool-args-append
+          expected1
+          "target/typelisp/git-deps/remote")]
+      [expected3 : process.ProcessStringList
+        (build_run_core.source-tool-args-append expected2 "--resolved-dep")]
+      [expected4 : process.ProcessStringList
+        (build_run_core.source-tool-args-append expected3 "local")]
+      [expected : process.ProcessStringList
+        (build_run_core.source-tool-args-append expected4 "../local")]
+      (build_run_tests.source-tool-string-list-eq? actual expected))
     (io.panic "build package worker resolved deps args smoke failed")))

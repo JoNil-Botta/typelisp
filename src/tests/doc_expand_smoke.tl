@@ -25,66 +25,41 @@
     (doc-expand-ignore-fence-smoke)
     (doc-expand-smoke)))
 
-(define (doc-expand-smoke-source) : String
-  "(module doc.generated.fixture)
-(import stdlib.comptime)
-
-(defmacro (boxmod [T : type]) : Module
-  (let
-    [module-name : comptime.Expr
-      (comptime.expr-var \"doc.generated.fixture.box_i64\")]
-    `(begin
-      (module ,module-name)
-      (defstruct Box
-        (value ,T))
-      (defenum Status
-        (Empty)
-        (Full ,T))
-      (define (new [value : ,T]) : Box
-        (Box value))
-      (define (value [b : (& b Box)]) : ,T
-        b.value))))
-
-(import (boxmod i64) as ibox)")
-
-(define (doc-expand-macro-type-kind-constraint-source-smoke?) : bool
-  (let
-    [parsed : parser.ResultAstProgram
-      (parser.parse-ast-source
-        "(defmacro (catalog [T : type (:kind i64 struct)]) : Module unit)")]
-    [ctx : doc_expand.DocExpandContext
-      (let
-        [pools (ast.ast-node-pool-context-capture-active)]
-        [intern-state (ci.intern-compat-state-capture-active)]
-        (doc_expand.doc-expand-context-from-pools-and-intern-state
-          pools
-          intern-state))]
-    (match parsed
-      [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-        (match (ast.ast-decl-list-step (deref decls-box))
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefMacro decl-meta _ params _ _)
-              rest)
-            (and
-              (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil) true]
-                [_ false])
-              (= (ast.ast-macro-param-list-len (& params)) 1)
-              (string.eq
-                (doc_expand.doc-ast-macro-param-source
-                  ctx
-                  (ast.ast-macro-param-list-get
-                    (& params)
-                    0
-                    (ast.ast-macro-param-fallback)))
-                "[T : type (:kind i64 struct)]"))]
-          [_ false])]
-      [(parser.ResultAstProgram.Err _) false])))
-
 (test
   doc-macro-type-kind-constraint-source
   (unless
-    (doc-expand-macro-type-kind-constraint-source-smoke?)
+    (let
+      [parsed : parser.ResultAstProgram
+        (parser.parse-ast-source
+          "(defmacro (catalog [T : type (:kind i64 struct)]) : Module unit)")]
+      [ctx : doc_expand.DocExpandContext
+        (let
+          [pools (ast.ast-node-pool-context-capture-active)]
+          [intern-state (ci.intern-compat-state-capture-active)]
+          (doc_expand.doc-expand-context-from-pools-and-intern-state
+            pools
+            intern-state))]
+      (match parsed
+        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+          (match (ast.ast-decl-list-step (deref decls-box))
+            [(ast.AstDeclListStep.Cons
+                (ast.AstDecl.DefMacro decl-meta _ params _ _)
+                rest)
+              (and
+                (match (ast.ast-decl-list-step rest)
+                  [(ast.AstDeclListStep.Nil) true]
+                  [_ false])
+                (= (ast.ast-macro-param-list-len (& params)) 1)
+                (string.eq
+                  (doc_expand.doc-ast-macro-param-source
+                    ctx
+                    (ast.ast-macro-param-list-get
+                      (& params)
+                      0
+                      (ast.ast-macro-param-fallback)))
+                  "[T : type (:kind i64 struct)]"))]
+            [_ false])]
+        [(parser.ResultAstProgram.Err _) false]))
     (io.panic "doc-expand: macro type-kind constraint signature mismatch")))
 
 (test
@@ -246,7 +221,26 @@
     [roots : doc_svec.Vec (doc_svec.new)]
     (match (compiler_load.compiler-load-source-with-paths-and-roots
       "doc_expand_smoke.tl"
-      (doc-expand-smoke-source)
+      "(module doc.generated.fixture)
+(import stdlib.comptime)
+
+(defmacro (boxmod [T : type]) : Module
+  (let
+    [module-name : comptime.Expr
+      (comptime.expr-var \"doc.generated.fixture.box_i64\")]
+    `(begin
+      (module ,module-name)
+      (defstruct Box
+        (value ,T))
+      (defenum Status
+        (Empty)
+        (Full ,T))
+      (define (new [value : ,T]) : Box
+        (Box value))
+      (define (value [b : (& b Box)]) : ,T
+        b.value))))
+
+(import (boxmod i64) as ibox)"
       (sym_i64_env.sym-i64-empty)
       (owned_view.compiler-owned-shared-view roots))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)

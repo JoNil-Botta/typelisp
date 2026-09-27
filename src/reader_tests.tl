@@ -159,204 +159,6 @@
             [(reader.ResultSpannedSexpr.Ok _)
               (= (array-ref cur 0) expected-cursor)])))]))
 
-(define (reader-test-invalid-projection-suffix?) : bool
-  (match (lexer.spanned-result "(deref boxed).0")
-    [(lexer.ResultSpannedTokens.Err _) false]
-    [(lexer.ResultSpannedTokens.Ok toks)
-      (let
-        [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-        (begin
-          (reader.sp-node-pool-reset!)
-          (set! (array-ref cur 0) 0)
-          (match (reader.form-spanned-result (& toks) (&mut cur))
-            [(reader.ResultSpannedSexpr.Ok _) false]
-            [(reader.ResultSpannedSexpr.Err err)
-              (string.eq
-                (token.source-error-message err)
-                "reader: dotted field access cannot use numeric field segments; use tuple-ref or array-ref")])))]))
-
-(define (reader-test-data-dense-ranges?) : bool
-  (match (begin
-    (reader.sp-node-pool-reset!)
-    (reader.data-result "(alpha (beta gamma) [])"))
-    [(reader.ResultSexpr.Err _) false]
-    [(reader.ResultSexpr.Ok form)
-      (and
-        (= (reader.sp-node-pool-len) 5)
-        (match (unsafe
-          (ptr-read (ptr-addr-of form)))
-          [(reader.SpannedSexpr.List start length _)
-            (and
-              (= start 2)
-              (= length 3)
-              (match (reader.sexpr-view form)
-                [(reader.SexprView.Cons first tail1)
-                  (and
-                    (reader-test-symbol? first "alpha")
-                    (match (reader.sexpr-view tail1)
-                      [(reader.SexprView.Cons nested tail2)
-                        (and
-                          (match (reader.sexpr-view nested)
-                            [(reader.SexprView.Cons beta nested-tail)
-                              (and
-                                (reader-test-symbol? beta "beta")
-                                (match (reader.sexpr-view nested-tail)
-                                  [(reader.SexprView.Cons gamma nested-end)
-                                    (and
-                                      (reader-test-symbol? gamma "gamma")
-                                      (match (reader.sexpr-view nested-end)
-                                        [(reader.SexprView.Nil) true]
-                                        [_ false]))]
-                                  [_ false]))]
-                            [_ false])
-                          (match (reader.sexpr-view tail2)
-                            [(reader.SexprView.Cons empty tail3)
-                              (and
-                                (match (reader.sexpr-view empty)
-                                  [(reader.SexprView.Nil) true]
-                                  [_ false])
-                                (match (reader.sexpr-view tail3)
-                                  [(reader.SexprView.Nil) true]
-                                  [_ false]))]
-                            [_ false]))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]))
-
-(define (reader-test-spanned-bracket-range?) : bool
-  (begin
-    (reader.sp-node-pool-reset!)
-    (match (lexer.spanned-result "[alpha (beta gamma)]")
-      [(lexer.ResultSpannedTokens.Err _) false]
-      [(lexer.ResultSpannedTokens.Ok toks)
-        (match (reader.spanned-result toks)
-          [(reader.ResultSpannedSexpr.Err _) false]
-          [(reader.ResultSpannedSexpr.Ok form)
-            (and
-              (= (reader.sp-node-pool-len) 4)
-              (match (unsafe
-                (ptr-read (ptr-addr-of form)))
-                [(reader.SpannedSexpr.BracketList start length span)
-                  (and
-                    (= start 2)
-                    (= length 2)
-                    (= (token.span-start-line span) 1)
-                    (= (token.span-start-col span) 1)
-                    (match (reader.spanned-sexpr-view form)
-                      [(reader.SpannedSexprView.BracketList items _)
-                        (match (reader.spanned-sexpr-view items)
-                          [(reader.SpannedSexprView.Cons alpha tail _)
-                            (and
-                              (match (reader.spanned-sexpr-view alpha)
-                                [(reader.SpannedSexprView.Sym name-id _)
-                                  (string.eq
-                                    (reader.symbol-text-for-syntax-id name-id)
-                                    "alpha")]
-                                [_ false])
-                              (match (reader.spanned-sexpr-view tail)
-                                [(reader.SpannedSexprView.Cons nested end _)
-                                  (and
-                                    (match (reader.spanned-sexpr-view nested)
-                                      [(reader.SpannedSexprView.Cons _ _ _)
-                                        true]
-                                      [_ false])
-                                    (match (reader.spanned-sexpr-view end)
-                                      [(reader.SpannedSexprView.Nil _) true]
-                                      [_ false]))]
-                                [_ false]))]
-                          [_ false])]
-                      [_ false]))]
-                [_ false]))])])))
-
-(define (reader-test-prefix-range?) : bool
-  (match (begin
-    (reader.sp-node-pool-reset!)
-    (reader.data-result "'alpha"))
-    [(reader.ResultSexpr.Err _) false]
-    [(reader.ResultSexpr.Ok form)
-      (and
-        (= (reader.sp-node-pool-len) 2)
-        (match (reader.sexpr-view form)
-          [(reader.SexprView.Cons quote tail)
-            (and
-              (reader-test-symbol? quote "quote")
-              (match (reader.sexpr-view tail)
-                [(reader.SexprView.Cons value end)
-                  (and
-                    (reader-test-symbol? value "alpha")
-                    (match (reader.sexpr-view end)
-                      [(reader.SexprView.Nil) true]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]))
-
-(define (reader-test-mismatched-delimiter?) : bool
-  (begin
-    (reader.sp-node-pool-reset!)
-    (match (lexer.spanned-result "(alpha]")
-      [(lexer.ResultSpannedTokens.Err _) false]
-      [(lexer.ResultSpannedTokens.Ok toks)
-        (match (reader.spanned-result toks)
-          [(reader.ResultSpannedSexpr.Ok _) false]
-          [(reader.ResultSpannedSexpr.Err err)
-            (let
-              [span : token.SourceSpan
-                (token.source-error-span
-                  (unsafe
-                    (ptr-read (ptr-addr-of err))))]
-              (and
-                (string.eq
-                  (token.source-error-message err)
-                  "reader: mismatched delimiter: expected ')' but found ']' at 1:7")
-                (= (token.span-start-line span) 1)
-                (= (token.span-start-col span) 7)))])])))
-
-(define (reader-test-error-rolls-back-ranges?) : bool
-  (let
-    [_reset-data : unit (reader.sp-node-pool-reset!)]
-    [data-error-ok : bool
-      (match (reader.data-result "((alpha)]")
-        [(reader.ResultSexpr.Ok _) false]
-        [(reader.ResultSexpr.Err _)
-          (and (= (reader.sp-node-pool-len) 0) (= reader.sp-builder-count 0))])]
-    [_reset-spanned : unit (reader.sp-node-pool-reset!)]
-    [spanned-error-ok : bool
-      (match (lexer.spanned-result "((alpha)]")
-        [(lexer.ResultSpannedTokens.Err _) false]
-        [(lexer.ResultSpannedTokens.Ok toks)
-          (match (reader.spanned-result toks)
-            [(reader.ResultSpannedSexpr.Ok _) false]
-            [(reader.ResultSpannedSexpr.Err _)
-              (and
-                (= (reader.sp-node-pool-len) 0)
-                (= reader.sp-builder-count 0))])])]
-    [repeated-read-ok : bool
-      (match (lexer.spanned-result "(beta)")
-        [(lexer.ResultSpannedTokens.Err _) false]
-        [(lexer.ResultSpannedTokens.Ok toks)
-          (match (reader.spanned-result toks)
-            [(reader.ResultSpannedSexpr.Err _) false]
-            [(reader.ResultSpannedSexpr.Ok form)
-              (and
-                (= (reader.sp-node-pool-len) 1)
-                (match (reader.spanned-sexpr-view form)
-                  [(reader.SpannedSexprView.Cons value tail _)
-                    (and
-                      (match (reader.spanned-sexpr-view value)
-                        [(reader.SpannedSexprView.Sym name-id _)
-                          (string.eq
-                            (reader.symbol-text-for-syntax-id name-id)
-                            "beta")]
-                        [_ false])
-                      (match (reader.spanned-sexpr-view tail)
-                        [(reader.SpannedSexprView.Nil _) true]
-                        [_ false]))]
-                  [_ false]))])])]
-    [ok : bool (and data-error-ok spanned-error-ok repeated-read-ok)]
-    (begin
-      (reader.sp-node-pool-reset!)
-      ok)))
-
 (define (reader-test-data-error? [source : String] [expected : String]) : bool
   (match (reader.data-result source)
     [(reader.ResultSexpr.Ok _) false]
@@ -397,8 +199,9 @@
       (reader.sp-node-pool-reset!)
       (and errors-ok suffix-ok (not reader.sp-reader-data-mode?)))))
 
-(define (reader-test-typed-traversal-ids?) : bool
-  (let
+(test
+  reader-traversal-ids-typed-and-preserved
+  (if (let
     [source : ci.InternId (ci.intern-source-slice-id "reader-view-name" 0 16)]
     [text : ci.InternId (ci.intern-source-slice-id "reader-view-string" 0 18)]
     [intern-state : ci.InternCompatState
@@ -441,22 +244,185 @@
         [_ false])
       (match (reader.spanned-sexpr-view (reader.SpannedSexpr.Str text span))
         [(reader.SpannedSexprView.Str found _) (ci.intern-id-eq? found text)]
-        [_ false]))))
-
-(test
-  reader-traversal-ids-typed-and-preserved
-  (if (reader-test-typed-traversal-ids?)
+        [_ false])))
     unit
     (io.panic "reader: typed traversal identity self-test failed")))
 
 (test
   reader-dense-child-ranges
   (if (and
-    (reader-test-data-dense-ranges?)
-    (reader-test-spanned-bracket-range?)
-    (reader-test-prefix-range?)
-    (reader-test-mismatched-delimiter?)
-    (reader-test-error-rolls-back-ranges?))
+    (match (begin
+      (reader.sp-node-pool-reset!)
+      (reader.data-result "(alpha (beta gamma) [])"))
+      [(reader.ResultSexpr.Err _) false]
+      [(reader.ResultSexpr.Ok form)
+        (and
+          (= (reader.sp-node-pool-len) 5)
+          (match (unsafe
+            (ptr-read (ptr-addr-of form)))
+            [(reader.SpannedSexpr.List start length _)
+              (and
+                (= start 2)
+                (= length 3)
+                (match (reader.sexpr-view form)
+                  [(reader.SexprView.Cons first tail1)
+                    (and
+                      (reader-test-symbol? first "alpha")
+                      (match (reader.sexpr-view tail1)
+                        [(reader.SexprView.Cons nested tail2)
+                          (and
+                            (match (reader.sexpr-view nested)
+                              [(reader.SexprView.Cons beta nested-tail)
+                                (and
+                                  (reader-test-symbol? beta "beta")
+                                  (match (reader.sexpr-view nested-tail)
+                                    [(reader.SexprView.Cons gamma nested-end)
+                                      (and
+                                        (reader-test-symbol? gamma "gamma")
+                                        (match (reader.sexpr-view nested-end)
+                                          [(reader.SexprView.Nil) true]
+                                          [_ false]))]
+                                    [_ false]))]
+                              [_ false])
+                            (match (reader.sexpr-view tail2)
+                              [(reader.SexprView.Cons empty tail3)
+                                (and
+                                  (match (reader.sexpr-view empty)
+                                    [(reader.SexprView.Nil) true]
+                                    [_ false])
+                                  (match (reader.sexpr-view tail3)
+                                    [(reader.SexprView.Nil) true]
+                                    [_ false]))]
+                              [_ false]))]
+                        [_ false]))]
+                  [_ false]))]
+            [_ false]))])
+    (begin
+      (reader.sp-node-pool-reset!)
+      (match (lexer.spanned-result "[alpha (beta gamma)]")
+        [(lexer.ResultSpannedTokens.Err _) false]
+        [(lexer.ResultSpannedTokens.Ok toks)
+          (match (reader.spanned-result toks)
+            [(reader.ResultSpannedSexpr.Err _) false]
+            [(reader.ResultSpannedSexpr.Ok form)
+              (and
+                (= (reader.sp-node-pool-len) 4)
+                (match (unsafe
+                  (ptr-read (ptr-addr-of form)))
+                  [(reader.SpannedSexpr.BracketList start length span)
+                    (and
+                      (= start 2)
+                      (= length 2)
+                      (= (token.span-start-line span) 1)
+                      (= (token.span-start-col span) 1)
+                      (match (reader.spanned-sexpr-view form)
+                        [(reader.SpannedSexprView.BracketList items _)
+                          (match (reader.spanned-sexpr-view items)
+                            [(reader.SpannedSexprView.Cons alpha tail _)
+                              (and
+                                (match (reader.spanned-sexpr-view alpha)
+                                  [(reader.SpannedSexprView.Sym name-id _)
+                                    (string.eq
+                                      (reader.symbol-text-for-syntax-id name-id)
+                                      "alpha")]
+                                  [_ false])
+                                (match (reader.spanned-sexpr-view tail)
+                                  [(reader.SpannedSexprView.Cons nested end _)
+                                    (and
+                                      (match (reader.spanned-sexpr-view nested)
+                                        [(reader.SpannedSexprView.Cons _ _ _)
+                                          true]
+                                        [_ false])
+                                      (match (reader.spanned-sexpr-view end)
+                                        [(reader.SpannedSexprView.Nil _) true]
+                                        [_ false]))]
+                                  [_ false]))]
+                            [_ false])]
+                        [_ false]))]
+                  [_ false]))])]))
+    (match (begin
+      (reader.sp-node-pool-reset!)
+      (reader.data-result "'alpha"))
+      [(reader.ResultSexpr.Err _) false]
+      [(reader.ResultSexpr.Ok form)
+        (and
+          (= (reader.sp-node-pool-len) 2)
+          (match (reader.sexpr-view form)
+            [(reader.SexprView.Cons quote tail)
+              (and
+                (reader-test-symbol? quote "quote")
+                (match (reader.sexpr-view tail)
+                  [(reader.SexprView.Cons value end)
+                    (and
+                      (reader-test-symbol? value "alpha")
+                      (match (reader.sexpr-view end)
+                        [(reader.SexprView.Nil) true]
+                        [_ false]))]
+                  [_ false]))]
+            [_ false]))])
+    (begin
+      (reader.sp-node-pool-reset!)
+      (match (lexer.spanned-result "(alpha]")
+        [(lexer.ResultSpannedTokens.Err _) false]
+        [(lexer.ResultSpannedTokens.Ok toks)
+          (match (reader.spanned-result toks)
+            [(reader.ResultSpannedSexpr.Ok _) false]
+            [(reader.ResultSpannedSexpr.Err err)
+              (let
+                [span : token.SourceSpan
+                  (token.source-error-span
+                    (unsafe
+                      (ptr-read (ptr-addr-of err))))]
+                (and
+                  (string.eq
+                    (token.source-error-message err)
+                    "reader: mismatched delimiter: expected ')' but found ']' at 1:7")
+                  (= (token.span-start-line span) 1)
+                  (= (token.span-start-col span) 7)))])]))
+    (let
+      [_reset-data : unit (reader.sp-node-pool-reset!)]
+      [data-error-ok : bool
+        (match (reader.data-result "((alpha)]")
+          [(reader.ResultSexpr.Ok _) false]
+          [(reader.ResultSexpr.Err _)
+            (and (= (reader.sp-node-pool-len) 0) (= reader.sp-builder-count 0))])]
+      [_reset-spanned : unit (reader.sp-node-pool-reset!)]
+      [spanned-error-ok : bool
+        (match (lexer.spanned-result "((alpha)]")
+          [(lexer.ResultSpannedTokens.Err _) false]
+          [(lexer.ResultSpannedTokens.Ok toks)
+            (match (reader.spanned-result toks)
+              [(reader.ResultSpannedSexpr.Ok _) false]
+              [(reader.ResultSpannedSexpr.Err _)
+                (and
+                  (= (reader.sp-node-pool-len) 0)
+                  (= reader.sp-builder-count 0))])])]
+      [repeated-read-ok : bool
+        (match (lexer.spanned-result "(beta)")
+          [(lexer.ResultSpannedTokens.Err _) false]
+          [(lexer.ResultSpannedTokens.Ok toks)
+            (match (reader.spanned-result toks)
+              [(reader.ResultSpannedSexpr.Err _) false]
+              [(reader.ResultSpannedSexpr.Ok form)
+                (and
+                  (= (reader.sp-node-pool-len) 1)
+                  (match (reader.spanned-sexpr-view form)
+                    [(reader.SpannedSexprView.Cons value tail _)
+                      (and
+                        (match (reader.spanned-sexpr-view value)
+                          [(reader.SpannedSexprView.Sym name-id _)
+                            (string.eq
+                              (reader.symbol-text-for-syntax-id name-id)
+                              "beta")]
+                          [_ false])
+                        (match (reader.spanned-sexpr-view tail)
+                          [(reader.SpannedSexprView.Nil _) true]
+                          [_ false]))]
+                    [_ false]))])])]
+      [ok : bool (and data-error-ok spanned-error-ok repeated-read-ok)]
+      (begin
+        (reader.sp-node-pool-reset!)
+        ok)))
     unit
     (io.panic "reader: dense child range self-test failed")))
 
@@ -473,7 +439,20 @@
     ;; the closing delimiter. The final token in both streams is End.
     (reader-test-projection-suffix-cursor? "(array-ref items 0).inner.value" 6)
     (reader-test-projection-suffix-cursor? "(array-ref items 0) .value" 5)
-    (reader-test-invalid-projection-suffix?))
+    (match (lexer.spanned-result "(deref boxed).0")
+      [(lexer.ResultSpannedTokens.Err _) false]
+      [(lexer.ResultSpannedTokens.Ok toks)
+        (let
+          [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+          (begin
+            (reader.sp-node-pool-reset!)
+            (set! (array-ref cur 0) 0)
+            (match (reader.form-spanned-result (& toks) (&mut cur))
+              [(reader.ResultSpannedSexpr.Ok _) false]
+              [(reader.ResultSpannedSexpr.Err err)
+                (string.eq
+                  (token.source-error-message err)
+                  "reader: dotted field access cannot use numeric field segments; use tuple-ref or array-ref")])))]))
     unit
     (io.panic "reader: projection suffix self-test failed")))
 
@@ -654,57 +633,20 @@
 (define (basic-token-sequence-ok?) : bool
   (match (lexer.result "(define [x : i64] -42 \"ok\" '\\n')")
     [(lexer.ResultTokens.Ok toks)
-      (let
-        [ok : bool true]
-        (begin
-          (if (=
-            (token.tag (lexer.array-shared-view toks 0))
-            (token.tag-lparen))
-            unit
-            (set! ok false))
-          (if (= (token.tag (lexer.array-shared-view toks 1)) (token.tag-sym))
-            unit
-            (set! ok false))
-          (if (string.eq (token.sym (lexer.array-shared-view toks 1)) "define")
-            unit
-            (set! ok false))
-          (if (=
-            (token.tag (lexer.array-shared-view toks 2))
-            (token.tag-lbracket))
-            unit
-            (set! ok false))
-          (if (string.eq (token.sym (lexer.array-shared-view toks 3)) "x")
-            unit
-            (set! ok false))
-          (if (string.eq (token.sym (lexer.array-shared-view toks 4)) ":")
-            unit
-            (set! ok false))
-          (if (string.eq (token.sym (lexer.array-shared-view toks 5)) "i64")
-            unit
-            (set! ok false))
-          (if (=
-            (token.tag (lexer.array-shared-view toks 6))
-            (token.tag-rbracket))
-            unit
-            (set! ok false))
-          (if (= (token.int (& (array-ref toks 7))) -42)
-            unit
-            (set! ok false))
-          (if (string.eq (token.str (lexer.array-shared-view toks 8)) "ok")
-            unit
-            (set! ok false))
-          (if (= (token.char (& (array-ref toks 9))) '\n')
-            unit
-            (set! ok false))
-          (if (=
-            (token.tag (lexer.array-shared-view toks 10))
-            (token.tag-rparen))
-            unit
-            (set! ok false))
-          (if (= (token.tag (lexer.array-shared-view toks 11)) (token.tag-end))
-            unit
-            (set! ok false))
-          ok))]
+      (and
+        (= (token.tag (lexer.array-shared-view toks 0)) (token.tag-lparen))
+        (= (token.tag (lexer.array-shared-view toks 1)) (token.tag-sym))
+        (string.eq (token.sym (lexer.array-shared-view toks 1)) "define")
+        (= (token.tag (lexer.array-shared-view toks 2)) (token.tag-lbracket))
+        (string.eq (token.sym (lexer.array-shared-view toks 3)) "x")
+        (string.eq (token.sym (lexer.array-shared-view toks 4)) ":")
+        (string.eq (token.sym (lexer.array-shared-view toks 5)) "i64")
+        (= (token.tag (lexer.array-shared-view toks 6)) (token.tag-rbracket))
+        (= (token.int (& (array-ref toks 7))) -42)
+        (string.eq (token.str (lexer.array-shared-view toks 8)) "ok")
+        (= (token.char (& (array-ref toks 9))) '\n')
+        (= (token.tag (lexer.array-shared-view toks 10)) (token.tag-rparen))
+        (= (token.tag (lexer.array-shared-view toks 11)) (token.tag-end)))]
     [(lexer.ResultTokens.Err _) false]))
 
 (define (colon-annotation-tokens-ok?) : bool
@@ -947,42 +889,19 @@
     [(lexer.ResultTokens.Err _) false]))
 
 (define (span-positions-ok? [s : (& s (__tl_dyn-array token.SpannedToken))]) : bool
-  (let
-    [ok : bool true]
-    (begin
-      (if (= (token.spanned-token-line (array-ref s 0)) 1)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 0)) 1)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 1)) 2)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-line (array-ref s 2)) 2)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 2)) 3)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 3)) 4)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 4)) 6)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-line (array-ref s 7)) 2)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 7)) 9)
-        unit
-        (set! ok false))
-      (if (=
-        (token.tag-ref (token.spanned-token-token-ref (& (array-ref s 7))))
-        (token.tag-end))
-        unit
-        (set! ok false))
-      ok)))
+  (and
+    (= (token.spanned-token-line (array-ref s 0)) 1)
+    (= (token.spanned-token-col (array-ref s 0)) 1)
+    (= (token.spanned-token-col (array-ref s 1)) 2)
+    (= (token.spanned-token-line (array-ref s 2)) 2)
+    (= (token.spanned-token-col (array-ref s 2)) 3)
+    (= (token.spanned-token-col (array-ref s 3)) 4)
+    (= (token.spanned-token-col (array-ref s 4)) 6)
+    (= (token.spanned-token-line (array-ref s 7)) 2)
+    (= (token.spanned-token-col (array-ref s 7)) 9)
+    (=
+      (token.tag-ref (token.spanned-token-token-ref (& (array-ref s 7))))
+      (token.tag-end))))
 
 (define (lexer-intern-owner-isolation-ok?) : bool
   (let
@@ -1122,69 +1041,31 @@
   (let
     [ok : bool true]
     (begin
-      (if (span-positions-self-ok?)
-        unit
-        (set! ok false))
-      (if (string-escapes-ok?)
-        unit
-        (set! ok false))
-      (if (string-token-retains-id?)
-        unit
-        (set! ok false))
-      (if (basic-token-sequence-ok?)
-        unit
-        (set! ok false))
-      (if (colon-annotation-tokens-ok?)
-        unit
-        (set! ok false))
-      (if (spanned-colon-annotation-tokens-ok?)
-        unit
-        (set! ok false))
-      (if (char-literals-ok?)
-        unit
-        (set! ok false))
-      (if (quote-vs-apostrophe-char-ok?)
-        unit
-        (set! ok false))
-      (if (error-spans-ok?)
-        unit
-        (set! ok false))
-      (if (percent-symbol-ok?)
-        unit
-        (set! ok false))
-      (if (ampersand-symbol-ok?)
-        unit
-        (set! ok false))
-      (if (float-token-ok?)
-        unit
-        (set! ok false))
-      (if (negative-int-token-ok?)
-        unit
-        (set! ok false))
-      (if (prefixed-int-token-ok?)
-        unit
-        (set! ok false))
-      (if (prefixed-int-errors-ok?)
-        unit
-        (set! ok false))
-      (if (result-prefixed-int-ok?)
-        unit
-        (set! ok false))
-      (if (result-prefixed-int-error-ok?)
-        unit
-        (set! ok false))
-      (if (quote-prefix-tokens-ok?)
-        unit
-        (set! ok false))
-      (if (lexer-intern-owner-isolation-ok?)
-        unit
-        (set! ok false))
-      (if (spanned-token-buffer-arena-ownership-ok?)
-        unit
-        (set! ok false))
-      (if (spanned-token-buffer-release-regrow-ok?)
-        unit
-        (set! ok false))
+      (set!
+        ok
+        (and
+          ok
+          (span-positions-self-ok?)
+          (string-escapes-ok?)
+          (string-token-retains-id?)
+          (basic-token-sequence-ok?)
+          (colon-annotation-tokens-ok?)
+          (spanned-colon-annotation-tokens-ok?)
+          (char-literals-ok?)
+          (quote-vs-apostrophe-char-ok?)
+          (error-spans-ok?)
+          (percent-symbol-ok?)
+          (ampersand-symbol-ok?)
+          (float-token-ok?)
+          (negative-int-token-ok?)
+          (prefixed-int-token-ok?)
+          (prefixed-int-errors-ok?)
+          (result-prefixed-int-ok?)
+          (result-prefixed-int-error-ok?)
+          (quote-prefix-tokens-ok?)
+          (lexer-intern-owner-isolation-ok?)
+          (spanned-token-buffer-arena-ownership-ok?)
+          (spanned-token-buffer-release-regrow-ok?)))
       (if ok
         42
         1))))

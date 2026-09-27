@@ -456,60 +456,46 @@
         [type-collision-b : i64 (ast.ty-node-push (ast.AstType.Var 131072))]
         [type-collision-a-again : i64 (ast.ty-node-push (ast.AstType.Var 0))]
         (begin
-          (unless (= expr-a 0) (set! ok false))
-          (unless (= expr-b 1) (set! ok false))
-          (unless (= type-a 0) (set! ok false))
-          (unless (= type-b 1) (set! ok false))
-          (unless (= type-collision-a 2) (set! ok false))
-          (unless (= type-collision-b 3) (set! ok false))
-          (unless (= type-collision-a-again type-collision-a) (set! ok false))
+          (set!
+            ok
+            (and
+              ok
+              (= expr-a 0)
+              (= expr-b 1)
+              (= type-a 0)
+              (= type-b 1)
+              (= type-collision-a 2)
+              (= type-collision-b 3)
+              (= type-collision-a-again type-collision-a)))
           ;; Force replacement of the installed context's dedup table. The hot
           ;; raw backing pointer must follow the new descriptor and continue to
           ;; return the existing ids rather than appending duplicates.
           (ast.ty-node-dedup-grow!)
-          (unless
-            (= (ast.ty-node-push (ast.AstType.I64)) type-a)
-            (set! ok false))
-          (unless
-            (= (ast.ty-node-push (ast.AstType.Char)) type-b)
-            (set! ok false))
-          (unless
-            (= (ast.ty-node-push (ast.AstType.Var 0)) type-collision-a)
-            (set! ok false))
-          (unless
-            (= (ast.ty-node-push (ast.AstType.Var 131072)) type-collision-b)
-            (set! ok false))
-          (unless
-            (= (ast.ast-node-pool-context-expr-len pools) 2)
-            (set! ok false))
-          (unless
-            (= (ast.ast-node-pool-context-type-len pools) 4)
-            (set! ok false))
-          (unless
-            (compiler-ast-context-expr-int-lit? pools expr-a 31)
-            (set! ok false))
-          (unless
-            (compiler-ast-context-expr-int-lit? pools expr-b 32)
-            (set! ok false))
-          (unless (compiler-ast-context-type-i64? pools type-a) (set! ok false))
-          (unless
-            (compiler-ast-context-type-char? pools type-b)
-            (set! ok false))
-          (unless
-            (compiler-ast-context-base-arenas-match? pools)
-            (set! ok false))
+          (set!
+            ok
+            (and
+              ok
+              (= (ast.ty-node-push (ast.AstType.I64)) type-a)
+              (= (ast.ty-node-push (ast.AstType.Char)) type-b)
+              (= (ast.ty-node-push (ast.AstType.Var 0)) type-collision-a)
+              (= (ast.ty-node-push (ast.AstType.Var 131072)) type-collision-b)
+              (= (ast.ast-node-pool-context-expr-len pools) 2)
+              (= (ast.ast-node-pool-context-type-len pools) 4)
+              (compiler-ast-context-expr-int-lit? pools expr-a 31)
+              (compiler-ast-context-expr-int-lit? pools expr-b 32)
+              (compiler-ast-context-type-i64? pools type-a)
+              (compiler-ast-context-type-char? pools type-b)
+              (compiler-ast-context-base-arenas-match? pools)))
           (ast.ast-node-pool-truncate! 1)
           (ast.ty-node-pool-truncate! 1)
-          (unless
-            (= (ast.ast-node-pool-context-expr-len pools) 1)
-            (set! ok false))
-          (unless
-            (= (ast.ast-node-pool-context-type-len pools) 1)
-            (set! ok false))
-          (unless
-            (compiler-ast-context-expr-int-lit? pools expr-a 31)
-            (set! ok false))
-          (unless (compiler-ast-context-type-i64? pools type-a) (set! ok false))
+          (set!
+            ok
+            (and
+              ok
+              (= (ast.ast-node-pool-context-expr-len pools) 1)
+              (= (ast.ast-node-pool-context-type-len pools) 1)
+              (compiler-ast-context-expr-int-lit? pools expr-a 31)
+              (compiler-ast-context-type-i64? pools type-a)))
           (ast.ast-node-pool-context-install! active-before)
           ok)))))
 

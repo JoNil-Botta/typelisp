@@ -288,22 +288,6 @@
         0)]
     [(parser.ResultAstTypeList.Err _) 0]))
 
-(define (compiler-symbols-smoke-source) : String
-  "(import stdlib.test)
-(defstruct Point (x i64) (y i64))
-(defenum Maybe (None) (Some i64))
-(extern (io.emit-string [arg0 : String]) : unit)
-(define answer : i64 42)
-(define (main [argc : i64] [name : String]) : i64
-  (let
-    [x : i64 1]
-    [arr (array 1 2 3)]
-    (begin
-      (set! x (+ x 41))
-      (if (and (= x 42) true)
-          (match (Some x) [(Some v) v] [_ 0])
-          0))))")
-
 (define (compiler-symbols-smoke-score
   [symbols : (& symbols csym.CompilerSymbols)]) : i64
   (let
@@ -429,95 +413,15 @@
                       point-id
                       -1)))))))))))
 
-(define (compiler-symbols-duplicate-value-source) : String
-  "(define answer : i64 1)
-(define (answer) : i64 2)")
-
-(define (compiler-symbols-duplicate-type-source) : String
-  "(defstruct Point (x i64))
-(defenum Point (PointVariant))")
-
-(define (compiler-registries-duplicate-variant-source) : String
-  "(defenum Left (Same) (Same))")
-
-(define (compiler-registries-cross-enum-variant-source) : String
-  "(defenum Left (Same))
-(defenum Right (Same))")
-
-(define (compiler-registries-duplicate-field-source) : String
-  "(defstruct Pair (x i64) (x i64))")
-
-(define (compiler-symbols-macro-source) : String
-  "(defmacro (all [first : bool] [rest : bool ...]) : bool first)
-(define (main) : i64 0)")
-
-(define (compiler-symbols-duplicate-macro-source) : String
-  "(defmacro (same) : bool (expr-bool true))
-(defmacro (same) : bool (expr-bool false))")
-
-(define (compiler-symbols-value-then-macro-source) : String
-  "(define same : i64 1)
-(defmacro (same) : bool (expr-bool true))")
-
 (define (compiler-symbols-module-duplicate-value-source) : String
   "(module left)
 (define same : i64 1)
 (define same : i64 2)")
 
-(define (compiler-symbols-module-duplicate-type-source) : String
-  "(module left)
-(defstruct Point (x i64))
-(defenum Point (PointVariant))")
-
-(define (compiler-symbols-module-duplicate-macro-source) : String
-  "(module left)
-(defmacro (same) : bool (expr-bool true))
-(defmacro (same) : bool (expr-bool false))")
-
-(define (compiler-symbols-module-macro-then-value-source) : String
-  "(module left)
-(defmacro (same) : bool (expr-bool true))
-(define same : i64 1)")
-
-(define (compiler-symbols-macro-then-variant-source) : String
-  "(defmacro (same) : bool (expr-bool true))
-(defenum Choice (same))")
-
-(define (compiler-symbols-module-duplicate-variant-source) : String
-  "(module left)
-(defenum Choice (Same) (Same))")
-
-(define (compiler-symbols-variant-function-collision-source) : String
-  "(defenum A (Foo))
-(define (Foo [x : i64]) : i64 x)")
-
-(define (compiler-symbols-variant-define-collision-source) : String
-  "(defenum A (Foo))
-(define Foo : i64 42)")
-
-(define (compiler-symbols-variant-extern-collision-source) : String
-  "(defenum A (Foo))
-(extern (Foo [arg0 : i64]) : i64)")
-
-(define (compiler-symbols-variant-struct-collision-source) : String
-  "(defenum A (Foo))
-(defstruct Foo (x i64))")
-
-(define (compiler-symbols-struct-function-collision-source) : String
-  "(defstruct Point (x i64))
-(define (Point [x : i64]) : i64 x)")
-
-(define (compiler-symbols-struct-define-collision-source) : String
-  "(defstruct Point (x i64))
-(define Point : i64 42)")
-
-(define (compiler-symbols-struct-extern-collision-source) : String
-  "(defstruct Point (x i64))
-(extern (Point [arg0 : i64]) : i64)")
-
 (define (compiler-symbols-duplicate-value-ok?) : bool
   (match (build-compiler-symbols-from-source
-    (compiler-symbols-duplicate-value-source))
+    "(define answer : i64 1)
+(define (answer) : i64 2)")
     [(csym.ResultCompilerSymbols.Err message)
       (string.eq
         message
@@ -526,7 +430,8 @@
 
 (define (compiler-symbols-duplicate-type-ok?) : bool
   (match (build-compiler-symbols-from-source
-    (compiler-symbols-duplicate-type-source))
+    "(defstruct Point (x i64))
+(defenum Point (PointVariant))")
     [(csym.ResultCompilerSymbols.Err message)
       (string.eq message (csym.compiler-symbols-duplicate-type-message "Point"))]
     [(csym.ResultCompilerSymbols.Ok _) false]))
@@ -545,21 +450,26 @@
       (compiler-symbols-module-duplicate-value-source)
       "left/same")
     (match (build-compiler-symbols-from-source
-      (compiler-symbols-module-duplicate-type-source))
+      "(module left)
+(defstruct Point (x i64))
+(defenum Point (PointVariant))")
       [(csym.ResultCompilerSymbols.Err message)
         (string.eq
           message
           (csym.compiler-symbols-duplicate-type-message "left/Point"))]
       [(csym.ResultCompilerSymbols.Ok _) false])
     (match (build-compiler-symbols-from-source
-      (compiler-symbols-module-duplicate-macro-source))
+      "(module left)
+(defmacro (same) : bool (expr-bool true))
+(defmacro (same) : bool (expr-bool false))")
       [(csym.ResultCompilerSymbols.Err message)
         (string.eq
           message
           (csym.compiler-symbols-duplicate-macro-message "left/same"))]
       [(csym.ResultCompilerSymbols.Ok _) false])
     (match (build-compiler-symbols-from-source
-      (compiler-symbols-module-duplicate-variant-source))
+      "(module left)
+(defenum Choice (Same) (Same))")
       [(csym.ResultCompilerSymbols.Err message)
         (string.eq
           message
@@ -597,33 +507,39 @@
 (define (compiler-symbols-variant-value-collisions-ok?) : bool
   (and
     (compiler-symbols-duplicate-value-error-ok?
-      (compiler-symbols-variant-function-collision-source)
+      "(defenum A (Foo))
+(define (Foo [x : i64]) : i64 x)"
       "Foo")
     (compiler-symbols-duplicate-value-error-ok?
-      (compiler-symbols-variant-define-collision-source)
+      "(defenum A (Foo))
+(define Foo : i64 42)"
       "Foo")
     (compiler-symbols-duplicate-value-error-ok?
-      (compiler-symbols-variant-extern-collision-source)
+      "(defenum A (Foo))
+(extern (Foo [arg0 : i64]) : i64)"
       "Foo")
     (compiler-symbols-duplicate-value-error-ok?
-      (compiler-symbols-variant-struct-collision-source)
+      "(defenum A (Foo))
+(defstruct Foo (x i64))"
       "Foo")))
 
 (define (compiler-symbols-struct-value-collisions-ok?) : bool
   (and
     (compiler-symbols-duplicate-value-error-ok?
-      (compiler-symbols-struct-function-collision-source)
+      "(defstruct Point (x i64))
+(define (Point [x : i64]) : i64 x)"
       "Point")
     (compiler-symbols-duplicate-value-error-ok?
-      (compiler-symbols-struct-define-collision-source)
+      "(defstruct Point (x i64))
+(define Point : i64 42)"
       "Point")
     (compiler-symbols-duplicate-value-error-ok?
-      (compiler-symbols-struct-extern-collision-source)
+      "(defstruct Point (x i64))
+(extern (Point [arg0 : i64]) : i64)"
       "Point")))
 
 (define (compiler-registries-duplicate-variant-ok?) : bool
-  (match (build-compiler-registries-from-source
-    (compiler-registries-duplicate-variant-source))
+  (match (build-compiler-registries-from-source "(defenum Left (Same) (Same))")
     [(csym.ResultCompilerRegistries.Err message)
       (string.eq
         message
@@ -632,7 +548,8 @@
 
 (define (compiler-registries-cross-enum-variant-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-registries-cross-enum-variant-source))
+    "(defenum Left (Same))
+(defenum Right (Same))")
     [(parser.ResultAstProgram.Ok program)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)
@@ -676,7 +593,7 @@
 
 (define (compiler-registries-duplicate-field-ok?) : bool
   (match (build-compiler-registries-from-source
-    (compiler-registries-duplicate-field-source))
+    "(defstruct Pair (x i64) (x i64))")
     [(csym.ResultCompilerRegistries.Err message)
       (string.eq
         message
@@ -684,7 +601,9 @@
     [(csym.ResultCompilerRegistries.Ok _) false]))
 
 (define (compiler-symbols-macro-namespace-ok?) : bool
-  (match (parser.parse-ast-source (compiler-symbols-macro-source))
+  (match (parser.parse-ast-source
+    "(defmacro (all [first : bool] [rest : bool ...]) : bool first)
+(define (main) : i64 0)")
     [(parser.ResultAstProgram.Ok program)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)
@@ -715,13 +634,16 @@
 
 (define (compiler-symbols-duplicate-macro-ok?) : bool
   (match (build-compiler-symbols-from-source
-    (compiler-symbols-duplicate-macro-source))
+    "(defmacro (same) : bool (expr-bool true))
+(defmacro (same) : bool (expr-bool false))")
     [(csym.ResultCompilerSymbols.Err message)
       (string.eq message (csym.compiler-symbols-duplicate-macro-message "same"))]
     [(csym.ResultCompilerSymbols.Ok _) false]))
 
 (define (compiler-symbols-value-then-macro-namespace-ok?) : bool
-  (match (parser.parse-ast-source (compiler-symbols-value-then-macro-source))
+  (match (parser.parse-ast-source
+    "(define same : i64 1)
+(defmacro (same) : bool (expr-bool true))")
     [(parser.ResultAstProgram.Ok program)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)
@@ -746,7 +668,9 @@
 
 (define (compiler-symbols-module-macro-then-value-namespace-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-symbols-module-macro-then-value-source))
+    "(module left)
+(defmacro (same) : bool (expr-bool true))
+(define same : i64 1)")
     [(parser.ResultAstProgram.Ok program)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)
@@ -788,7 +712,9 @@
     [(parser.ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-macro-then-variant-namespace-ok?) : bool
-  (match (parser.parse-ast-source (compiler-symbols-macro-then-variant-source))
+  (match (parser.parse-ast-source
+    "(defmacro (same) : bool (expr-bool true))
+(defenum Choice (same))")
     [(parser.ResultAstProgram.Ok program)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)
@@ -869,15 +795,6 @@
 
 (define (compiler-registries-incremental-base-source) : String
   "(module nested
-  (defenum Later (Empty) (Value i64))
-  (defstruct Record (value i64)))")
-
-(define (compiler-registries-incremental-splice-source) : String
-  "(defstruct Inserted (id i64))")
-
-(define (compiler-registries-incremental-combined-source) : String
-  "(module nested
-  (defstruct Inserted (id i64))
   (defenum Later (Empty) (Value i64))
   (defstruct Record (value i64)))")
 
@@ -1027,8 +944,7 @@
         [(csym.ResultCompilerSymbols.Ok base-symbols)
           (match (csym.build-compiler-registries base-program)
             [(csym.ResultCompilerRegistries.Ok base-registries)
-              (match (parser.parse-ast-source
-                (compiler-registries-incremental-splice-source))
+              (match (parser.parse-ast-source "(defstruct Inserted (id i64))")
                 [(parser.ResultAstProgram.Ok splice-program)
                   (match splice-program
                     [(ast.AstProgram.Program splice-box)
@@ -1049,7 +965,10 @@
                             0))
                           [(csym.ResultCompilerRegistries.Ok rebased-registries)
                             (match (parser.parse-ast-source
-                              (compiler-registries-incremental-combined-source))
+                              "(module nested
+  (defstruct Inserted (id i64))
+  (defenum Later (Empty) (Value i64))
+  (defstruct Record (value i64)))")
                               [(parser.ResultAstProgram.Ok combined-program)
                                 (match (csym.build-compiler-symbols
                                   combined-program)
@@ -1070,28 +989,18 @@
         [(csym.ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 
-(define (compiler-symbols-append-splice-source) : String
-  "(module fresh
-  (defenum Added (None) (Some i64))
-  (defstruct Boxed (value i64)))")
-
-(define (compiler-symbols-append-macro-base-source) : String
-  "(module data)
-(defmacro (all [first : bool]) : bool first)")
-
-(define (compiler-symbols-append-macro-import-source) : String
-  "(module fresh)
-(define answer : i64 42)
-(module main)
-(import data as d)")
-
 (define (compiler-symbols-append-external-macro-alias-ok?) : bool
-  (match (parser.parse-ast-source (compiler-symbols-append-macro-base-source))
+  (match (parser.parse-ast-source
+    "(module data)
+(defmacro (all [first : bool]) : bool first)")
     [(parser.ResultAstProgram.Ok base-program)
       (match (csym.build-compiler-symbols base-program)
         [(csym.ResultCompilerSymbols.Ok base-symbols)
           (match (parser.parse-ast-source
-            (compiler-symbols-append-macro-import-source))
+            "(module fresh)
+(define answer : i64 42)
+(module main)
+(import data as d)")
             [(parser.ResultAstProgram.Ok splice-program)
               (match splice-program
                 [(ast.AstProgram.Program splice-box)
@@ -1138,7 +1047,9 @@
           (match (csym.build-compiler-registries base-program)
             [(csym.ResultCompilerRegistries.Ok base-registries)
               (match (parser.parse-ast-source
-                (compiler-symbols-append-splice-source))
+                "(module fresh
+  (defenum Added (None) (Some i64))
+  (defstruct Boxed (value i64)))")
                 [(parser.ResultAstProgram.Ok splice-program)
                   (match splice-program
                     [(ast.AstProgram.Program splice-box)
@@ -1229,13 +1140,11 @@
         [(csym.ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 
-(define (compiler-symbols-nominal-decl-source) : String
-  "(defstruct Point (x i64) (y i64))
+(define (compiler-symbols-nominal-decl-ok?) : bool
+  (match (parser.parse-ast-source
+    "(defstruct Point (x i64) (y i64))
 (defenum Maybe (None) (Some i64))
 (define (main) : i64 0)")
-
-(define (compiler-symbols-nominal-decl-ok?) : bool
-  (match (parser.parse-ast-source (compiler-symbols-nominal-decl-source))
     [(parser.ResultAstProgram.Ok program)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)
@@ -1514,30 +1423,6 @@
             1))]
       [(csym.ResultCompilerSymbols.Err _) false])))
 
-(define (compiler-symbols-import-alias-source) : String
-  "(module data)
-(define answer : i64 7)
-(define (get) : i64 answer)
-(defmacro (all [args : bool ...]) : bool
-  `(all-from (__all-args ,@args) 0))
-(defmacro (all-from [carrier : Expr] [idx : Expr]) : bool
-  (match idx
-    [(Expr.Int i)
-      (match carrier
-        [(Expr.Call _ elems)
-          (if (>= i (expr-list-length elems))
-            (expr-bool true)
-            `(if ,(expr-list-nth elems i)
-               (all-from ,carrier ,(expr-int (+ i 1)))
-               false))]
-        [_ (expr-bool true)])]
-    [_ (expr-bool true)]))
-(defenum Maybe (None) (Some i64))
-(defstruct Point (x i64))
-(module main)
-(import data as d)
-(define (main) : i64 (d.get))")
-
 (define (compiler-program-first-import-alias-id [program : ast.AstProgram]) : i64
   (match program
     [(ast.AstProgram.Program decls-box)
@@ -1564,7 +1449,29 @@
           -1))]))
 
 (define (compiler-symbols-import-alias-ok?) : bool
-  (match (parser.parse-ast-source (compiler-symbols-import-alias-source))
+  (match (parser.parse-ast-source
+    "(module data)
+(define answer : i64 7)
+(define (get) : i64 answer)
+(defmacro (all [args : bool ...]) : bool
+  `(all-from (__all-args ,@args) 0))
+(defmacro (all-from [carrier : Expr] [idx : Expr]) : bool
+  (match idx
+    [(Expr.Int i)
+      (match carrier
+        [(Expr.Call _ elems)
+          (if (>= i (expr-list-length elems))
+            (expr-bool true)
+            `(if ,(expr-list-nth elems i)
+               (all-from ,carrier ,(expr-int (+ i 1)))
+               false))]
+        [_ (expr-bool true)])]
+    [_ (expr-bool true)]))
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module main)
+(import data as d)
+(define (main) : i64 (d.get))")
     [(parser.ResultAstProgram.Ok program)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)
@@ -1653,8 +1560,9 @@
         [(csym.ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 
-(define (compiler-symbols-comptime-root-helper-alias-source) : String
-  "(module stdlib.comptime)
+(define (compiler-symbols-comptime-root-helper-alias-ok?) : bool
+  (match (parser.parse-ast-source
+    "(module stdlib.comptime)
 (defenum Expr (Bool bool))
 (define (string.int->string [value : i64]) : String \"\")
 (define (string.append [left : String] [right : String]) : String left)
@@ -1663,10 +1571,6 @@
 (module main)
 (defenum Expr (Bool i64))
 (define (expr-bool [value : i64]) : i64 value)")
-
-(define (compiler-symbols-comptime-root-helper-alias-ok?) : bool
-  (match (parser.parse-ast-source
-    (compiler-symbols-comptime-root-helper-alias-source))
     [(parser.ResultAstProgram.Ok program)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)
@@ -1805,12 +1709,10 @@
         (= (csym.compiler-symbol-map-lookup-handle-id (& map) 16) 50)
         (not (csym.compiler-symbol-map-remove-id! (&mut map) 24))))))
 
-(define (compiler-symbols-dotted-variant-id-source) : String
-  "(define deep : i64 a.b.Enum.Variant)
-(define qualified : i64 q/a.b.Enum.Variant)")
-
 (define (compiler-symbols-dotted-variant-id-paths-ok?) : bool
-  (match (parser.parse-ast-source (compiler-symbols-dotted-variant-id-source))
+  (match (parser.parse-ast-source
+    "(define deep : i64 a.b.Enum.Variant)
+(define qualified : i64 q/a.b.Enum.Variant)")
     [(parser.ResultAstProgram.Ok program)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)
@@ -2138,7 +2040,21 @@
 (define (compiler-symbols-self-test) : i64
   (begin
     (cbi.compiler-builtin-refresh!)
-    (match (parser.parse-ast-source (compiler-symbols-smoke-source))
+    (match (parser.parse-ast-source
+      "(import stdlib.test)
+(defstruct Point (x i64) (y i64))
+(defenum Maybe (None) (Some i64))
+(extern (io.emit-string [arg0 : String]) : unit)
+(define answer : i64 42)
+(define (main [argc : i64] [name : String]) : i64
+  (let
+    [x : i64 1]
+    [arr (array 1 2 3)]
+    (begin
+      (set! x (+ x 41))
+      (if (and (= x 42) true)
+          (match (Some x) [(Some v) v] [_ 0])
+          0))))")
       [(parser.ResultAstProgram.Ok program)
         (match (csym.build-compiler-symbols program)
           [(csym.ResultCompilerSymbols.Ok symbols)
@@ -2147,110 +2063,48 @@
                 (let
                   [ok : bool true]
                   (begin
-                    (if (= (compiler-symbols-smoke-score symbols) 10)
-                      unit
-                      (set! ok false))
-                    (if (=
-                      (compiler-registries-smoke-score
-                        program
-                        symbols
-                        registries)
-                      8)
-                      unit
-                      (set! ok false))
-                    (if (compiler-registry-handle-bounds-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-duplicate-value-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-duplicate-type-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-module-duplicate-diagnostics-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-module-duplicate-with-paths-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-variant-value-collisions-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-struct-value-collisions-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-registries-duplicate-variant-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-registries-cross-enum-variant-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-registries-duplicate-field-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-registry-large-owner-handle-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-registry-shift-map-full-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-registries-incremental-splice-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-registries-lifetime-field-indexed-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-append-splice-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-append-external-macro-alias-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-nominal-decl-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-module-scope-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-structural-id-api-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbol-map-fast-path-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-direct-qualified-add-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-import-alias-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-comptime-root-helper-alias-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-macro-namespace-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-duplicate-macro-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-value-macro-namespace-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbol-map-structure-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-dotted-variant-id-paths-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-dotted-suffix-owner-module-id-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-module-id-identity-ok?)
-                      unit
-                      (set! ok false))
-                    (if (compiler-symbols-defining-provenance-survives-owner-rewrite-ok?)
-                      unit
-                      (set! ok false))
+                    (set!
+                      ok
+                      (and
+                        ok
+                        (= (compiler-symbols-smoke-score symbols) 10)
+                        (=
+                          (compiler-registries-smoke-score
+                            program
+                            symbols
+                            registries)
+                          8)
+                        (compiler-registry-handle-bounds-ok?)
+                        (compiler-symbols-duplicate-value-ok?)
+                        (compiler-symbols-duplicate-type-ok?)
+                        (compiler-symbols-module-duplicate-diagnostics-ok?)
+                        (compiler-symbols-module-duplicate-with-paths-ok?)
+                        (compiler-symbols-variant-value-collisions-ok?)
+                        (compiler-symbols-struct-value-collisions-ok?)
+                        (compiler-registries-duplicate-variant-ok?)
+                        (compiler-registries-cross-enum-variant-ok?)
+                        (compiler-registries-duplicate-field-ok?)
+                        (compiler-registry-large-owner-handle-ok?)
+                        (compiler-registry-shift-map-full-ok?)
+                        (compiler-registries-incremental-splice-ok?)
+                        (compiler-registries-lifetime-field-indexed-ok?)
+                        (compiler-symbols-append-splice-ok?)
+                        (compiler-symbols-append-external-macro-alias-ok?)
+                        (compiler-symbols-nominal-decl-ok?)
+                        (compiler-symbols-module-scope-ok?)
+                        (compiler-symbols-structural-id-api-ok?)
+                        (compiler-symbol-map-fast-path-ok?)
+                        (compiler-symbols-direct-qualified-add-ok?)
+                        (compiler-symbols-import-alias-ok?)
+                        (compiler-symbols-comptime-root-helper-alias-ok?)
+                        (compiler-symbols-macro-namespace-ok?)
+                        (compiler-symbols-duplicate-macro-ok?)
+                        (compiler-symbols-value-macro-namespace-ok?)
+                        (compiler-symbol-map-structure-ok?)
+                        (compiler-symbols-dotted-variant-id-paths-ok?)
+                        (compiler-symbols-dotted-suffix-owner-module-id-ok?)
+                        (compiler-symbols-module-id-identity-ok?)
+                        (compiler-symbols-defining-provenance-survives-owner-rewrite-ok?)))
                     (if ok
                       42
                       (io.panic "symbols: smoke score mismatch"))))]

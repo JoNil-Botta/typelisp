@@ -909,31 +909,6 @@
             (set! index (+ index 1)))))
       count)))
 
-(define (compiler-load-surface-summary-smoke-source) : String
-  (str_cat.str-cat
-    "(module summary.mod)
-(import dep.mod as dep)
-(import stdlib.vector as vec)
-(import (vec.vector i64) as vi64)
-(cfg feature (import feature.mod as feat))
-(emit-generated VecI64)
-(define value : i64 1)
-(define (pub [x : i64]) (:export-symbol \"pub\") : i64 x)
-(extern (foreign [x : i64]) : i64)
-(unsafe (extern (danger [x : i64]) : i64))
-(defstruct Resource (:cleanup close-resource) (:must-use) (fd i64 (:cleanup close-fd)))
-(defenum Maybe (:cleanup close-maybe) (:must-use) (None) (Some i64 (:cleanup close-i64)))
-(defmacro (expr-m [x : Expr]) : Expr x)
-(defmacro (module-m [T : type]) : Module (expr-unit))
-(defmacro (decls-m [T : type]) : Decls (expr-unit))
-(define generated-value : i64 3)
-(module nested.summary
-  (define nested-value : i64 4))
-("
-    "test loader-summary value)
-(include-str text \"data.txt\")
-(include-bin blob \"data.bin\")"))
-
 (define (compiler-load-surface-summary-shape-ok?
   [summary : load.CompilerLoadSurfaceSummary]) : bool
   (let
@@ -1067,7 +1042,29 @@
     [fallback-id : i64 parse-identity.module-fallback-id]
     (match (load.compiler-load-parse-source-diagnostic-escaping
       (string.copy path)
-      (compiler-load-surface-summary-smoke-source)
+      (str_cat.str-cat
+        "(module summary.mod)
+(import dep.mod as dep)
+(import stdlib.vector as vec)
+(import (vec.vector i64) as vi64)
+(cfg feature (import feature.mod as feat))
+(emit-generated VecI64)
+(define value : i64 1)
+(define (pub [x : i64]) (:export-symbol \"pub\") : i64 x)
+(extern (foreign [x : i64]) : i64)
+(unsafe (extern (danger [x : i64]) : i64))
+(defstruct Resource (:cleanup close-resource) (:must-use) (fd i64 (:cleanup close-fd)))
+(defenum Maybe (:cleanup close-maybe) (:must-use) (None) (Some i64 (:cleanup close-i64)))
+(defmacro (expr-m [x : Expr]) : Expr x)
+(defmacro (module-m [T : type]) : Module (expr-unit))
+(defmacro (decls-m [T : type]) : Decls (expr-unit))
+(define generated-value : i64 3)
+(module nested.summary
+  (define nested-value : i64 4))
+("
+        "test loader-summary value)
+(include-str text \"data.txt\")
+(include-bin blob \"data.bin\")")
       cfgs)
       [(parser.ResultAstProgramDiagnostic.Ok program)
         (if (not

@@ -206,15 +206,6 @@
 ;: Unattached docs are ignored
 ")
 
-(define (doc-test-ordinary-comment-source) : String
-  "; ```typelisp
-; (define (bad) : i64 true)
-; ```
-;; ```typelisp
-;; (define (also-bad) : i64 true)
-;; ```
-")
-
 (define (doc-test-malformed-source) : String
   ";# ```typelisp maybe
 ;# (define (main) : i64 0)
@@ -246,25 +237,6 @@
     ";# ;; doctest-exit: 42\n"
     ";# (define (main) : i64 42)\n"
     ";# ```\n"))
-
-(define (doc-test-runnable-malformed-source) : String
-  ";# ```typelisp run expect-error
-;# ;; doctest-exit: 0
-;# ```
-;# ```typelisp expect-error run
-;# ;; doctest-exit: 0
-;# ```
-;# ```typelisp run
-;# ;; doctest-exit: nope
-;# ```
-;# ```typelisp run
-;# ;; doctest-exit: 0
-;# ;; doctest-stdout: nope
-;# ```
-;# ```typelisp run
-;# ;; doctest-stdout: -
-;# ```
-")
 
 (define (doc-test-example-ok?
   [example : doc_test.DocTestExample]
@@ -415,21 +387,26 @@
     false))
 
 (define (doc-test-ordinary-comments-ok?) : bool
-  (match (doc_test.doc-test-extract-source (doc-test-ordinary-comment-source))
+  (match (doc_test.doc-test-extract-source
+    "; ```typelisp
+; (define (bad) : i64 true)
+; ```
+;; ```typelisp
+;; (define (also-bad) : i64 true)
+;; ```
+")
     [(doc_test.DocTestExtraction.Extraction ordinary-examples ordinary-errors)
       (if (= (doc_test.doc-test-example-list-count ordinary-examples) 0)
         (= (doc_test.doc-test-error-list-count ordinary-errors) 0)
         false)]))
 
-(define (doc-test-legacy-item-source) : String
-  ";: Legacy item docs
+(define (doc-test-legacy-item-smoke-ok?) : bool
+  (match (doc_test.doc-test-extract-source
+    ";: Legacy item docs
 ;: ```typelisp
 ;: (define legacy : i64 1)
 ;: ```
 (define legacy : i64 1)")
-
-(define (doc-test-legacy-item-smoke-ok?) : bool
-  (match (doc_test.doc-test-extract-source (doc-test-legacy-item-source))
     [(doc_test.DocTestExtraction.Extraction examples errors)
       (begin
         (unless
@@ -490,7 +467,24 @@
               "(define (main)"))))]))
 
 (define (doc-test-runnable-malformed-smoke-ok?) : bool
-  (match (doc_test.doc-test-extract-source (doc-test-runnable-malformed-source))
+  (match (doc_test.doc-test-extract-source
+    ";# ```typelisp run expect-error
+;# ;; doctest-exit: 0
+;# ```
+;# ```typelisp expect-error run
+;# ;; doctest-exit: 0
+;# ```
+;# ```typelisp run
+;# ;; doctest-exit: nope
+;# ```
+;# ```typelisp run
+;# ;; doctest-exit: 0
+;# ;; doctest-stdout: nope
+;# ```
+;# ```typelisp run
+;# ;; doctest-stdout: -
+;# ```
+")
     [(doc_test.DocTestExtraction.Extraction examples errors)
       (begin
         (unless
@@ -601,20 +595,6 @@
 ;#   (begin
 ;#     (let [text : String \"actual-error\\n\"] (io.stderr-write (byte_buf.str-as-bytes (& text))))
 ;#     0))
-;# ```
-")
-
-(define (doc-test-run-runnable-compile-failure-source) : String
-  ";# ```typelisp run
-;# ;; doctest-exit: 0
-;# (define (main) : i64 true)
-;# ```
-")
-
-(define (doc-test-run-runnable-implicit-main-source) : String
-  ";# ```typelisp run
-;# ;; doctest-exit: 0
-;# (define answer : i64 1)
 ;# ```
 ")
 
@@ -756,7 +736,11 @@
     [report : doc_test.DocTestRunReport
       (doc_test.doc-test-run-source-with-roots
         "docs/run.tl"
-        (doc-test-run-runnable-implicit-main-source)
+        ";# ```typelisp run
+;# ;; doctest-exit: 0
+;# (define answer : i64 1)
+;# ```
+"
         (doc-test-run-smoke-stdlib-roots))]
     (if (=
       (doc_test.doc-test-run-report-count
@@ -820,7 +804,11 @@
       (return false))
     (unless
       (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-compile-failure-source)
+        ";# ```typelisp run
+;# ;; doctest-exit: 0
+;# (define (main) : i64 true)
+;# ```
+"
         "runnable compile failed")
       (return false))
     true))
@@ -933,17 +921,6 @@ typecheck: return type mismatch"))]
         (doc_test.doc-test-run-report-render fail-report)
         "return type mismatch"))))
 
-(define (doc-test-session-cache-source) : String
-  ";# ```typelisp
-;# (import stdlib.dep)
-;# (define (main) : i64 dep.shared-value)
-;# ```
-;# ```typelisp
-;# (import stdlib.dep)
-;# (define (main) : i64 dep.shared-value)
-;# ```
-")
-
 (define (doc-test-session-cache-smoke-ok?) : bool
   (let
     [root : String "target/doc_test_session_cache"]
@@ -967,7 +944,15 @@ typecheck: return type mismatch"))]
         [report : doc_test.DocTestRunReport
           (doc_test.doc-test-typecheck-source-with-roots
             doc-file
-            (doc-test-session-cache-source)
+            ";# ```typelisp
+;# (import stdlib.dep)
+;# (define (main) : i64 dep.shared-value)
+;# ```
+;# ```typelisp
+;# (import stdlib.dep)
+;# (define (main) : i64 dep.shared-value)
+;# ```
+"
             roots)]
         [hits : i64 (load_tests.compiler-load-program-cache-hit-count-value)]
         (begin

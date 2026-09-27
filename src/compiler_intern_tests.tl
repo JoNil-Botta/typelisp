@@ -77,41 +77,34 @@
     (ci.intern-reset!)
     (let
       [capacity : i64 (ci.intern-capacity)]
-      [ok : bool true]
-      (begin
-        ;; A power of two, so `intern-bucket` masks instead of dividing.
-        (unless (> capacity 0) (set! ok false))
-        (unless (= (bit-and capacity (- capacity 1)) 0) (set! ok false))
-        ;; Each dedup map has to outsize the lane it indexes. A map smaller than
-        ;; its lane cannot hold a full lane, and the overflow is an abort inside
-        ;; the probe loop, not a resize.
-        (unless
+      [ok : bool
+        (and
+          ;; A power of two, so `intern-bucket` masks instead of dividing.
+          (> capacity 0)
+          (= (bit-and capacity (- capacity 1)) 0)
+          ;; Each dedup map has to outsize the lane it indexes. A map smaller than
+          ;; its lane cannot hold a full lane, and the overflow is an abort inside
+          ;; the probe loop, not a resize.
           (>= (array-length ci.intern-map-id-slots) capacity)
-          (set! ok false))
-        (unless (>= ci.intern-generated-map-capacity capacity) (set! ok false))
-        ;; A renderable id is a pool id and nothing else.
-        (unless (ci.intern-renderable-id? (- capacity 1)) (set! ok false))
-        (unless (not (ci.intern-renderable-id? capacity)) (set! ok false))
-        ;; Both lanes address the one pool: source ids grow up from zero and
-        ;; generated ids grow down from capacity-1, so the capacity is the sum
-        ;; the two lanes must fit in, and they meet only when it is exhausted.
-        (unless (= (ci.intern-pool-len) 0) (set! ok false))
-        (unless (= (ci.intern-generated-count) 0) (set! ok false))
-        (unless (= (ci.intern "id-space-lane-probe") 0) (set! ok false))
-        (unless (= (ci.intern-syntax-source-name-id-or 0 -1) 0) (set! ok false))
-        (unless
+          (>= ci.intern-generated-map-capacity capacity)
+          ;; A renderable id is a pool id and nothing else.
+          (ci.intern-renderable-id? (- capacity 1))
+          (not (ci.intern-renderable-id? capacity))
+          ;; Both lanes address the one pool: source ids grow up from zero and
+          ;; generated ids grow down from capacity-1, so the capacity is the sum
+          ;; the two lanes must fit in, and they meet only when it is exhausted.
+          (= (ci.intern-pool-len) 0)
+          (= (ci.intern-generated-count) 0)
+          (= (ci.intern "id-space-lane-probe") 0)
+          (= (ci.intern-syntax-source-name-id-or 0 -1) 0)
           (ci.intern-private-string-eq
             (ci.intern-syntax-name-text-or capacity "missing")
             "missing")
-          (set! ok false))
-        (unless
           (= (ci.intern-generated-name "id-space-lane-probe") (- capacity 1))
-          (set! ok false))
-        (unless
           (= (ci.intern-generated-id-at-allocation-index 0) (- capacity 1))
-          (set! ok false))
-        (unless (= (ci.intern-pool-len) 1) (set! ok false))
-        (unless (= (ci.intern-generated-count) 1) (set! ok false))
+          (= (ci.intern-pool-len) 1)
+          (= (ci.intern-generated-count) 1))]
+      (begin
         (ci.intern-reset!)
         ok))))
 
@@ -147,61 +140,43 @@
           dotted-tail-id)]
       [ok : bool true]
       (begin
-        (unless (= (ci.intern-pool-len) source-len) (set! ok false))
-        (unless (= opaque-id (- (ci.intern-capacity) 1)) (set! ok false))
-        (unless (= opaque-again-id (- (ci.intern-capacity) 2)) (set! ok false))
-        (unless
-          (= duplicate-display-id (- (ci.intern-capacity) 3))
-          (set! ok false))
-        (unless (= qualified-id (- (ci.intern-capacity) 4)) (set! ok false))
-        (unless (= dotted-id (- (ci.intern-capacity) 5)) (set! ok false))
-        (unless (= (ci.intern-generated-count) 5) (set! ok false))
-        (unless
-          (= (ci.intern-generated-id-at-allocation-index 0) opaque-id)
-          (set! ok false))
-        (unless
-          (= (ci.intern-generated-id-at-allocation-index 4) dotted-id)
-          (set! ok false))
-        (unless
-          (= (ci.intern-generated-id-at-allocation-index -1) -1)
-          (set! ok false))
-        (unless
-          (= (ci.intern-generated-id-at-allocation-index 5) -1)
-          (set! ok false))
-        (unless (not (= opaque-id opaque-again-id)) (set! ok false))
-        (unless
-          (ci.intern-private-string-eq
-            (ci.intern-str opaque-id)
-            "hygiene/local")
-          (set! ok false))
-        (unless
-          (intern-qualified-metadata-case-ok?
-            opaque-id
-            false
-            -1
-            ""
-            "hygiene/local")
-          (set! ok false))
-        (unless
-          (intern-qualified-metadata-case-ok?
-            qualified-id
-            true
-            16
-            "generated-module"
-            "generated-base")
-          (set! ok false))
-        (unless (= (ci.intern-first-dot dotted-id) 14) (set! ok false))
-        (unless
-          (= (ci.intern-leading-dot-id dotted-id) base-id)
-          (set! ok false))
-        (unless
-          (= (ci.intern-dotted-prefix-id dotted-id) dotted-prefix-id)
-          (set! ok false))
-        (unless
-          (= (ci.intern-dotted-tail-id dotted-id) dotted-tail-id)
-          (set! ok false))
-        (unless (ci.intern-dotted? dotted-id) (set! ok false))
-        (unless (not (ci.intern-qualified? dotted-id)) (set! ok false))
+        (set!
+          ok
+          (and
+            ok
+            (= (ci.intern-pool-len) source-len)
+            (= opaque-id (- (ci.intern-capacity) 1))
+            (= opaque-again-id (- (ci.intern-capacity) 2))
+            (= duplicate-display-id (- (ci.intern-capacity) 3))
+            (= qualified-id (- (ci.intern-capacity) 4))
+            (= dotted-id (- (ci.intern-capacity) 5))
+            (= (ci.intern-generated-count) 5)
+            (= (ci.intern-generated-id-at-allocation-index 0) opaque-id)
+            (= (ci.intern-generated-id-at-allocation-index 4) dotted-id)
+            (= (ci.intern-generated-id-at-allocation-index -1) -1)
+            (= (ci.intern-generated-id-at-allocation-index 5) -1)
+            (not (= opaque-id opaque-again-id))
+            (ci.intern-private-string-eq
+              (ci.intern-str opaque-id)
+              "hygiene/local")
+            (intern-qualified-metadata-case-ok?
+              opaque-id
+              false
+              -1
+              ""
+              "hygiene/local")
+            (intern-qualified-metadata-case-ok?
+              qualified-id
+              true
+              16
+              "generated-module"
+              "generated-base")
+            (= (ci.intern-first-dot dotted-id) 14)
+            (= (ci.intern-leading-dot-id dotted-id) base-id)
+            (= (ci.intern-dotted-prefix-id dotted-id) dotted-prefix-id)
+            (= (ci.intern-dotted-tail-id dotted-id) dotted-tail-id)
+            (ci.intern-dotted? dotted-id)
+            (not (ci.intern-qualified? dotted-id))))
         (match (ci.intern-lookup "hygiene/local")
           [(InternLookupMissing) unit]
           [(InternLookupFound _) (set! ok false)])
@@ -245,45 +220,29 @@
               module-id
               base-id)]
           (begin
-            (unless (= canonical-id canonical-again-id) (set! ok false))
-            (unless (= (ci.intern-generated-count) 8) (set! ok false))
-            (unless
-              (ci.intern-generated-canonical-id? canonical-id)
-              (set! ok false))
-            (unless
-              (ci.intern-generated-canonical-id? canonical-dotted-id)
-              (set! ok false))
-            (unless
-              (ci.intern-generated-canonical-id? canonical-qualified-id)
-              (set! ok false))
-            (unless
-              (not (ci.intern-generated-canonical-id? opaque-id))
-              (set! ok false))
-            (unless
-              (= canonical-dotted-id canonical-dotted-again-id)
-              (set! ok false))
-            (unless
-              (= (ci.intern-leading-dot-id canonical-dotted-id) base-id)
-              (set! ok false))
-            (unless
-              (=
-                (ci.intern-dotted-prefix-id canonical-dotted-id)
-                dotted-prefix-id)
-              (set! ok false))
-            (unless
-              (= canonical-qualified-id canonical-qualified-again-id)
-              (set! ok false))
-            (unless
-              (not (= canonical-qualified-id canonical-id))
-              (set! ok false))
-            (unless
-              (intern-qualified-metadata-case-ok?
-                canonical-qualified-id
-                true
-                -1
-                "generated-module"
-                "generated-base")
-              (set! ok false))
+            (set!
+              ok
+              (and
+                ok
+                (= canonical-id canonical-again-id)
+                (= (ci.intern-generated-count) 8)
+                (ci.intern-generated-canonical-id? canonical-id)
+                (ci.intern-generated-canonical-id? canonical-dotted-id)
+                (ci.intern-generated-canonical-id? canonical-qualified-id)
+                (not (ci.intern-generated-canonical-id? opaque-id))
+                (= canonical-dotted-id canonical-dotted-again-id)
+                (= (ci.intern-leading-dot-id canonical-dotted-id) base-id)
+                (=
+                  (ci.intern-dotted-prefix-id canonical-dotted-id)
+                  dotted-prefix-id)
+                (= canonical-qualified-id canonical-qualified-again-id)
+                (not (= canonical-qualified-id canonical-id))
+                (intern-qualified-metadata-case-ok?
+                  canonical-qualified-id
+                  true
+                  -1
+                  "generated-module"
+                  "generated-base")))
             (match (ci.intern-generated-canonical-lookup "computed-name")
               [(InternLookupFound found-id)
                 (unless (= found-id canonical-id) (set! ok false))]
@@ -294,13 +253,13 @@
             (let
               [source-observed-id : i64 (ci.intern "computed-name")]
               (begin
-                (unless
-                  (= canonical-id (- (ci.intern-capacity) 6))
-                  (set! ok false))
-                (unless (= source-observed-id source-len) (set! ok false))
-                (unless
-                  (not (= source-observed-id canonical-id))
-                  (set! ok false))
+                (set!
+                  ok
+                  (and
+                    ok
+                    (= canonical-id (- (ci.intern-capacity) 6))
+                    (= source-observed-id source-len)
+                    (not (= source-observed-id canonical-id))))
                 (match (ci.intern-lookup-content "computed-name")
                   [(InternLookupFound found-id)
                     (unless (= found-id source-observed-id) (set! ok false))]
@@ -309,29 +268,29 @@
         (let
           [after-reset-to-id : i64 (ci.intern-generated-name "after/reset-to")]
           (begin
-            (unless (= (ci.intern-pool-len) source-len) (set! ok false))
-            (unless
-              (= after-reset-to-id (- (ci.intern-capacity) 1))
-              (set! ok false))
-            (unless
-              (ci.intern-private-string-eq
-                (ci.intern-str after-reset-to-id)
-                "after/reset-to")
-              (set! ok false))
+            (set!
+              ok
+              (and
+                ok
+                (= (ci.intern-pool-len) source-len)
+                (= after-reset-to-id (- (ci.intern-capacity) 1))
+                (ci.intern-private-string-eq
+                  (ci.intern-str after-reset-to-id)
+                  "after/reset-to")))
             unit))
         (ci.intern-reset!)
         (let
           [after-reset-id : i64 (ci.intern-generated-name "after/reset")]
           (begin
-            (unless (= (ci.intern-pool-len) 0) (set! ok false))
-            (unless
-              (= after-reset-id (- (ci.intern-capacity) 1))
-              (set! ok false))
-            (unless
-              (ci.intern-private-string-eq
-                (ci.intern-str after-reset-id)
-                "after/reset")
-              (set! ok false))
+            (set!
+              ok
+              (and
+                ok
+                (= (ci.intern-pool-len) 0)
+                (= after-reset-id (- (ci.intern-capacity) 1))
+                (ci.intern-private-string-eq
+                  (ci.intern-str after-reset-id)
+                  "after/reset")))
             unit))
         (ci.intern-reset!)
         ok))))
@@ -516,66 +475,53 @@
                 0
                 (+ 2000000 structural-grow-index))
               (set! structural-grow-index (+ structural-grow-index 1))))
-          (unless grew? (set! ok false))
-          (unless (= grown-arena initial-arena) (set! ok false))
-          (unless (not (= grown-head initial-head)) (set! ok false))
-          (unless
-            (ci.intern-private-string-eq before-text "state/pre-growth")
-            (set! ok false))
-          (unless
-            (ci.intern-private-string-eq
-              (ci.intern-compat-state-str state before-id)
-              "state/pre-growth")
-            (set! ok false))
-          (unless
-            (ci.intern-private-string-eq
-              (ci.intern-compat-state-str state post-id)
-              "state/post-growth")
-            (set! ok false))
-          (unless
-            (ci.intern-private-string-eq
-              (ci.intern-compat-state-str state generated-id)
-              "state/generated-after-growth")
-            (set! ok false))
-          (unless
-            (ci.intern-private-string-eq
-              rendered-name
-              "state/pre-growth+state/post-growth")
-            (set! ok false))
-          (unless
-            (= (ci.intern-private-string-length post-copy) 64)
-            (set! ok false))
-          (unless
-            (=
-              (ci.intern-private-string-ref post-copy 0)
-              (ci.intern-private-string-ref source 0))
-            (set! ok false))
-          (unless post-copy-restored? (set! ok false))
-          (unless (= (ci.tl_arena_current) home) (set! ok false))
+          (set!
+            ok
+            (and
+              ok
+              grew?
+              (= grown-arena initial-arena)
+              (not (= grown-head initial-head))
+              (ci.intern-private-string-eq before-text "state/pre-growth")
+              (ci.intern-private-string-eq
+                (ci.intern-compat-state-str state before-id)
+                "state/pre-growth")
+              (ci.intern-private-string-eq
+                (ci.intern-compat-state-str state post-id)
+                "state/post-growth")
+              (ci.intern-private-string-eq
+                (ci.intern-compat-state-str state generated-id)
+                "state/generated-after-growth")
+              (ci.intern-private-string-eq
+                rendered-name
+                "state/pre-growth+state/post-growth")
+              (= (ci.intern-private-string-length post-copy) 64)
+              (=
+                (ci.intern-private-string-ref post-copy 0)
+                (ci.intern-private-string-ref source 0))
+              post-copy-restored?
+              (= (ci.tl_arena_current) home)))
           (let
             [grown-structural-table : ci.InternStructuralTable
               (ci.intern-array-shared-view state.structural-table-cell 0)]
-            (begin
-              (unless
+            (set!
+              ok
+              (and
+                ok
                 (>= (array-length grown-structural-table.kinds) 512)
-                (set! ok false))
-              (unless
-                (>= (array-length grown-structural-table.map-slots) 1024)
-                (set! ok false))))
-          (unless
-            (=
-              equal-branch-head
-              (ci.intern-compat-state-persistent-arena-current-head state))
-            (set! ok false))
-          (unless
-            (= (ci.intern-private-string-length equal-copy) 64)
-            (set! ok false))
-          (unless
-            (=
-              (ci.intern-private-string-ref equal-copy 0)
-              (ci.intern-private-string-ref source 1))
-            (set! ok false))
-          (unless (= (ci.tl_arena_current) home) (set! ok false))
+                (>= (array-length grown-structural-table.map-slots) 1024))))
+          (set!
+            ok
+            (and
+              ok
+              (=
+                equal-branch-head
+                (ci.intern-compat-state-persistent-arena-current-head state))
+              (= (ci.intern-private-string-length equal-copy) 64)
+              (=
+                (ci.intern-private-string-ref equal-copy 0)
+                (ci.intern-private-string-ref source 1))
+              (= (ci.tl_arena_current) home)))
           (ci.intern-compat-state-reset! (&mut state))
           (let
             [state-arena : i64 (ci.intern-compat-state-persistent-arena state)]
@@ -597,12 +543,14 @@
       [ok : bool true]
       (begin
         (ci.intern-reset-to! mark)
-        (unless (= (ci.intern-pool-len) mark) (set! ok false))
-        (unless (= (ci.intern "keep/name") kept) (set! ok false))
-        (unless (= (ci.intern "plain") plain) (set! ok false))
-        (unless
-          (intern-qualified-metadata-case-ok? kept true 4 "keep" "name")
-          (set! ok false))
+        (set!
+          ok
+          (and
+            ok
+            (= (ci.intern-pool-len) mark)
+            (= (ci.intern "keep/name") kept)
+            (= (ci.intern "plain") plain)
+            (intern-qualified-metadata-case-ok? kept true 4 "keep" "name")))
         (match (ci.intern-lookup "drop/name")
           [(InternLookupMissing) unit]
           [(InternLookupFound _) (set! ok false)])
@@ -674,87 +622,67 @@
       (ci.intern-compat-state-intern (&mut state-a) "after-boundary")]
     [ok : bool true]
     (begin
-      (unless persistent-handle-restored? (set! ok false))
-      (unless
-        (= persistent-handle-session.table-id session-a.table-id)
-        (set! ok false))
-      (unless
-        (=
-          persistent-handle-session.reset-generation
-          session-a.reset-generation)
-        (set! ok false))
+      (set!
+        ok
+        (and
+          ok
+          persistent-handle-restored?
+          (= persistent-handle-session.table-id session-a.table-id)
+          (=
+            persistent-handle-session.reset-generation
+            session-a.reset-generation)))
       (match (ci.intern-compat-state-lookup state-a "equal")
         [(InternLookupFound id) (unless (= id equal-id) (set! ok false))]
         [(InternLookupMissing) (set! ok false)])
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-str state-a equal-id)
-          "equal")
-        (set! ok false))
-      (unless
-        (ci.intern-compat-state-qualified? state-a qualified-id)
-        (set! ok false))
-      (unless
-        (= (ci.intern-id-value qualified-slice-id) qualified-id)
-        (set! ok false))
-      (unless (= slice-mark-after slice-mark) (set! ok false))
-      (unless
-        (= (intern-compat-state-qualified-last-slash state-a qualified-id) 3)
-        (set! ok false))
-      (unless
-        (= (ci.intern-compat-state-first-dot state-a qualified-id) 10)
-        (set! ok false))
-      (unless
-        (ci.intern-compat-state-dotted? state-a qualified-id)
-        (set! ok false))
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-str
-            state-a
-            (ci.intern-compat-state-qualified-module-id state-a qualified-id))
-          "pkg")
-        (set! ok false))
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-str
-            state-a
-            (ci.intern-compat-state-qualified-base-id state-a qualified-id))
-          "module.name")
-        (set! ok false))
-      ;; The captured owner is not the installed compatibility pool. Dotted
-      ;; root projections must read that owner, just like final-leaf queries.
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-str
-            state-a
-            (ci.intern-source-name-session-handle-leading-dot-id
-              persistent-handle
-              (ci.intern-source-name-session-handle-qualified-base-id
+      (set!
+        ok
+        (and
+          ok
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-str state-a equal-id)
+            "equal")
+          (ci.intern-compat-state-qualified? state-a qualified-id)
+          (= (ci.intern-id-value qualified-slice-id) qualified-id)
+          (= slice-mark-after slice-mark)
+          (= (intern-compat-state-qualified-last-slash state-a qualified-id) 3)
+          (= (ci.intern-compat-state-first-dot state-a qualified-id) 10)
+          (ci.intern-compat-state-dotted? state-a qualified-id)
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-str
+              state-a
+              (ci.intern-compat-state-qualified-module-id state-a qualified-id))
+            "pkg")
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-str
+              state-a
+              (ci.intern-compat-state-qualified-base-id state-a qualified-id))
+            "module.name")
+          ;; The captured owner is not the installed compatibility pool. Dotted
+          ;; root projections must read that owner, just like final-leaf queries.
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-str
+              state-a
+              (ci.intern-source-name-session-handle-leading-dot-id
                 persistent-handle
-                qualified-id)))
-          "module")
-        (set! ok false))
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-str
-            state-a
-            (ci.intern-compat-state-dotted-prefix-id state-a qualified-id))
-          "pkg/module")
-        (set! ok false))
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-str
-            state-a
-            (ci.intern-compat-state-dotted-tail-id state-a qualified-id))
-          "name")
-        (set! ok false))
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-str
-            state-a
-            (ci.intern-compat-state-dotted-final-id state-a qualified-id))
-          "name")
-        (set! ok false))
+                (ci.intern-source-name-session-handle-qualified-base-id
+                  persistent-handle
+                  qualified-id)))
+            "module")
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-str
+              state-a
+              (ci.intern-compat-state-dotted-prefix-id state-a qualified-id))
+            "pkg/module")
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-str
+              state-a
+              (ci.intern-compat-state-dotted-tail-id state-a qualified-id))
+            "name")
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-str
+              state-a
+              (ci.intern-compat-state-dotted-final-id state-a qualified-id))
+            "name")))
       (match (ci.intern-source-name-session-resolve
         session-a
         parsed-a
@@ -923,85 +851,71 @@
         enum-boundary-b-components)]
     [ok : bool true]
     (begin
-      (unless (= lambda-a lambda-a-again) (set! ok false))
-      (unless (not (= lambda-a clone-a)) (set! ok false))
-      (unless (not (= lambda-a source-collision-a)) (set! ok false))
-      (unless
-        (ci.intern-compat-state-generated-role-symbol?
-          state-a
-          lambda-a
-          (ci.intern-generated-symbol-role-lambda))
-        (set! ok false))
-      (when
-        (ci.intern-compat-state-generated-role-symbol?
-          state-a
-          lambda-a
-          (ci.intern-generated-symbol-role-clone-helper))
-        (set! ok false))
-      (when
-        (ci.intern-compat-state-generated-role-symbol?
-          state-a
-          source-collision-a
-          (ci.intern-generated-symbol-role-lambda))
-        (set! ok false))
-      ;; Both recipes render as `__enum_obj_A_B_C`; component boundaries stay
-      ;; structural so they cannot silently alias before the output boundary.
-      (unless (not (= enum-boundary-a enum-boundary-b)) (set! ok false))
-      (unless
-        (=
-          (ci.intern-private-string-length
-            (ci.intern-compat-state-str state-a lambda-a))
-          0)
-        (set! ok false))
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-generated-role-symbol-materialize!
-            (&mut state-a)
-            (ci.intern-generated-symbol-role-lambda)
+      (set!
+        ok
+        (and
+          ok
+          (= lambda-a lambda-a-again)
+          (not (= lambda-a clone-a))
+          (not (= lambda-a source-collision-a))
+          (ci.intern-compat-state-generated-role-symbol?
+            state-a
             lambda-a
+            (ci.intern-generated-symbol-role-lambda))
+          (not
+            (ci.intern-compat-state-generated-role-symbol?
+              state-a
+              lambda-a
+              (ci.intern-generated-symbol-role-clone-helper)))
+          (not
+            (ci.intern-compat-state-generated-role-symbol?
+              state-a
+              source-collision-a
+              (ci.intern-generated-symbol-role-lambda)))
+          ;; Both recipes render as `__enum_obj_A_B_C`; component boundaries stay
+          ;; structural so they cannot silently alias before the output boundary.
+          (not (= enum-boundary-a enum-boundary-b))
+          (=
+            (ci.intern-private-string-length
+              (ci.intern-compat-state-str state-a lambda-a))
+            0)
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-generated-role-symbol-materialize!
+              (&mut state-a)
+              (ci.intern-generated-symbol-role-lambda)
+              lambda-a
+              "__tl_lambda_component_0")
             "__tl_lambda_component_0")
-          "__tl_lambda_component_0")
-        (set! ok false))
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-generated-role-symbol-materialize!
-            (&mut state-b)
-            (ci.intern-generated-symbol-role-lambda)
-            lambda-b
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-generated-role-symbol-materialize!
+              (&mut state-b)
+              (ci.intern-generated-symbol-role-lambda)
+              lambda-b
+              "state_b_lambda")
             "state_b_lambda")
-          "state_b_lambda")
-        (set! ok false))
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-str state-a lambda-a)
-          "__tl_lambda_component_0")
-        (set! ok false))
-      (unless
-        (ci.intern-private-string-eq
-          (ci.intern-compat-state-str state-b lambda-b)
-          "state_b_lambda")
-        (set! ok false))
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-str state-a lambda-a)
+            "__tl_lambda_component_0")
+          (ci.intern-private-string-eq
+            (ci.intern-compat-state-str state-b lambda-b)
+            "state_b_lambda")))
       (ci.intern-compat-state-generated-role-symbol-materialize!
         (&mut state-a)
         (ci.intern-generated-symbol-role-cleanup-helper)
         qualified-a
         "pkg/__tl_cleanup_cleanup")
-      (unless
-        (ci.intern-compat-state-qualified? state-a qualified-a)
-        (set! ok false))
-      (unless
-        (=
-          (ci.intern-compat-state-qualified-module-id state-a qualified-a)
-          module-a)
-        (set! ok false))
-      (unless
-        (=
-          (ci.intern-compat-state-qualified-base-id state-a qualified-a)
-          base-a)
-        (set! ok false))
-      (unless
-        (= (intern-compat-state-qualified-last-slash state-a qualified-a) 3)
-        (set! ok false))
+      (set!
+        ok
+        (and
+          ok
+          (ci.intern-compat-state-qualified? state-a qualified-a)
+          (=
+            (ci.intern-compat-state-qualified-module-id state-a qualified-a)
+            module-a)
+          (=
+            (ci.intern-compat-state-qualified-base-id state-a qualified-a)
+            base-a)
+          (= (intern-compat-state-qualified-last-slash state-a qualified-a) 3)))
       (let
         [growth-first : i64
           (ci.intern-compat-state-generated-role-symbol-id
@@ -1078,13 +992,14 @@
             (&mut active-state)
             (ci.intern-generated-symbol-role-lambda)
             99)]
-        (begin
-          (unless (not (= compat-id role-id)) (set! ok false))
-          (unless
+        (set!
+          ok
+          (and
+            ok
+            (not (= compat-id role-id))
             (ci.intern-private-string-eq
               (ci.intern-str compat-id)
-              "compat-generated")
-            (set! ok false))))
+              "compat-generated"))))
       ;; Reusing a role first published by the active compatibility view also
       ;; refreshes the explicit state's generated frontier. This is distinct
       ;; from the new-role allocation case above: the structural record and
@@ -1102,23 +1017,22 @@
             (&mut active-state)
             role
             component)]
-        (begin
-          (unless (= state-role-id compat-role-id) (set! ok false))
-          (unless
+        (set!
+          ok
+          (and
+            ok
+            (= state-role-id compat-role-id)
             (ci.intern-compat-state-generated-role-symbol?
               active-state
               state-role-id
               role)
-            (set! ok false))
-          (unless
             (ci.intern-private-string-eq
               (ci.intern-compat-state-generated-role-symbol-materialize!
                 (&mut active-state)
                 role
                 state-role-id
                 "clone$SharedRole")
-              "clone$SharedRole")
-            (set! ok false))))
+              "clone$SharedRole"))))
       ok)))
 
 (define (intern-qualified-metadata-tests-ok?) : bool
@@ -1133,80 +1047,53 @@
       [slash : i64 (ci.intern "/")]
       [dotted : i64 (ci.intern "point.x")]
       [nested-dotted : i64 (ci.intern "point.inner.x")]
-      [ok : bool true]
-      (begin
-        (unless
+      [ok : bool
+        (and
           (intern-qualified-metadata-case-ok? plain false -1 "" "name")
-          (set! ok false))
-        (unless (= (ci.intern-qualified-base-id plain) plain) (set! ok false))
-        (unless (= (ci.intern-qualified-module-id plain) -1) (set! ok false))
-        (unless (= (ci.intern-first-dot plain) -1) (set! ok false))
-        (unless (not (ci.intern-dotted? plain)) (set! ok false))
-        (unless
+          (= (ci.intern-qualified-base-id plain) plain)
+          (= (ci.intern-qualified-module-id plain) -1)
+          (= (ci.intern-first-dot plain) -1)
+          (not (ci.intern-dotted? plain))
           (intern-qualified-metadata-case-ok? qualified true 6 "module" "name")
-          (set! ok false))
-        (unless (= (ci.intern-first-dot qualified) -1) (set! ok false))
-        (unless
+          (= (ci.intern-first-dot qualified) -1)
           (intern-qualified-metadata-case-ok? nested true 7 "pkg/sub" "name")
-          (set! ok false))
-        (unless
           (intern-qualified-metadata-case-ok? leading true 0 "" "name")
-          (set! ok false))
-        (unless
           (intern-qualified-metadata-case-ok? trailing true 6 "module" "")
-          (set! ok false))
-        (unless
           (intern-qualified-metadata-case-ok? slash true 0 "" "")
-          (set! ok false))
-        (unless (= (ci.intern-first-dot dotted) 5) (set! ok false))
-        (unless (ci.intern-dotted? dotted) (set! ok false))
-        (unless
+          (= (ci.intern-first-dot dotted) 5)
+          (ci.intern-dotted? dotted)
           (= (ci.intern-dotted-prefix-id dotted) (ci.intern "point"))
-          (set! ok false))
-        (unless
           (ci.intern-private-string-eq
             (ci.intern-str (ci.intern-dotted-tail-id dotted))
             "x")
-          (set! ok false))
-        (unless
           (ci.intern-private-string-eq
             (ci.intern-str (ci.intern-dotted-final-id dotted))
             "x")
-          (set! ok false))
-        (unless (= (ci.intern-first-dot nested-dotted) 5) (set! ok false))
-        (unless
+          (= (ci.intern-first-dot nested-dotted) 5)
           (ci.intern-private-string-eq
             (ci.intern-str (ci.intern-dotted-prefix-id nested-dotted))
             "point.inner")
-          (set! ok false))
-        (unless
           (ci.intern-private-string-eq
             (ci.intern-str
               (ci.intern-dotted-prefix-id
                 (ci.intern-dotted-prefix-id nested-dotted)))
             "point")
-          (set! ok false))
-        (unless
           (ci.intern-private-string-eq
             (ci.intern-str (ci.intern-dotted-tail-id nested-dotted))
             "inner.x")
-          (set! ok false))
-        (unless
           (ci.intern-private-string-eq
             (ci.intern-str (ci.intern-dotted-final-id nested-dotted))
             "x")
-          (set! ok false))
-        (unless (ci.intern-dotted? dotted) (set! ok false))
-        (unless (= (ci.intern-first-dot dotted) 5) (set! ok false))
-        (unless (intern-slice-tests-ok?) (set! ok false))
-        (unless (intern-generated-name-tests-ok?) (set! ok false))
-        (unless (intern-persistent-arena-tests-ok?) (set! ok false))
-        (unless
+          (ci.intern-dotted? dotted)
+          (= (ci.intern-first-dot dotted) 5)
+          (intern-slice-tests-ok?)
+          (intern-generated-name-tests-ok?)
+          (intern-persistent-arena-tests-ok?)
           (intern-compat-state-persistent-arena-growth-tests-ok?)
-          (set! ok false))
-        (unless (intern-reset-to-tests-ok?) (set! ok false))
-        (unless (intern-persistent-floor-reset-tests-ok?) (set! ok false))
-        (unless (intern-source-name-session-tests-ok?) (set! ok false))
-        (unless (intern-generated-role-symbol-tests-ok?) (set! ok false))
+          (intern-reset-to-tests-ok?)
+          (intern-persistent-floor-reset-tests-ok?)
+          (intern-source-name-session-tests-ok?)
+          (intern-generated-role-symbol-tests-ok?))]
+      (begin
         (ci.intern-reset!)
         ok))))

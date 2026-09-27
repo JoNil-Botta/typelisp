@@ -9,8 +9,8 @@
 (import compiler_ast_types as ast)
 (import compiler_load as load)
 (import compiler_parse_core as parse_core)
-(import lint_driver_core)
-(import lint_driver_core_tests)
+(import lint_driver_core as lint_driver)
+(import lint_driver_core_tests as driver_tests)
 (import lint_core)
 (import lint_core_tests)
 (import compiler_owned_view as owned_view)
@@ -18,199 +18,17 @@
 (define (lint-driver-smoke-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
-(define (lint-driver-smoke-string-concat-source) : String
-  "(define (main) : i64
-  (string.string-length (string.append \"a\" \"b\")))")
-
-(define (lint-driver-smoke-loop-string-concat-source) : String
-  "(define (main) : i64
-  (let
-    [i : i64 0]
-    [out : String \"\"]
-    (begin
-      (while (< i 3)
-        (begin
-          (set! out (string.append out \"x\"))
-          (set! i (+ i 1))))
-      (string.string-length out))))")
-
-(define (lint-driver-smoke-bare-self-named-import-macro-source) : String
-  "(import pkg.vector)
-(vector i64)")
-
 (define (lint-driver-smoke-bare-self-named-import-macro-unused-test) : i64
   (let
     [findings : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots
+      (driver_tests.selfhost-lint-source-with-roots
         "lint_driver_smoke_test.tl"
-        (lint-driver-smoke-bare-self-named-import-macro-source)
+        "(import pkg.vector)
+(vector i64)"
         (lint_svec.new))]
-    (if (lint_driver_core_tests.selfhost-lint-unused-import-finding-ok?
-      findings)
+    (if (driver_tests.selfhost-lint-unused-import-finding-ok? findings)
       42
       39)))
-
-(define (lint-driver-smoke-nested-string-concat-source) : String
-  "(define (main) : i64
-  (string.string-length (string.append \"a\" (string.append \"b\" \"c\"))))")
-
-(define (lint-driver-smoke-suppressed-string-concat-source) : String
-  "(define (main) : i64
-  ;; lint-allow: deprecated-string-concat
-  (string.string-length (string.append \"a\" \"b\")))")
-
-(define (lint-driver-smoke-redundant-import-alias-source) : String
-  (str_cat.str-cat
-    "(import pkg.data "
-    "as data)
-(define (main) : i64 (data.value))"))
-
-(define (lint-driver-smoke-clean-default-import-alias-source) : String
-  "(import pkg.data)
-(define (main) : i64 (data.value))")
-
-(define (lint-driver-smoke-renamed-import-alias-source) : String
-  "(import pkg.data as d)
-(define (main) : i64 (d.value))")
-
-(define (lint-driver-smoke-suppressed-redundant-import-alias-source) : String
-  (str_cat.str-cat
-    ";; lint-allow: redundant-import-alias
-(import pkg.data "
-    "as data)
-(define (main) : i64 (data.value))"))
-
-(define (lint-driver-smoke-redundant-function-name-source) : String
-  "(module sample.vector)
-(define (vector-push [x : i64]) : i64 x)
-(define (push [x : i64]) : i64 x)")
-
-(define (lint-driver-smoke-redundant-generated-function-name-source) : String
-  "(module sample.vector)
-(defmacro (build [module-name : Expr]) : Module
-  `(begin
-    (module ,module-name)
-    (define (vector-push [x : i64]) : i64 x)))")
-
-(define (lint-driver-smoke-clean-function-name-source) : String
-  "(module sample.vector)
-(define (push [x : i64]) : i64 x)
-(defmacro (build [module-name : Expr]) : Module
-  `(begin
-    (module ,module-name)
-    (define (push [x : i64]) : i64 x)))")
-
-(define (lint-driver-smoke-suppressed-redundant-function-name-source) : String
-  "(module sample.vector)
-;; lint-allow: redundant-function-name
-(define (vector-push [x : i64]) : i64 x)")
-
-(define (lint-driver-smoke-no-effect-source) : String
-  "(define (main) : i64
-  (let
-    [x : i64 1]
-    (begin
-      1
-      x
-      (+ x 2)
-      (cast x : i64)
-      x)))")
-
-(define (lint-driver-smoke-clean-no-effect-source) : String
-  "(define (touch [x : i64]) : i64 x)
-(define (main) : i64
-  (let
-    [x : i64 0]
-    (begin
-      (touch x)
-      (set! x 1)
-      x)))")
-
-(define (lint-driver-smoke-suppressed-no-effect-source) : String
-  "(define (main) : i64
-  (begin
-    ;; lint-allow: no-effect
-    1
-    42))")
-
-(define (lint-driver-smoke-unreachable-source) : String
-  "(define (cleanup [_x : i64]) : unit unit)
-(define (main [arena : i64]) : i64
-  (begin
-    (begin
-      (return 1)
-      (set! arena 2))
-    (unsafe
-      (io.panic \"stop\")
-      (set! arena 3))
-    (with-arena r
-      (io.error \"stop\")
-      (set! arena 4))
-    (in-arena arena
-      (return 2)
-      (set! arena 5))
-    (with ([handle 1 cleanup])
-      (return 3)
-      (set! arena 6))
-    arena))")
-
-(define (lint-driver-smoke-clean-unreachable-source) : String
-  "(define (main [ok : bool]) : i64
-  (begin
-    (if ok (return 1) (return 2))
-    3))")
-
-(define (lint-driver-smoke-suppressed-unreachable-source) : String
-  "(define (main) : i64
-  (begin
-    (return 1)
-    ;; lint-allow: unreachable-code
-    2))")
-
-(define (lint-driver-smoke-divergence-padding-source) : String
-  "(define (main [flag : bool]) : i64
-  (begin
-    (begin
-      (io.panic \"stop\")
-      ;; lint-allow: unreachable-code
-      0)
-    (unsafe
-      (io.error \"stop\")
-      ;; lint-allow: unreachable-code
-      1)
-    (with-arena scratch
-      (io.panic \"stop\")
-      ;; lint-allow: unreachable-code
-      2)
-    (if flag
-      (begin
-        (io.panic \"stop\")
-        ;; lint-allow: unreachable-code
-        3)
-      4)))")
-
-(define (lint-driver-smoke-clean-divergence-source) : String
-  "(define (main [flag : bool]) : i64
-  (if flag
-    (io.panic \"stop\")
-    4))")
-
-(define (lint-driver-smoke-unused-variable-source) : String
-  "(defmacro (emit [quoted-only : Expr] [used-macro : Expr]) : Expr
-  `(quoted-only ,used-macro))
-(defmacro (unused-type [T : type]) : Expr
-  `(init : i64))
-(defmacro (delayed-type [T : type]) : Expr
-  ``(init : ,T))
-(define (lambda-case) : i64
-  (let
-    [f (lambda ([x : i64] [unused-lambda : i64]) : i64 x)]
-    (f 1 2)))
-(define (main [unused-param : i64] [used-param : i64]) : i64
-  (let
-    [used-local : i64 used-param]
-    [unused-local : i64 9]
-    used-local))")
 
 (define (lint-driver-smoke-clean-unused-variable-source) : String
   "(defstruct Pair
@@ -257,50 +75,6 @@
     [used-local : i64 used-param]
     used-local))")
 
-(define (lint-driver-smoke-shadow-unused-variable-source) : String
-  "(define (main [x : i64]) : i64
-  (let
-    [x : i64 2]
-    x))")
-
-(define (lint-driver-smoke-suppressed-unused-variable-source) : String
-  "(define (main
-  ;; lint-allow: unused-variable
-  [x : i64]
-  [y : i64]) : i64
-  y)")
-
-(define (lint-driver-smoke-prefix-unused-variable-source) : String
-  "(define (prefix-long [buf : i64]) : i64
-  buf)
-(define (prefix [buf : i64]) : i64
-  0)")
-
-(define (lint-driver-smoke-unused-unsafe-source) : String
-  "(define (main) : i64
-  (unsafe (+ 1 2)))")
-
-(define (lint-driver-smoke-unused-unsafe-call-source) : String
-  "(define (safe-helper) : i64
-  7)
-(define (main) : i64
-  (unsafe (cast (safe-helper) : i64)))")
-
-(define (lint-driver-smoke-required-unsafe-source) : String
-  "(define (main [p : (Ptr i64)]) : i64
-  (unsafe (ptr-read p)))")
-
-(define (lint-driver-smoke-required-unsafe-call-source) : String
-  "(unsafe (define (danger [value : i64]) : i64
-  value))
-(define (main) : i64
-  (unsafe (danger 9)))")
-
-(define (lint-driver-smoke-nested-unsafe-source) : String
-  "(define (main [p : (Ptr i64)]) : i64
-  (unsafe
-    (unsafe (ptr-read p))))")
-
 (define (lint-driver-smoke-unsafe-builtin-source [name : String]) : String
   (str_cat.str-cat "(define (main) : i64
   (unsafe (" name " 0)))"))
@@ -308,59 +82,6 @@
 (define (lint-driver-smoke-program-unsafe-source [name : String]) : String
   (str_cat.str-cat "(define (main) : (Ptr (Ptr u8))
   (unsafe (" name ")))"))
-
-(define (lint-driver-smoke-safe-program-argc-source) : String
-  "(define (main) : i64
-  (unsafe (program-argc)))")
-
-(define (lint-driver-smoke-safe-tls-current-arena-source) : String
-  "(define (main) : i64
-  (unsafe (tls-current-arena)))")
-
-(define (lint-driver-smoke-unsafe-parameter-shadow-source) : String
-  "(define (main [atomic-load : (-> i64 i64)]) : i64
-  (unsafe (atomic-load 1)))")
-
-(define (lint-driver-smoke-unsafe-local-shadow-source) : String
-  "(define (identity [value : i64]) : i64 value)
-(define (main) : i64
-  ((lambda ([atomic-add! : (-> i64 i64)]) : i64
-    (unsafe (atomic-add! 1)))
-    identity))")
-
-(define (lint-driver-smoke-unsafe-let-shadow-source) : String
-  "(define (identity [value : i64]) : i64 value)
-(define (main) : i64
-  (let
-    [atomic-store! : (-> i64 i64) identity]
-    (unsafe (atomic-store! 1))))")
-
-(define (lint-driver-smoke-unsafe-top-level-shadow-source) : String
-  "(define (volatile-load [value : i64]) : i64 value)
-(define (main) : i64
-  (unsafe (volatile-load 1)))")
-
-(define (lint-driver-smoke-unsafe-tls-shadow-source) : String
-  "(define (tls-current-arena-set! [value : i64]) : i64 value)
-(define (main) : i64
-  (unsafe (tls-current-arena-set! 1)))")
-
-(define (lint-driver-smoke-unsafe-resource-snapshot-source) : String
-  "(define (main) : i64
-  (unsafe
-    (with ([atomic-load
-      (let [clobber : i64 0] 0)
-      (atomic-load 1)])
-      0)))")
-
-(define (lint-driver-smoke-unsafe-spmd-scan-snapshot-source) : String
-  "(define (main) : i64
-  (unsafe
-    (spmd-scan sum
-      ([atomic-load : i64 (let [clobber : i64 0] 0) 1]
-       [prefix : i64 0])
-      (atomic-load 1)
-      prefix)))")
 
 (define (lint-driver-smoke-source-has-unused-unsafe-candidate?
   [path : String]
@@ -370,159 +91,15 @@
       (lint_core.lint-program-has-unused-unsafe-candidate? program)]
     [(parse_core.ResultAstProgramDiagnostic.Err _) true]))
 
-(define (lint-driver-smoke-suppressed-unused-unsafe-source) : String
-  "(define (main) : i64
-  ;; lint-allow: unused-unsafe
-  (unsafe (+ 1 2)))")
-
-(define (lint-driver-smoke-raw-arena-op-source) : String
-  "(define (exercise [handle : i64]) : unit
-  (begin
-    (arena.tl_arena_set handle)
-    (arena.tl_arena_destroy handle)
-    (arena.tl_region_reset handle)
-    (tl_arena_set handle)
-    (tl_arena_destroy handle)
-    (tl_region_reset handle)
-    (arena.set! handle)
-    (arena.destroy handle)
-    (arena.rewind handle)))")
-
-(define (lint-driver-smoke-raw-arena-text-source) : String
-  "(define emitted : String
-  \"(arena.tl_arena_set x) tl_arena_destroy arena.rewind\")")
-
-(define (lint-driver-smoke-raw-arena-suppressed-source) : String
-  "(define (exercise [handle : i64]) : unit
-  ;; lint-allow: raw-arena-op
-  (arena.tl_arena_set handle))")
-
-(define (lint-driver-smoke-unsafe-surface-dep-source) : String
-  "(module dep)
-(unsafe
-  (define (danger [value : i64]) : i64 value))
-(define (safe [value : i64]) : i64 value)")
-
-(define (lint-driver-smoke-unsafe-surface-required-source) : String
-  "(import dep)
-(define (main) : i64
-  (unsafe (dep.danger 42)))")
-
-(define (lint-driver-smoke-unsafe-surface-required-alias-source) : String
-  "(import dep as d)
-(define (main) : i64
-  (unsafe (d.danger 42)))")
-
 (define (lint-driver-smoke-unsafe-surface-safe-source) : String
   "(import dep)
 (define (main) : i64
   (unsafe (dep.safe 42)))")
 
-(define (lint-driver-smoke-unsafe-surface-shadow-source) : String
-  "(import dep)
-(defstruct Holder
-  (danger i64))
-(define (read [dep : Holder]) : i64
-  (unsafe dep.danger))
-(define (main) : i64
-  (read (Holder 42)))")
-
-(define (lint-driver-smoke-unsafe-surface-macro-source) : String
-  "(defmacro (identity [value : Expr]) : Expr value)
-(define (main) : i64
-  (unsafe (identity 42)))")
-
-(define (lint-driver-smoke-unsafe-surface-local-value-source) : String
-  "(define (main [value : i64]) : i64
-  (unsafe (+ value 1)))")
-
-(define (lint-driver-smoke-unsafe-surface-callable-value-source) : String
-  "(define (main) : i64
-  (let
-    [callable (lambda ([value : i64]) : i64 value)]
-    (unsafe (callable 42))))")
-
-(define (lint-driver-smoke-unsafe-surface-dotted-dep-source) : String
-  "(unsafe
-  (define (legacy-danger [value : i64]) : i64 value))")
-
-(define (lint-driver-smoke-unsafe-surface-dotted-source) : String
-  "(import legacy_dep)
-(define (main) : i64
-  (unsafe (legacy_dep.legacy-danger 42)))")
-
 (define (lint-driver-smoke-unsafe-surface-type-error-source) : String
   "(defmacro (identity [value : Expr]) : Expr value)
 (define (main) : i64
   (unsafe (identity missing-value)))")
-
-(define (lint-driver-smoke-unsafe-surface-parse-error-source) : String
-  "(define (main) : i64
-  (unsafe (+ 1 2))")
-
-(define (lint-driver-smoke-copy-on-update-struct-source) : String
-  "(defstruct Point
-  (x i64)
-  (y i64))
-(define (main [p : Point] [y : i64]) : i64
-  (begin
-    (set! p (Point p.x y))
-    p.y))")
-
-(define (lint-driver-smoke-dot-copy-on-update-struct-source) : String
-  "(defstruct Point
-  (x i64)
-  (y i64))
-(define (main [p : Point] [y : i64]) : i64
-  (begin
-    (set! p (Point p.x y))
-    p.y))")
-
-(define (lint-driver-smoke-suppressed-copy-on-update-struct-source) : String
-  "(defstruct Point
-  (x i64)
-  (y i64))
-(define (main [p : Point] [y : i64]) : i64
-  (begin
-    ;; lint-allow: copy-on-update-struct
-    (set! p (Point p.x y))
-    p.y))")
-
-(define (lint-driver-smoke-multiple-field-copy-on-update-source) : String
-  "(defstruct Point
-  (x i64)
-  (y i64))
-(define (main [p : Point] [x : i64] [y : i64]) : i64
-  (begin
-    (set! p (Point (+ p.x x) y))
-    p.y))")
-
-(define (lint-driver-smoke-other-value-copy-on-update-source) : String
-  "(defstruct Point
-  (x i64)
-  (y i64))
-(define (main [p : Point] [q : Point] [y : i64]) : i64
-  (begin
-    (set! p (Point q.x y))
-    p.y))")
-
-(define (lint-driver-smoke-enum-copy-on-update-source) : String
-  "(defenum State
-  (A i64 i64)
-  (B i64 i64))
-(define (main [s : State] [x : i64]) : i64
-  (begin
-    (set! s (B x 2))
-    x))")
-
-(define (lint-driver-smoke-prefer-dotted-field-compat-source) : String
-  "(defstruct Point
-  (x i64)
-  (y i64))
-(define (main [p : Point] [y : i64]) : i64
-  (begin
-    (set! p.x y)
-    (__tl-project-field p x)))")
 
 (define (lint-driver-smoke-name-case-source) : String
   "(define badGlobal : i64 1)
@@ -540,59 +117,10 @@
 (unsafe (define (BadUnsafe) : i64 0))
 (define bad-comptime : i64 1)")
 
-(define (lint-driver-smoke-name-case-binders-source) : String
-  "(defenum Choice (Some i64) (None))
-(define (cleanup [value : i64]) : unit unit)
-(define (binder-cases [n : i64]) : i64
-  (begin
-    (match (Some 1)
-      [(Some BadPattern) BadPattern]
-      [(Some Choice.None) 0]
-      [None 0])
-    (foreach ([BadIndex : i64 0 n]) unit)
-    (spmd-reduce sum ([BadReduce : i64 0 n]) 0 BadReduce)
-    (spmd-scan sum
-      ([BadScanIndex : i64 0 n] [BadPrefix : i64 0])
-      BadScanIndex
-      BadPrefix)
-    (with ([BadResource 1 cleanup]) BadResource)
-    0))")
-
-(define (lint-driver-smoke-name-case-module-source) : String
-  "(module nested
-  ;; (define badGlobal : i64 0)
-  (define badGlobal : i64 1)
-  (define (BadFunction [BadParam : i64] [unused-name : i64]) : i64
-    BadParam))")
-
-(define (lint-driver-smoke-name-case-suppressed-source) : String
-  ";; lint-allow: global-name-case
-(define BadGlobal : i64 1)
-;; lint-allow: type-name-case
-(defstruct bad-type (field i64))
-;; lint-allow: function-name-case
-(define (BadFunction) : i64 1)
-(define (good-function
-  ;; lint-allow: local-name-case
-  [BadParam : i64]) : i64 BadParam)")
-
-(define (lint-driver-smoke-name-case-out-of-scope-source) : String
-  (str_cat.str-cat
-    "(defstruct GoodType (bad_Field i64))
-(defenum GoodEnum (bad-variant))
-(extern BadExtern : i64)
-(import pkg.data as BadAlias)
-("
-    "test BadTest unit)
-(defmacro (builder [T : type]) : Module
-  `(begin
-    (module generated.Bad)
-    (define BadGenerated : i64 1)))"))
-
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
   (lint_core.lint-findings-count
-    (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+    (driver_tests.selfhost-lint-source-with-roots-and-options
       "lint_driver_smoke_test.tl"
       source
       (lint_svec.new)
@@ -600,7 +128,7 @@
 
 (define (lint-driver-smoke-source-findings-with-redundant-function-name
   [source : String]) : lint_core.LintFindings
-  (lint_driver_core_tests.selfhost-lint-source-with-roots-and-staged-options
+  (driver_tests.selfhost-lint-source-with-roots-and-staged-options
     "lint_driver_smoke_test.tl"
     source
     (lint_svec.new)
@@ -610,7 +138,7 @@
 
 (define (lint-driver-smoke-source-findings-with-prefer-dotted-field-compat
   [source : String]) : lint_core.LintFindings
-  (lint_driver_core_tests.selfhost-lint-source-with-roots-and-staged-options
+  (driver_tests.selfhost-lint-source-with-roots-and-staged-options
     "lint_driver_smoke_test.tl"
     source
     (lint_svec.new)
@@ -619,7 +147,7 @@
     true))
 
 (define (lint-driver-smoke-source-findings-with-name-case [source : String]) : lint_core.LintFindings
-  (lint_driver_core_tests.selfhost-lint-source-with-roots-and-all-options
+  (driver_tests.selfhost-lint-source-with-roots-and-all-options
     "lint_driver_smoke_test.tl"
     source
     (lint_svec.new)
@@ -631,25 +159,25 @@
 (define (lint-driver-smoke-source-rule-count-with-name-case
   [source : String]
   [rule : String]) : i64
-  (lint_driver_core_tests.selfhost-lint-findings-rule-count
+  (driver_tests.selfhost-lint-findings-rule-count
     (lint-driver-smoke-source-findings-with-name-case source)
     rule))
 
 (define (lint-driver-smoke-name-case-rule-count
   [findings : lint_core.LintFindings]) : i64
   (+
-    (lint_driver_core_tests.selfhost-lint-findings-rule-count
+    (driver_tests.selfhost-lint-findings-rule-count
       (owned_view.compiler-owned-shared-view findings)
       (lint_core.lint-rule-global-name-case-id))
     (+
-      (lint_driver_core_tests.selfhost-lint-findings-rule-count
+      (driver_tests.selfhost-lint-findings-rule-count
         (owned_view.compiler-owned-shared-view findings)
         (lint_core.lint-rule-function-name-case-id))
       (+
-        (lint_driver_core_tests.selfhost-lint-findings-rule-count
+        (driver_tests.selfhost-lint-findings-rule-count
           (owned_view.compiler-owned-shared-view findings)
           (lint_core.lint-rule-local-name-case-id))
-        (lint_driver_core_tests.selfhost-lint-findings-rule-count
+        (driver_tests.selfhost-lint-findings-rule-count
           findings
           (lint_core.lint-rule-type-name-case-id))))))
 
@@ -712,7 +240,7 @@
 (define (lint-driver-smoke-source-rule-count-with-redundant-function-name
   [source : String]
   [rule : String]) : i64
-  (lint_driver_core_tests.selfhost-lint-findings-rule-count
+  (driver_tests.selfhost-lint-findings-rule-count
     (lint-driver-smoke-source-findings-with-redundant-function-name source)
     rule))
 
@@ -778,21 +306,32 @@
 (define (lint-driver-smoke-deprecated-string-concat-self-test) : i64
   (let
     [string-concat-reported : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
-        (lint-driver-smoke-string-concat-source)
+        "(define (main) : i64
+  (string.string-length (string.append \"a\" \"b\")))"
         (lint_svec.new)
         true)]
     [loop-string-concat-reported : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
-        (lint-driver-smoke-loop-string-concat-source)
+        "(define (main) : i64
+  (let
+    [i : i64 0]
+    [out : String \"\"]
+    (begin
+      (while (< i 3)
+        (begin
+          (set! out (string.append out \"x\"))
+          (set! i (+ i 1))))
+      (string.string-length out))))"
         (lint_svec.new)
         true)]
     [nested-string-concat-reported : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_smoke_test.tl"
-        (lint-driver-smoke-nested-string-concat-source)
+        "(define (main) : i64
+  (string.string-length (string.append \"a\" (string.append \"b\" \"c\"))))"
         (lint_svec.new)
         true)]
     (cond
@@ -837,7 +376,9 @@
       [(not
           (=
             (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
-              (lint-driver-smoke-suppressed-string-concat-source))
+              "(define (main) : i64
+  ;; lint-allow: deprecated-string-concat
+  (string.string-length (string.append \"a\" \"b\")))")
             0))
         26]
       [else 42])))
@@ -845,21 +386,40 @@
 (define (lint-driver-smoke-no-effect-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_no_effect.tl"
-        (lint-driver-smoke-no-effect-source)
+        "(define (main) : i64
+  (let
+    [x : i64 1]
+    (begin
+      1
+      x
+      (+ x 2)
+      (cast x : i64)
+      x)))"
         (lint_svec.new)
         true)]
     [clean : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_no_effect_clean.tl"
-        (lint-driver-smoke-clean-no-effect-source)
+        "(define (touch [x : i64]) : i64 x)
+(define (main) : i64
+  (let
+    [x : i64 0]
+    (begin
+      (touch x)
+      (set! x 1)
+      x)))"
         (lint_svec.new)
         true)]
     [suppressed : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_no_effect_suppressed.tl"
-        (lint-driver-smoke-suppressed-no-effect-source)
+        "(define (main) : i64
+  (begin
+    ;; lint-allow: no-effect
+    1
+    42))"
         (lint_svec.new)
         true)]
     (cond
@@ -882,21 +442,46 @@
 (define (lint-driver-smoke-unreachable-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unreachable.tl"
-        (lint-driver-smoke-unreachable-source)
+        "(define (cleanup [_x : i64]) : unit unit)
+(define (main [arena : i64]) : i64
+  (begin
+    (begin
+      (return 1)
+      (set! arena 2))
+    (unsafe
+      (io.panic \"stop\")
+      (set! arena 3))
+    (with-arena r
+      (io.error \"stop\")
+      (set! arena 4))
+    (in-arena arena
+      (return 2)
+      (set! arena 5))
+    (with ([handle 1 cleanup])
+      (return 3)
+      (set! arena 6))
+    arena))"
         (lint_svec.new)
         true)]
     [clean : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unreachable_clean.tl"
-        (lint-driver-smoke-clean-unreachable-source)
+        "(define (main [ok : bool]) : i64
+  (begin
+    (if ok (return 1) (return 2))
+    3))"
         (lint_svec.new)
         true)]
     [suppressed : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unreachable_suppressed.tl"
-        (lint-driver-smoke-suppressed-unreachable-source)
+        "(define (main) : i64
+  (begin
+    (return 1)
+    ;; lint-allow: unreachable-code
+    2))"
         (lint_svec.new)
         true)]
     (cond
@@ -908,14 +493,14 @@
         40]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               (owned_view.compiler-owned-shared-view reported)
               (lint_core.lint-rule-unreachable-code-id))
             5))
         41]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               reported
               (lint_core.lint-rule-redundant-divergence-padding-id))
             2))
@@ -927,15 +512,37 @@
 (define (lint-driver-smoke-divergence-padding-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_divergence_padding.tl"
-        (lint-driver-smoke-divergence-padding-source)
+        "(define (main [flag : bool]) : i64
+  (begin
+    (begin
+      (io.panic \"stop\")
+      ;; lint-allow: unreachable-code
+      0)
+    (unsafe
+      (io.error \"stop\")
+      ;; lint-allow: unreachable-code
+      1)
+    (with-arena scratch
+      (io.panic \"stop\")
+      ;; lint-allow: unreachable-code
+      2)
+    (if flag
+      (begin
+        (io.panic \"stop\")
+        ;; lint-allow: unreachable-code
+        3)
+      4)))"
         (lint_svec.new)
         true)]
     [clean : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_divergence_padding_clean.tl"
-        (lint-driver-smoke-clean-divergence-source)
+        "(define (main [flag : bool]) : i64
+  (if flag
+    (io.panic \"stop\")
+    4))"
         (lint_svec.new)
         true)]
     (cond
@@ -947,7 +554,7 @@
         46]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               (owned_view.compiler-owned-shared-view reported)
               (lint_core.lint-rule-redundant-divergence-padding-id))
             4))
@@ -965,33 +572,57 @@
 (define (lint-driver-smoke-unused-variable-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable.tl"
-        (lint-driver-smoke-unused-variable-source)
+        "(defmacro (emit [quoted-only : Expr] [used-macro : Expr]) : Expr
+  `(quoted-only ,used-macro))
+(defmacro (unused-type [T : type]) : Expr
+  `(init : i64))
+(defmacro (delayed-type [T : type]) : Expr
+  ``(init : ,T))
+(define (lambda-case) : i64
+  (let
+    [f (lambda ([x : i64] [unused-lambda : i64]) : i64 x)]
+    (f 1 2)))
+(define (main [unused-param : i64] [used-param : i64]) : i64
+  (let
+    [used-local : i64 used-param]
+    [unused-local : i64 9]
+    used-local))"
         (lint_svec.new)
         false)]
     [clean : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_clean.tl"
         (lint-driver-smoke-clean-unused-variable-source)
         (lint_svec.new)
         false)]
     [shadow : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_shadow.tl"
-        (lint-driver-smoke-shadow-unused-variable-source)
+        "(define (main [x : i64]) : i64
+  (let
+    [x : i64 2]
+    x))"
         (lint_svec.new)
         false)]
     [suppressed : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_suppressed.tl"
-        (lint-driver-smoke-suppressed-unused-variable-source)
+        "(define (main
+  ;; lint-allow: unused-variable
+  [x : i64]
+  [y : i64]) : i64
+  y)"
         (lint_svec.new)
         false)]
     [prefix : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_variable_prefix.tl"
-        (lint-driver-smoke-prefix-unused-variable-source)
+        "(define (prefix-long [buf : i64]) : i64
+  buf)
+(define (prefix [buf : i64]) : i64
+  0)"
         (lint_svec.new)
         false)]
     [status : i64
@@ -1067,69 +698,94 @@
 (define (lint-driver-smoke-unused-unsafe-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_unsafe.tl"
-        (lint-driver-smoke-unused-unsafe-source)
+        "(define (main) : i64
+  (unsafe (+ 1 2)))"
         (lint_svec.new)
         false)]
     [required : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_required_unsafe.tl"
-        (lint-driver-smoke-required-unsafe-source)
+        "(define (main [p : (Ptr i64)]) : i64
+  (unsafe (ptr-read p)))"
         (lint_svec.new)
         false)]
     [safe-call : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unused_unsafe_call.tl"
-        (lint-driver-smoke-unused-unsafe-call-source)
+        "(define (safe-helper) : i64
+  7)
+(define (main) : i64
+  (unsafe (cast (safe-helper) : i64)))"
         (lint_svec.new)
         false)]
     [required-call : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_required_unsafe_call.tl"
-        (lint-driver-smoke-required-unsafe-call-source)
+        "(unsafe (define (danger [value : i64]) : i64
+  value))
+(define (main) : i64
+  (unsafe (danger 9)))"
         (lint_svec.new)
         false)]
     [nested : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_nested_unsafe.tl"
-        (lint-driver-smoke-nested-unsafe-source)
+        "(define (main [p : (Ptr i64)]) : i64
+  (unsafe
+    (unsafe (ptr-read p))))"
         (lint_svec.new)
         false)]
     [suppressed : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_suppressed_unused_unsafe.tl"
-        (lint-driver-smoke-suppressed-unused-unsafe-source)
+        "(define (main) : i64
+  ;; lint-allow: unused-unsafe
+  (unsafe (+ 1 2)))"
         (lint_svec.new)
         false)]
     [parameter-shadow : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_parameter_shadow.tl"
-        (lint-driver-smoke-unsafe-parameter-shadow-source)
+        "(define (main [atomic-load : (-> i64 i64)]) : i64
+  (unsafe (atomic-load 1)))"
         (lint_svec.new)
         false)]
     [local-shadow : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_local_shadow.tl"
-        (lint-driver-smoke-unsafe-local-shadow-source)
+        "(define (identity [value : i64]) : i64 value)
+(define (main) : i64
+  ((lambda ([atomic-add! : (-> i64 i64)]) : i64
+    (unsafe (atomic-add! 1)))
+    identity))"
         (lint_svec.new)
         false)]
     [let-shadow : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_let_shadow.tl"
-        (lint-driver-smoke-unsafe-let-shadow-source)
+        "(define (identity [value : i64]) : i64 value)
+(define (main) : i64
+  (let
+    [atomic-store! : (-> i64 i64) identity]
+    (unsafe (atomic-store! 1))))"
         (lint_svec.new)
         false)]
     [top-level-shadow : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_top_level_shadow.tl"
-        (lint-driver-smoke-unsafe-top-level-shadow-source)
+        "(define (volatile-load [value : i64]) : i64 value)
+(define (main) : i64
+  (unsafe (volatile-load 1)))"
         (lint_svec.new)
         false)]
     [tls-shadow : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_unsafe_tls_shadow.tl"
-        (lint-driver-smoke-unsafe-tls-shadow-source)
+        "(define (tls-current-arena-set! [value : i64]) : i64 value)
+(define (main) : i64
+  (unsafe (tls-current-arena-set! 1)))"
         (lint_svec.new)
         false)]
     (cond
@@ -1218,12 +874,14 @@
       [(not
           (lint-driver-smoke-source-has-unused-unsafe-candidate?
             "lint_driver_program_argc.tl"
-            (lint-driver-smoke-safe-program-argc-source)))
+            "(define (main) : i64
+  (unsafe (program-argc)))"))
         170]
       [(not
           (lint-driver-smoke-source-has-unused-unsafe-candidate?
             "lint_driver_tls_current.tl"
-            (lint-driver-smoke-safe-tls-current-arena-source)))
+            "(define (main) : i64
+  (unsafe (tls-current-arena)))"))
         171]
       [(not (= (lint_core.lint-findings-count parameter-shadow) 1)) 172]
       [(not (= (lint_core.lint-findings-count local-shadow) 1)) 173]
@@ -1233,26 +891,45 @@
       [(not
           (lint-driver-smoke-source-has-unused-unsafe-candidate?
             "lint_driver_unsafe_resource_snapshot.tl"
-            (lint-driver-smoke-unsafe-resource-snapshot-source)))
+            "(define (main) : i64
+  (unsafe
+    (with ([atomic-load
+      (let [clobber : i64 0] 0)
+      (atomic-load 1)])
+      0)))"))
         178]
       [(not
           (lint-driver-smoke-source-has-unused-unsafe-candidate?
             "lint_driver_unsafe_spmd_scan_snapshot.tl"
-            (lint-driver-smoke-unsafe-spmd-scan-snapshot-source)))
+            "(define (main) : i64
+  (unsafe
+    (spmd-scan sum
+      ([atomic-load : i64 (let [clobber : i64 0] 0) 1]
+       [prefix : i64 0])
+      (atomic-load 1)
+      prefix)))"))
         179]
       [else 42])))
 
 (define (lint-driver-smoke-raw-arena-op-count [path : String] [source : String]) : i64
-  (lint_driver_core_tests.selfhost-lint-findings-rule-count
-    (lint_driver_core_tests.selfhost-lint-source-with-roots
-      path
-      source
-      (lint_svec.new))
+  (driver_tests.selfhost-lint-findings-rule-count
+    (driver_tests.selfhost-lint-source-with-roots path source (lint_svec.new))
     (lint_core.lint-rule-raw-arena-op-id)))
 
 (define (lint-driver-smoke-raw-arena-op-self-test) : i64
   (let
-    [source : String (lint-driver-smoke-raw-arena-op-source)]
+    [source : String
+      "(define (exercise [handle : i64]) : unit
+  (begin
+    (arena.tl_arena_set handle)
+    (arena.tl_arena_destroy handle)
+    (arena.tl_region_reset handle)
+    (tl_arena_set handle)
+    (tl_arena_destroy handle)
+    (tl_region_reset handle)
+    (arena.set! handle)
+    (arena.destroy handle)
+    (arena.rewind handle)))"]
     [ordinary-count : i64
       (lint-driver-smoke-raw-arena-op-count
         "src/new_module.tl"
@@ -1268,11 +945,14 @@
     [text-count : i64
       (lint-driver-smoke-raw-arena-op-count
         "src/emitter_text.tl"
-        (lint-driver-smoke-raw-arena-text-source))]
+        "(define emitted : String
+  \"(arena.tl_arena_set x) tl_arena_destroy arena.rewind\")")]
     [suppressed-count : i64
       (lint-driver-smoke-raw-arena-op-count
         "src/new_suppressed_module.tl"
-        (lint-driver-smoke-raw-arena-suppressed-source))]
+        "(define (exercise [handle : i64]) : unit
+  ;; lint-allow: raw-arena-op
+  (arena.tl_arena_set handle))")]
     (cond
       [(not (= ordinary-count 9)) 180]
       [(not (= absolute-allowlisted-count 0)) 181]
@@ -1328,7 +1008,7 @@
     request
     (let
       [findings : lint_core.LintFindings
-        (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+        (driver_tests.selfhost-lint-source-with-roots-and-options
           "target/lint_unsafe_surface/direct_safe.tl"
           source
           stdlib-roots
@@ -1340,56 +1020,78 @@
     (load.compiler-load-test-mkdir "target/lint_unsafe_surface")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/dep.tl"
-      (lint-driver-smoke-unsafe-surface-dep-source))
+      "(module dep)
+(unsafe
+  (define (danger [value : i64]) : i64 value))
+(define (safe [value : i64]) : i64 value)")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/legacy_dep.tl"
-      (lint-driver-smoke-unsafe-surface-dotted-dep-source))
+      "(unsafe
+  (define (legacy-danger [value : i64]) : i64 value))")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/required_a.tl"
-      (lint-driver-smoke-unsafe-surface-required-source))
+      "(import dep)
+(define (main) : i64
+  (unsafe (dep.danger 42)))")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/required_b.tl"
-      (lint-driver-smoke-unsafe-surface-required-alias-source))
+      "(import dep as d)
+(define (main) : i64
+  (unsafe (d.danger 42)))")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/safe.tl"
       (lint-driver-smoke-unsafe-surface-safe-source))
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/shadow.tl"
-      (lint-driver-smoke-unsafe-surface-shadow-source))
+      "(import dep)
+(defstruct Holder
+  (danger i64))
+(define (read [dep : Holder]) : i64
+  (unsafe dep.danger))
+(define (main) : i64
+  (read (Holder 42)))")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/macro.tl"
-      (lint-driver-smoke-unsafe-surface-macro-source))
+      "(defmacro (identity [value : Expr]) : Expr value)
+(define (main) : i64
+  (unsafe (identity 42)))")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/local_value.tl"
-      (lint-driver-smoke-unsafe-surface-local-value-source))
+      "(define (main [value : i64]) : i64
+  (unsafe (+ value 1)))")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/callable_value.tl"
-      (lint-driver-smoke-unsafe-surface-callable-value-source))
+      "(define (main) : i64
+  (let
+    [callable (lambda ([value : i64]) : i64 value)]
+    (unsafe (callable 42))))")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/legacy.tl"
-      (lint-driver-smoke-unsafe-surface-dotted-source))
+      "(import legacy_dep)
+(define (main) : i64
+  (unsafe (legacy_dep.legacy-danger 42)))")
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/type_error.tl"
       (lint-driver-smoke-unsafe-surface-type-error-source))
     (let
       [_reset-direct : unit
-        (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
+        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
       [direct-count : i64
         (lint-driver-smoke-unsafe-surface-request-count
           (lint-driver-smoke-unsafe-surface-safe-source)
           (lint_svec.new))]
       [direct-fallbacks : i64
-        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
+        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [second-direct-count : i64
         (lint-driver-smoke-unsafe-surface-request-count
           (lint-driver-smoke-unsafe-surface-safe-source)
           (lint_svec.new))]
       [second-direct-fallbacks : i64
-        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
+        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-safe : unit
-        (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
+        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
       [safe-status : i64
-        (lint_driver_core.selfhost-lint-run-file-in-scratch
+        (lint_driver.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/safe.tl"
           (lint_svec.new)
           true
@@ -1398,13 +1100,13 @@
           false
           false)]
       [safe-parses : i64
-        (lint_driver_core_tests.selfhost-lint-unsafe-surface-cache-parse-count)]
+        (driver_tests.selfhost-lint-unsafe-surface-cache-parse-count)]
       [safe-fallbacks : i64
-        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
+        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-shadow : unit
-        (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
+        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
       [_shadow-status : i64
-        (lint_driver_core.selfhost-lint-run-file-in-scratch
+        (lint_driver.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/shadow.tl"
           (lint_svec.new)
           false
@@ -1413,11 +1115,11 @@
           false
           false)]
       [shadow-fallbacks : i64
-        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
+        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-macro : unit
-        (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
+        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
       [macro-status : i64
-        (lint_driver_core.selfhost-lint-run-file-in-scratch
+        (lint_driver.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/macro.tl"
           (lint_svec.new)
           true
@@ -1426,11 +1128,11 @@
           false
           false)]
       [macro-fallbacks : i64
-        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
+        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-local-value : unit
-        (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
+        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
       [local-value-status : i64
-        (lint_driver_core.selfhost-lint-run-file-in-scratch
+        (lint_driver.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/local_value.tl"
           (lint_svec.new)
           true
@@ -1439,11 +1141,11 @@
           false
           false)]
       [local-value-fallbacks : i64
-        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
+        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-callable-value : unit
-        (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
+        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
       [_callable-value-status : i64
-        (lint_driver_core.selfhost-lint-run-file-in-scratch
+        (lint_driver.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/callable_value.tl"
           (lint_svec.new)
           false
@@ -1452,11 +1154,11 @@
           false
           false)]
       [callable-value-fallbacks : i64
-        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
+        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-dotted : unit
-        (lint_driver_core.selfhost-lint-unsafe-surface-cache-reset!)]
+        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
       [_dotted-status : i64
-        (lint_driver_core.selfhost-lint-run-file-in-scratch
+        (lint_driver.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/legacy.tl"
           (lint_svec.new)
           false
@@ -1465,25 +1167,26 @@
           false
           false)]
       [dotted-fallbacks : i64
-        (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)]
+        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_direct-error-findings : lint_core.LintFindings
-        (lint_driver_core.selfhost-lint-typed-unused-unsafe-findings
+        (lint_driver.selfhost-lint-typed-unused-unsafe-findings
           "target/lint_unsafe_surface/direct_type_error.tl"
           (lint-driver-smoke-unsafe-surface-type-error-source)
           (lint_svec.new)
-          (lint_driver_core.selfhost-lint-language-cfgs))]
+          (lint_driver.selfhost-lint-language-cfgs))]
       [direct-error : String
-        (lint_driver_core_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
+        (driver_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
       [_direct-parse-error-findings : lint_core.LintFindings
-        (lint_driver_core.selfhost-lint-typed-unused-unsafe-findings
+        (lint_driver.selfhost-lint-typed-unused-unsafe-findings
           "target/lint_unsafe_surface/direct_parse_error.tl"
-          (lint-driver-smoke-unsafe-surface-parse-error-source)
+          "(define (main) : i64
+  (unsafe (+ 1 2))"
           (lint_svec.new)
-          (lint_driver_core.selfhost-lint-language-cfgs))]
+          (lint_driver.selfhost-lint-language-cfgs))]
       [direct-parse-error : String
-        (lint_driver_core_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
+        (driver_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
       [file-error-status : i64
-        (lint_driver_core.selfhost-lint-run-file-in-scratch
+        (lint_driver.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/type_error.tl"
           (lint_svec.new)
           false
@@ -1494,7 +1197,7 @@
       [batch-macro-status : i64
         (let
           [smoke-paths (lint-driver-smoke-unsafe-surface-macro-paths)]
-          (lint_driver_core.selfhost-lint-files
+          (lint_driver.selfhost-lint-files
             smoke-paths
             (lint_svec.new)
             true
@@ -1507,7 +1210,7 @@
       [package-macro-status : i64
         (let
           [smoke-paths (lint-driver-smoke-unsafe-surface-macro-paths)]
-          (lint_driver_core.selfhost-lint-package-files
+          (lint_driver.selfhost-lint-package-files
             smoke-paths
             (lint_svec.new)
             true
@@ -1515,13 +1218,13 @@
             false
             false
             false
-            (lint_driver_core.selfhost-lint-dead-decls-with-capacity 0)
+            (lint_driver.selfhost-lint-dead-decls-with-capacity 0)
             false
             0))]
       [batch-error-status : i64
         (let
           [smoke-paths (lint-driver-smoke-unsafe-surface-error-paths)]
-          (lint_driver_core.selfhost-lint-files
+          (lint_driver.selfhost-lint-files
             smoke-paths
             (lint_svec.new)
             false
@@ -1534,7 +1237,7 @@
       [package-error-status : i64
         (let
           [smoke-paths (lint-driver-smoke-unsafe-surface-error-paths)]
-          (lint_driver_core.selfhost-lint-package-files
+          (lint_driver.selfhost-lint-package-files
             smoke-paths
             (lint_svec.new)
             false
@@ -1542,13 +1245,13 @@
             false
             false
             false
-            (lint_driver_core.selfhost-lint-dead-decls-with-capacity 0)
+            (lint_driver.selfhost-lint-dead-decls-with-capacity 0)
             false
             0))]
       [batch-status : i64
         (let
           [smoke-paths (lint-driver-smoke-unsafe-surface-paths)]
-          (lint_driver_core.selfhost-lint-files
+          (lint_driver.selfhost-lint-files
             smoke-paths
             (lint_svec.new)
             false
@@ -1572,28 +1275,20 @@
         [(not (= dotted-fallbacks 0)) 105]
         [(not (= batch-status 0)) 106]
         [(not
-            (=
-              (lint_driver_core_tests.selfhost-lint-unsafe-surface-cache-parse-count)
-              1))
+            (= (driver_tests.selfhost-lint-unsafe-surface-cache-parse-count) 1))
           107]
-        [(not
-            (=
-              (lint_driver_core_tests.selfhost-lint-unsafe-surface-cache-hit-count)
-              1))
+        [(not (= (driver_tests.selfhost-lint-unsafe-surface-cache-hit-count) 1))
           108]
-        [(not
-            (=
-              (lint_driver_core_tests.selfhost-lint-unused-unsafe-fallback-count)
-              0))
+        [(not (= (driver_tests.selfhost-lint-unused-unsafe-fallback-count) 0))
           109]
         [(not
             (=
-              (lint_driver_core_tests.selfhost-lint-unused-unsafe-surface-required-total)
+              (driver_tests.selfhost-lint-unused-unsafe-surface-required-total)
               2))
           110]
         [(not
             (=
-              (lint_driver_core_tests.selfhost-lint-unused-unsafe-surface-classified-total)
+              (driver_tests.selfhost-lint-unused-unsafe-surface-classified-total)
               2))
           114]
         [(not (= local-value-status 1)) 111]
@@ -1624,15 +1319,21 @@
   (let
     [rule : String (lint_core.lint-rule-copy-on-update-struct-id)]
     [reported : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-options
+      (driver_tests.selfhost-lint-source-with-roots-and-options
         "lint_driver_copy_on_update_struct.tl"
-        (lint-driver-smoke-copy-on-update-struct-source)
+        "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    (set! p (Point p.x y))
+    p.y))"
         (lint_svec.new)
         false)]
     (cond
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               (owned_view.compiler-owned-shared-view reported)
               (owned_view.compiler-owned-shared-view rule))
             1))
@@ -1646,29 +1347,54 @@
         82]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-source-rule-count
-              (lint-driver-smoke-suppressed-copy-on-update-struct-source)
+            (driver_tests.selfhost-lint-source-rule-count
+              "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    ;; lint-allow: copy-on-update-struct
+    (set! p (Point p.x y))
+    p.y))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         83]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-source-rule-count
-              (lint-driver-smoke-multiple-field-copy-on-update-source)
+            (driver_tests.selfhost-lint-source-rule-count
+              "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [x : i64] [y : i64]) : i64
+  (begin
+    (set! p (Point (+ p.x x) y))
+    p.y))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         84]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-source-rule-count
-              (lint-driver-smoke-other-value-copy-on-update-source)
+            (driver_tests.selfhost-lint-source-rule-count
+              "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [q : Point] [y : i64]) : i64
+  (begin
+    (set! p (Point q.x y))
+    p.y))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         85]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-source-rule-count
-              (lint-driver-smoke-enum-copy-on-update-source)
+            (driver_tests.selfhost-lint-source-rule-count
+              "(defenum State
+  (A i64 i64)
+  (B i64 i64))
+(define (main [s : State] [x : i64]) : i64
+  (begin
+    (set! s (B x 2))
+    x))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         86]
@@ -1686,8 +1412,14 @@
         88]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-source-rule-count
-              (lint-driver-smoke-dot-copy-on-update-struct-source)
+            (driver_tests.selfhost-lint-source-rule-count
+              "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    (set! p (Point p.x y))
+    p.y))"
               rule)
             1))
         89]
@@ -1695,9 +1427,16 @@
 
 (define (lint-driver-smoke-prefer-dotted-field-compat-self-test) : i64
   (let
-    [source : String (lint-driver-smoke-prefer-dotted-field-compat-source)]
+    [source : String
+      "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    (set! p.x y)
+    (__tl-project-field p x)))"]
     [ordinary : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots-and-staged-options
+      (driver_tests.selfhost-lint-source-with-roots-and-staged-options
         "lint_driver_smoke_test.tl"
         (owned_view.compiler-owned-shared-view source)
         (lint_svec.new)
@@ -1732,27 +1471,36 @@
     (cond
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-source-rule-count
-              (lint-driver-smoke-redundant-import-alias-source)
+            (driver_tests.selfhost-lint-source-rule-count
+              (str_cat.str-cat
+                "(import pkg.data "
+                "as data)
+(define (main) : i64 (data.value))")
               (owned_view.compiler-owned-shared-view rule))
             1))
         69]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-source-finding-count
-              (lint-driver-smoke-clean-default-import-alias-source))
+            (driver_tests.selfhost-lint-source-finding-count
+              "(import pkg.data)
+(define (main) : i64 (data.value))")
             0))
         71]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-source-finding-count
-              (lint-driver-smoke-renamed-import-alias-source))
+            (driver_tests.selfhost-lint-source-finding-count
+              "(import pkg.data as d)
+(define (main) : i64 (d.value))")
             0))
         72]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-source-rule-count
-              (lint-driver-smoke-suppressed-redundant-import-alias-source)
+            (driver_tests.selfhost-lint-source-rule-count
+              (str_cat.str-cat
+                ";; lint-allow: redundant-import-alias
+(import pkg.data "
+                "as data)
+(define (main) : i64 (data.value))")
               (owned_view.compiler-owned-shared-view rule))
             0))
         73]
@@ -1770,14 +1518,20 @@
       [(not
           (=
             (lint-driver-smoke-source-rule-count-with-redundant-function-name
-              (lint-driver-smoke-redundant-function-name-source)
+              "(module sample.vector)
+(define (vector-push [x : i64]) : i64 x)
+(define (push [x : i64]) : i64 x)"
               (owned_view.compiler-owned-shared-view rule))
             1))
         75]
       [(not
           (=
             (lint-driver-smoke-source-rule-count-with-redundant-function-name
-              (lint-driver-smoke-redundant-generated-function-name-source)
+              "(module sample.vector)
+(defmacro (build [module-name : Expr]) : Module
+  `(begin
+    (module ,module-name)
+    (define (vector-push [x : i64]) : i64 x)))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         76]
@@ -1785,13 +1539,20 @@
           (=
             (lint_core.lint-findings-count
               (lint-driver-smoke-source-findings-with-redundant-function-name
-                (lint-driver-smoke-clean-function-name-source)))
+                "(module sample.vector)
+(define (push [x : i64]) : i64 x)
+(defmacro (build [module-name : Expr]) : Module
+  `(begin
+    (module ,module-name)
+    (define (push [x : i64]) : i64 x)))"))
             0))
         77]
       [(not
           (=
             (lint-driver-smoke-source-rule-count-with-redundant-function-name
-              (lint-driver-smoke-suppressed-redundant-function-name-source)
+              "(module sample.vector)
+;; lint-allow: redundant-function-name
+(define (vector-push [x : i64]) : i64 x)"
               (owned_view.compiler-owned-shared-view rule))
             0))
         78]
@@ -1815,12 +1576,31 @@
         (lint-driver-smoke-name-case-source))]
     [binder-findings : lint_core.LintFindings
       (lint-driver-smoke-source-findings-with-name-case
-        (lint-driver-smoke-name-case-binders-source))]
+        "(defenum Choice (Some i64) (None))
+(define (cleanup [value : i64]) : unit unit)
+(define (binder-cases [n : i64]) : i64
+  (begin
+    (match (Some 1)
+      [(Some BadPattern) BadPattern]
+      [(Some Choice.None) 0]
+      [None 0])
+    (foreach ([BadIndex : i64 0 n]) unit)
+    (spmd-reduce sum ([BadReduce : i64 0 n]) 0 BadReduce)
+    (spmd-scan sum
+      ([BadScanIndex : i64 0 n] [BadPrefix : i64 0])
+      BadScanIndex
+      BadPrefix)
+    (with ([BadResource 1 cleanup]) BadResource)
+    0))")]
     [module-findings : lint_core.LintFindings
       (lint-driver-smoke-source-findings-with-name-case
-        (lint-driver-smoke-name-case-module-source))]
+        "(module nested
+  ;; (define badGlobal : i64 0)
+  (define badGlobal : i64 1)
+  (define (BadFunction [BadParam : i64] [unused-name : i64]) : i64
+    BadParam))")]
     [default-findings : lint_core.LintFindings
-      (lint_driver_core_tests.selfhost-lint-source-with-roots
+      (driver_tests.selfhost-lint-source-with-roots
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-name-case-source)
         (lint_svec.new))]
@@ -1883,35 +1663,35 @@
         85]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               (owned_view.compiler-owned-shared-view findings)
               (lint_core.lint-rule-global-name-case-id))
             1))
         86]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               (owned_view.compiler-owned-shared-view findings)
               (lint_core.lint-rule-function-name-case-id))
             4))
         87]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               (owned_view.compiler-owned-shared-view findings)
               (lint_core.lint-rule-type-name-case-id))
             2))
         88]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               (owned_view.compiler-owned-shared-view findings)
               (lint_core.lint-rule-local-name-case-id))
             5))
         89]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               (owned_view.compiler-owned-shared-view binder-findings)
               (lint_core.lint-rule-local-name-case-id))
             6))
@@ -1932,14 +1712,32 @@
           (=
             (lint-driver-smoke-name-case-rule-count
               (lint-driver-smoke-source-findings-with-name-case
-                (lint-driver-smoke-name-case-suppressed-source)))
+                ";; lint-allow: global-name-case
+(define BadGlobal : i64 1)
+;; lint-allow: type-name-case
+(defstruct bad-type (field i64))
+;; lint-allow: function-name-case
+(define (BadFunction) : i64 1)
+(define (good-function
+  ;; lint-allow: local-name-case
+  [BadParam : i64]) : i64 BadParam)"))
             0))
         92]
       [(not
           (=
             (lint-driver-smoke-name-case-rule-count
               (lint-driver-smoke-source-findings-with-name-case
-                (lint-driver-smoke-name-case-out-of-scope-source)))
+                (str_cat.str-cat
+                  "(defstruct GoodType (bad_Field i64))
+(defenum GoodEnum (bad-variant))
+(extern BadExtern : i64)
+(import pkg.data as BadAlias)
+("
+                  "test BadTest unit)
+(defmacro (builder [T : type]) : Module
+  `(begin
+    (module generated.Bad)
+    (define BadGenerated : i64 1)))")))
             0))
         93]
       [(not (= (lint-driver-smoke-name-case-rule-count default-findings) 0)) 94]
@@ -1974,7 +1772,7 @@
         96]
       [(not
           (=
-            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+            (driver_tests.selfhost-lint-findings-rule-count
               (owned_view.compiler-owned-shared-view module-findings)
               (lint_core.lint-rule-unused-variable-id))
             0))
@@ -1992,15 +1790,14 @@
   (begin
     ;; This smoke's manifest intentionally covers the stable machine-readable
     ;; path while verify-public-tools.sh covers the default rich CLI renderer.
-    (lint_driver_core.selfhost-lint-set-flat-output! true)
+    (lint_driver.selfhost-lint-set-flat-output! true)
     ;; The imported driver core defines output helpers; keep the output
     ;; runtime linked even when this smoke only exercises the pure source path.
     (io.print-format "{}" "")
     (let
-      [core-result : i64
-        (lint_driver_core_tests.compiler-lint-driver-self-test)]
+      [core-result : i64 (driver_tests.compiler-lint-driver-self-test)]
       [unused-import-result : i64
-        (lint_driver_core_tests.selfhost-lint-unused-imports-self-test)]
+        (driver_tests.selfhost-lint-unused-imports-self-test)]
       [bare-import-result : i64
         (lint-driver-smoke-bare-self-named-import-macro-unused-test)]
       [redundant-import-result : i64
@@ -2008,13 +1805,13 @@
       [redundant-name-result : i64
         (lint-driver-smoke-redundant-function-name-self-test)]
       [dead-code-result : i64
-        (lint_driver_core_tests.selfhost-lint-package-dead-code-self-test)]
+        (driver_tests.selfhost-lint-package-dead-code-self-test)]
       [unused-assignment-result : i64
-        (lint_driver_core_tests.selfhost-lint-unused-assignment-self-test)]
+        (driver_tests.selfhost-lint-unused-assignment-self-test)]
       [single-cell-result : i64
-        (lint_driver_core_tests.selfhost-lint-single-element-array-cell-self-test)]
+        (driver_tests.selfhost-lint-single-element-array-cell-self-test)]
       [dynamic-array-literal-result : i64
-        (lint_driver_core_tests.selfhost-lint-dynamic-array-literal-self-test)]
+        (driver_tests.selfhost-lint-dynamic-array-literal-self-test)]
       [concat-result : i64
         (lint-driver-smoke-deprecated-string-concat-self-test)]
       [no-effect-result : i64 (lint-driver-smoke-no-effect-self-test)]

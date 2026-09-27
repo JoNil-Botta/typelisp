@@ -1568,12 +1568,6 @@
     cabi.CompilerRegTargetAbi.Linux
     0
     true))
-(define compiler-reg-windows-vector-callee-registers : CompilerRegIdSeq
-  (compiler-reg-xmm-callee-registers-for-abi-from
-    cabi.CompilerRegTargetAbi.Windows
-    0
-    true))
-
 (define (compiler-reg-xmm-registers-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
@@ -12556,9 +12550,6 @@
 (define (compiler-reg-block-weights-set-frequency! [on : bool]) : unit
   (set! compiler-reg-block-weights-frequency? on))
 
-(define (compiler-reg-block-weights-frequency-current?) : bool
-  compiler-reg-block-weights-frequency?)
-
 ;; Iterative DFS from block 0 over the successor CSR: `post` receives the
 ;; postorder, `edge-back` marks (1) every edge that closed on a block still on
 ;; the stack. Returns the number of blocks visited.
@@ -13803,15 +13794,6 @@
   ;; one is invariant across the whole body (the per-function version of
   ;; `compiler-reg-global-frozen?`).
   (cells-clean bool))
-
-(define (compiler-reg-invariant-facts-empty) : CompilerRegInvariantFacts
-  (CompilerRegInvariantFacts
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array ast.AstType 0)
-    (__tl_make-array i64 0)
-    false))
 
 ;; May a recomputed `gep BASE, K` re-read BASE here? A static address always
 ;; may; a var only when its value cannot have changed since the original
@@ -38314,19 +38296,6 @@
           scratch-base
           out-vars)
         out))))
-
-;; A segmented interval or expanded coalesced class can leave a point gap even
-;; though its physical home still carries a value needed after the lowering
-;; group. Reject that one register only for scratch demands inside the exact
-;; carried gap. Unrelated values that merely reuse a home remain eligible,
-;; preserving normal hole-aware allocation and avoiding function-wide
-;; coarse-interval spill inflation.
-(defstruct CompilerRegScratchCoalescedHulls
-  ;; Per-register slices sorted by hull start. Each end is the prefix maximum
-  ;; within its slice, so a binary search answers the exact carried-gap query.
-  (items (__tl_dyn-array CompilerRegInterval))
-  (offsets (__tl_dyn-array i64))
-  (register-count i64))
 
 (interval_sort.compiler-reg-interval-heapsort
   CompilerRegInterval

@@ -14964,29 +14964,6 @@
           (set! b (+ b 1))))
       out)))
 
-;; The GP callee-saved registers, as a mask. These are the only bits fix B
-;; trims: a caller-saved home costs no prologue traffic, and the XMM callee
-;; save path reads the assignment table directly rather than this mask.
-(define (compiler-backend-callee-saved-reg-mask) : i64
-  (bit-or
-    (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r12)
-    (bit-or
-      (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r13)
-      (bit-or
-        (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r14)
-        (bit-or
-          (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r15)
-          (bit-or
-            (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-rbx)
-            (bit-or
-              (compiler-backend-plan-reg-id-bit
-                compiler_abi.compiler-reg-id-rbp)
-              (bit-or
-                (compiler-backend-plan-reg-id-bit
-                  compiler_abi.compiler-reg-id-rsi)
-                (compiler-backend-plan-reg-id-bit
-                  compiler_abi.compiler-reg-id-rdi)))))))))
-
 (define (compiler-backend-plan-uses-reg?
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -23106,17 +23083,6 @@
   (if (compiler-backend-imm32? n)
     (compiler-backend-emit-load-i64-immediate n reg)
     (str_cat.str-cat "    movabsq $" (string.int->string n) ", " reg "\n")))
-
-(define (compiler-backend-signed-min-value
-  [type-segment-bases : i64]
-  [ty : compiler_ast_types.AstType]) : i64
-  (let
-    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
-    (cond
-      [(= size 1) (- 0 128)]
-      [(= size 2) (- 0 32768)]
-      [(= size 4) (- 0 2147483648)]
-      [else (- (- 0 9223372036854775807) 1)])))
 
 (define (compiler-backend-div-zero-guard-asm
   [type-segment-bases : i64]
@@ -69239,23 +69205,6 @@
     0
     0
     backend-state))
-
-;; True when any block holds a call or syscall: such a function keeps the FPO
-;; alignment adjustment.
-(define (compiler-backend-blocks-have-call?
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (if (compiler_regalloc.compiler-reg-loop-split-seq-has-call-or-syscall?
-            instrs)
-            true
-            (compiler-backend-blocks-have-call? (deref rest)))])]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-blocks-have-call?
-        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
 ;; The same census restricted to calls that RETURN here: a function whose only
 ;; call-shaped instructions are tail transfers needs no slot region for them.

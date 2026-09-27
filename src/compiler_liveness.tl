@@ -2368,11 +2368,6 @@
         (compiler-live-shared-view blocks))]
     (CompilerFunctionLiveness.Liveness ids blocks edge-index)))
 
-(define (compiler-live-function-edge-index
-  [liveness : CompilerFunctionLiveness]) : CompilerLiveEdgeIndex
-  (match liveness
-    [(CompilerFunctionLiveness.Liveness _ _ edge-index) edge-index]))
-
 (define (compiler-live-analyze-function [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)

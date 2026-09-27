@@ -11264,7 +11264,7 @@
                 [clobber-kind-points
                   (reg.compiler-reg-clobber-kind-points
                     (ast.ast-node-pool-reader-type-segment-bases)
-                    (clone func)
+                    func
                     0)]
                 (reg.compiler-reg-same-value-eligible-vars
                   interval-index
@@ -11285,7 +11285,7 @@
           [clobber-kind-points
             (reg.compiler-reg-clobber-kind-points
               (ast.ast-node-pool-reader-type-segment-bases)
-              (clone func)
+              func
               0)]
           (reg.compiler-reg-same-value-eligible-vars
             interval-index
@@ -11431,25 +11431,25 @@
       (=
         (let
           [clobber-kind-points
-            (reg.compiler-reg-clobber-kind-points bases (clone pure-fn) 0)]
+            (reg.compiler-reg-clobber-kind-points bases pure-fn 0)]
           (live.compiler-live-set-count clobber-kind-points))
         2)
       (=
         (let
           [clobber-kind-points
-            (reg.compiler-reg-clobber-kind-points bases (clone pure-fn) 6)]
+            (reg.compiler-reg-clobber-kind-points bases pure-fn 6)]
           (live.compiler-live-set-count clobber-kind-points))
         0)
       (=
         (let
           [clobber-kind-points
-            (reg.compiler-reg-clobber-kind-points bases (clone real-fn) 0)]
+            (reg.compiler-reg-clobber-kind-points bases real-fn 0)]
           (live.compiler-live-set-count clobber-kind-points))
         2)
       (=
         (let
           [clobber-kind-points
-            (reg.compiler-reg-clobber-kind-points bases (clone real-fn) 6)]
+            (reg.compiler-reg-clobber-kind-points bases real-fn 6)]
           (live.compiler-live-set-count clobber-kind-points))
         1))))
 

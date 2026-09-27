@@ -9419,32 +9419,35 @@
 
 ;; Resolve `value` back through one `I64->U64` reinterpret cast, if recorded.
 (define (opt-bounds-cast-canon
-  [env : OptBoundsCastEnv]
+  [env : (& env OptBoundsCastEnv)]
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match (compiler-opt-global-shared-view value)
-    [(ir.CompilerIrValue.Var var)
-      (match env
-        [(OptBoundsCastEnv.Empty) value]
-        [(OptBoundsCastEnv.Dense state)
-          (if (or
-            (< var 0)
-            (>= var (opt_dense_i64_vec.len (& (deref state).indices))))
-            value
-            (let
-              [slot : i64
-                (array-ref
-                  (opt_dense_i64_vec.slots (& (deref state).indices))
-                  var)]
-              (if (< slot 0)
-                value
-                (let
-                  [binding : OptBoundsCastBinding
-                    (compiler-opt-borrowed-array-element-shared-view
-                      (opt_bounds_cast_binding_vec.slots
-                        (& (deref state).bindings))
-                      slot)]
-                  binding.src))))])]
-    [_ value]))
+  (let
+    [env : OptBoundsCastEnv
+      (owned_view.compiler-owned-reference-shared-view env)]
+    (match (compiler-opt-global-shared-view value)
+      [(ir.CompilerIrValue.Var var)
+        (match env
+          [(OptBoundsCastEnv.Empty) value]
+          [(OptBoundsCastEnv.Dense state)
+            (if (or
+              (< var 0)
+              (>= var (opt_dense_i64_vec.len (& (deref state).indices))))
+              value
+              (let
+                [slot : i64
+                  (array-ref
+                    (opt_dense_i64_vec.slots (& (deref state).indices))
+                    var)]
+                (if (< slot 0)
+                  value
+                  (let
+                    [binding : OptBoundsCastBinding
+                      (compiler-opt-borrowed-array-element-shared-view
+                        (opt_bounds_cast_binding_vec.slots
+                          (& (deref state).bindings))
+                        slot)]
+                    binding.src))))])]
+      [_ value])))
 
 ;; Record an `I64->U64` reinterpret cast (the index/length unsigned-compare form)
 ;; so its dst canonicalizes to the source; other casts only invalidate the dst.
@@ -9541,8 +9544,7 @@
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(ir.CompilerIrInstr.BoundsCheck index length _)
       (let
-        [index-key : ir.CompilerIrValue
-          (opt-bounds-cast-canon (compiler-opt-global-shared-view casts) index)]
+        [index-key : ir.CompilerIrValue (opt-bounds-cast-canon casts index)]
         (if (opt-bounds-contains facts index-key length)
           (OptBoundsSeqStep.Step (OptBoundsSeqState.Plain facts casts) false)
           (OptBoundsSeqStep.Step
@@ -9600,8 +9602,7 @@
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(ir.CompilerIrInstr.BoundsCheck index length _)
       (let
-        [index-key : ir.CompilerIrValue
-          (opt-bounds-cast-canon (compiler-opt-global-shared-view casts) index)]
+        [index-key : ir.CompilerIrValue (opt-bounds-cast-canon casts index)]
         [length-key : ir.CompilerIrValue
           (opt-bounds-length-value lengths length)]
         (if (opt-bounds-contains facts index-key length-key)
@@ -10981,8 +10982,10 @@
 
 (define (opt-cfg-index-refresh-blocks!
   [index : (& index OptCfgIndex)]
-  [blocks : ir.CompilerIrBlockList]) : unit
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : unit
   (let
+    [blocks : ir.CompilerIrBlockList
+      (owned_view.compiler-owned-reference-shared-view blocks)]
     [count : i64 (opt-cfg-index-block-count index)]
     (if (= count (ir.compiler-ir-block-list-count blocks))
       (begin
@@ -11596,9 +11599,7 @@
                   (compiler-opt-global-shared-view blocks)
                   function-abi)]
               [next-context : OptCfgContext (opt-cfg-context-build blocks)]
-              (match (opt-verify-function-with-context
-                (compiler-opt-global-shared-view next)
-                next-context)
+              (match (opt-verify-function-with-context next next-context)
                 [(ResultCompilerOptimizeVerify.Ok)
                   (OptFunctionRewriteResult.Result next next-context true)]
                 [(ResultCompilerOptimizeVerify.Err _)
@@ -12876,13 +12877,16 @@
       [else (ResultCompilerOptimizeVerify.Ok)])))
 
 (define (opt-verify-function-with-context
-  [func : ir.CompilerIrFunction]
+  [func : (& func ir.CompilerIrFunction)]
   [context : (& context OptCfgContext)]) : ResultCompilerOptimizeVerify
-  (match (opt-verify-structure context)
-    [(ResultCompilerOptimizeVerify.Ok)
-      (opt-verify-function-body-with-context func context)]
-    [(ResultCompilerOptimizeVerify.Err message)
-      (ResultCompilerOptimizeVerify.Err message)]))
+  (let
+    [func : ir.CompilerIrFunction
+      (owned_view.compiler-owned-reference-shared-view func)]
+    (match (opt-verify-structure context)
+      [(ResultCompilerOptimizeVerify.Ok)
+        (opt-verify-function-body-with-context func context)]
+      [(ResultCompilerOptimizeVerify.Err message)
+        (ResultCompilerOptimizeVerify.Err message)])))
 
 ;; Pipeline-level verification consolidation: the opt2 pipeline verifies the
 ;; SSA function once per iteration before the loop-pass cluster and threads
@@ -14605,9 +14609,7 @@
     [index : OptCfgIndex context.index]
     [block-capacity : i64 (opt-cfg-index-block-count index)]
     (begin
-      (opt-cfg-index-refresh-blocks!
-        index
-        (compiler-opt-global-shared-view blocks))
+      (opt-cfg-index-refresh-blocks! index blocks)
       (match (opt-cfg-index-id index entry-label)
         [(option_i64.Some entry-id)
           (opt-ssa-rename-missing-blocks
@@ -18071,9 +18073,7 @@
                     ;; post-pass verify, and hand it back for the next pass.
                     [next-context : OptCfgContext
                       (opt-cfg-context-build next-blocks)]
-                    (match (opt-verify-function-with-context
-                      (compiler-opt-global-shared-view next)
-                      next-context)
+                    (match (opt-verify-function-with-context next next-context)
                       [(ResultCompilerOptimizeVerify.Ok)
                         (OptFunctionCtxResult.Result next next-context)]
                       [(ResultCompilerOptimizeVerify.Err _)
@@ -20270,9 +20270,7 @@
                 (compiler-opt-global-shared-view next-blocks)
                 function-abi)]
             [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-            (match (opt-verify-function-with-context
-              (compiler-opt-global-shared-view next)
-              next-context)
+            (match (opt-verify-function-with-context next next-context)
               [(ResultCompilerOptimizeVerify.Ok)
                 (OptFunctionCtxMaybe.Some next next-context)]
               [(ResultCompilerOptimizeVerify.Err _) (OptFunctionCtxMaybe.No)]))])]))
@@ -24468,7 +24466,7 @@
     [(ir.CompilerIrInstr.Load dst src load-ty)
       (and
         (opt-gvn-stable-var? sources dst)
-        (opt-gvn-value-stable? sources (compiler-opt-global-shared-view src))
+        (opt-gvn-value-stable? sources src)
         ;; A `Global` SOURCE here is a load THROUGH the pointer that cell holds
         ;; -- the head of the very chain the Gep arm above prices -- so it keeps
         ;; the loop-wide answer for the same reason.
@@ -36728,9 +36726,7 @@
     (compiler-opt-global-shared-view blocks))
     [(OptFlagSeeded.No)
       (begin
-        (opt-cfg-index-refresh-blocks!
-          context.index
-          (compiler-opt-global-shared-view blocks))
+        (opt-cfg-index-refresh-blocks! context.index blocks)
         (OptFlagExitPassResult.Result blocks frame false))]
     [(OptFlagSeeded.Some seeded)
       (let
@@ -36766,9 +36762,7 @@
               true)]
           [(OptFlagExitMaybePlan.No)
             (begin
-              (opt-cfg-index-refresh-blocks!
-                context.index
-                (compiler-opt-global-shared-view blocks))
+              (opt-cfg-index-refresh-blocks! context.index blocks)
               (OptFlagExitPassResult.Result blocks frame false))]))]))
 
 (define (opt-flag-exit-convert-loops
@@ -49917,20 +49911,23 @@
 ;; literals are excluded to match the existing copy-propagation conservatism.
 (define (opt-gvn-value-stable?
   [sources : (& sources OptValueSources)]
-  [value : ir.CompilerIrValue]) : bool
-  (match value
-    [(ir.CompilerIrValue.Var id) (opt-gvn-stable-var? sources id)]
-    [(ir.CompilerIrValue.I64 _) true]
-    [(ir.CompilerIrValue.Bool _) true]
-    [(ir.CompilerIrValue.Char _) true]
-    [(ir.CompilerIrValue.Unit) true]
-    [(ir.CompilerIrValue.F64 _) false]
-    [(ir.CompilerIrValue.String _) false]
-    [(ir.CompilerIrValue.Bytes _) false]
-    [(ir.CompilerIrValue.Global _) false]
-    [(ir.CompilerIrValue.GlobalAddr _) false]
-    [(ir.CompilerIrValue.Function _) false]
-    [(ir.CompilerIrValue.RuntimeGlobal _) false]))
+  [value : (& value ir.CompilerIrValue)]) : bool
+  (let
+    [value : ir.CompilerIrValue
+      (owned_view.compiler-owned-reference-shared-view value)]
+    (match value
+      [(ir.CompilerIrValue.Var id) (opt-gvn-stable-var? sources id)]
+      [(ir.CompilerIrValue.I64 _) true]
+      [(ir.CompilerIrValue.Bool _) true]
+      [(ir.CompilerIrValue.Char _) true]
+      [(ir.CompilerIrValue.Unit) true]
+      [(ir.CompilerIrValue.F64 _) false]
+      [(ir.CompilerIrValue.String _) false]
+      [(ir.CompilerIrValue.Bytes _) false]
+      [(ir.CompilerIrValue.Global _) false]
+      [(ir.CompilerIrValue.GlobalAddr _) false]
+      [(ir.CompilerIrValue.Function _) false]
+      [(ir.CompilerIrValue.RuntimeGlobal _) false])))
 
 (define (opt-gvn-sources-params-from
   [params : ir.CompilerIrParamSeq]
@@ -50443,9 +50440,7 @@
     [out : (__tl_dyn-array OptGvnBlockResult)
       (__tl_make-array OptGvnBlockResult count)]
     (begin
-      (opt-cfg-index-refresh-blocks!
-        index
-        (compiler-opt-global-shared-view blocks))
+      (opt-cfg-index-refresh-blocks! index blocks)
       (let
         [changed : i64
           (match (opt-cfg-index-id index context.entry-label)
@@ -51398,12 +51393,8 @@
                 (if (and
                   (opt-dom-cmp-foldable-op? op)
                   (opt-integer-type? ty)
-                  (opt-gvn-value-stable?
-                    env.sources
-                    (compiler-opt-global-shared-view clhs))
-                  (opt-gvn-value-stable?
-                    env.sources
-                    (compiler-opt-global-shared-view crhs)))
+                  (opt-gvn-value-stable? env.sources clhs)
+                  (opt-gvn-value-stable? env.sources crhs))
                   (opt-dom-cmp-facts-cons
                     (OptDomCmpFact.Fact
                       (opt-dom-cmp-canon-op op)
@@ -52502,10 +52493,7 @@
                   len)]
               (if (or
                 (< key 0)
-                (not
-                  (opt-gvn-value-stable?
-                    sources
-                    (compiler-opt-global-shared-view clen)))
+                (not (opt-gvn-value-stable? sources clen))
                 (>= (+ key 1) (array-length cursor)))
                 unit
                 (if fill?
@@ -53184,9 +53172,7 @@
                 from-id
                 home-label)]
             (and
-              (opt-gvn-value-stable?
-                env.sources
-                (compiler-opt-global-shared-view value))
+              (opt-gvn-value-stable? env.sources value)
               (opt-bounds-dom-induct-in-range?
                 env
                 cmp-facts
@@ -55207,12 +55193,8 @@
                     (let
                       [stable? : bool
                         (and
-                          (opt-gvn-value-stable?
-                            env.sources
-                            (compiler-opt-global-shared-view cidx))
-                          (opt-gvn-value-stable?
-                            env.sources
-                            (compiler-opt-global-shared-view clen)))]
+                          (opt-gvn-value-stable? env.sources cidx)
+                          (opt-gvn-value-stable? env.sources clen))]
                       (begin
                         (ir.compiler-ir-instr-builder-push!
                           (&mut builder)
@@ -55556,12 +55538,8 @@
                                 (opt-bounds-dom-resolve env.copies raw-rhs)]
                               (if (not
                                 (and
-                                  (opt-gvn-value-stable?
-                                    env.sources
-                                    (compiler-opt-global-shared-view clhs))
-                                  (opt-gvn-value-stable?
-                                    env.sources
-                                    (compiler-opt-global-shared-view crhs))))
+                                  (opt-gvn-value-stable? env.sources clhs)
+                                  (opt-gvn-value-stable? env.sources crhs)))
                                 (set! ok false)
                                 (match (opt-bounds-dom-edge-cmp-verdict
                                   env
@@ -55771,15 +55749,12 @@
         (compiler-opt-global-shared-view resolved))]
     ;; A var with more than one definition names more than one runtime value,
     ;; so no fact may follow it; that is the pass-wide stability rule.
-    (if (not
-      (opt-gvn-value-stable? sources (compiler-opt-global-shared-view resolved)))
+    (if (not (opt-gvn-value-stable? sources resolved))
       unit
       (begin
         (opt-bounds-dom-var-facts-set-value! var-facts len bit)
         (opt-bounds-dom-var-facts-set-value! var-facts resolved bit)
-        (if (opt-gvn-value-stable?
-          sources
-          (compiler-opt-global-shared-view stripped))
+        (if (opt-gvn-value-stable? sources stripped)
           (opt-bounds-dom-var-facts-set-value! var-facts stripped bit)
           unit)))))
 
@@ -55837,7 +55812,9 @@
                     var-facts
                     src-var
                     (opt-bounds-dom-var-fact-length-slot))
-                  (opt-gvn-value-stable? sources (ir.CompilerIrValue.Var dst)))
+                  (let
+                    [value (ir.CompilerIrValue.Var dst)]
+                    (opt-gvn-value-stable? sources value)))
                   (opt-bounds-dom-var-facts-set!
                     var-facts
                     dst
@@ -56109,12 +56086,8 @@
                 [clen : ir.CompilerIrValue
                   (opt-bounds-dom-resolve env.copies len)]
                 (if (and
-                  (opt-gvn-value-stable?
-                    env.sources
-                    (compiler-opt-global-shared-view cidx))
-                  (opt-gvn-value-stable?
-                    env.sources
-                    (compiler-opt-global-shared-view clen)))
+                  (opt-gvn-value-stable? env.sources cidx)
+                  (opt-gvn-value-stable? env.sources clen))
                   (set!
                     cur
                     (opt-dom-cmp-facts-cons
@@ -56296,16 +56269,18 @@
             (match def-instr
               [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                 (if (and
-                  (opt-gvn-value-stable?
-                    env.sources
-                    (opt-bounds-dom-resolve
-                      env.copies
-                      (compiler-opt-global-shared-view lhs)))
-                  (opt-gvn-value-stable?
-                    env.sources
-                    (opt-bounds-dom-resolve
-                      env.copies
-                      (compiler-opt-global-shared-view rhs))))
+                  (let
+                    [value
+                      (opt-bounds-dom-resolve
+                        env.copies
+                        (compiler-opt-global-shared-view lhs))]
+                    (opt-gvn-value-stable? env.sources value))
+                  (let
+                    [value
+                      (opt-bounds-dom-resolve
+                        env.copies
+                        (compiler-opt-global-shared-view rhs))]
+                    (opt-gvn-value-stable? env.sources value)))
                   (opt-bounds-dom-compare-verdict
                     env
                     block-id
@@ -56868,9 +56843,7 @@
                       ;; non-negativity is a property of the CELL rather than
                       ;; of a program point.
                       (or
-                        (opt-gvn-value-stable?
-                          env.sources
-                          (compiler-opt-global-shared-view canon-bound))
+                        (opt-gvn-value-stable? env.sources canon-bound)
                         (opt-nonneg-global? nonneg canon-bound))
                       (opt-bounds-dom-range-arms-agree?
                         env.index
@@ -57709,10 +57682,7 @@
   (let
     ;; The dense block values are read for each predecessor's terminator, so
     ;; they must be this list's, not whatever the context last indexed.
-    [_refresh : unit
-      (opt-cfg-index-refresh-blocks!
-        index
-        (compiler-opt-global-shared-view blocks))]
+    [_refresh : unit (opt-cfg-index-refresh-blocks! index blocks)]
     [facts : OptFlagFacts (opt-flag-facts-build index doms sources)]
     (if (not (opt-flag-facts-any? facts))
       blocks
@@ -57733,10 +57703,7 @@
   [header : i64]
   [blocks : ir.CompilerIrBlockList]) : OptFlagSeeded
   (let
-    [_refresh : unit
-      (opt-cfg-index-refresh-blocks!
-        index
-        (compiler-opt-global-shared-view blocks))]
+    [_refresh : unit (opt-cfg-index-refresh-blocks! index blocks)]
     [facts : OptFlagFacts (opt-flag-facts-build index doms sources)]
     [changed : (__tl_dyn-array bool) (__tl_make-array bool 1)]
     (if (not (opt-flag-facts-any? facts))
@@ -57878,9 +57845,7 @@
     ;; where the topology context is, not where the table was built.
     [len-eq-blocks : OptLenEqUse (opt-len-eq-use-with-loops len-eq index doms)]
     (begin
-      (opt-cfg-index-refresh-blocks!
-        index
-        (compiler-opt-global-shared-view blocks))
+      (opt-cfg-index-refresh-blocks! index blocks)
       ;; Decide every derived value at its own definition site first; the walk
       ;; below reads the answers wherever it needs them.
       (opt-bounds-dom-nonneg-prepass! env children (&mut var-facts))
@@ -57950,11 +57915,7 @@
             (compiler-opt-global-shared-view params))]
         (if (or
           (not use.on?)
-          (not
-            (opt-verify-ok?
-              (opt-verify-function-with-context
-                (compiler-opt-global-shared-view func)
-                context))))
+          (not (opt-verify-ok? (opt-verify-function-with-context func context))))
           func
           (match (opt-bounds-dom-blocks-with-context-result
             type-segment-bases
@@ -58828,9 +58789,7 @@
       [out : (__tl_dyn-array OptDivRemBlockResult)
         (__tl_make-array OptDivRemBlockResult count)]
       (begin
-        (opt-cfg-index-refresh-blocks!
-          index
-          (compiler-opt-global-shared-view blocks))
+        (opt-cfg-index-refresh-blocks! index blocks)
         (opt-divrem-process-rpo!
           type-segment-bases
           context
@@ -70160,9 +70119,7 @@
             context
             true
             func)
-          (match (opt-verify-function-with-context
-            (compiler-opt-global-shared-view func)
-            context)
+          (match (opt-verify-function-with-context func context)
             [(ResultCompilerOptimizeVerify.Ok)
               (opt-unroll-function-verified-with-context-result
                 type-segment-bases
@@ -70236,9 +70193,7 @@
                   ;; it to the next round.
                   [next-context : OptCfgContext
                     (opt-cfg-context-build next-blocks)]
-                  (match (opt-verify-function-with-context
-                    (compiler-opt-global-shared-view next)
-                    next-context)
+                  (match (opt-verify-function-with-context next next-context)
                     [(ResultCompilerOptimizeVerify.Ok)
                       (opt-unroll-function-budget-result
                         type-segment-bases
@@ -87427,9 +87382,7 @@
                     function-abi)]
                 [next-context : OptCfgContext
                   (opt-cfg-context-build next-blocks)]
-                (match (opt-verify-function-with-context
-                  (compiler-opt-global-shared-view next)
-                  next-context)
+                (match (opt-verify-function-with-context next next-context)
                   [(ResultCompilerOptimizeVerify.Ok)
                     (opt-bce-hoist-function-budget-result
                       next-context
@@ -87756,9 +87709,7 @@
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
       (let
         [context : OptCfgContext (opt-cfg-context-build blocks)]
-        (match (opt-verify-function-with-context
-          (compiler-opt-global-shared-view func)
-          context)
+        (match (opt-verify-function-with-context func context)
           [(ResultCompilerOptimizeVerify.Ok)
             (match (opt-bce-version-function-budget-result
               (- 0 1)
@@ -94458,9 +94409,7 @@
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; The check itself is still a full verify: this pass is NOT covered by the
   ;; `loop-cluster-verified?` invariant and skipping it crashes the self-compile.
-  (match (opt-verify-function-with-context
-    (compiler-opt-global-shared-view func)
-    context)
+  (match (opt-verify-function-with-context func context)
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]
     [(ResultCompilerOptimizeVerify.Ok)
@@ -94508,9 +94457,7 @@
               [(OptSuccessorSinkBlocksResult.Result _ _ _ unchanged)
                 (and unchanged (= (array-ref frame-cell 0) frame))])
               (OptFunctionCtxResult.Result next next-context)
-              (match (opt-verify-function-with-context
-                (compiler-opt-global-shared-view next)
-                next-context)
+              (match (opt-verify-function-with-context next next-context)
                 [(ResultCompilerOptimizeVerify.Ok)
                   (OptFunctionCtxResult.Result next next-context)]
                 [(ResultCompilerOptimizeVerify.Err _)
@@ -96607,9 +96554,7 @@
   [remat-left : i64]
   [changed : bool]) : OptBlockListPassResult
   (begin
-    (opt-cfg-index-refresh-blocks!
-      (__tl-project-field context index)
-      (compiler-opt-global-shared-view blocks))
+    (opt-cfg-index-refresh-blocks! (__tl-project-field context index) blocks)
     (if (> remaining 0)
       (match (opt-guard-sink-round
         (compiler-opt-global-shared-view cells)
@@ -96660,9 +96605,7 @@
   [cells : OptGlobalCellSummary]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-function-with-context
-    (compiler-opt-global-shared-view func)
-    context)
+  (match (opt-verify-function-with-context func context)
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]
     [(ResultCompilerOptimizeVerify.Ok)
@@ -96707,9 +96650,7 @@
                       (opt-cfg-index-refresh-blocks!
                         (__tl-project-field context index)
                         next)]
-                    (match (opt-verify-function-with-context
-                      (compiler-opt-global-shared-view candidate)
-                      context)
+                    (match (opt-verify-function-with-context candidate context)
                       [(ResultCompilerOptimizeVerify.Ok)
                         (OptFunctionCtxResult.Result candidate context)]
                       [(ResultCompilerOptimizeVerify.Err _)
@@ -101332,7 +101273,9 @@
   [func : ir.CompilerIrFunction]
   [state : OptPassState]) : OptPassState
   (begin
-    (opt-cfg-index-refresh-blocks! state.ctx.index (opt-function-blocks func))
+    (let
+      [blocks (opt-function-blocks func)]
+      (opt-cfg-index-refresh-blocks! state.ctx.index blocks))
     (opt-pass-with-func func state)))
 
 ;; Rotation, with the speculative literal-edge normalization kept only if the
@@ -101717,7 +101660,9 @@
     ;; stays verified across the chain.
     [verified? : bool
       (opt-verify-ok?
-        (opt-verify-function-with-context (opt-pass-func s) s.ctx))]
+        (let
+          [func (opt-pass-func s)]
+          (opt-verify-function-with-context func s.ctx)))]
     [s
       (opt-stage
         "preheaders"
@@ -140676,10 +140621,7 @@
             ;; use is proven dominated by it, and both mechanisms here reuse a
             ;; var across a dominance edge.
             (not
-              (opt-verify-ok?
-                (opt-verify-function-with-context
-                  (compiler-opt-global-shared-view func)
-                  context))))
+              (opt-verify-ok? (opt-verify-function-with-context func context))))
             func
             (let
               ;; (1) MF-3's hoist, verbatim. It moves whole `gep ; load` pairs
@@ -140719,10 +140661,7 @@
                   true
                   frame
                   blocks)]
-              [_refresh : unit
-                (opt-cfg-index-refresh-blocks!
-                  index
-                  (compiler-opt-global-shared-view hoisted))]
+              [_refresh : unit (opt-cfg-index-refresh-blocks! index hoisted)]
               [moved : (__tl_dyn-array bool) (__tl_make-array bool frame)]
               [_moved : unit
                 (opt-guard-dedup-moved-fill!
@@ -141269,9 +141208,7 @@
           (and
             (= load-dst mov-dst)
             (opt-gvn-stable-var? sources mov-dst)
-            (opt-gvn-value-stable?
-              sources
-              (compiler-opt-global-shared-view src))
+            (opt-gvn-value-stable? sources src)
             (not (opt-value-is-var? src mov-dst)))]
         [_ false])]
     [_ false]))
@@ -141681,10 +141618,7 @@
       ;; it, and everything below simply reads the hoisted list. The block walk
       ;; that records cell reads indexes blocks BY ID, so the index has to
       ;; describe the hoist's input first and its output after.
-      [_refresh-in : unit
-        (opt-cfg-index-refresh-blocks!
-          index
-          (compiler-opt-global-shared-view blocks))]
+      [_refresh-in : unit (opt-cfg-index-refresh-blocks! index blocks)]
       [work : ir.CompilerIrBlockList
         (opt-load-pre-hoist-blocks
           type-segment-bases
@@ -141722,10 +141656,7 @@
         (if promotable?
           (opt-load-gvn-loop-masks-fill (&mut loop-masks) loops 0)
           unit)]
-      [_refresh : unit
-        (opt-cfg-index-refresh-blocks!
-          index
-          (compiler-opt-global-shared-view work))]
+      [_refresh : unit (opt-cfg-index-refresh-blocks! index work)]
       [promote : OptLoadCellPromote
         (opt-load-cell-promote-build
           candidates

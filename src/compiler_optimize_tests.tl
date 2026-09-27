@@ -1213,32 +1213,24 @@
     (begin
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var 12))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var 12))
           (ir.CompilerIrValue.Var 12))
         "a missing destination canonicalizes to itself")
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var (- 0 1)))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var (- 0 1)))
           (ir.CompilerIrValue.Var (- 0 1)))
         "a negative var stays out of the dense table")
       (set! env (opt.opt-bounds-cast-bind env 64 (ir.CompilerIrValue.Var 7)))
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var 64))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var 64))
           (ir.CompilerIrValue.Var 7))
         "a high destination grows the direct table")
       (set! env (opt.opt-bounds-cast-bind env 64 (ir.CompilerIrValue.Var 8)))
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var 64))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var 64))
           (ir.CompilerIrValue.Var 8))
         "the newest destination binding replaces the old source")
       (set! env (opt.opt-bounds-cast-bind env 65 (ir.CompilerIrValue.Var 8)))
@@ -1246,47 +1238,35 @@
       (set! env (opt.opt-bounds-cast-unbind env 8))
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var 64))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var 64))
           (ir.CompilerIrValue.Var 64))
         "source invalidation drops the first dependent destination")
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var 65))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var 65))
           (ir.CompilerIrValue.Var 65))
         "source invalidation drops every dependent destination")
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var 70))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var 70))
           (ir.CompilerIrValue.Var 9))
         "source invalidation preserves unrelated destinations")
       (set! env (opt.opt-bounds-cast-bind env 512 (ir.CompilerIrValue.I64 33)))
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var 512))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var 512))
           (ir.CompilerIrValue.I64 33))
         "table growth preserves non-var sources")
       (set! env (opt.opt-bounds-cast-bind env 71 (ir.CompilerIrValue.Var 70)))
       (set! env (opt.opt-bounds-cast-unbind env 70))
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var 70))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var 70))
           (ir.CompilerIrValue.Var 70))
         "destination invalidation drops its stale binding")
       (test.assert-true
         (opt.opt-value-eq
-          (opt.opt-bounds-cast-canon
-            (opt.compiler-opt-global-shared-view env)
-            (ir.CompilerIrValue.Var 71))
+          (opt.opt-bounds-cast-canon env (ir.CompilerIrValue.Var 71))
           (ir.CompilerIrValue.Var 71))
         "destination invalidation also drops its dependents")
       (test.assert-true

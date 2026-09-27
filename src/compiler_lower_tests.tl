@@ -11918,26 +11918,13 @@
         (ci.intern-generated-canonical-name "dense-overlay-module"))]
     [ok : bool
       (and
-        (= (lower.lower-name-env-count (lower.lower-global-shared-view base)) 1)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view child))
-          2)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view sibling))
-          2)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view grown))
-          18)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view copied))
-          2)
-        (=
-          (lower.lower-name-env-count
-            (lower.lower-global-shared-view copy-branch))
-          3)
-        (=
-          (lower.lower-name-env-count (lower.lower-global-shared-view appended))
-          3)
+        (= (lower.lower-name-env-count base) 1)
+        (= (lower.lower-name-env-count child) 2)
+        (= (lower.lower-name-env-count sibling) 2)
+        (= (lower.lower-name-env-count grown) 18)
+        (= (lower.lower-name-env-count copied) 2)
+        (= (lower.lower-name-env-count copy-branch) 3)
+        (= (lower.lower-name-env-count appended) 3)
         (=
           (lower.lower-name-env-lookup-symbol-id base source-id -1)
           base-symbol-id)
@@ -13045,10 +13032,7 @@
         (lower.LowerCAbiSlot.Slot (ast.AstType.I64) 0)
         (lower.LowerCAbiSlot.Slot (ast.AstType.F64) 8))]
     (and
-      (=
-        (lower.lower-name-env-count
-          (owned_view.compiler-owned-shared-view names))
-        2)
+      (= (lower.lower-name-env-count names) 2)
       (string.eq
         (lower-name-env-resolve-with-id names "source-b" source-b-id)
         "logical-b")

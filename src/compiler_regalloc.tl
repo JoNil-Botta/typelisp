@@ -6562,14 +6562,8 @@
             (live.compiler-live-set-empty)
             ;; Kind 6 excludes tail calls: control never returns, and the
             ;; marshalling arm reads an incoming pin before overwriting it.
-            (compiler-reg-clobber-kind-points
-              type-segment-bases
-              (compiler-reg-global-shared-view func)
-              6))
-          (compiler-reg-clobber-kind-points
-            type-segment-bases
-            (compiler-reg-global-shared-view func)
-            1)
+            (compiler-reg-clobber-kind-points type-segment-bases func 6))
+          (compiler-reg-clobber-kind-points type-segment-bases func 1)
           (compiler-reg-clobber-kind-points type-segment-bases func 2)))]))
 
 (define (compiler-reg-ineligible-instr
@@ -10521,17 +10515,20 @@
 
 (define (compiler-reg-clobber-kind-points
   [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]
+  [func : (& func ir.CompilerIrFunction)]
   [kind : i64]) : live.CompilerLiveI64Set
-  (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-      (match (compiler-reg-clobber-kind-points-blocks
-        type-segment-bases
-        blocks
-        0
-        (live.compiler-live-set-empty)
-        kind)
-        [(CompilerRegCallScan.Scan _ set) set])]))
+  (let
+    [func : ir.CompilerIrFunction
+      (owned_view.compiler-owned-reference-shared-view func)]
+    (match func
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+        (match (compiler-reg-clobber-kind-points-blocks
+          type-segment-bases
+          blocks
+          0
+          (live.compiler-live-set-empty)
+          kind)
+          [(CompilerRegCallScan.Scan _ set) set])])))
 
 ;; "Does any set bit of `bits` land strictly inside (start, end) once offset by
 ;; `var-base`?" The bit positions satisfying `start < var-base + i < end` form a
@@ -22960,10 +22957,7 @@
         1
         n)]
     [kind0 : live.CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points
-        type-segment-bases
-        (compiler-reg-global-shared-view func)
-        0)]
+      (compiler-reg-clobber-kind-points type-segment-bases func 0)]
     [remat-table : CompilerRegRematTable
       (compiler-reg-remat-table-build
         (compiler-reg-global-shared-view func)
@@ -29192,10 +29186,7 @@
     [clobber-points : live.CompilerLiveI64Set
       (if ignore-single-cold-call?
         (live.compiler-live-set-empty)
-        (compiler-reg-clobber-kind-points
-          type-segment-bases
-          (compiler-reg-global-shared-view func)
-          6))]
+        (compiler-reg-clobber-kind-points type-segment-bases func 6))]
     ;; Per-register clobber point sets (15c): kind 1 = idiv (rax:rdx), kind 2 =
     ;; variable shift (rcx). Bound once here and reused both for the destructive
     ;; tie exclusion below and for the GAP3c pin demotion / greedy further down,
@@ -29204,15 +29195,9 @@
     ;; blocks and `compiler-live-set-union` never writes through its operands,
     ;; so the shared sets are the same values two separate walks would produce.
     [div-points : live.CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points
-        type-segment-bases
-        (compiler-reg-global-shared-view func)
-        1)]
+      (compiler-reg-clobber-kind-points type-segment-bases func 1)]
     [shift-points : live.CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points
-        type-segment-bases
-        (compiler-reg-global-shared-view func)
-        2)]
+      (compiler-reg-clobber-kind-points type-segment-bases func 2)]
     [destructive-fixed-points : live.CompilerLiveI64Set
       (live.compiler-live-set-union
         (compiler-reg-global-shared-view div-points)

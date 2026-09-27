@@ -940,9 +940,7 @@
             (string.contains (& cached-doc.text) (& fresh-name))
             (not cached-doc.decls-valid))]
         [decls-ok : bool
-          (match (lsp.lsp-get-document-decls
-            (owned_view.compiler-owned-shared-view params)
-            docs)
+          (match (lsp.lsp-get-document-decls params docs)
             [(lsp.LspDocumentDeclsLookup.Found _ text _ decls)
               (let
                 [entry : lvf.LspDeclEntry

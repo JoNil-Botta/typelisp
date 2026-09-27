@@ -3062,11 +3062,14 @@
       (tc_core.TcMaybeString.Some (ir.compiler-ir-symbol-text symbol-id))
       (tc_core.TcMaybeString.No))))
 
-(define (lower-name-env-count [names : LowerNameEnv]) : i64
-  (match names
-    [(LowerNameEnv.Nil) 0]
-    [(LowerNameEnv.Inline _ _ _) 1]
-    [(LowerNameEnv.Dense _ _ count) count]))
+(define (lower-name-env-count [names : (& names LowerNameEnv)]) : i64
+  (let
+    [names : LowerNameEnv
+      (owned_view.compiler-owned-reference-shared-view names)]
+    (match names
+      [(LowerNameEnv.Nil) 0]
+      [(LowerNameEnv.Inline _ _ _) 1]
+      [(LowerNameEnv.Dense _ _ count) count])))
 
 (define (lower-name-env-copy-chain-into!
   [names : LowerNameEnv]
@@ -3103,8 +3106,8 @@
   [left : LowerNameEnv]
   [right : LowerNameEnv]) : LowerNameEnv
   (let
-    [left-count : i64 (lower-name-env-count (lower-global-shared-view left))]
-    [right-count : i64 (lower-name-env-count (lower-global-shared-view right))]
+    [left-count : i64 (lower-name-env-count left)]
+    [right-count : i64 (lower-name-env-count right)]
     [count : i64 (+ left-count right-count)]
     (if (< count 1)
       LowerNameEnv.Nil
@@ -3136,7 +3139,7 @@
   [left : LowerNameEnv]
   [right : LowerNameEnv]) : LowerNameEnv
   (let
-    [count : i64 (lower-name-env-count (lower-global-shared-view left))]
+    [count : i64 (lower-name-env-count left)]
     [cur : LowerNameEnv left]
     [bindings : (__tl_dyn-array LowerNameFlatBinding)
       (__tl_make-array LowerNameFlatBinding count)]
@@ -3309,10 +3312,7 @@
     [left : LowerNameEnv]
     [right : LowerNameEnv]) : LowerNameEnv
     (let
-      [count : i64
-        (+
-          (lower-name-env-count (lower-global-shared-view left))
-          (lower-name-env-count (lower-global-shared-view right)))]
+      [count : i64 (+ (lower-name-env-count left) (lower-name-env-count right))]
       [metrics : profile_state.CompilerProfileMetrics
         (compiler-lower-profile-metrics-view state)]
       (begin
@@ -3344,8 +3344,7 @@
     [left : LowerNameEnv]
     [right : LowerNameEnv]) : LowerNameEnv
     (let
-      [append-count : i64
-        (lower-name-env-count (lower-global-shared-view left))]
+      [append-count : i64 (lower-name-env-count left)]
       [metrics : profile_state.CompilerProfileMetrics
         (compiler-lower-profile-metrics-view state)]
       (begin
@@ -3871,7 +3870,7 @@
         compiler-lower-profile-name-cache-builds-metric
         1))
     (let
-      [count : i64 (lower-name-env-count (lower-global-shared-view names))]
+      [count : i64 (lower-name-env-count names)]
       [logical-alias-count : i64
         (lower-name-env-logical-alias-count (lower-global-shared-view names))]
       (lower-name-cache-from-env-into
@@ -3903,7 +3902,7 @@
         compiler-lower-profile-name-cache-builds-metric
         1))
     (let
-      [count : i64 (lower-name-env-count (lower-global-shared-view names))]
+      [count : i64 (lower-name-env-count names)]
       [logical-alias-count : i64
         (lower-name-env-logical-alias-count (lower-global-shared-view names))]
       (lower-name-cache-from-env-into
@@ -20058,13 +20057,15 @@
       (tc_core.tc-nominal-name-id-display enum-name)]
     [_ ""]))
 
-(define (lower-enum-type-name-id-or [ty : ast.AstType] [fallback : i64]) : i64
-  (match (tc_core.tc-type-strip-region ty)
-    [(ast.AstType.Enum enum-name) enum-name]
-    [(ast.AstType.EnumArgs enum-name _) enum-name]
-    [(ast.AstType.Var enum-name) enum-name]
-    [(ast.AstType.VarArgs enum-name _) enum-name]
-    [_ fallback]))
+(define (lower-enum-type-name-id-or [ty : (& ty ast.AstType)] [fallback : i64]) : i64
+  (let
+    [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
+    (match (tc_core.tc-type-strip-region ty)
+      [(ast.AstType.Enum enum-name) enum-name]
+      [(ast.AstType.EnumArgs enum-name _) enum-name]
+      [(ast.AstType.Var enum-name) enum-name]
+      [(ast.AstType.VarArgs enum-name _) enum-name]
+      [_ fallback])))
 
 (define (lower-struct-type-name-or-empty [ty : ast.AstType]) : String
   (match (tc_core.tc-type-strip-region ty)
@@ -21118,8 +21119,7 @@
                                                 nested-fields
                                                 mode
                                                 (lower-enum-type-name-id-or
-                                                  (lower-global-shared-view
-                                                    resolved)
+                                                  resolved
                                                   -1)
                                                 (lower-enum-type-name-or-empty
                                                   (lower-global-shared-view
@@ -25961,7 +25961,7 @@
   [enum-ty : ast.AstType]) : ResultLowerExpr
   (match (tc_core.tc-inline-aggregate-layout-for-id
     ctx
-    (lower-enum-type-name-id-or (lower-global-shared-view enum-ty) -1))
+    (lower-enum-type-name-id-or enum-ty -1))
     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
       (match (lower-global-shared-view layout)
         [(tc_core.TcInlineAggregateLayout.Enum size _ _)
@@ -26577,10 +26577,10 @@
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
         ctx
-        (lower-enum-type-name-id-or (lower-global-shared-view enum-ty) -1))]
+        (lower-enum-type-name-id-or enum-ty -1))]
     (match (tc_core.tc-enum-decl-id
       field-ctx
-      (lower-enum-type-name-id-or (lower-global-shared-view enum-ty) -1))
+      (lower-enum-type-name-id-or enum-ty -1))
       [(tc_core.ResultTcEnumDecl.Ok decl)
         (match decl
           [(tc_core.TcEnumDecl _ variants)
@@ -26696,10 +26696,10 @@
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
         ctx
-        (lower-enum-type-name-id-or (lower-global-shared-view enum-ty) -1))]
+        (lower-enum-type-name-id-or enum-ty -1))]
     (match (tc_core.tc-enum-decl-id
       field-ctx
-      (lower-enum-type-name-id-or (lower-global-shared-view enum-ty) -1))
+      (lower-enum-type-name-id-or enum-ty -1))
       [(tc_core.ResultTcEnumDecl.Ok decl)
         (match decl
           [(tc_core.TcEnumDecl _ variants)
@@ -39335,9 +39335,7 @@
   [ctx : tc_core.TcContext]
   [_ : String]
   [enum-ty : ast.AstType]) : bool
-  (match (tc_core.tc-enum-decl-id
-    ctx
-    (lower-enum-type-name-id-or (lower-global-shared-view enum-ty) -1))
+  (match (tc_core.tc-enum-decl-id ctx (lower-enum-type-name-id-or enum-ty -1))
     [(tc_core.ResultTcEnumDecl.Ok decl)
       (match decl
         [(tc_core.TcEnumDecl cleanup variants)
@@ -39788,7 +39786,7 @@
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
         ctx
-        (lower-enum-type-name-id-or (lower-global-shared-view enum-ty) -1))]
+        (lower-enum-type-name-id-or enum-ty -1))]
     (match (tc_core.tc-enum-decl-id
       field-ctx
       (lower-enum-type-name-id-or enum-ty -1))
@@ -55377,7 +55375,7 @@
                   (lower-global-shared-view active-mask)
                   lanes
                   value
-                  (lower-global-shared-view lane-ty))
+                  lane-ty)
                   [(ResultLowerExpr.Ok value-lowered)
                     (match value-lowered
                       [(LowerExpr.Expr value-state value-ir _)
@@ -55421,7 +55419,7 @@
                     (lower-global-shared-view active-mask)
                     lanes
                     value
-                    (lower-global-shared-view lane-ty))
+                    lane-ty)
                     [(ResultLowerExpr.Ok value-lowered)
                       (match value-lowered
                         [(LowerExpr.Expr value-state value-ir _)
@@ -55875,19 +55873,23 @@
                     s
                     (ir.CompilerIrInstr.Branch any-active body-label exit-label))
                   body-label))
-              (match (lower-avx512-masked-expr-expected
-                ctx
-                s
-                env
-                type-env
-                lane-locals
-                index
-                index-var
-                (ir.CompilerIrMaybeValue.Some
-                  (lower-global-shared-view cond-active))
-                lanes
-                body
-                (ast.AstType.Unit))
+              (match (let
+                [active-mask
+                  (ir.CompilerIrMaybeValue.Some
+                    (lower-global-shared-view cond-active))]
+                [expected-ty (ast.AstType.Unit)]
+                (lower-avx512-masked-expr-expected
+                  ctx
+                  s
+                  env
+                  type-env
+                  lane-locals
+                  index
+                  index-var
+                  active-mask
+                  lanes
+                  body
+                  expected-ty))
                 [(ResultLowerExpr.Ok body-lowered)
                   (match body-lowered
                     [(LowerExpr.Expr body-state _ _)
@@ -55966,7 +55968,7 @@
                           (lower-global-shared-view then-mask))
                         lanes
                         then-branch
-                        (lower-global-shared-view result-ty))
+                        result-ty)
                         [(ResultLowerExpr.Ok then-lowered)
                           (match then-lowered
                             [(LowerExpr.Expr then-state then-value then-ty)
@@ -56160,7 +56162,7 @@
           (lower-global-shared-view active-mask)
           lanes
           left
-          (lower-global-shared-view lane-ty))
+          lane-ty)
           [(ResultLowerExpr.Ok left-lowered)
             (match left-lowered
               [(LowerExpr.Expr left-state left-value _)
@@ -56175,7 +56177,7 @@
                   active-mask
                   lanes
                   right
-                  (lower-global-shared-view lane-ty))
+                  lane-ty)
                   [(ResultLowerExpr.Ok right-lowered)
                     (match right-lowered
                       [(LowerExpr.Expr right-state right-value _)
@@ -56283,7 +56285,7 @@
             (lower-global-shared-view active-mask)
             lanes
             left
-            (lower-global-shared-view lane-ty))
+            lane-ty)
             [(ResultLowerExpr.Ok left-lowered)
               (match left-lowered
                 [(LowerExpr.Expr left-state left-value _)
@@ -56298,7 +56300,7 @@
                     (lower-global-shared-view active-mask)
                     lanes
                     right
-                    (lower-global-shared-view lane-ty))
+                    lane-ty)
                     [(ResultLowerExpr.Ok right-lowered)
                       (match right-lowered
                         [(LowerExpr.Expr right-state right-value right-ty)
@@ -56803,7 +56805,7 @@
             active-mask
             lanes
             right
-            (lower-global-shared-view left-ty))
+            left-ty)
             [(ResultLowerExpr.Ok right-lowered)
               (match right-lowered
                 [(LowerExpr.Expr right-state right-value _)
@@ -57379,8 +57381,7 @@
               (tc_core.tc-context-type-get ctx field-node)))]
         [default-offset : i64
           (lower-align-up cursor (lower-type-align ctx field-ty))]
-        [enum-id : i64
-          (lower-enum-type-name-id-or (lower-global-shared-view enum-ty) -1)]
+        [enum-id : i64 (lower-enum-type-name-id-or enum-ty -1)]
         [enum-name : String
           (lower-enum-type-name-or-empty (lower-global-shared-view enum-ty))]
         [variant-name : String (tc_core.tc-env-key-name-text variant-name-id)]
@@ -57642,7 +57643,7 @@
                           (lower-global-shared-view arm-mask))
                         lanes
                         body
-                        (lower-global-shared-view result-ty))
+                        result-ty)
                         [(ResultLowerExpr.Ok body-lowered)
                           (match (lower-global-shared-view body-lowered)
                             [(LowerExpr.Expr body-state body-value body-ty)
@@ -58024,7 +58025,7 @@
                     (lower-global-shared-view arm-mask))
                   lanes
                   body
-                  (lower-global-shared-view result-ty))
+                  result-ty)
                   [(ResultLowerExpr.Ok body-lowered)
                     (match body-lowered
                       [(LowerExpr.Expr body-state body-value body-ty)
@@ -58331,7 +58332,7 @@
                   (lower-global-shared-view active-mask)
                   lanes
                   arg
-                  (lower-global-shared-view resolved-ty))
+                  resolved-ty)
                 (lower-expr-expected
                   ctx
                   state
@@ -59847,7 +59848,7 @@
       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0))
       lanes
       body
-      (lower-global-shared-view ret-ty))
+      ret-ty)
       [(ResultLowerExpr.Ok lowered)
         (match (lower-global-shared-view lowered)
           [(LowerExpr.Expr body-state value _)
@@ -61185,128 +61186,113 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [expr : ast.AstExpr]
-  [expected-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-global-shared-view expr)
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-avx512-masked-expr-expected
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          inner
-          expected-ty))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-avx512-masked-expr-expected
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          inner
-          expected-ty))]
-    [(ast.AstExpr.Cast inner-box cast-ty-id)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        [resolved-cast : ast.AstType
-          (tc_core.tc-type-without-regions
-            (tc_core.tc-resolve-type
-              ctx
-              (tc_core.tc-context-type-get ctx cast-ty-id)))]
-        [resolved-expected : ast.AstType
-          (tc_core.tc-type-without-regions
-            (tc_core.tc-resolve-type ctx expected-ty))]
-        (match (lower-simple-vector-map-casted-literal
-          ctx
-          (lower-state-mode state)
-          resolved-cast
-          (lower-global-shared-view resolved-expected)
-          inner)
-          [(LowerMaybeVectorMapValue.Some plan)
-            (match plan
-              [(LowerVectorMapValue.Uniform value)
-                (ResultLowerExpr.Ok
-                  (lower-emit-masked-preheader-splat
+  [expected-ty : (& expected-ty ast.AstType)]) : ResultLowerExpr
+  (let
+    [expected-ty : ast.AstType
+      (owned_view.compiler-owned-reference-shared-view expected-ty)]
+    (match (lower-global-shared-view expr)
+      [(ast.AstExpr.Spanned inner-box _)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            inner
+            expected-ty))]
+      [(ast.AstExpr.Ann inner-box _)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            inner
+            expected-ty))]
+      [(ast.AstExpr.Cast inner-box cast-ty-id)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          [resolved-cast : ast.AstType
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-resolve-type
+                ctx
+                (tc_core.tc-context-type-get ctx cast-ty-id)))]
+          [resolved-expected : ast.AstType
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-resolve-type ctx expected-ty))]
+          (match (lower-simple-vector-map-casted-literal
+            ctx
+            (lower-state-mode state)
+            resolved-cast
+            (lower-global-shared-view resolved-expected)
+            inner)
+            [(LowerMaybeVectorMapValue.Some plan)
+              (match plan
+                [(LowerVectorMapValue.Uniform value)
+                  (ResultLowerExpr.Ok
+                    (lower-emit-masked-preheader-splat
+                      state
+                      value
+                      lanes
+                      resolved-expected))]
+                [_
+                  (lower-avx512-masked-expr
+                    ctx
                     state
-                    value
+                    env
+                    type-env
+                    lane-locals
+                    index
+                    index-var
+                    active-mask
                     lanes
-                    resolved-expected))]
-              [_
-                (lower-avx512-masked-expr
-                  ctx
-                  state
-                  env
-                  type-env
-                  lane-locals
-                  index
-                  index-var
-                  active-mask
-                  lanes
-                  expr)])]
-          [(LowerMaybeVectorMapValue.No)
-            (lower-avx512-masked-expr
-              ctx
-              state
-              env
-              type-env
-              lane-locals
-              index
-              index-var
-              active-mask
-              lanes
-              expr)]))]
-    [(ast.AstExpr.Literal lit)
-      (match (lower-global-shared-view lit)
-        [(ast.AstLiteral.Bool value)
-          (ResultLowerExpr.Ok
-            (lower-avx512-masked-bool-literal state active-mask lanes value))]
-        [_
-          (ResultLowerExpr.Ok
-            (lower-emit-masked-preheader-splat
-              state
-              (lower-literal-value-with-type
-                (tc_core.tc-context-source-names ctx)
-                lit
-                (tc_core.tc-type-without-regions
-                  (lower-global-shared-view expected-ty)))
-              lanes
-              (tc_core.tc-type-without-regions expected-ty)))])]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
-        [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-        (lower-avx512-masked-if
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          expected-ty
-          expr
-          cond
-          then-branch
-          else-branch))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
-          (lower-avx512-masked-match
+                    expr)])]
+            [(LowerMaybeVectorMapValue.No)
+              (lower-avx512-masked-expr
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                expr)]))]
+      [(ast.AstExpr.Literal lit)
+        (match (lower-global-shared-view lit)
+          [(ast.AstLiteral.Bool value)
+            (ResultLowerExpr.Ok
+              (lower-avx512-masked-bool-literal state active-mask lanes value))]
+          [_
+            (ResultLowerExpr.Ok
+              (lower-emit-masked-preheader-splat
+                state
+                (lower-literal-value-with-type
+                  (tc_core.tc-context-source-names ctx)
+                  lit
+                  (tc_core.tc-type-without-regions
+                    (lower-global-shared-view expected-ty)))
+                lanes
+                (tc_core.tc-type-without-regions expected-ty)))])]
+      [(ast.AstExpr.If cond-box then-box else-box)
+        (let
+          [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
+          [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
+          [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
+          (lower-avx512-masked-if
             ctx
             state
             env
@@ -61318,20 +61304,38 @@
             lanes
             expected-ty
             expr
-            (lower-context-expr-get ctx scrutinee-box)
-            arms)])]
-    [_
-      (lower-avx512-masked-expr
-        ctx
-        state
-        env
-        type-env
-        lane-locals
-        index
-        index-var
-        active-mask
-        lanes
-        expr)]))
+            cond
+            then-branch
+            else-branch))]
+      [(ast.AstExpr.Match match-box)
+        (match (__tl-box-place match-box)
+          [(ast.AstMatch.Match scrutinee-box arms)
+            (lower-avx512-masked-match
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              expected-ty
+              expr
+              (lower-context-expr-get ctx scrutinee-box)
+              arms)])]
+      [_
+        (lower-avx512-masked-expr
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          expr)])))
 
 (define (lower-predicated-tail-map-body
   [ctx : tc_core.TcContext]
@@ -64511,9 +64515,7 @@
             args
             resolved-fields
             (lower-state-mode state)
-            (lower-enum-type-name-id-or
-              (lower-global-shared-view resolved-scrut-ty)
-              -1)
+            (lower-enum-type-name-id-or resolved-scrut-ty -1)
             (lower-enum-type-name-or-empty resolved-scrut-ty)
             variant-name
             handle-name-id
@@ -64562,7 +64564,7 @@
     args
     fields
     (lower-state-mode body-start)
-    (lower-enum-type-name-id-or (lower-global-shared-view scrut-ty) -1)
+    (lower-enum-type-name-id-or scrut-ty -1)
     (lower-enum-type-name-or-empty (lower-global-shared-view scrut-ty))
     variant-name
     variant-name-id

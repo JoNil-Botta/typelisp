@@ -9,7 +9,7 @@
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
-(import compiler_profile_state as profile_state)
+(cfg test (import compiler_profile_state as profile_state))
 (import compiler_parse_core as parser)
 (import compiler_typecheck_core as tc_core)
 (import compiler_symbols as csym)
@@ -840,58 +840,52 @@
     (compiler-lower-comptime-error-runtime-diagnostics-ok?)
     "ordinary and tail-position comptime-error calls are rejected"))
 
-(define (compiler-lower-resetting-entry-live-session-guard-ok?) : bool
-  (let
-    [previous-state : load.CompilerLoadSessionState
-      (load.compiler-load-active-session-state-shared-view)]
-    [live-state : load.CompilerLoadSessionState
-      (load.compiler-load-session-state-new)]
-    [generation-before : i64 (ci.intern-generation)]
-    [_select-live : unit (load.compiler-load-session-state-use! live-state)]
-    [result : lower.ResultCompilerLower
-      (lower.lower-compiler-source "(define (main) : i64 0)")]
-    [generation-after : i64 (ci.intern-generation)]
-    [_restore : unit
-      (load.compiler-load-session-state-use!
-        (load.compiler-load-session-state-shared-view (& previous-state)))]
-    (and
-      (load.compiler-load-session-state-standalone-reset-safe? previous-state)
-      (= generation-before generation-after)
-      (match result
-        [(lower.ResultCompilerLower.Err diag)
-          (string.eq
-            (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-            "lower-compiler-source-with-path-mode: standalone resetting compiler entry cannot run inside an active compiler load session")]
-        [(lower.ResultCompilerLower.Ok _ _) false]))))
-
 (test
   compiler-lower-resetting-entry-live-session-guard
   (test.assert-true
-    (compiler-lower-resetting-entry-live-session-guard-ok?)
+    (let
+      [previous-state : load.CompilerLoadSessionState
+        (load.compiler-load-active-session-state-shared-view)]
+      [live-state : load.CompilerLoadSessionState
+        (load.compiler-load-session-state-new)]
+      [generation-before : i64 (ci.intern-generation)]
+      [_select-live : unit (load.compiler-load-session-state-use! live-state)]
+      [result : lower.ResultCompilerLower
+        (lower.lower-compiler-source "(define (main) : i64 0)")]
+      [generation-after : i64 (ci.intern-generation)]
+      [_restore : unit
+        (load.compiler-load-session-state-use!
+          (load.compiler-load-session-state-shared-view (& previous-state)))]
+      (and
+        (load.compiler-load-session-state-standalone-reset-safe? previous-state)
+        (= generation-before generation-after)
+        (match result
+          [(lower.ResultCompilerLower.Err diag)
+            (string.eq
+              (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+              "lower-compiler-source-with-path-mode: standalone resetting compiler entry cannot run inside an active compiler load session")]
+          [(lower.ResultCompilerLower.Ok _ _) false])))
     "lower standalone entry rejects a live compiler session before reset"))
-
-(define (compiler-lower-pool-copy-arena-restoration-ok?) : bool
-  (let
-    [home : arena.Arena (arena.current)]
-    [owner : arena.Arena (arena.make)]
-    [ok : bool
-      (let
-        [pools : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-new-with-capacities-in-arena
-            8
-            8
-            (arena.raw-handle owner))]
-        [copied : String
-          (lower.lower-copy-string-into-pools "pool-owned" pools)]
-        (and (arena.eq? (arena.current) home) (string.eq copied "pool-owned")))]
-    (begin
-      (arena.destroy-safe! owner)
-      ok)))
 
 (test
   compiler-lower-pool-copy-arena-restoration
   (test.assert-true
-    (compiler-lower-pool-copy-arena-restoration-ok?)
+    (let
+      [home : arena.Arena (arena.current)]
+      [owner : arena.Arena (arena.make)]
+      [ok : bool
+        (let
+          [pools : ast.AstNodePoolContext
+            (ast.ast-node-pool-context-new-with-capacities-in-arena
+              8
+              8
+              (arena.raw-handle owner))]
+          [copied : String
+            (lower.lower-copy-string-into-pools "pool-owned" pools)]
+          (and (arena.eq? (arena.current) home) (string.eq copied "pool-owned")))]
+      (begin
+        (arena.destroy-safe! owner)
+        ok))
     "lower pool-copy helper restores caller arena"))
 
 (define (compiler-lower-maybe-span-start-ok?
@@ -6375,134 +6369,6 @@
                   "consumer/src/main.tl"
                   (ast.ast-decl-path-list-new))))))))))
 
-(define (compiler-lower-package-alias-collision-ok?) : bool
-  (match (parser.parse-ast-source
-    (compiler-lower-package-alias-collision-source))
-    [(parser.ResultAstProgram.Ok program)
-      (match (lower-test-functions
-        (lower-compiler-program-with-decl-paths
-          "consumer/src/main.tl"
-          program
-          (compiler-lower-package-alias-collision-paths)))
-        [(LowerTestFunctions.Some functions)
-          (and
-            (=
-              (lower-test-function-call-count
-                (ir.compiler-ir-global-shared-view functions)
-                "main"
-                "surface_left/src/lib.tl::left.src.lib/same")
-              1)
-            (=
-              (lower-test-function-call-count
-                functions
-                "main"
-                "surface_right/src/lib.tl::right.src.lib/same")
-              1))]
-        [_ false])]
-    [(parser.ResultAstProgram.Err _) false]))
-
-(define (compiler-lower-package-extern-alias-symbols-ok?) : bool
-  (let
-    [name : i64 (ci.intern "same")]
-    [left-module : i64 (ci.intern "left.src.lib")]
-    [right-module : i64 (ci.intern "right.src.lib")]
-    [left : ast.AstDecl
-      (load.compiler-load-package-def-fn-extern
-        "surface_left"
-        "C:/surface_left/"
-        (svec.new)
-        "C:/surface_left/src/lib.tl"
-        "left.src.lib"
-        name
-        (ast.ast-param-list-new)
-        (ast.AstType.I64)
-        load.CompilerLoadPackageSpmdInterface.Unavailable)]
-    [right : ast.AstDecl
-      (load.compiler-load-package-def-fn-extern
-        "surface_right"
-        "C:/surface_right/"
-        (svec.new)
-        "C:/surface_right/src/lib.tl"
-        "right.src.lib"
-        name
-        (ast.ast-param-list-new)
-        (ast.AstType.I64)
-        load.CompilerLoadPackageSpmdInterface.Unavailable)]
-    [lower-state : lower.CompilerLowerState
-      (lower.compiler-lower-state-new-with-intern-state
-        (ci.intern-compat-state-capture-active))]
-    (match left
-      [(ast.AstDecl.Extern _ _ _ left-meta _)
-        (match right
-          [(ast.AstDecl.Extern _ _ _ right-meta _)
-            (let
-              [left-symbol : i64
-                (lower.lower-extern-logical-symbol-id
-                  lower-state
-                  (csym.compiler-symbol-module-key-id-by-id left-module name)
-                  "same"
-                  name
-                  (ast.ast-extern-metadata-box-shared-view left-meta))]
-              [right-symbol : i64
-                (lower.lower-extern-logical-symbol-id
-                  lower-state
-                  (csym.compiler-symbol-module-key-id-by-id right-module name)
-                  "same"
-                  name
-                  (ast.ast-extern-metadata-box-shared-view right-meta))]
-              (and
-                (not (= left-symbol right-symbol))
-                (string.eq
-                  (ir.compiler-ir-symbol-text left-symbol)
-                  "left.src.lib/same")
-                (string.eq
-                  (ir.compiler-ir-symbol-text right-symbol)
-                  "right.src.lib/same")))]
-          [_ false])]
-      [_ false])))
-
-(define (compiler-lower-selected-import-alias-name-env-ok?) : bool
-  (let
-    [target-module : i64 (ci.intern "selected.source")]
-    [importer-module : i64 (ci.intern "selected.importer")]
-    [item : i64 (ci.intern "source-value")]
-    [alias : i64 (ci.intern "chosen")]
-    [target-key : i64
-      (csym.compiler-symbol-module-key-id-by-id target-module item)]
-    [alias-key : i64
-      (csym.compiler-symbol-module-key-id-by-id importer-module alias)]
-    [symbol-id : i64 4242]
-    [base : lower.LowerNameEnv
-      (lower.lower-name-env-bind-logical-symbol-id
-        target-key
-        target-key
-        symbol-id
-        (lower.LowerNameEnv.Nil))]
-    [aliased : lower.LowerNameEnv
-      (lower.lower-name-env-add-selected-item-alias
-        (lower.compiler-lower-state-new)
-        base
-        importer-module
-        target-module
-        item
-        alias)]
-    (and
-      (=
-        (lower.lower-name-env-lookup-logical-id
-          (lower.lower-global-shared-view aliased)
-          alias-key
-          -1)
-        target-key)
-      (=
-        (lower.lower-name-env-lookup-symbol-id
-          (lower.lower-global-shared-view aliased)
-          alias-key
-          -1)
-        symbol-id)
-      (=
-        (lower.lower-name-env-lookup-symbol-id aliased target-key -1)
-        symbol-id))))
-
 (define (compiler-lower-dotted-import-default-alias-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
@@ -10055,56 +9921,53 @@
     [(lower.ResultCompilerLower.Ok _ _)
       (io.panic "SPMD numeric source unexpectedly lowered")]))
 
-(define (compiler-lower-spmd-numeric-diagnostics-ok?) : bool
-  (and
-    (compiler-lower-ok? (compiler-lower-spmd-numeric-i64-division-source))
-    (compiler-lower-ok? (compiler-lower-spmd-numeric-f32-division-source))
-    (compiler-lower-ok? (compiler-lower-spmd-numeric-conversion-source))
-    (compiler-lower-ok? (compiler-lower-spmd-numeric-masked-division-source))
-    (compiler-lower-ok? (compiler-lower-spmd-numeric-inline-helper-source))
-    (compiler-lower-ok? (compiler-lower-spmd-numeric-private-helper-source))
-    (compiler-lower-ok? (compiler-lower-spmd-numeric-fused-reduction-source))
-    (compiler-lower-spmd-numeric-error-at-source?
-      (compiler-lower-spmd-numeric-i64-division-source)
-      (lower.CompilerLowerMode.Avx2)
-      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in direct map context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
-    (compiler-lower-spmd-numeric-error-at-source?
-      (compiler-lower-spmd-numeric-i64-division-source)
-      (lower.CompilerLowerMode.Avx512)
-      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in direct map context for AVX-512 backend; SIMD division has no implemented strategy; use scalar backend")
-    (compiler-lower-spmd-numeric-error-at-source?
-      (compiler-lower-spmd-numeric-f32-division-source)
-      (lower.CompilerLowerMode.Avx2)
-      "lower: SPMD numeric operation '/' from f32 to f32 is unsupported in direct map context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
-    (compiler-lower-spmd-numeric-error-at-source?
-      (compiler-lower-spmd-numeric-conversion-source)
-      (lower.CompilerLowerMode.Avx2)
-      "lower: SPMD numeric conversion from i32 to f32 is unsupported in direct map context for AVX2 backend; SIMD cross-lane conversion has no implemented strategy; use scalar backend")
-    (compiler-lower-spmd-numeric-error-at-source?
-      (compiler-lower-spmd-numeric-masked-division-source)
-      (lower.CompilerLowerMode.Avx2)
-      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in masked control context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
-    (compiler-lower-spmd-numeric-error-at-source?
-      (compiler-lower-spmd-numeric-masked-division-source)
-      (lower.CompilerLowerMode.Avx512)
-      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in masked control context for AVX-512 backend; SIMD division has no implemented strategy; use scalar backend")
-    (compiler-lower-spmd-numeric-error-at-source?
-      (compiler-lower-spmd-numeric-inline-helper-source)
-      (lower.CompilerLowerMode.Avx2)
-      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in inline helper context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
-    (compiler-lower-spmd-numeric-error-at-source?
-      (compiler-lower-spmd-numeric-private-helper-source)
-      (lower.CompilerLowerMode.Avx512)
-      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in private helper context for AVX-512 backend; SIMD division has no implemented strategy; use scalar backend")
-    (compiler-lower-spmd-numeric-error-at-source?
-      (compiler-lower-spmd-numeric-fused-reduction-source)
-      (lower.CompilerLowerMode.Avx2)
-      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in map-fused reduction context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")))
-
 (test
   compiler-lower-spmd-numeric-diagnostics
   (test.assert-true
-    (compiler-lower-spmd-numeric-diagnostics-ok?)
+    (and
+      (compiler-lower-ok? (compiler-lower-spmd-numeric-i64-division-source))
+      (compiler-lower-ok? (compiler-lower-spmd-numeric-f32-division-source))
+      (compiler-lower-ok? (compiler-lower-spmd-numeric-conversion-source))
+      (compiler-lower-ok? (compiler-lower-spmd-numeric-masked-division-source))
+      (compiler-lower-ok? (compiler-lower-spmd-numeric-inline-helper-source))
+      (compiler-lower-ok? (compiler-lower-spmd-numeric-private-helper-source))
+      (compiler-lower-ok? (compiler-lower-spmd-numeric-fused-reduction-source))
+      (compiler-lower-spmd-numeric-error-at-source?
+        (compiler-lower-spmd-numeric-i64-division-source)
+        (lower.CompilerLowerMode.Avx2)
+        "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in direct map context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
+      (compiler-lower-spmd-numeric-error-at-source?
+        (compiler-lower-spmd-numeric-i64-division-source)
+        (lower.CompilerLowerMode.Avx512)
+        "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in direct map context for AVX-512 backend; SIMD division has no implemented strategy; use scalar backend")
+      (compiler-lower-spmd-numeric-error-at-source?
+        (compiler-lower-spmd-numeric-f32-division-source)
+        (lower.CompilerLowerMode.Avx2)
+        "lower: SPMD numeric operation '/' from f32 to f32 is unsupported in direct map context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
+      (compiler-lower-spmd-numeric-error-at-source?
+        (compiler-lower-spmd-numeric-conversion-source)
+        (lower.CompilerLowerMode.Avx2)
+        "lower: SPMD numeric conversion from i32 to f32 is unsupported in direct map context for AVX2 backend; SIMD cross-lane conversion has no implemented strategy; use scalar backend")
+      (compiler-lower-spmd-numeric-error-at-source?
+        (compiler-lower-spmd-numeric-masked-division-source)
+        (lower.CompilerLowerMode.Avx2)
+        "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in masked control context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
+      (compiler-lower-spmd-numeric-error-at-source?
+        (compiler-lower-spmd-numeric-masked-division-source)
+        (lower.CompilerLowerMode.Avx512)
+        "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in masked control context for AVX-512 backend; SIMD division has no implemented strategy; use scalar backend")
+      (compiler-lower-spmd-numeric-error-at-source?
+        (compiler-lower-spmd-numeric-inline-helper-source)
+        (lower.CompilerLowerMode.Avx2)
+        "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in inline helper context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
+      (compiler-lower-spmd-numeric-error-at-source?
+        (compiler-lower-spmd-numeric-private-helper-source)
+        (lower.CompilerLowerMode.Avx512)
+        "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in private helper context for AVX-512 backend; SIMD division has no implemented strategy; use scalar backend")
+      (compiler-lower-spmd-numeric-error-at-source?
+        (compiler-lower-spmd-numeric-fused-reduction-source)
+        (lower.CompilerLowerMode.Avx2)
+        "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in map-fused reduction context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend"))
     "SPMD numeric failures report their matrix row at the operator or cast"))
 
 (define (compiler-lower-avx2-foreach-map-source-shape-ok?
@@ -10929,20 +10792,6 @@
       (compiler-lower-masked-preheader-grow-source)
       mode
       "typecheck: SPMD masked if does not support side effects other than contiguous array writes inside masked branches")))
-
-(define (compiler-lower-masked-preheader-cache-tests-ok?) : bool
-  (and
-    (compiler-lower-masked-preheader-cache-counts-ok?
-      (lower.CompilerLowerMode.Avx2)
-      4)
-    (compiler-lower-masked-preheader-cache-counts-ok?
-      (lower.CompilerLowerMode.Avx512)
-      8)
-    (compiler-lower-masked-preheader-unsafe-rejected?
-      (lower.CompilerLowerMode.Avx2))
-    (compiler-lower-masked-preheader-unsafe-rejected?
-      (lower.CompilerLowerMode.Avx512))
-    (compiler-lower-masked-preheader-windows-avx2-cap-ok?)))
 
 (define (compiler-lower-masked-load-cache-tests-ok?) : bool
   (and
@@ -14871,172 +14720,169 @@
       (set! bindings.len 1)
       (ast.AstExpr.Let (box (ast.AstLet.Let bindings body-id))))))
 
-(define (compiler-lower-compat-prescan-id-parity-ok?) : bool
-  (let
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 4 1)]
-    [expr-bases : i64 (ast.ast-node-pool-context-expr-segment-bases pools)]
-    [when-id : i64 (ci.intern "when")]
-    [unless-id : i64 (ci.intern "unless")]
-    [x-id : i64 (ci.intern "x")]
-    [intern-state : ci.InternCompatState
-      (ci.intern-compat-state-capture-active)]
-    [session : cis.InternStructuralSessionHandle
-      (cis.intern-structural-session-handle-from-source-names
-        (ci.intern-source-name-session-handle-from-state intern-state))]
-    [hygiene-ctx : tc_core.MacroHygieneContext
-      (tc_core.MacroHygieneContext
-        (ci.intern "test-macro")
-        (ci.intern "test-module")
-        1360
-        (csym.compiler-symbols-empty))]
-    [hyg-when-id : i64
-      (tc_core.macro-hygiene-local-id
-        session
-        (owned_view.compiler-owned-shared-view hygiene-ctx)
-        1
-        when-id)]
-    [hyg-x-id : i64 (tc_core.macro-hygiene-local-id session hygiene-ctx 1 x-id)]
-    [struct-when-id : i64
-      (cis.intern-fresh-local-identity-raw
-        (cis.intern-structural-session-fresh-local-identity session 1 when-id))]
-    [composite-id : i64
-      (tc_core.tc-module-name-id-by-id (ci.intern "stdlib.io") when-id)]
-    [when-var : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var when-id))]
-    [hyg-when-var : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var hyg-when-id))]
-    [x-var : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var x-id))]
-    (and
-      (compiler-lower-compat-prescan-id-parity?
-        session
-        expr-bases
-        (ast.AstExpr.Var when-id)
-        when-id
-        unless-id)
-      (compiler-lower-compat-prescan-id-parity?
-        session
-        expr-bases
-        (ast.AstExpr.Var x-id)
-        when-id
-        unless-id)
-      (tc_core.tc-expr-uses-free-source-id?
-        session
-        expr-bases
-        (ast.AstExpr.Var hyg-when-id)
-        when-id
-        unless-id
-        tc_core.TcNameIdList.Nil)
-      (not
-        (tc_core.tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          (ast.AstExpr.Var hyg-x-id)
-          when-id
-          unless-id
-          tc_core.TcNameIdList.Nil))
-      (compiler-lower-compat-prescan-id-parity?
-        session
-        expr-bases
-        (ast.AstExpr.Var struct-when-id)
-        when-id
-        unless-id)
-      (compiler-lower-compat-prescan-id-parity?
-        session
-        expr-bases
-        (ast.AstExpr.Var composite-id)
-        when-id
-        unless-id)
-      (compiler-lower-compat-prescan-id-parity?
-        session
-        expr-bases
-        (ast.AstExpr.Var unless-id)
-        when-id
-        unless-id)
-      ;; A pool binder named `when` shadows a pool use of `when`.
-      (compiler-lower-compat-prescan-id-parity?
-        session
-        expr-bases
-        (compiler-lower-compat-prescan-test-let when-id x-var when-var)
-        when-id
-        unless-id)
-      ;; A differently-named binder does not shadow the use.
-      (compiler-lower-compat-prescan-id-parity?
-        session
-        expr-bases
-        (compiler-lower-compat-prescan-test-let x-id x-var when-var)
-        when-id
-        unless-id)
-      ;; A pool binder named `when` also shadows a hygiene-id use whose
-      ;; source name is `when` (the post-splice re-run shape).
-      (not
-        (tc_core.tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          (compiler-lower-compat-prescan-test-let when-id x-var hyg-when-var)
-          when-id
-          unless-id
-          tc_core.TcNameIdList.Nil))
-      ;; A hygiene binder whose source name is `when` shadows the hygiene
-      ;; use (the string walker cannot see this shape: intern-str traps on
-      ;; out-of-pool ids, so check the id walker directly).
-      (not
-        (tc_core.tc-expr-uses-free-source-id?
-          session
-          expr-bases
-          (compiler-lower-compat-prescan-test-let
-            hyg-when-id
-            x-var
-            hyg-when-var)
-          when-id
-          unless-id
-          tc_core.TcNameIdList.Nil)))))
-
 (test
   compiler-lower-compat-prescan-id-parity
   (test.assert-true
-    (compiler-lower-compat-prescan-id-parity-ok?)
-    "id-keyed compat prescan matches the string-keyed walks incl. hygiene ids"))
-
-(define (compiler-lower-macro-structural-growth-ok?) : bool
-  (let
-    [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
-    [session : cis.InternStructuralSessionHandle
-      (cis.intern-structural-session-handle-from-source-names
-        (ci.intern-source-name-session-handle-from-state intern-state))]
-    [definition : cis.InternMacroDefinitionIdentity
-      (cis.intern-structural-session-macro-definition-identity session 1 2)]
-    [index : i64 0]
-    [last : i64 -1]
-    (begin
-      (while (< index 600)
-        (begin
-          (set!
-            last
-            (cis.intern-macro-local-identity-raw
-              (cis.intern-structural-session-macro-local-identity
-                session
-                definition
-                index
-                3)))
-          (set! index (+ index 1))))
-      (set!
-        last
-        (cis.intern-macro-local-identity-raw
-          (cis.intern-structural-session-macro-local-identity
-            session
-            definition
-            7
-            3)))
+    (let
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 4 1)]
+      [expr-bases : i64 (ast.ast-node-pool-context-expr-segment-bases pools)]
+      [when-id : i64 (ci.intern "when")]
+      [unless-id : i64 (ci.intern "unless")]
+      [x-id : i64 (ci.intern "x")]
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [hygiene-ctx : tc_core.MacroHygieneContext
+        (tc_core.MacroHygieneContext
+          (ci.intern "test-macro")
+          (ci.intern "test-module")
+          1360
+          (csym.compiler-symbols-empty))]
+      [hyg-when-id : i64
+        (tc_core.macro-hygiene-local-id
+          session
+          (owned_view.compiler-owned-shared-view hygiene-ctx)
+          1
+          when-id)]
+      [hyg-x-id : i64
+        (tc_core.macro-hygiene-local-id session hygiene-ctx 1 x-id)]
+      [struct-when-id : i64
+        (cis.intern-fresh-local-identity-raw
+          (cis.intern-structural-session-fresh-local-identity session 1 when-id))]
+      [composite-id : i64
+        (tc_core.tc-module-name-id-by-id (ci.intern "stdlib.io") when-id)]
+      [when-var : i64
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var when-id))]
+      [hyg-when-var : i64
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (ast.AstExpr.Var hyg-when-id))]
+      [x-var : i64
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var x-id))]
       (and
-        (> last 0)
-        (= (ci.intern-compat-state-structural-count intern-state) 601)))))
+        (compiler-lower-compat-prescan-id-parity?
+          session
+          expr-bases
+          (ast.AstExpr.Var when-id)
+          when-id
+          unless-id)
+        (compiler-lower-compat-prescan-id-parity?
+          session
+          expr-bases
+          (ast.AstExpr.Var x-id)
+          when-id
+          unless-id)
+        (tc_core.tc-expr-uses-free-source-id?
+          session
+          expr-bases
+          (ast.AstExpr.Var hyg-when-id)
+          when-id
+          unless-id
+          tc_core.TcNameIdList.Nil)
+        (not
+          (tc_core.tc-expr-uses-free-source-id?
+            session
+            expr-bases
+            (ast.AstExpr.Var hyg-x-id)
+            when-id
+            unless-id
+            tc_core.TcNameIdList.Nil))
+        (compiler-lower-compat-prescan-id-parity?
+          session
+          expr-bases
+          (ast.AstExpr.Var struct-when-id)
+          when-id
+          unless-id)
+        (compiler-lower-compat-prescan-id-parity?
+          session
+          expr-bases
+          (ast.AstExpr.Var composite-id)
+          when-id
+          unless-id)
+        (compiler-lower-compat-prescan-id-parity?
+          session
+          expr-bases
+          (ast.AstExpr.Var unless-id)
+          when-id
+          unless-id)
+        ;; A pool binder named `when` shadows a pool use of `when`.
+        (compiler-lower-compat-prescan-id-parity?
+          session
+          expr-bases
+          (compiler-lower-compat-prescan-test-let when-id x-var when-var)
+          when-id
+          unless-id)
+        ;; A differently-named binder does not shadow the use.
+        (compiler-lower-compat-prescan-id-parity?
+          session
+          expr-bases
+          (compiler-lower-compat-prescan-test-let x-id x-var when-var)
+          when-id
+          unless-id)
+        ;; A pool binder named `when` also shadows a hygiene-id use whose
+        ;; source name is `when` (the post-splice re-run shape).
+        (not
+          (tc_core.tc-expr-uses-free-source-id?
+            session
+            expr-bases
+            (compiler-lower-compat-prescan-test-let when-id x-var hyg-when-var)
+            when-id
+            unless-id
+            tc_core.TcNameIdList.Nil))
+        ;; A hygiene binder whose source name is `when` shadows the hygiene
+        ;; use (the string walker cannot see this shape: intern-str traps on
+        ;; out-of-pool ids, so check the id walker directly).
+        (not
+          (tc_core.tc-expr-uses-free-source-id?
+            session
+            expr-bases
+            (compiler-lower-compat-prescan-test-let
+              hyg-when-id
+              x-var
+              hyg-when-var)
+            when-id
+            unless-id
+            tc_core.TcNameIdList.Nil))))
+    "id-keyed compat prescan matches the string-keyed walks incl. hygiene ids"))
 
 (test
   compiler-lower-macro-structural-growth
   (test.assert-true
-    (compiler-lower-macro-structural-growth-ok?)
+    (let
+      [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [definition : cis.InternMacroDefinitionIdentity
+        (cis.intern-structural-session-macro-definition-identity session 1 2)]
+      [index : i64 0]
+      [last : i64 -1]
+      (begin
+        (while (< index 600)
+          (begin
+            (set!
+              last
+              (cis.intern-macro-local-identity-raw
+                (cis.intern-structural-session-macro-local-identity
+                  session
+                  definition
+                  index
+                  3)))
+            (set! index (+ index 1))))
+        (set!
+          last
+          (cis.intern-macro-local-identity-raw
+            (cis.intern-structural-session-macro-local-identity
+              session
+              definition
+              7
+              3)))
+        (and
+          (> last 0)
+          (= (ci.intern-compat-state-structural-count intern-state) 601))))
     "macro structural records grow beyond the first record slab"))
 
 (define (compiler-lower-private-record-missing?
@@ -15051,287 +14897,286 @@
   (cis.intern-lower-private-identity-raw
     (cis.intern-structural-session-lower-private-identity session record)))
 
-(define (compiler-lower-private-structural-identities-ok?) : bool
-  (let
-    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [session-a : cis.InternStructuralSessionHandle
-      (cis.intern-structural-session-handle-from-source-names
-        (ci.intern-source-name-session-handle-from-state intern-a))]
-    [session-b : cis.InternStructuralSessionHandle
-      (cis.intern-structural-session-handle-from-source-names
-        (ci.intern-source-name-session-handle-from-state intern-b))]
-    [identities : (__tl_dyn-array i64) (__tl_make-array i64 18)]
-    [ok : bool true]
-    (begin
-      (set!
-        (array-ref identities 0)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SretParameter))
-      (set!
-        (array-ref identities 1)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.CleanupStack))
-      (set!
-        (array-ref identities 2)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.RegionReset))
-      (set!
-        (array-ref identities 3)
-        (compiler-lower-private-identity-raw
-          session-a
-          (cis.InternLowerPrivateRecord.CleanupHidden 1)))
-      (set!
-        (array-ref identities 4)
-        (compiler-lower-private-identity-raw
-          session-a
-          (cis.InternLowerPrivateRecord.CleanupLiveness 1)))
-      (set!
-        (array-ref identities 5)
-        (compiler-lower-private-identity-raw
-          session-a
-          (cis.InternLowerPrivateRecord.RegionHidden 1)))
-      (set!
-        (array-ref identities 6)
-        (compiler-lower-private-identity-raw
-          session-a
-          (cis.InternLowerPrivateRecord.ArenaRestoreHidden 1)))
-      (set!
-        (array-ref identities 7)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SpmdReduceAccumulator))
-      (set!
-        (array-ref identities 8)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SpmdReduceEnd))
-      (set!
-        (array-ref identities 9)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SpmdReduceValue))
-      (set!
-        (array-ref identities 10)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SpmdReduceCurrent))
-      (set!
-        (array-ref identities 11)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SpmdReduceStart))
-      (set!
-        (array-ref identities 12)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SpmdReduceUniform))
-      (set!
-        (array-ref identities 13)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SpmdScanAccumulator))
-      (set!
-        (array-ref identities 14)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SpmdScanEnd))
-      (set!
-        (array-ref identities 15)
-        (compiler-lower-private-identity-raw
-          session-a
-          cis.InternLowerPrivateRecord.SpmdScanValue))
-      (set!
-        (array-ref identities 16)
-        (compiler-lower-private-identity-raw
-          session-a
-          (cis.InternLowerPrivateRecord.WhileExit 1)))
-      (set!
-        (array-ref identities 17)
-        (compiler-lower-private-identity-raw
-          session-a
-          (cis.InternLowerPrivateRecord.WhileHeader 1)))
-      (let
-        [left : i64 0]
-        (while (< left 18)
-          (let
-            [right : i64 (+ left 1)]
-            (begin
-              (while (< right 18)
-                (begin
-                  (when
-                    (= (array-ref identities left) (array-ref identities right))
-                    (set! ok false))
-                  (set! right (+ right 1))))
-              (set! left (+ left 1))))))
-      (let
-        [high-owner : i64 (+ (ci.intern-capacity) 100)]
-        [high-owner-a : i64
-          (compiler-lower-private-identity-raw
-            session-a
-            (cis.InternLowerPrivateRecord.CleanupHidden high-owner))]
-        [high-owner-a-again : i64
-          (compiler-lower-private-identity-raw
-            session-a
-            (cis.InternLowerPrivateRecord.CleanupHidden high-owner))]
-        [high-owner-b : i64
-          (compiler-lower-private-identity-raw
-            session-a
-            (cis.InternLowerPrivateRecord.CleanupHidden (+ high-owner 1)))]
-        [collision-a : i64
-          (compiler-lower-private-identity-raw
-            session-a
-            (cis.InternLowerPrivateRecord.CleanupHidden 2048))]
-        [collision-b : i64
-          (compiler-lower-private-identity-raw
-            session-a
-            (cis.InternLowerPrivateRecord.CleanupHidden 2560))]
-        [other-session-uniform : i64
-          (compiler-lower-private-identity-raw
-            session-b
-            cis.InternLowerPrivateRecord.SpmdReduceUniform)]
-        [former-collision-key : cis.InternStructuralKey
-          (cis.intern-structural-session-key
-            session-a
-            (ci.intern-structural-kind-lower-private)
-            0
-            1
-            0)]
-        [former-collision-raw : i64
-          (cis.intern-structural-key-raw former-collision-key)]
-        [unknown-kind-key : cis.InternStructuralKey
-          (cis.intern-structural-session-key session-a 255 0 0 0)]
-        [unknown-kind-raw : i64
-          (cis.intern-structural-key-raw unknown-kind-key)]
-        [index : i64 0]
-        (begin
-          (unless (= high-owner-a high-owner-a-again) (set! ok false))
-          (when (= high-owner-a high-owner-b) (set! ok false))
-          (when (= collision-a collision-b) (set! ok false))
-          (when
-            (= other-session-uniform (array-ref identities 12))
-            (set! ok false))
-          ;; This is the structural counterpart of the old kind-16/value-0
-          ;; versus kind-0/value-1 collision. The malformed marker recipe is a
-          ;; separate record and fails typed decoding.
-          (when
-            (= former-collision-raw (array-ref identities 12))
-            (set! ok false))
-          (unless
-            (compiler-lower-private-record-missing?
-              (cis.intern-structural-session-lower-private-record-for-raw
-                session-a
-                former-collision-raw))
-            (set! ok false))
-          (unless
-            (compiler-lower-private-record-missing?
-              (cis.intern-structural-session-lower-private-record-for-raw
-                session-a
-                unknown-kind-raw))
-            (set! ok false))
-          (unless
-            (compiler-lower-private-record-missing?
-              (cis.intern-structural-session-lower-private-record-for-raw
-                session-b
-                (array-ref identities 12)))
-            (set! ok false))
-          (match (cis.intern-structural-session-lower-private-record-for-raw
-            session-a
-            (array-ref identities 12))
-            [(cis.InternMaybeLowerPrivateRecord.Some
-                (cis.InternLowerPrivateRecord.SpmdReduceUniform))
-              unit]
-            [_ (set! ok false)])
-          (match (cis.intern-structural-session-lower-private-record-for-raw
-            session-a
-            high-owner-a)
-            [(cis.InternMaybeLowerPrivateRecord.Some
-                (cis.InternLowerPrivateRecord.CleanupHidden owner-id))
-              (unless (= owner-id high-owner) (set! ok false))]
-            [_ (set! ok false)])
-          (match (cis.intern-structural-session-lower-private-record-for-raw
-            session-a
-            (array-ref identities 16))
-            [(cis.InternMaybeLowerPrivateRecord.Some
-                (cis.InternLowerPrivateRecord.WhileExit ordinal))
-              (unless (= ordinal 1) (set! ok false))]
-            [_ (set! ok false)])
-          (while (< index 700)
-            (begin
-              (compiler-lower-private-identity-raw
-                session-a
-                (cis.InternLowerPrivateRecord.CleanupHidden (+ 100000 index)))
-              (set! index (+ index 1))))
-          (unless
-            (=
-              (compiler-lower-private-identity-raw
-                session-a
-                (cis.InternLowerPrivateRecord.CleanupHidden 100000))
-              (compiler-lower-private-identity-raw
-                session-a
-                (cis.InternLowerPrivateRecord.CleanupHidden 100000)))
-            (set! ok false))
-          (unless
-            (=
-              (cis.intern-structural-session-kind-count
-                session-a
-                (ci.intern-structural-kind-lower-private))
-              723)
-            (set! ok false))
-          (unless
-            (= (ci.intern-compat-state-structural-count intern-a) 724)
-            (set! ok false))
-          (unless
-            (= (ci.intern-structural-record-slot-bytes) 37)
-            (set! ok false))))
-      (let
-        [reset-to-state : ci.InternCompatState (ci.intern-compat-state-new)]
-        [reset-to-session : cis.InternStructuralSessionHandle
-          (cis.intern-structural-session-handle-from-source-names
-            (ci.intern-source-name-session-handle-from-state reset-to-state))]
-        [reset-to-identity : i64
-          (compiler-lower-private-identity-raw
-            reset-to-session
-            cis.InternLowerPrivateRecord.CleanupStack)]
-        [mark : i64 (ci.intern-compat-state-pool-len reset-to-state)]
-        (begin
-          (ci.intern-compat-state-reset-to! (&mut reset-to-state) mark)
-          (unless
-            (compiler-lower-private-record-missing?
-              (cis.intern-structural-session-lower-private-record-for-raw
-                reset-to-session
-                reset-to-identity))
-            (set! ok false))))
-      (let
-        [reset-state : ci.InternCompatState (ci.intern-compat-state-new)]
-        [reset-session : cis.InternStructuralSessionHandle
-          (cis.intern-structural-session-handle-from-source-names
-            (ci.intern-source-name-session-handle-from-state reset-state))]
-        [reset-identity : i64
-          (compiler-lower-private-identity-raw
-            reset-session
-            cis.InternLowerPrivateRecord.RegionReset)]
-        (begin
-          (ci.intern-compat-state-reset! (&mut reset-state))
-          (unless
-            (compiler-lower-private-record-missing?
-              (cis.intern-structural-session-lower-private-record-for-raw
-                reset-session
-                reset-identity))
-            (set! ok false))))
-      (and
-        ok
-        (=
-          (cis.intern-lower-private-identity-size)
-          (comptime (size-of (type i64))))))))
-
 (test
   compiler-lower-private-structural-identities
   (test.assert-true
-    (compiler-lower-private-structural-identities-ok?)
+    (let
+      [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+      [session-a : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-a))]
+      [session-b : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-b))]
+      [identities : (__tl_dyn-array i64) (__tl_make-array i64 18)]
+      [ok : bool true]
+      (begin
+        (set!
+          (array-ref identities 0)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SretParameter))
+        (set!
+          (array-ref identities 1)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.CleanupStack))
+        (set!
+          (array-ref identities 2)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.RegionReset))
+        (set!
+          (array-ref identities 3)
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.CleanupHidden 1)))
+        (set!
+          (array-ref identities 4)
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.CleanupLiveness 1)))
+        (set!
+          (array-ref identities 5)
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.RegionHidden 1)))
+        (set!
+          (array-ref identities 6)
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.ArenaRestoreHidden 1)))
+        (set!
+          (array-ref identities 7)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SpmdReduceAccumulator))
+        (set!
+          (array-ref identities 8)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SpmdReduceEnd))
+        (set!
+          (array-ref identities 9)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SpmdReduceValue))
+        (set!
+          (array-ref identities 10)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SpmdReduceCurrent))
+        (set!
+          (array-ref identities 11)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SpmdReduceStart))
+        (set!
+          (array-ref identities 12)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SpmdReduceUniform))
+        (set!
+          (array-ref identities 13)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SpmdScanAccumulator))
+        (set!
+          (array-ref identities 14)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SpmdScanEnd))
+        (set!
+          (array-ref identities 15)
+          (compiler-lower-private-identity-raw
+            session-a
+            cis.InternLowerPrivateRecord.SpmdScanValue))
+        (set!
+          (array-ref identities 16)
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.WhileExit 1)))
+        (set!
+          (array-ref identities 17)
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.WhileHeader 1)))
+        (let
+          [left : i64 0]
+          (while (< left 18)
+            (let
+              [right : i64 (+ left 1)]
+              (begin
+                (while (< right 18)
+                  (begin
+                    (when
+                      (=
+                        (array-ref identities left)
+                        (array-ref identities right))
+                      (set! ok false))
+                    (set! right (+ right 1))))
+                (set! left (+ left 1))))))
+        (let
+          [high-owner : i64 (+ (ci.intern-capacity) 100)]
+          [high-owner-a : i64
+            (compiler-lower-private-identity-raw
+              session-a
+              (cis.InternLowerPrivateRecord.CleanupHidden high-owner))]
+          [high-owner-a-again : i64
+            (compiler-lower-private-identity-raw
+              session-a
+              (cis.InternLowerPrivateRecord.CleanupHidden high-owner))]
+          [high-owner-b : i64
+            (compiler-lower-private-identity-raw
+              session-a
+              (cis.InternLowerPrivateRecord.CleanupHidden (+ high-owner 1)))]
+          [collision-a : i64
+            (compiler-lower-private-identity-raw
+              session-a
+              (cis.InternLowerPrivateRecord.CleanupHidden 2048))]
+          [collision-b : i64
+            (compiler-lower-private-identity-raw
+              session-a
+              (cis.InternLowerPrivateRecord.CleanupHidden 2560))]
+          [other-session-uniform : i64
+            (compiler-lower-private-identity-raw
+              session-b
+              cis.InternLowerPrivateRecord.SpmdReduceUniform)]
+          [former-collision-key : cis.InternStructuralKey
+            (cis.intern-structural-session-key
+              session-a
+              (ci.intern-structural-kind-lower-private)
+              0
+              1
+              0)]
+          [former-collision-raw : i64
+            (cis.intern-structural-key-raw former-collision-key)]
+          [unknown-kind-key : cis.InternStructuralKey
+            (cis.intern-structural-session-key session-a 255 0 0 0)]
+          [unknown-kind-raw : i64
+            (cis.intern-structural-key-raw unknown-kind-key)]
+          [index : i64 0]
+          (begin
+            (unless (= high-owner-a high-owner-a-again) (set! ok false))
+            (when (= high-owner-a high-owner-b) (set! ok false))
+            (when (= collision-a collision-b) (set! ok false))
+            (when
+              (= other-session-uniform (array-ref identities 12))
+              (set! ok false))
+            ;; This is the structural counterpart of the old kind-16/value-0
+            ;; versus kind-0/value-1 collision. The malformed marker recipe is a
+            ;; separate record and fails typed decoding.
+            (when
+              (= former-collision-raw (array-ref identities 12))
+              (set! ok false))
+            (unless
+              (compiler-lower-private-record-missing?
+                (cis.intern-structural-session-lower-private-record-for-raw
+                  session-a
+                  former-collision-raw))
+              (set! ok false))
+            (unless
+              (compiler-lower-private-record-missing?
+                (cis.intern-structural-session-lower-private-record-for-raw
+                  session-a
+                  unknown-kind-raw))
+              (set! ok false))
+            (unless
+              (compiler-lower-private-record-missing?
+                (cis.intern-structural-session-lower-private-record-for-raw
+                  session-b
+                  (array-ref identities 12)))
+              (set! ok false))
+            (match (cis.intern-structural-session-lower-private-record-for-raw
+              session-a
+              (array-ref identities 12))
+              [(cis.InternMaybeLowerPrivateRecord.Some
+                  (cis.InternLowerPrivateRecord.SpmdReduceUniform))
+                unit]
+              [_ (set! ok false)])
+            (match (cis.intern-structural-session-lower-private-record-for-raw
+              session-a
+              high-owner-a)
+              [(cis.InternMaybeLowerPrivateRecord.Some
+                  (cis.InternLowerPrivateRecord.CleanupHidden owner-id))
+                (unless (= owner-id high-owner) (set! ok false))]
+              [_ (set! ok false)])
+            (match (cis.intern-structural-session-lower-private-record-for-raw
+              session-a
+              (array-ref identities 16))
+              [(cis.InternMaybeLowerPrivateRecord.Some
+                  (cis.InternLowerPrivateRecord.WhileExit ordinal))
+                (unless (= ordinal 1) (set! ok false))]
+              [_ (set! ok false)])
+            (while (< index 700)
+              (begin
+                (compiler-lower-private-identity-raw
+                  session-a
+                  (cis.InternLowerPrivateRecord.CleanupHidden (+ 100000 index)))
+                (set! index (+ index 1))))
+            (unless
+              (=
+                (compiler-lower-private-identity-raw
+                  session-a
+                  (cis.InternLowerPrivateRecord.CleanupHidden 100000))
+                (compiler-lower-private-identity-raw
+                  session-a
+                  (cis.InternLowerPrivateRecord.CleanupHidden 100000)))
+              (set! ok false))
+            (unless
+              (=
+                (cis.intern-structural-session-kind-count
+                  session-a
+                  (ci.intern-structural-kind-lower-private))
+                723)
+              (set! ok false))
+            (unless
+              (= (ci.intern-compat-state-structural-count intern-a) 724)
+              (set! ok false))
+            (unless
+              (= (ci.intern-structural-record-slot-bytes) 37)
+              (set! ok false))))
+        (let
+          [reset-to-state : ci.InternCompatState (ci.intern-compat-state-new)]
+          [reset-to-session : cis.InternStructuralSessionHandle
+            (cis.intern-structural-session-handle-from-source-names
+              (ci.intern-source-name-session-handle-from-state reset-to-state))]
+          [reset-to-identity : i64
+            (compiler-lower-private-identity-raw
+              reset-to-session
+              cis.InternLowerPrivateRecord.CleanupStack)]
+          [mark : i64 (ci.intern-compat-state-pool-len reset-to-state)]
+          (begin
+            (ci.intern-compat-state-reset-to! (&mut reset-to-state) mark)
+            (unless
+              (compiler-lower-private-record-missing?
+                (cis.intern-structural-session-lower-private-record-for-raw
+                  reset-to-session
+                  reset-to-identity))
+              (set! ok false))))
+        (let
+          [reset-state : ci.InternCompatState (ci.intern-compat-state-new)]
+          [reset-session : cis.InternStructuralSessionHandle
+            (cis.intern-structural-session-handle-from-source-names
+              (ci.intern-source-name-session-handle-from-state reset-state))]
+          [reset-identity : i64
+            (compiler-lower-private-identity-raw
+              reset-session
+              cis.InternLowerPrivateRecord.RegionReset)]
+          (begin
+            (ci.intern-compat-state-reset! (&mut reset-state))
+            (unless
+              (compiler-lower-private-record-missing?
+                (cis.intern-structural-session-lower-private-record-for-raw
+                  reset-session
+                  reset-identity))
+              (set! ok false))))
+        (and
+          ok
+          (=
+            (cis.intern-lower-private-identity-size)
+            (comptime (size-of (type i64)))))))
     "lower-private records are typed, canonical, session-owned, and collision-free"))
 
 (test
@@ -15342,125 +15187,119 @@
   (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))")
     "lower-private select temporaries stay outside renderable-name metadata"))
 
-;; The standalone adapter resets the active intern generation after constructing
-;; its lower carrier. Cleanup synthesis must use the refreshed post-reset view;
-;; publishing a pre-reset snapshot would invalidate the active builtin IDs.
-(define (compiler-lower-standalone-cleanup-owner-refresh-ok?) : bool
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (if (compiler-lower-cleanup-struct-shape-ok?)
-      (begin
-        (cbi.compiler-builtin-refresh!)
-        true)
-      false)))
-
 (test
   compiler-lower-standalone-cleanup-owner-refresh
   (test.assert-true
-    (compiler-lower-standalone-cleanup-owner-refresh-ok?)
-    "standalone cleanup lowering preserves post-reset intern/builtin ownership"))
-
-;; Lowerer-owned synthesis must select its compile job's capabilities even
-;; while a different job is installed as the serial compatibility decoy.
-(define (compiler-lower-cleanup-owner-interleaving-ok?) : bool
-  (let
-    [active-intern-before : ci.InternCompatState
-      (ci.intern-compat-state-capture-active)]
-    [active-pools-before : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-capture-active)]
-    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [module-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "owner-a")]
-    [cleanup-a : i64
-      (ci.intern-compat-state-intern (&mut intern-a) "cleanup-a")]
-    [_module-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "decoy-b")]
-    [_cleanup-b : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "cleanup-b")]
-    [pools-a : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 8 1)]
-    [pools-b : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 8 1)]
-    [lower-a : lower.CompilerLowerState
-      (lower.compiler-lower-state-new-with-intern-state
-        (owned_view.compiler-owned-shared-view intern-a))]
-    [generated-b-before : i64 (ci.intern-compat-state-generated-count intern-b)]
-    [expr-b-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
-    [ok : bool false]
     (begin
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-b))
-      (ast.ast-node-pool-context-install! pools-b)
-      (let
-        [_active-generated-b : i64
-          (ci.intern-compat-state-generated-name
-            (&mut intern-b)
-            "decoy-generated-b")]
-        [generated-b-after : i64
-          (ci.intern-compat-state-generated-count intern-b)]
-        [param-a : i64 (lower.lower-struct-cleanup-param-id lower-a)]
-        [param-again-a : i64 (lower.lower-struct-cleanup-param-id lower-a)]
-        [payload-a : i64 (lower.lower-enum-cleanup-payload-id lower-a 0)]
-        [payload-again-a : i64 (lower.lower-enum-cleanup-payload-id lower-a 0)]
-        [qualified-a : i64
-          (ci.intern-compat-state-generated-canonical-qualified-name
-            (&mut intern-a)
-            "owner-a/cleanup-a"
-            module-a
-            cleanup-a)]
-        [_enum-call-a : i64
-          (lower.lower-enum-cleanup-call-expr pools-a cleanup-a payload-a)]
-        [_struct-call-a : i64
-          (lower.lower-struct-cleanup-call-expr
-            pools-a
-            cleanup-a
-            param-a
-            cleanup-a)]
-        [lower-a-interns : ci.InternCompatState
-          (lower.compiler-lower-state-interns lower-a)]
-        (set!
-          ok
-          (and
-            (=
-              (ci.intern-compat-state-table-id (& lower-a-interns))
-              (ci.intern-compat-state-table-id intern-a))
-            (= param-a param-again-a)
-            (= payload-a payload-again-a)
-            (= (ci.intern-compat-state-generated-count intern-a) 3)
-            (=
-              (ci.intern-compat-state-generated-count intern-b)
-              generated-b-after)
-            (= generated-b-after (+ generated-b-before 1))
-            (= (ci.intern-generated-count) generated-b-after)
-            (string.eq
-              (ci.intern-compat-state-str intern-a param-a)
-              "__tl_cleanup_value")
-            (string.eq
-              (ci.intern-compat-state-str intern-a payload-a)
-              "__tl_cleanup_payload_0")
-            (ci.intern-compat-state-qualified? intern-a qualified-a)
-            (=
-              (ci.intern-compat-state-qualified-module-id intern-a qualified-a)
-              module-a)
-            (=
-              (ci.intern-compat-state-qualified-base-id intern-a qualified-a)
-              cleanup-a)
-            (= (ast.ast-node-pool-context-expr-len pools-a) 7)
-            (= (ast.ast-node-pool-context-expr-len pools-b) expr-b-before))))
-      (ci.intern-compat-state-install! active-intern-before)
-      (ast.ast-node-pool-context-install! active-pools-before)
-      (ast.ast-node-pool-context-destroy-storage! pools-a)
-      (ast.ast-node-pool-context-destroy-storage! pools-b)
-      (unsafe
-        (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena intern-a))
-        (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena intern-b)))
-      ok)))
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (if (compiler-lower-cleanup-struct-shape-ok?)
+        (begin
+          (cbi.compiler-builtin-refresh!)
+          true)
+        false))
+    "standalone cleanup lowering preserves post-reset intern/builtin ownership"))
 
 (test
   compiler-lower-cleanup-owner-interleaving
   (test.assert-true
-    (compiler-lower-cleanup-owner-interleaving-ok?)
+    (let
+      [active-intern-before : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [active-pools-before : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+      [module-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "owner-a")]
+      [cleanup-a : i64
+        (ci.intern-compat-state-intern (&mut intern-a) "cleanup-a")]
+      [_module-b : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "decoy-b")]
+      [_cleanup-b : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "cleanup-b")]
+      [pools-a : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 8 1)]
+      [pools-b : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 8 1)]
+      [lower-a : lower.CompilerLowerState
+        (lower.compiler-lower-state-new-with-intern-state
+          (owned_view.compiler-owned-shared-view intern-a))]
+      [generated-b-before : i64
+        (ci.intern-compat-state-generated-count intern-b)]
+      [expr-b-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
+      [ok : bool false]
+      (begin
+        (ci.intern-compat-state-install!
+          (owned_view.compiler-owned-shared-view intern-b))
+        (ast.ast-node-pool-context-install! pools-b)
+        (let
+          [_active-generated-b : i64
+            (ci.intern-compat-state-generated-name
+              (&mut intern-b)
+              "decoy-generated-b")]
+          [generated-b-after : i64
+            (ci.intern-compat-state-generated-count intern-b)]
+          [param-a : i64 (lower.lower-struct-cleanup-param-id lower-a)]
+          [param-again-a : i64 (lower.lower-struct-cleanup-param-id lower-a)]
+          [payload-a : i64 (lower.lower-enum-cleanup-payload-id lower-a 0)]
+          [payload-again-a : i64
+            (lower.lower-enum-cleanup-payload-id lower-a 0)]
+          [qualified-a : i64
+            (ci.intern-compat-state-generated-canonical-qualified-name
+              (&mut intern-a)
+              "owner-a/cleanup-a"
+              module-a
+              cleanup-a)]
+          [_enum-call-a : i64
+            (lower.lower-enum-cleanup-call-expr pools-a cleanup-a payload-a)]
+          [_struct-call-a : i64
+            (lower.lower-struct-cleanup-call-expr
+              pools-a
+              cleanup-a
+              param-a
+              cleanup-a)]
+          [lower-a-interns : ci.InternCompatState
+            (lower.compiler-lower-state-interns lower-a)]
+          (set!
+            ok
+            (and
+              (=
+                (ci.intern-compat-state-table-id (& lower-a-interns))
+                (ci.intern-compat-state-table-id intern-a))
+              (= param-a param-again-a)
+              (= payload-a payload-again-a)
+              (= (ci.intern-compat-state-generated-count intern-a) 3)
+              (=
+                (ci.intern-compat-state-generated-count intern-b)
+                generated-b-after)
+              (= generated-b-after (+ generated-b-before 1))
+              (= (ci.intern-generated-count) generated-b-after)
+              (string.eq
+                (ci.intern-compat-state-str intern-a param-a)
+                "__tl_cleanup_value")
+              (string.eq
+                (ci.intern-compat-state-str intern-a payload-a)
+                "__tl_cleanup_payload_0")
+              (ci.intern-compat-state-qualified? intern-a qualified-a)
+              (=
+                (ci.intern-compat-state-qualified-module-id
+                  intern-a
+                  qualified-a)
+                module-a)
+              (=
+                (ci.intern-compat-state-qualified-base-id intern-a qualified-a)
+                cleanup-a)
+              (= (ast.ast-node-pool-context-expr-len pools-a) 7)
+              (= (ast.ast-node-pool-context-expr-len pools-b) expr-b-before))))
+        (ci.intern-compat-state-install! active-intern-before)
+        (ast.ast-node-pool-context-install! active-pools-before)
+        (ast.ast-node-pool-context-destroy-storage! pools-a)
+        (ast.ast-node-pool-context-destroy-storage! pools-b)
+        (unsafe
+          (arena.tl_arena_destroy
+            (ci.intern-compat-state-persistent-arena intern-a))
+          (arena.tl_arena_destroy
+            (ci.intern-compat-state-persistent-arena intern-b)))
+        ok))
     "cleanup synthesis mutates only its explicit intern and AST-pool owners"))
 
 (define (compiler-lower-comptime-error-test-builtins
@@ -15488,206 +15327,205 @@
       (cbi.state-set! (&mut state) 150 stdlib-error-id)
       state)))
 
-;; Cache identity is the pair `(table-id, reset generation)`, not a numeric ID
-;; alone. A and B deliberately assign the same raw ID to different strings;
-;; the installed third state is a compatibility decoy and must remain untouched.
-(define (compiler-lower-comptime-error-cache-owner-isolation-ok?) : bool
-  (let
-    [active-intern-before : ci.InternCompatState
-      (ci.intern-compat-state-capture-active)]
-    [active-builtins-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
-    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [intern-decoy : ci.InternCompatState (ci.intern-compat-state-new)]
-    [a-bare : i64
-      (ci.intern-compat-state-intern (&mut intern-a) "comptime-error")]
-    [a-comptime : i64
-      (ci.intern-compat-state-intern (&mut intern-a) "comptime.comptime-error")]
-    [a-error : i64
-      (ci.intern-compat-state-intern (&mut intern-a) "comptime.error")]
-    [a-stdlib-comptime : i64
-      (ci.intern-compat-state-intern
-        (&mut intern-a)
-        "stdlib.comptime.comptime-error")]
-    [a-stdlib-error : i64
-      (ci.intern-compat-state-intern (&mut intern-a) "stdlib.comptime.error")]
-    [b-decoy : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy")]
-    [_b-decoy-2 : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-2")]
-    [_b-decoy-3 : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-3")]
-    [_b-decoy-4 : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-4")]
-    [_b-decoy-5 : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-5")]
-    [b-bare : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "comptime-error")]
-    [b-comptime : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "comptime.comptime-error")]
-    [b-error : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "comptime.error")]
-    [b-stdlib-comptime : i64
-      (ci.intern-compat-state-intern
-        (&mut intern-b)
-        "stdlib.comptime.comptime-error")]
-    [b-stdlib-error : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "stdlib.comptime.error")]
-    [decoy-id : i64
-      (ci.intern-compat-state-intern (&mut intern-decoy) "installed-decoy")]
-    [builtins-a : cbi.CompilerBuiltinIdsState
-      (compiler-lower-comptime-error-test-builtins
-        intern-a
-        a-comptime
-        a-error
-        a-bare
-        a-stdlib-comptime
-        a-stdlib-error)]
-    [builtins-b : cbi.CompilerBuiltinIdsState
-      (compiler-lower-comptime-error-test-builtins
-        intern-b
-        b-comptime
-        b-error
-        b-bare
-        b-stdlib-comptime
-        b-stdlib-error)]
-    [builtins-decoy : cbi.CompilerBuiltinIdsState
-      (compiler-lower-comptime-error-test-builtins
-        intern-decoy
-        decoy-id
-        decoy-id
-        decoy-id
-        decoy-id
-        decoy-id)]
-    [lower-a : lower.CompilerLowerState
-      (lower.compiler-lower-state-new-with-intern-state
-        (owned_view.compiler-owned-shared-view intern-a))]
-    [lower-b : lower.CompilerLowerState
-      (lower.compiler-lower-state-new-with-intern-state
-        (owned_view.compiler-owned-shared-view intern-b))]
-    [initial-a : lower.CompilerLowerStateObservation
-      (lower.compiler-lower-state-observe lower-a)]
-    [ok : bool false]
-    (begin
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-decoy))
-      (cbi.state-install! builtins-decoy)
-      (lower.lower-comptime-error-ids-ensure! lower-a builtins-a)
-      (lower.lower-comptime-error-ids-ensure! lower-b builtins-b)
-      (let
-        [b-before-reuse : lower.CompilerLowerStateObservation
-          (lower.compiler-lower-state-observe lower-b)]
-        [old-generation : i64 (ci.intern-compat-state-generation intern-a)]
-        (begin
-          (lower.compiler-lower-state-reset! lower-a)
-          (let
-            [reset-ok? : bool (compiler-lower-state-reset? lower-a)]
-            (begin
-              (ci.intern-compat-state-reset! (&mut intern-a))
-              (let
-                [_a-new-decoy-1 : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "owner-a-new-decoy-1")]
-                [_a-new-decoy-2 : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "owner-a-new-decoy-2")]
-                [_a-new-decoy-3 : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "owner-a-new-decoy-3")]
-                [_a-new-decoy-4 : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "owner-a-new-decoy-4")]
-                [_a-new-decoy-5 : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "owner-a-new-decoy-5")]
-                [a-new-bare : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "comptime-error")]
-                [a-new-comptime : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "comptime.comptime-error")]
-                [a-new-error : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "comptime.error")]
-                [a-new-stdlib-comptime : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "stdlib.comptime.comptime-error")]
-                [a-new-stdlib-error : i64
-                  (ci.intern-compat-state-intern
-                    (&mut intern-a)
-                    "stdlib.comptime.error")]
-                [builtins-a-reused : cbi.CompilerBuiltinIdsState
-                  (compiler-lower-comptime-error-test-builtins
-                    intern-a
-                    a-new-comptime
-                    a-new-error
-                    a-new-bare
-                    a-new-stdlib-comptime
-                    a-new-stdlib-error)]
-                (begin
-                  (lower.lower-comptime-error-ids-ensure!
-                    lower-a
-                    builtins-a-reused)
-                  (set!
-                    ok
-                    (and
-                      (= a-bare b-decoy)
-                      (string.eq
-                        (ci.intern-compat-state-str intern-a a-new-bare)
-                        "comptime-error")
-                      (string.eq
-                        (ci.intern-compat-state-str intern-b b-decoy)
-                        "owner-b-decoy")
-                      (not
-                        (lower.compiler-lower-state-observation-eq?
-                          initial-a
-                          (lower.compiler-lower-state-observe lower-a)))
-                      (lower.lower-comptime-error-call-id? lower-a a-new-bare)
-                      (not (lower.lower-comptime-error-call-id? lower-a a-bare))
-                      (lower.lower-comptime-error-call-id? lower-b b-bare)
-                      (not
-                        (lower.lower-comptime-error-call-id? lower-b b-decoy))
-                      reset-ok?
-                      (not
-                        (=
-                          old-generation
-                          (ci.intern-compat-state-generation intern-a)))
-                      (lower.compiler-lower-state-observation-eq?
-                        b-before-reuse
-                        (lower.compiler-lower-state-observe lower-b))
-                      (=
-                        (ci.intern-active-table-id)
-                        (ci.intern-compat-state-table-id intern-decoy))
-                      (=
-                        (ci.intern-generation)
-                        (ci.intern-compat-state-generation intern-decoy))
-                      (= (ci.intern-pool-len) 1)
-                      (cbi.compiler-builtin-table-current?)
-                      (= cbi.compiler-builtin-id-fix-comptime_error decoy-id)))))))))
-      (ci.intern-compat-state-install! active-intern-before)
-      (cbi.state-install! active-builtins-before)
-      (unsafe
-        (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena intern-a))
-        (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena intern-b))
-        (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena intern-decoy)))
-      ok)))
-
 (test
   compiler-lower-comptime-error-cache-owner-isolation
   (test.assert-true
-    (compiler-lower-comptime-error-cache-owner-isolation-ok?)
+    (let
+      [active-intern-before : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [active-builtins-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+      [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+      [intern-decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+      [a-bare : i64
+        (ci.intern-compat-state-intern (&mut intern-a) "comptime-error")]
+      [a-comptime : i64
+        (ci.intern-compat-state-intern
+          (&mut intern-a)
+          "comptime.comptime-error")]
+      [a-error : i64
+        (ci.intern-compat-state-intern (&mut intern-a) "comptime.error")]
+      [a-stdlib-comptime : i64
+        (ci.intern-compat-state-intern
+          (&mut intern-a)
+          "stdlib.comptime.comptime-error")]
+      [a-stdlib-error : i64
+        (ci.intern-compat-state-intern (&mut intern-a) "stdlib.comptime.error")]
+      [b-decoy : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy")]
+      [_b-decoy-2 : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-2")]
+      [_b-decoy-3 : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-3")]
+      [_b-decoy-4 : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-4")]
+      [_b-decoy-5 : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-5")]
+      [b-bare : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "comptime-error")]
+      [b-comptime : i64
+        (ci.intern-compat-state-intern
+          (&mut intern-b)
+          "comptime.comptime-error")]
+      [b-error : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "comptime.error")]
+      [b-stdlib-comptime : i64
+        (ci.intern-compat-state-intern
+          (&mut intern-b)
+          "stdlib.comptime.comptime-error")]
+      [b-stdlib-error : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "stdlib.comptime.error")]
+      [decoy-id : i64
+        (ci.intern-compat-state-intern (&mut intern-decoy) "installed-decoy")]
+      [builtins-a : cbi.CompilerBuiltinIdsState
+        (compiler-lower-comptime-error-test-builtins
+          intern-a
+          a-comptime
+          a-error
+          a-bare
+          a-stdlib-comptime
+          a-stdlib-error)]
+      [builtins-b : cbi.CompilerBuiltinIdsState
+        (compiler-lower-comptime-error-test-builtins
+          intern-b
+          b-comptime
+          b-error
+          b-bare
+          b-stdlib-comptime
+          b-stdlib-error)]
+      [builtins-decoy : cbi.CompilerBuiltinIdsState
+        (compiler-lower-comptime-error-test-builtins
+          intern-decoy
+          decoy-id
+          decoy-id
+          decoy-id
+          decoy-id
+          decoy-id)]
+      [lower-a : lower.CompilerLowerState
+        (lower.compiler-lower-state-new-with-intern-state
+          (owned_view.compiler-owned-shared-view intern-a))]
+      [lower-b : lower.CompilerLowerState
+        (lower.compiler-lower-state-new-with-intern-state
+          (owned_view.compiler-owned-shared-view intern-b))]
+      [initial-a : lower.CompilerLowerStateObservation
+        (lower.compiler-lower-state-observe lower-a)]
+      [ok : bool false]
+      (begin
+        (ci.intern-compat-state-install!
+          (owned_view.compiler-owned-shared-view intern-decoy))
+        (cbi.state-install! builtins-decoy)
+        (lower.lower-comptime-error-ids-ensure! lower-a builtins-a)
+        (lower.lower-comptime-error-ids-ensure! lower-b builtins-b)
+        (let
+          [b-before-reuse : lower.CompilerLowerStateObservation
+            (lower.compiler-lower-state-observe lower-b)]
+          [old-generation : i64 (ci.intern-compat-state-generation intern-a)]
+          (begin
+            (lower.compiler-lower-state-reset! lower-a)
+            (let
+              [reset-ok? : bool (compiler-lower-state-reset? lower-a)]
+              (begin
+                (ci.intern-compat-state-reset! (&mut intern-a))
+                (let
+                  [_a-new-decoy-1 : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "owner-a-new-decoy-1")]
+                  [_a-new-decoy-2 : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "owner-a-new-decoy-2")]
+                  [_a-new-decoy-3 : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "owner-a-new-decoy-3")]
+                  [_a-new-decoy-4 : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "owner-a-new-decoy-4")]
+                  [_a-new-decoy-5 : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "owner-a-new-decoy-5")]
+                  [a-new-bare : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "comptime-error")]
+                  [a-new-comptime : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "comptime.comptime-error")]
+                  [a-new-error : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "comptime.error")]
+                  [a-new-stdlib-comptime : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "stdlib.comptime.comptime-error")]
+                  [a-new-stdlib-error : i64
+                    (ci.intern-compat-state-intern
+                      (&mut intern-a)
+                      "stdlib.comptime.error")]
+                  [builtins-a-reused : cbi.CompilerBuiltinIdsState
+                    (compiler-lower-comptime-error-test-builtins
+                      intern-a
+                      a-new-comptime
+                      a-new-error
+                      a-new-bare
+                      a-new-stdlib-comptime
+                      a-new-stdlib-error)]
+                  (begin
+                    (lower.lower-comptime-error-ids-ensure!
+                      lower-a
+                      builtins-a-reused)
+                    (set!
+                      ok
+                      (and
+                        (= a-bare b-decoy)
+                        (string.eq
+                          (ci.intern-compat-state-str intern-a a-new-bare)
+                          "comptime-error")
+                        (string.eq
+                          (ci.intern-compat-state-str intern-b b-decoy)
+                          "owner-b-decoy")
+                        (not
+                          (lower.compiler-lower-state-observation-eq?
+                            initial-a
+                            (lower.compiler-lower-state-observe lower-a)))
+                        (lower.lower-comptime-error-call-id? lower-a a-new-bare)
+                        (not
+                          (lower.lower-comptime-error-call-id? lower-a a-bare))
+                        (lower.lower-comptime-error-call-id? lower-b b-bare)
+                        (not
+                          (lower.lower-comptime-error-call-id? lower-b b-decoy))
+                        reset-ok?
+                        (not
+                          (=
+                            old-generation
+                            (ci.intern-compat-state-generation intern-a)))
+                        (lower.compiler-lower-state-observation-eq?
+                          b-before-reuse
+                          (lower.compiler-lower-state-observe lower-b))
+                        (=
+                          (ci.intern-active-table-id)
+                          (ci.intern-compat-state-table-id intern-decoy))
+                        (=
+                          (ci.intern-generation)
+                          (ci.intern-compat-state-generation intern-decoy))
+                        (= (ci.intern-pool-len) 1)
+                        (cbi.compiler-builtin-table-current?)
+                        (= cbi.compiler-builtin-id-fix-comptime_error decoy-id)))))))))
+        (ci.intern-compat-state-install! active-intern-before)
+        (cbi.state-install! active-builtins-before)
+        (unsafe
+          (arena.tl_arena_destroy
+            (ci.intern-compat-state-persistent-arena intern-a))
+          (arena.tl_arena_destroy
+            (ci.intern-compat-state-persistent-arena intern-b))
+          (arena.tl_arena_destroy
+            (ci.intern-compat-state-persistent-arena intern-decoy)))
+        ok))
     "comptime-error caches use explicit intern/builtin owners and reset stamps"))
 
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
@@ -16093,112 +15931,6 @@
                               true]
                             [_ false])
                           (compiler-lower-state-reset? owner-a))))))))))))))
-
-(define (compiler-lower-spmd-structural-profile-ok?) : bool
-  (let
-    [state : lower.CompilerLowerState
-      (lower.compiler-lower-state-new-with-intern-state
-        (ci.intern-compat-state-new))]
-    [_package : unit
-      (lower.compiler-lower-state-set-spmd-package! state "profile-pkg")]
-    [intern-state : ci.InternCompatState
-      (lower.compiler-lower-state-interns state)]
-    [canonical : i64
-      (ci.intern-compat-state-intern (&mut intern-state) "profile-pkg/helper")]
-    [classes : ast.AstSpmdParamClassList (ast.ast-spmd-param-class-list-new)]
-    [_class : unit
-      (ast.ast-spmd-param-class-list-push
-        (&mut classes)
-        ast.AstSpmdParamClass.Varying)]
-    [first : i64
-      (lower.lower-spmd-package-structural-symbol
-        state
-        "profile-pkg"
-        "profile-pkg/helper"
-        canonical
-        "(-> i64 i64)"
-        (ast.AstType.I64)
-        (ir.CompilerIrSpmdBackend.Avx512)
-        8
-        classes
-        (ast.AstSpmdResultClass.Varying)
-        0)]
-    [repeat : i64
-      (lower.lower-spmd-package-structural-symbol
-        state
-        "profile-pkg"
-        "profile-pkg/helper"
-        canonical
-        "(-> i64 i64)"
-        (ast.AstType.I64)
-        (ir.CompilerIrSpmdBackend.Avx512)
-        8
-        classes
-        (ast.AstSpmdResultClass.Varying)
-        0)]
-    [expected : String
-      (lower.lower-spmd-package-symbol
-        "profile-pkg"
-        "profile-pkg/helper"
-        "(-> i64 i64)"
-        (ast.AstType.I64)
-        (ir.CompilerIrSpmdBackend.Avx512)
-        8
-        "v"
-        "v"
-        0)]
-    [lazy-before : bool
-      (and
-        (=
-          (string.string-length
-            (ci.intern-compat-state-str
-              intern-state
-              (lower.lower-spmd-package-structural-identity
-                (owned_view.compiler-owned-shared-view intern-state)
-                first)))
-          0)
-        (=
-          (string.string-length
-            (ci.intern-compat-state-str
-              intern-state
-              (lower.lower-spmd-package-structural-linker-symbol
-                intern-state
-                first)))
-          0))]
-    (begin
-      (lower.lower-materialize-generated-role-symbols! state)
-      (and
-        lazy-before
-        (=
-          (lower.lower-spmd-package-structural-identity
-            (owned_view.compiler-owned-shared-view intern-state)
-            first)
-          (lower.lower-spmd-package-structural-identity
-            (owned_view.compiler-owned-shared-view intern-state)
-            repeat))
-        (=
-          (lower.lower-spmd-package-structural-linker-symbol intern-state first)
-          (lower.lower-spmd-package-structural-linker-symbol
-            intern-state
-            repeat))
-        (=
-          (lower.lower-spmd-package-structural-registration-key
-            intern-state
-            first)
-          (lower.lower-spmd-package-structural-registration-key
-            intern-state
-            repeat))
-        (string.eq
-          (ci.intern-compat-state-str
-            intern-state
-            (lower.lower-spmd-package-structural-linker-symbol
-              intern-state
-              first))
-          expected)
-        (= (compiler-lower-profile-spmd-identity-serializations-value state) 1)
-        (= (compiler-lower-profile-spmd-stable-hash-computations-value state) 1)
-        (= (compiler-lower-profile-spmd-render-cache-misses-value state) 1)
-        (>= (compiler-lower-profile-spmd-render-cache-hits-value state) 2)))))
 
 (define (compiler-lower-type-cache-i64-keys-ok?) : bool
   (let
@@ -17209,19 +16941,138 @@
 (test
   compiler-lower-selected-import-alias-name-env
   (test.assert-true
-    (compiler-lower-selected-import-alias-name-env-ok?)
+    (let
+      [target-module : i64 (ci.intern "selected.source")]
+      [importer-module : i64 (ci.intern "selected.importer")]
+      [item : i64 (ci.intern "source-value")]
+      [alias : i64 (ci.intern "chosen")]
+      [target-key : i64
+        (csym.compiler-symbol-module-key-id-by-id target-module item)]
+      [alias-key : i64
+        (csym.compiler-symbol-module-key-id-by-id importer-module alias)]
+      [symbol-id : i64 4242]
+      [base : lower.LowerNameEnv
+        (lower.lower-name-env-bind-logical-symbol-id
+          target-key
+          target-key
+          symbol-id
+          (lower.LowerNameEnv.Nil))]
+      [aliased : lower.LowerNameEnv
+        (lower.lower-name-env-add-selected-item-alias
+          (lower.compiler-lower-state-new)
+          base
+          importer-module
+          target-module
+          item
+          alias)]
+      (and
+        (=
+          (lower.lower-name-env-lookup-logical-id
+            (lower.lower-global-shared-view aliased)
+            alias-key
+            -1)
+          target-key)
+        (=
+          (lower.lower-name-env-lookup-symbol-id
+            (lower.lower-global-shared-view aliased)
+            alias-key
+            -1)
+          symbol-id)
+        (=
+          (lower.lower-name-env-lookup-symbol-id aliased target-key -1)
+          symbol-id)))
     "selected import aliases preserve source logical and linker identities"))
 
 (test
   compiler-lower-package-alias-collision
   (test.assert-true
-    (compiler-lower-package-alias-collision-ok?)
+    (match (parser.parse-ast-source
+      (compiler-lower-package-alias-collision-source))
+      [(parser.ResultAstProgram.Ok program)
+        (match (lower-test-functions
+          (lower-compiler-program-with-decl-paths
+            "consumer/src/main.tl"
+            program
+            (compiler-lower-package-alias-collision-paths)))
+          [(LowerTestFunctions.Some functions)
+            (and
+              (=
+                (lower-test-function-call-count
+                  (ir.compiler-ir-global-shared-view functions)
+                  "main"
+                  "surface_left/src/lib.tl::left.src.lib/same")
+                1)
+              (=
+                (lower-test-function-call-count
+                  functions
+                  "main"
+                  "surface_right/src/lib.tl::right.src.lib/same")
+                1))]
+          [_ false])]
+      [(parser.ResultAstProgram.Err _) false])
     "package aliases preserve same-named value targets"))
 
 (test
   compiler-lower-package-extern-alias-symbols
   (test.assert-true
-    (compiler-lower-package-extern-alias-symbols-ok?)
+    (let
+      [name : i64 (ci.intern "same")]
+      [left-module : i64 (ci.intern "left.src.lib")]
+      [right-module : i64 (ci.intern "right.src.lib")]
+      [left : ast.AstDecl
+        (load.compiler-load-package-def-fn-extern
+          "surface_left"
+          "C:/surface_left/"
+          (svec.new)
+          "C:/surface_left/src/lib.tl"
+          "left.src.lib"
+          name
+          (ast.ast-param-list-new)
+          (ast.AstType.I64)
+          load.CompilerLoadPackageSpmdInterface.Unavailable)]
+      [right : ast.AstDecl
+        (load.compiler-load-package-def-fn-extern
+          "surface_right"
+          "C:/surface_right/"
+          (svec.new)
+          "C:/surface_right/src/lib.tl"
+          "right.src.lib"
+          name
+          (ast.ast-param-list-new)
+          (ast.AstType.I64)
+          load.CompilerLoadPackageSpmdInterface.Unavailable)]
+      [lower-state : lower.CompilerLowerState
+        (lower.compiler-lower-state-new-with-intern-state
+          (ci.intern-compat-state-capture-active))]
+      (match left
+        [(ast.AstDecl.Extern _ _ _ left-meta _)
+          (match right
+            [(ast.AstDecl.Extern _ _ _ right-meta _)
+              (let
+                [left-symbol : i64
+                  (lower.lower-extern-logical-symbol-id
+                    lower-state
+                    (csym.compiler-symbol-module-key-id-by-id left-module name)
+                    "same"
+                    name
+                    (ast.ast-extern-metadata-box-shared-view left-meta))]
+                [right-symbol : i64
+                  (lower.lower-extern-logical-symbol-id
+                    lower-state
+                    (csym.compiler-symbol-module-key-id-by-id right-module name)
+                    "same"
+                    name
+                    (ast.ast-extern-metadata-box-shared-view right-meta))]
+                (and
+                  (not (= left-symbol right-symbol))
+                  (string.eq
+                    (ir.compiler-ir-symbol-text left-symbol)
+                    "left.src.lib/same")
+                  (string.eq
+                    (ir.compiler-ir-symbol-text right-symbol)
+                    "right.src.lib/same")))]
+            [_ false])]
+        [_ false]))
     "package extern aliases preserve canonical call symbols"))
 
 (test
@@ -17239,7 +17090,18 @@
 (test
   compiler-lower-masked-preheader-cache
   (test.assert-true
-    (compiler-lower-masked-preheader-cache-tests-ok?)
+    (and
+      (compiler-lower-masked-preheader-cache-counts-ok?
+        (lower.CompilerLowerMode.Avx2)
+        4)
+      (compiler-lower-masked-preheader-cache-counts-ok?
+        (lower.CompilerLowerMode.Avx512)
+        8)
+      (compiler-lower-masked-preheader-unsafe-rejected?
+        (lower.CompilerLowerMode.Avx2))
+      (compiler-lower-masked-preheader-unsafe-rejected?
+        (lower.CompilerLowerMode.Avx512))
+      (compiler-lower-masked-preheader-windows-avx2-cap-ok?))
     "masked loops hoist typed splats and dynamic-array data pointers"))
 
 (test
@@ -17375,7 +17237,116 @@
 (test
   compiler-lower-spmd-structural-profile
   (test.assert-true
-    (compiler-lower-spmd-structural-profile-ok?)
+    (let
+      [state : lower.CompilerLowerState
+        (lower.compiler-lower-state-new-with-intern-state
+          (ci.intern-compat-state-new))]
+      [_package : unit
+        (lower.compiler-lower-state-set-spmd-package! state "profile-pkg")]
+      [intern-state : ci.InternCompatState
+        (lower.compiler-lower-state-interns state)]
+      [canonical : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "profile-pkg/helper")]
+      [classes : ast.AstSpmdParamClassList (ast.ast-spmd-param-class-list-new)]
+      [_class : unit
+        (ast.ast-spmd-param-class-list-push
+          (&mut classes)
+          ast.AstSpmdParamClass.Varying)]
+      [first : i64
+        (lower.lower-spmd-package-structural-symbol
+          state
+          "profile-pkg"
+          "profile-pkg/helper"
+          canonical
+          "(-> i64 i64)"
+          (ast.AstType.I64)
+          (ir.CompilerIrSpmdBackend.Avx512)
+          8
+          classes
+          (ast.AstSpmdResultClass.Varying)
+          0)]
+      [repeat : i64
+        (lower.lower-spmd-package-structural-symbol
+          state
+          "profile-pkg"
+          "profile-pkg/helper"
+          canonical
+          "(-> i64 i64)"
+          (ast.AstType.I64)
+          (ir.CompilerIrSpmdBackend.Avx512)
+          8
+          classes
+          (ast.AstSpmdResultClass.Varying)
+          0)]
+      [expected : String
+        (lower.lower-spmd-package-symbol
+          "profile-pkg"
+          "profile-pkg/helper"
+          "(-> i64 i64)"
+          (ast.AstType.I64)
+          (ir.CompilerIrSpmdBackend.Avx512)
+          8
+          "v"
+          "v"
+          0)]
+      [lazy-before : bool
+        (and
+          (=
+            (string.string-length
+              (ci.intern-compat-state-str
+                intern-state
+                (lower.lower-spmd-package-structural-identity
+                  (owned_view.compiler-owned-shared-view intern-state)
+                  first)))
+            0)
+          (=
+            (string.string-length
+              (ci.intern-compat-state-str
+                intern-state
+                (lower.lower-spmd-package-structural-linker-symbol
+                  intern-state
+                  first)))
+            0))]
+      (begin
+        (lower.lower-materialize-generated-role-symbols! state)
+        (and
+          lazy-before
+          (=
+            (lower.lower-spmd-package-structural-identity
+              (owned_view.compiler-owned-shared-view intern-state)
+              first)
+            (lower.lower-spmd-package-structural-identity
+              (owned_view.compiler-owned-shared-view intern-state)
+              repeat))
+          (=
+            (lower.lower-spmd-package-structural-linker-symbol
+              intern-state
+              first)
+            (lower.lower-spmd-package-structural-linker-symbol
+              intern-state
+              repeat))
+          (=
+            (lower.lower-spmd-package-structural-registration-key
+              intern-state
+              first)
+            (lower.lower-spmd-package-structural-registration-key
+              intern-state
+              repeat))
+          (string.eq
+            (ci.intern-compat-state-str
+              intern-state
+              (lower.lower-spmd-package-structural-linker-symbol
+                intern-state
+                first))
+            expected)
+          (=
+            (compiler-lower-profile-spmd-identity-serializations-value state)
+            1)
+          (=
+            (compiler-lower-profile-spmd-stable-hash-computations-value state)
+            1)
+          (= (compiler-lower-profile-spmd-render-cache-misses-value state) 1)
+          (>= (compiler-lower-profile-spmd-render-cache-hits-value state) 2))))
     "SPMD identity serialization and stable hashing are cached per structural recipe"))
 
 (define (compiler-lower-state-advisory-sink [state : lower.CompilerLowerState]) : cdiag.CompilerAdvisorySink

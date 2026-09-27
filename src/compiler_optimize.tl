@@ -116376,31 +116376,26 @@
 ;; What the summaries read of the program besides its call graph: the globals
 ;; it stores to or takes the address of (`disq`, opt-const-globals-disq-instr)
 ;; and every global reference, store and call it makes (`cells`,
-;; opt-global-cell-scan-instr). Those two are level-2 facts; the index is built
-;; only within the summary function limit, above which every summary reading
-;; it declines.
+;; opt-global-cell-scan-instr). Only the level-2 summaries read them; the index
+;; is built only within the summary function limit, above which every summary
+;; reading it declines.
 (defstruct OptProgramFacts
   (index OptProgramIndex)
   (disq opt_i64_i64_map.Map)
   (cells OptGlobalCellScan))
 
 (define (opt-program-facts-build
-  [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [level : i64]) : OptProgramFacts
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptProgramFacts
   (let
     [count : i64 (opt-function-seq-count functions)]
     (OptProgramFacts
       (if (<= count (opt-summary-function-limit))
         (opt-program-index-build functions)
         (opt-program-index-empty))
-      (if (>= level 2)
-        (opt-const-globals-disqualified
-          (opt_i64_i64_map.with-capacity (opt-function-index-capacity count))
-          functions)
-        (opt_i64_i64_map.with-capacity 1))
-      (if (>= level 2)
-        (opt-global-cell-scan-functions (opt-global-cell-scan-new) functions)
-        (opt-global-cell-scan-new)))))
+      (opt-const-globals-disqualified
+        (opt_i64_i64_map.with-capacity (opt-function-index-capacity count))
+        functions)
+      (opt-global-cell-scan-functions (opt-global-cell-scan-new) functions))))
 
 (define (opt-program-index-count [index : (& index OptProgramIndex)]) : i64
   index.calls.count)
@@ -118504,9 +118499,7 @@
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [index : (& index OptProgramIndex)]
-  [build-direct-call-clean : bool]
-  [build-call-memory : bool]) : OptProgramSummaries
+  [index : (& index OptProgramIndex)]) : OptProgramSummaries
   (let
     [capacity : i64
       (opt-function-index-capacity (opt-function-seq-count functions))]
@@ -118520,32 +118513,18 @@
           (opt-function-index-capacity
             (ir.compiler-ir-global-seq-count globals))))]
     [call-memory : opt_i64_i64_map.Map
-      (if build-call-memory
-        (opt-call-memory-build-with-descriptor-globals
-          type-segment-bases
-          descriptor-globals
-          index
-          capacity)
-        (opt_i64_i64_map.with-capacity 1))]
-    ;; `build-direct-call-clean` is the level>=2 gate, so opt0/opt1 keep an
-    ;; empty map and stay byte-identical.
-    [direct-call-clean : opt_i64_i64_map.Map
-      (if build-direct-call-clean
-        (opt-direct-call-clean-map functions call-memory capacity)
-        (opt_i64_i64_map.with-capacity 1))]
-    ;; The return-alias table rides the same level>=2 gate as
-    ;; `direct-call-clean`: it feeds LICM provenance only, and leaving it empty
-    ;; below that level keeps opt0/opt1 byte-identical.
-    [return-alias : opt_i64_i64_map.Map
-      (if build-direct-call-clean
-        (opt-licm-return-alias-map functions capacity)
-        (opt_i64_i64_map.with-capacity 1))]
+      (opt-call-memory-build-with-descriptor-globals
+        type-segment-bases
+        descriptor-globals
+        index
+        capacity)]
     (OptProgramSummaries
       false
       (profile_state.compiler-profile-state-new)
-      direct-call-clean
+      (opt-direct-call-clean-map functions call-memory capacity)
       call-memory
-      return-alias
+      ;; The whole-program RETURN-ALIAS table feeds LICM provenance only.
+      (opt-licm-return-alias-map functions capacity)
       (opt_i64_i64_map.with-capacity 1)
       (opt-global-cell-summary-empty)
       (ir.compiler-ir-representation-index-empty)
@@ -118553,37 +118532,33 @@
       (opt_i64_i64_map.with-capacity 1))))
 
 ;; Build the per-program summaries: the function-count-gated call maps
-;; plus the const-divisor table. The const-divisor table is built only at opt
-;; level 2 (the only level whose pipeline runs the divisor rewrite), so opt0/opt1
-;; pay nothing for it. The global-cell summary follows the same
-;; gate: only the level-2 pipeline runs the global_cell pass. Every table is
-;; built on the same final function seq -- the post-inline, pruned program
-;; every function is then optimized from, which is the only seq whose call
-;; sites are the ones that survive.
+;; plus the const-divisor, constant-length and global-cell tables. Only the
+;; level-2 pipeline reads any of them (the level-1 pipeline reads the profile
+;; state alone), so opt0/opt1 pay nothing for them. Every table is built on the
+;; same final function seq -- the post-inline, pruned program every function is
+;; then optimized from, which is the only seq whose call sites are the ones
+;; that survive.
 (define (opt-build-program-summaries
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
   [externs : ir.CompilerIrExternSeq]
   [reachable-functions : (& reachable-functions ir.CompilerIrFunctionSeq)]
   [level : i64]) : OptProgramSummaries
-  (let
-    [count : i64 (opt-function-seq-count reachable-functions)]
-    [capacity : i64 (opt-function-index-capacity count)]
-    [facts : OptProgramFacts
-      (opt-program-facts-build reachable-functions level)]
-    [summaries : OptProgramSummaries
-      (if (<= count (opt-summary-function-limit))
-        (opt-program-call-summaries
-          type-segment-bases
-          (compiler-opt-global-shared-view globals)
-          reachable-functions
-          facts.index
-          (>= level 2)
-          (>= level 1))
-        (opt-program-summaries-empty))]
-    (begin
-      (when
-        (>= level 2)
+  (if (< level 2)
+    (opt-program-summaries-empty)
+    (let
+      [count : i64 (opt-function-seq-count reachable-functions)]
+      [capacity : i64 (opt-function-index-capacity count)]
+      [facts : OptProgramFacts (opt-program-facts-build reachable-functions)]
+      [summaries : OptProgramSummaries
+        (if (<= count (opt-summary-function-limit))
+          (opt-program-call-summaries
+            type-segment-bases
+            (compiler-opt-global-shared-view globals)
+            reachable-functions
+            facts.index)
+          (opt-program-summaries-empty))]
+      (begin
         (let
           [_divisors : unit
             (set!
@@ -118646,8 +118621,8 @@
                 roots
                 cell.len-eq
                 capacity))
-            (set! summaries.global-cell cell))))
-      summaries)))
+            (set! summaries.global-cell cell)))
+        summaries))))
 
 ;; Substitute a proven constant global with its literal value in
 ;; scalar operand positions. For an ordinary operand this lets the backend fold
@@ -123943,7 +123918,7 @@
         ;; `disq` records a global on a `Store` target OR a `GlobalAddr`
         ;; operand, so subtracting the direct-store targets leaves precisely the
         ;; globals whose ADDRESS the program takes.
-        [facts : OptProgramFacts (opt-program-facts-build functions level)]
+        [facts : OptProgramFacts (opt-program-facts-build functions)]
         [addr-taken : opt_i64_i64_map.Map
           (opt-global-cell-addr-taken-fill
             (compiler-opt-global-shared-view globals)
@@ -124485,7 +124460,7 @@
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionSeq]) : OptGlobalCellSummary
   (let
-    [facts : OptProgramFacts (opt-program-facts-build functions 2)]
+    [facts : OptProgramFacts (opt-program-facts-build functions)]
     (opt-global-cell-summary-build-with-call-memory
       type-segment-bases
       globals

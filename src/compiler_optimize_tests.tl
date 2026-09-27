@@ -2495,7 +2495,7 @@
   [globals : ir.CompilerIrGlobalSeq]
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : opt_i64_i64_map.Map
   (let
-    [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions 2)]
+    [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
     (opt.opt-const-divisors-build globals facts.disq)))
 
 (define (opt-test-summaries-with-global-cell
@@ -53169,7 +53169,7 @@
         [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
         [globals (opt-cl-test-globals cl-symbols)]
         [functions (opt-cl-test-functions cl-symbols)]
-        [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions 2)]
+        [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
         (opt.opt-cl-build type-segment-bases globals functions facts.disq 8))]
     [cl-call-length : i64
       (opt.opt-cl-init-length
@@ -59172,7 +59172,7 @@
     [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
     [globals (opt-le-test-globals symbols)]
     [functions (opt-le-test-functions symbols)]
-    [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions 2)]
+    [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
     (opt.opt-global-cell-summary-build-with-call-memory
       type-segment-bases
       globals

@@ -1,11 +1,7 @@
 ;; compiler_surface_binary.tl - string helpers shared by the portable
 ;; compiler surface codecs. Integers use stdlib.byte_le.
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
 (import stdlib.string)
 
@@ -16,11 +12,7 @@
   (string.string-ref text index))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-binary-push-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
@@ -52,7 +44,7 @@
         (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) length)))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  compiler-surface-producer
   (define (surface-binary-copy [bytes : (& bytes (__tl_dyn-array u8))]) : (__tl_dyn-array
       u8)
     (let

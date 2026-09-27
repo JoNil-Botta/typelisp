@@ -7,18 +7,10 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.arena))
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.byte_le))
 
 (defmacro (surface-facts-shared-view [place : Expr]) : Expr
@@ -668,11 +660,7 @@
         builder.clone-call-indices))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-encode
     [facts : SurfaceTypecheckFacts]
     [structural-session : cis.InternStructuralSessionHandle]

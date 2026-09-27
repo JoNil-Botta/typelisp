@@ -240,236 +240,198 @@
     (= tlci.tlci-macro-entry-function-offset 16)
     (= tlci.tlci-macro-entry-reserved0-offset 24)))
 
+(define (tlci-test-host-abi-accepts? [result : tlci.ResultTlciHostAbi]) : bool
+  (match result
+    [(tlci.ResultTlciHostAbi.Ok) true]
+    [(tlci.ResultTlciHostAbi.Err _) false]))
+
+;; A callback table with no host context and an empty registry; the rejection
+;; cases vary its header.
+(define (tlci-test-table
+  [magic : i64]
+  [version : i64]
+  [byte-size : i64]
+  [reserved0 : i64]
+  [reserved2 : i64]
+  [abort : i64]) : tlci.TlciHostCallbackTable
+  (tlci.TlciHostCallbackTable
+    magic
+    version
+    byte-size
+    0
+    reserved0
+    0
+    reserved2
+    abort
+    (__tl_make-array String 0)
+    (__tl_make-array i64 0)
+    0))
+
+;; A well-formed header over the given callback registry.
+(define (tlci-test-registry-table
+  [names : (__tl_dyn-array String)]
+  [callbacks : (__tl_dyn-array i64)]
+  [count : i64]) : tlci.TlciHostCallbackTable
+  (tlci.TlciHostCallbackTable
+    tlci.tlci-host-callback-table-magic
+    tlci.tlci-host-abi-version
+    tlci.tlci-host-callback-table-size
+    0
+    0
+    0
+    0
+    1
+    names
+    callbacks
+    count))
+
+(define (tlci-test-registration
+  [magic : i64]
+  [version : i64]
+  [byte-size : i64]
+  [reserved1 : i64]
+  [entry-table : i64]
+  [entry-count : i64]) : tlci.TlciImageRegistration
+  (tlci.TlciImageRegistration
+    magic
+    version
+    byte-size
+    0
+    0
+    reserved1
+    entry-table
+    entry-count))
+
+(define (tlci-test-table-rejects?
+  [table : tlci.TlciHostCallbackTable]
+  [expected : String]) : bool
+  (tlci-test-host-abi-rejects?
+    (tlci.tlci-validate-host-callback-table table)
+    expected))
+
+(define (tlci-test-registration-rejects?
+  [registration : tlci.TlciImageRegistration]
+  [expected : String]) : bool
+  (tlci-test-host-abi-rejects?
+    (tlci.tlci-validate-image-registration registration)
+    expected))
+
 (define (tlci-test-host-abi-ok?) : bool
-  (and
-    (tlci-test-host-abi-layout-ok?)
-    (match (tlci.tlci-validate-host-callback-table
-      (tlci-test-host-callback-table))
-      [(tlci.ResultTlciHostAbi.Ok) true]
-      [(tlci.ResultTlciHostAbi.Err _) false])
-    (match (tlci.tlci-validate-image-registration
-      (tlci-test-image-registration))
-      [(tlci.ResultTlciHostAbi.Ok) true]
-      [(tlci.ResultTlciHostAbi.Err _) false])
-    (match (tlci.tlci-validate-host-callback-table
-      (tlci.TlciHostCallbackTable
-        tlci.tlci-host-callback-table-magic
-        tlci.tlci-host-abi-version
-        (+ tlci.tlci-host-callback-table-size 16)
-        1234
-        0
-        0
-        0
-        8192
-        (__tl_make-array String 0)
-        (__tl_make-array i64 0)
-        0))
-      [(tlci.ResultTlciHostAbi.Ok) true]
-      [(tlci.ResultTlciHostAbi.Err _) false])
-    (match (tlci.tlci-validate-image-registration
-      (tlci.TlciImageRegistration
-        tlci.tlci-image-registration-magic
-        tlci.tlci-host-abi-version
-        (+ tlci.tlci-image-registration-size 16)
-        5678
-        0
-        0
-        12288
-        1))
-      [(tlci.ResultTlciHostAbi.Ok) true]
-      [(tlci.ResultTlciHostAbi.Err _) false])
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-host-callback-table
-        (tlci.TlciHostCallbackTable
-          0
-          tlci.tlci-host-abi-version
-          tlci.tlci-host-callback-table-size
-          0
-          0
-          0
-          1
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: bad host callback table magic")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-host-callback-table
-        (tlci.TlciHostCallbackTable
-          tlci.tlci-host-callback-table-magic
-          (+ tlci.tlci-host-abi-version 1)
-          tlci.tlci-host-callback-table-size
-          0
-          0
-          0
-          1
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: unsupported callback ABI version 3")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-host-callback-table
-        (tlci.TlciHostCallbackTable
-          tlci.tlci-host-callback-table-magic
-          tlci.tlci-host-abi-version
-          (- tlci.tlci-host-callback-table-size 1)
-          0
-          0
-          0
-          1
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: host callback table byte-size is smaller than v2")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-host-callback-table
-        (tlci.TlciHostCallbackTable
-          tlci.tlci-host-callback-table-magic
-          tlci.tlci-host-abi-version
-          tlci.tlci-host-callback-table-size
-          0
-          1
-          0
-          0
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: host callback table reserved0 must be zero")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-host-callback-table
-        (tlci.TlciHostCallbackTable
-          tlci.tlci-host-callback-table-magic
-          tlci.tlci-host-abi-version
-          tlci.tlci-host-callback-table-size
-          0
-          0
-          0
-          1
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: host callback table reserved2 must be zero")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-host-callback-table
-        (tlci.TlciHostCallbackTable
-          tlci.tlci-host-callback-table-magic
-          tlci.tlci-host-abi-version
-          tlci.tlci-host-callback-table-size
-          0
-          0
-          0
-          0
-          0
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: host abort callback must be nonzero")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-host-callback-table
-        (tlci.TlciHostCallbackTable
-          tlci.tlci-host-callback-table-magic
-          tlci.tlci-host-abi-version
-          tlci.tlci-host-callback-table-size
-          0
-          0
-          0
-          0
-          1
+  (let
+    [magic : i64 tlci.tlci-host-callback-table-magic]
+    [version : i64 tlci.tlci-host-abi-version]
+    [size : i64 tlci.tlci-host-callback-table-size]
+    [registration-magic : i64 tlci.tlci-image-registration-magic]
+    [registration-size : i64 tlci.tlci-image-registration-size]
+    (and
+      (tlci-test-host-abi-layout-ok?)
+      (tlci-test-host-abi-accepts?
+        (tlci.tlci-validate-host-callback-table (tlci-test-host-callback-table)))
+      (tlci-test-host-abi-accepts?
+        (tlci.tlci-validate-image-registration (tlci-test-image-registration)))
+      (tlci-test-host-abi-accepts?
+        (tlci.tlci-validate-host-callback-table
+          (tlci.TlciHostCallbackTable
+            magic
+            version
+            (+ size 16)
+            1234
+            0
+            0
+            0
+            8192
+            (__tl_make-array String 0)
+            (__tl_make-array i64 0)
+            0)))
+      (tlci-test-host-abi-accepts?
+        (tlci.tlci-validate-image-registration
+          (tlci.TlciImageRegistration
+            registration-magic
+            version
+            (+ registration-size 16)
+            5678
+            0
+            0
+            12288
+            1)))
+      (tlci-test-table-rejects?
+        (tlci-test-table 0 version size 0 1 1)
+        "tlci host ABI: bad host callback table magic")
+      (tlci-test-table-rejects?
+        (tlci-test-table magic (+ version 1) size 0 1 1)
+        "tlci host ABI: unsupported callback ABI version 3")
+      (tlci-test-table-rejects?
+        (tlci-test-table magic version (- size 1) 0 1 1)
+        "tlci host ABI: host callback table byte-size is smaller than v2")
+      (tlci-test-table-rejects?
+        (tlci-test-table magic version size 1 0 1)
+        "tlci host ABI: host callback table reserved0 must be zero")
+      (tlci-test-table-rejects?
+        (tlci-test-table magic version size 0 1 1)
+        "tlci host ABI: host callback table reserved2 must be zero")
+      (tlci-test-table-rejects?
+        (tlci-test-table magic version size 0 0 0)
+        "tlci host ABI: host abort callback must be nonzero")
+      (tlci-test-table-rejects?
+        (tlci-test-registry-table
           (__tl_make-array "fuel-check")
           (__tl_make-array 0)
-          1))
-      "tlci host ABI: host callback registry address must be nonzero")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-host-callback-table
-        (tlci.TlciHostCallbackTable
-          tlci.tlci-host-callback-table-magic
-          tlci.tlci-host-abi-version
-          tlci.tlci-host-callback-table-size
-          0
-          0
-          0
-          0
-          1
+          1)
+        "tlci host ABI: host callback registry address must be nonzero")
+      (tlci-test-table-rejects?
+        (tlci-test-registry-table
           (__tl_make-array "fuel-check" "fuel-check")
           (__tl_make-array 1 2)
-          2))
-      "tlci host ABI: duplicate host callback registry name")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-image-registration
-        (tlci.TlciImageRegistration
-          0
-          tlci.tlci-host-abi-version
-          tlci.tlci-image-registration-size
-          0
-          0
-          0
-          0
-          0))
-      "tlci host ABI: bad image registration magic")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-image-registration
-        (tlci.TlciImageRegistration
-          tlci.tlci-image-registration-magic
-          (+ tlci.tlci-host-abi-version 1)
-          tlci.tlci-image-registration-size
+          2)
+        "tlci host ABI: duplicate host callback registry name")
+      (tlci-test-registration-rejects?
+        (tlci-test-registration 0 version registration-size 0 0 0)
+        "tlci host ABI: bad image registration magic")
+      (tlci-test-registration-rejects?
+        (tlci-test-registration
+          registration-magic
+          (+ version 1)
+          registration-size
           0
           0
+          0)
+        "tlci host ABI: unsupported callback ABI version 3")
+      (tlci-test-registration-rejects?
+        (tlci-test-registration
+          registration-magic
+          version
+          (- registration-size 1)
           0
           0
-          0))
-      "tlci host ABI: unsupported callback ABI version 3")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-image-registration
-        (tlci.TlciImageRegistration
-          tlci.tlci-image-registration-magic
-          tlci.tlci-host-abi-version
-          (- tlci.tlci-image-registration-size 1)
-          0
-          0
-          0
-          0
-          0))
-      "tlci host ABI: image registration byte-size is smaller than v2")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-image-registration
-        (tlci.TlciImageRegistration
-          tlci.tlci-image-registration-magic
-          tlci.tlci-host-abi-version
-          tlci.tlci-image-registration-size
-          0
-          0
+          0)
+        "tlci host ABI: image registration byte-size is smaller than v2")
+      (tlci-test-registration-rejects?
+        (tlci-test-registration
+          registration-magic
+          version
+          registration-size
           1
           0
-          0))
-      "tlci host ABI: image registration reserved1 must be zero")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-image-registration
-        (tlci.TlciImageRegistration
-          tlci.tlci-image-registration-magic
-          tlci.tlci-host-abi-version
-          tlci.tlci-image-registration-size
+          0)
+        "tlci host ABI: image registration reserved1 must be zero")
+      (tlci-test-registration-rejects?
+        (tlci-test-registration
+          registration-magic
+          version
+          registration-size
           0
           0
-          0
-          0
-          1))
-      "tlci host ABI: macro entry count requires a table")
-    (tlci-test-host-abi-rejects?
-      (tlci.tlci-validate-image-registration
-        (tlci.TlciImageRegistration
-          tlci.tlci-image-registration-magic
-          tlci.tlci-host-abi-version
-          tlci.tlci-image-registration-size
-          0
-          0
+          1)
+        "tlci host ABI: macro entry count requires a table")
+      (tlci-test-registration-rejects?
+        (tlci-test-registration
+          registration-magic
+          version
+          registration-size
           0
           1
-          0))
-      "tlci host ABI: macro entry table requires a count")))
+          0)
+        "tlci host ABI: macro entry table requires a count"))))
 
 (define (tlci-test-parse-round-trip? [image : tlci.TlciImage]) : bool
   (match (tlci.tlci-emit-image image)
@@ -825,26 +787,37 @@
         "(exports (value (name \"answer\") (signature \"x\"))))")
       "tlci metadata: unknown field `exports`")))
 
+;; One spmd-call-v1 specialization with a varying result.
+(define (tlci-test-v1-spec
+  [backend : String]
+  [lanes : i64]
+  [args : String]
+  [index-param : i64]
+  [symbol : String]) : String
+  (tlci-test-spmd-specialization-source
+    "spmd-call-v1"
+    backend
+    lanes
+    args
+    "v"
+    index-param
+    symbol))
+
+;; A v2 document whose only helper is `demo.alpha`.
+(define (tlci-test-alpha-rejects?
+  [signature : String]
+  [specializations : String]
+  [expected : String]) : bool
+  (tlci-test-metadata-rejects?
+    (tlci-test-v2-source
+      (tlci-test-spmd-helper-source "demo.alpha" signature specializations))
+    expected))
+
 (define (tlci-test-v2-metadata-rejections-ok?) : bool
   (let
-    [avx : String
-      (tlci-test-spmd-specialization-source
-        "spmd-call-v1"
-        "avx512"
-        8
-        "v"
-        "v"
-        0
-        "__tl_spmd_alpha_v8")]
+    [avx : String (tlci-test-v1-spec "avx512" 8 "v" 0 "__tl_spmd_alpha_v8")]
     [scalar : String
-      (tlci-test-spmd-specialization-source
-        "spmd-call-v1"
-        "scalar"
-        1
-        "v"
-        "v"
-        0
-        "__tl_spmd_alpha_scalar")]
+      (tlci-test-v1-spec "scalar" 1 "v" 0 "__tl_spmd_alpha_scalar")]
     [alpha : String
       (tlci-test-spmd-helper-source
         "demo.alpha"
@@ -865,118 +838,49 @@
           (string.copy alpha)
           "))")
         "tlci metadata: field `spmd-callables` requires version `v2`")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx2"
-              8
-              "v"
-              "v"
-              0
-              "symbol")))
+      (tlci-test-alpha-rejects?
+        "(-> i64 i64)"
+        (tlci-test-v1-spec "avx2" 8 "v" 0 "symbol")
         "tlci metadata: unsupported backend `avx2` for `spmd-call-v1`")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              0
-              "v"
-              "v"
-              0
-              "symbol")))
+      (tlci-test-alpha-rejects?
+        "(-> i64 i64)"
+        (tlci-test-v1-spec "avx512" 0 "v" 0 "symbol")
         "tlci metadata: specialization lanes must be positive")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              8
-              "v,u"
-              "v"
-              0
-              "symbol")))
+      (tlci-test-alpha-rejects?
+        "(-> i64 i64)"
+        (tlci-test-v1-spec "avx512" 8 "v,u" 0 "symbol")
         "tlci metadata: specialization args must contain only `u` and `v`")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64 i64)"
-            (string.copy avx)))
+      (tlci-test-alpha-rejects?
+        "(-> i64 i64 i64)"
+        (string.copy avx)
         "tlci metadata: specialization args length must equal signature parameter count")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              8
-              "v"
-              "v"
-              2
-              "symbol")))
+      (tlci-test-alpha-rejects?
+        "(-> i64 i64)"
+        (tlci-test-v1-spec "avx512" 8 "v" 2 "symbol")
         "tlci metadata: specialization index-param is outside the signature")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              8
-              "u"
-              "v"
-              0
-              "symbol")))
+      (tlci-test-alpha-rejects?
+        "(-> i64 i64)"
+        (tlci-test-v1-spec "avx512" 8 "u" 0 "symbol")
         "tlci metadata: specialization index-param must name a varying argument")
       (tlci-test-metadata-rejects?
         (tlci-test-v2-source
           (tlci-test-spmd-helper-source "" "(-> i64 i64)" (string.copy avx)))
         "tlci metadata: helper name must not be empty")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source "demo.alpha" "" (string.copy avx)))
+      (tlci-test-alpha-rejects?
+        ""
+        (string.copy avx)
         "tlci metadata: helper signature must not be empty")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              8
-              "v"
-              "v"
-              0
-              "")))
+      (tlci-test-alpha-rejects?
+        "(-> i64 i64)"
+        (tlci-test-v1-spec "avx512" 8 "v" 0 "")
         "tlci metadata: specialization symbol must not be empty")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (str_cat.str-cat (string.copy avx) (string.copy avx))))
+      (tlci-test-alpha-rejects?
+        "(-> i64 i64)"
+        (str_cat.str-cat (string.copy avx) (string.copy avx))
         "tlci metadata: duplicate specialization record")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (str_cat.str-cat (string.copy scalar) (string.copy avx))))
+      (tlci-test-alpha-rejects?
+        "(-> i64 i64)"
+        (str_cat.str-cat (string.copy scalar) (string.copy avx))
         "tlci metadata: specialization records are not in stable order")
       (tlci-test-metadata-rejects?
         (tlci-test-v2-source

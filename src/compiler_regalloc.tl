@@ -8266,49 +8266,28 @@
 ;; width consistency is already guaranteed because coalescing is driven by pure
 ;; moves, whose two endpoints always have the same representation. So: both
 ;; register-eligible, and both the same register class.
-(define (compiler-reg-compatible-types?
-  [types : CompilerRegVarTypes]
-  [left : i64]
-  [right : i64]) : bool
-  (match (compiler-reg-var-types-lookup types left)
-    [(CompilerRegMaybeType.Some left-ty)
-      (match (compiler-reg-var-types-lookup types right)
-        [(CompilerRegMaybeType.Some right-ty)
-          (and
-            (compiler-reg-register-eligible-type? left-ty)
-            (compiler-reg-register-eligible-type? right-ty)
-            (if (compiler-reg-float-type? left-ty)
-              (compiler-reg-float-type? right-ty)
-              (not (compiler-reg-float-type? right-ty))))]
-        [(CompilerRegMaybeType.No) false])]
-    [(CompilerRegMaybeType.No) false]))
-
-;; M-C2: the overlap waiver admits every REGISTER-ELIGIBLE non-group value,
-;; not just CPU scalars. The scalar-type? restriction predated handle register
-;; eligibility (M-A/M-A2): when it was written, 8-byte handle values
-;; (Array/String/enum/struct descriptors) were categorically stack-homed, so
-;; scalar-only merely mirrored global eligibility. The waiver's value-carry
-;; proof (single-def direct-copy chain => one register holds the shared bit
-;; pattern) is representation-based and type-agnostic for anything the backend
-;; moves with a plain movq; register groups never reach this test (both sides
-;; are refused via group-vars in compiler-reg-coalesce-vars-compatible?), and
-;; the float check keeps GP/XMM classes apart exactly as before.
-(define (compiler-reg-same-value-overlap-eligible?
-  [types : CompilerRegVarTypes]
-  [left : i64]
-  [right : i64]) : bool
-  (match (compiler-reg-var-types-lookup types left)
-    [(CompilerRegMaybeType.Some left-ty)
-      (match (compiler-reg-var-types-lookup types right)
-        [(CompilerRegMaybeType.Some right-ty)
-          (and
-            (compiler-reg-register-eligible-type? left-ty)
-            (compiler-reg-register-eligible-type? right-ty)
-            (if (compiler-reg-float-type? left-ty)
-              (compiler-reg-float-type? right-ty)
-              (not (compiler-reg-float-type? right-ty))))]
-        [(CompilerRegMaybeType.No) false])]
-    [(CompilerRegMaybeType.No) false]))
+;;
+;; M-C2: the same-value overlap waiver admits exactly these pairs too, every
+;; REGISTER-ELIGIBLE non-group value and not just CPU scalars. The scalar-type?
+;; restriction predated handle register eligibility (M-A/M-A2): when it was
+;; written, 8-byte handle values (Array/String/enum/struct descriptors) were
+;; categorically stack-homed, so scalar-only merely mirrored global eligibility.
+;; The waiver's value-carry proof (single-def direct-copy chain => one register
+;; holds the shared bit pattern) is representation-based and type-agnostic for
+;; anything the backend moves with a plain movq; register groups never reach it,
+;; and the class keeps GP/XMM apart.
+;;
+;; The class of a var: -1 when it has no register-eligible type, else 1 for SSE
+;; and 0 for GP. Two vars may share a register when their classes are equal and
+;; not -1.
+(define (compiler-reg-register-class [types : CompilerRegVarTypes] [var : i64]) : i64
+  (match (compiler-reg-var-types-lookup types var)
+    [(CompilerRegMaybeType.Some ty)
+      (cond
+        [(not (compiler-reg-register-eligible-type? ty)) (- 0 1)]
+        [(compiler-reg-float-type? ty) 1]
+        [else 0])]
+    [(CompilerRegMaybeType.No) (- 0 1)]))
 
 (define (compiler-reg-assignment-table-location-conflicts-from?
   [assignments : CompilerRegAssignmentTable]
@@ -9256,29 +9235,113 @@
     (- 0 1)
     (array-ref parents var)))
 
-(define (compiler-reg-coalesce-vars-compatible?
+;; The per-var half of the coalescing pair test, computed once per map build.
+;; A class scan tests every member pair of two classes, and the versions of one
+;; value along a long straight-line function all join one class, so the pair
+;; test runs quadratically often in the length of that chain. With these arrays
+;; a pair whose spans are apart costs a few loads.
+;;
+;; `kinds[v]` folds the group and type conjuncts: -1 for a register-group member,
+;; else v's `compiler-reg-register-class`. Two vars are outside the groups and
+;; may share a register exactly when their kinds are equal and not -1.
+;;
+;; `lows[v]`/`highs[v]` are the least start and the greatest end of v's live
+;; segments, -1 and -1 when it has none. When two vars' spans are apart in the
+;; half-open sense of `compiler-reg-interval-seq-overlaps?`, every segment of
+;; one ends before any segment of the other starts, so that scan retires one
+;; side without finding an overlap: the spans decide the non-strict
+;; interference test in the pair's favour without walking the segments.
+(defstruct CompilerRegCoalesceFacts
+  (kinds (__tl_dyn-array i64))
+  (lows (__tl_dyn-array i64))
+  (highs (__tl_dyn-array i64)))
+
+(define (compiler-reg-coalesce-facts-build
   [intervals : (& intervals CompilerRegIntervalIndex)]
   [types : CompilerRegVarTypes]
   [group-vars : (& group-vars live.CompilerLiveI64Set)]
+  [count : i64]) : CompilerRegCoalesceFacts
+  (let
+    [kinds : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [lows : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [highs : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [segments : (__tl_dyn-array CompilerRegIntervalSeq) intervals.segments]
+    [var : i64 0]
+    (begin
+      (while (< var count)
+        (let
+          [segs : CompilerRegIntervalSeq
+            (if (< var (array-length segments))
+              (array-ref segments var)
+              (compiler-reg-interval-seq-empty))]
+          [low : i64 (- 0 1)]
+          [high : i64 (- 0 1)]
+          [index : i64 0]
+          (begin
+            (set!
+              (array-ref kinds var)
+              (if (live.compiler-live-set-contains? group-vars var)
+                (- 0 1)
+                (compiler-reg-register-class types var)))
+            (while (< index segs.len)
+              (let
+                [segment : CompilerRegInterval (array-ref segs.slots index)]
+                (begin
+                  (if (or (= index 0) (< segment.start low))
+                    (set! low segment.start)
+                    unit)
+                  (if (or (= index 0) (> segment.end high))
+                    (set! high segment.end)
+                    unit)
+                  (set! index (+ index 1)))))
+            (set! (array-ref lows var) low)
+            (set! (array-ref highs var) high)
+            (set! var (+ var 1)))))
+      (CompilerRegCoalesceFacts kinds lows highs))))
+
+;; Both vars have segments, none starting before 0, and their spans are apart;
+;; a 0-touch counts as overlap, exactly as in the segment scan.
+(define (compiler-reg-coalesce-segments-apart?
+  [facts : (& facts CompilerRegCoalesceFacts)]
+  [left : i64]
+  [right : i64]) : bool
+  (let
+    [left-low : i64 (array-ref facts.lows left)]
+    [right-low : i64 (array-ref facts.lows right)]
+    (and
+      (>= left-low 0)
+      (>= right-low 0)
+      (or
+        (and (<= (array-ref facts.highs left) right-low) (not (= right-low 0)))
+        (and (<= (array-ref facts.highs right) left-low) (not (= left-low 0)))))))
+
+(define (compiler-reg-coalesce-vars-compatible?
+  [intervals : (& intervals CompilerRegIntervalIndex)]
+  [facts : (& facts CompilerRegCoalesceFacts)]
   [left : i64]
   [right : i64]
   [strict : bool]
   [sv-parents : (&mut sv-parents (__tl_dyn-array i64))]) : bool
-  (and
-    (not (= left right))
-    (not (live.compiler-live-set-contains? group-vars left))
-    (not (live.compiler-live-set-contains? group-vars right))
-    (compiler-reg-compatible-types? types left right)
-    ;; #2 same-value relaxation: a proven same-value pair (single-def direct copy)
-    ;; may coalesce despite overlap -- one register holds the shared value. The
-    ;; geometry test itself is unchanged; this only ADDS the same-value escape.
-    (or
-      (not
-        (if strict
-          (compiler-reg-vars-interfere-index? intervals left right)
-          (compiler-reg-vars-interfere-segmented-index? intervals left right)))
-      (and
-        (compiler-reg-same-value-overlap-eligible? types left right)
+  (let
+    [kind : i64 (array-ref facts.kinds left)]
+    (and
+      (not (= left right))
+      (>= kind 0)
+      (= kind (array-ref facts.kinds right))
+      ;; #2 same-value relaxation: a proven same-value pair (single-def direct
+      ;; copy) may coalesce despite overlap -- one register holds the shared
+      ;; value. The geometry test itself is unchanged; this only ADDS the
+      ;; same-value escape.
+      (or
+        (not
+          (if strict
+            (compiler-reg-vars-interfere-index? intervals left right)
+            (and
+              (not (compiler-reg-coalesce-segments-apart? facts left right))
+              (compiler-reg-vars-interfere-segmented-index?
+                intervals
+                left
+                right))))
         (compiler-reg-same-value-class? sv-parents left right)))))
 
 ;; Class member chains. A coalescing class is tracked as a flat root array
@@ -9305,8 +9368,7 @@
 (define (compiler-reg-coalesce-map-var-compatible-with-root?
   [next : (& next (__tl_dyn-array i64))]
   [intervals : (& intervals CompilerRegIntervalIndex)]
-  [types : CompilerRegVarTypes]
-  [group-vars : (& group-vars live.CompilerLiveI64Set)]
+  [facts : (& facts CompilerRegCoalesceFacts)]
   [var : i64]
   [root : i64]
   [strict : bool]
@@ -9319,8 +9381,7 @@
         (begin
           (if (compiler-reg-coalesce-vars-compatible?
             intervals
-            types
-            group-vars
+            facts
             var
             member
             strict
@@ -9333,8 +9394,7 @@
 (define (compiler-reg-coalesce-map-classes-compatible?
   [next : (& next (__tl_dyn-array i64))]
   [intervals : (& intervals CompilerRegIntervalIndex)]
-  [types : CompilerRegVarTypes]
-  [group-vars : (& group-vars live.CompilerLiveI64Set)]
+  [facts : (& facts CompilerRegCoalesceFacts)]
   [left-root : i64]
   [right-root : i64]
   [strict : bool]
@@ -9348,8 +9408,7 @@
           (if (compiler-reg-coalesce-map-var-compatible-with-root?
             next
             intervals
-            types
-            group-vars
+            facts
             member
             right-root
             strict
@@ -9458,8 +9517,7 @@
   [root-start : (__tl_dyn-array i64)]
   [root-end : (__tl_dyn-array i64)]
   [intervals : (& intervals CompilerRegIntervalIndex)]
-  [types : CompilerRegVarTypes]
-  [group-vars : (& group-vars live.CompilerLiveI64Set)]
+  [facts : (& facts CompilerRegCoalesceFacts)]
   [left : i64]
   [right : i64]
   [strict : bool]
@@ -9473,8 +9531,7 @@
       [(not
           (compiler-reg-coalesce-vars-compatible?
             intervals
-            types
-            group-vars
+            facts
             left
             right
             strict
@@ -9493,8 +9550,7 @@
           (compiler-reg-coalesce-map-classes-compatible?
             next
             intervals
-            types
-            group-vars
+            facts
             left-root
             right-root
             strict
@@ -9530,8 +9586,7 @@
   [root-end : (__tl_dyn-array i64)]
   [moves : (& moves CompilerRegMoveSeq)]
   [intervals : (& intervals CompilerRegIntervalIndex)]
-  [types : CompilerRegVarTypes]
-  [group-vars : (& group-vars live.CompilerLiveI64Set)]
+  [facts : (& facts CompilerRegCoalesceFacts)]
   [changed : bool]
   [sv-parents : (__tl_dyn-array i64)]) : bool
   (let
@@ -9552,8 +9607,7 @@
                 (compiler-reg-global-shared-view root-start)
                 (compiler-reg-global-shared-view root-end)
                 intervals
-                types
-                group-vars
+                facts
                 item.src
                 item.dst
                 item.strict
@@ -9571,8 +9625,7 @@
   [root-end : (__tl_dyn-array i64)]
   [moves : (& moves CompilerRegMoveSeq)]
   [intervals : (& intervals CompilerRegIntervalIndex)]
-  [types : CompilerRegVarTypes]
-  [group-vars : (& group-vars live.CompilerLiveI64Set)]
+  [facts : (& facts CompilerRegCoalesceFacts)]
   [sv-parents : (__tl_dyn-array i64)]) : unit
   (begin
     (compiler-reg-coalesce-map-merge-moves!
@@ -9584,8 +9637,7 @@
       root-end
       moves
       intervals
-      types
-      group-vars
+      facts
       false
       sv-parents)
     unit))
@@ -9610,6 +9662,8 @@
       [root-end : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       [next : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       [tail : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [facts : CompilerRegCoalesceFacts
+        (compiler-reg-coalesce-facts-build intervals types group-vars n)]
       (begin
         (compiler-reg-coalesce-map-init! (&mut parents) (&mut sizes) 0)
         (compiler-reg-coalesce-chains-init! (&mut next) (&mut tail))
@@ -9628,8 +9682,7 @@
           root-end
           moves
           intervals
-          types
-          group-vars
+          (& facts)
           sv-parents)
         (CompilerRegCoalesceMap parents)))))
 

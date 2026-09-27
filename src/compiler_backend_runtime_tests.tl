@@ -4,7 +4,6 @@
 (import compiler_backend_runtime_windows as runtime_windows)
 (import stdlib.hash)
 (import stdlib.string)
-(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.test)
 
 (define (compiler-backend-runtime-test-contains?

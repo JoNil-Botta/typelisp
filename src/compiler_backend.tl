@@ -20912,7 +20912,6 @@
       [scratch : String
         (if sse?
           (compiler-backend-scavenge-pick-from-mask
-            backend-state
             (compiler-backend-state-function-state backend-state)
             0
             exclude
@@ -66568,7 +66567,6 @@
         (array-length cands)))))
 
 (define (compiler-backend-scavenge-pick-from-mask
-  [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
   [occupied-mask : i64]
   [exclude : (__tl_dyn-array String)]
@@ -66641,7 +66639,6 @@
         (& compiler-backend-scavenge-xmm-candidate-pool))]
     [reg : String
       (compiler-backend-scavenge-pick-from-mask
-        backend-state
         function-state
         (compiler-backend-scavenge-occupied-mask-over-range
           function-state
@@ -66816,7 +66813,6 @@
         (& compiler-backend-scavenge-rcx-candidate-pool))]
     [reg : String
       (compiler-backend-scavenge-pick-from-mask
-        backend-state
         function-state
         (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         exclude

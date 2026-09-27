@@ -109279,14 +109279,6 @@
   false)
 (define opt-inline-caller-loop-labels : (__tl_dyn-array OptLabelSet)
   (__tl_make-array (OptLabelSet.Nil)))
-
-(define (opt-inline-caller-loop-labels-shared-view) : OptLabelSet
-  (unsafe
-    (ptr-read
-      (ptr-cast
-        (__tl_array-data opt-inline-caller-loop-labels)
-        : (Ptr OptLabelSet)))))
-
 (define opt-inline-caller-has-bounds? : bool
   false)
 (define opt-inline-caller-name : i64
@@ -109371,7 +109363,7 @@
   (begin
     (opt-inline-caller-facts-ensure!)
     (opt-label-contains
-      (opt-inline-caller-loop-labels-shared-view)
+      (array-ref opt-inline-caller-loop-labels 0)
       opt-inline-current-block-label)))
 
 ;; Does the caller call itself? Memoized on its own flag rather than folded into
@@ -111053,7 +111045,7 @@
   (begin
     (opt-inline-caller-facts-ensure!)
     (and
-      (= (opt-label-count (opt-inline-caller-loop-labels-shared-view)) 0)
+      (= (opt-label-count (array-ref opt-inline-caller-loop-labels 0)) 0)
       (not (opt-inline-caller-recursive?)))))
 
 (define (opt-inline-hot-loop-leaf-ok?

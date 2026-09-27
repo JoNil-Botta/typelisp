@@ -440,22 +440,14 @@
     [function-state : backend.CompilerBackendFunctionState
       (backend.compiler-backend-state-function-state backend-state)]
     (EmitterScratch
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
-        function-state)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-ends
-        function-state)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-assignments
-        function-state)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
-        function-state)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-occupied-masks
-        function-state)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-vars
-        function-state)
-      (compiler-backend-test-get-compiler-backend-emit-instr-post-base
-        backend-state)
-      (compiler-backend-test-get-compiler-backend-emit-current-count
-        backend-state))))
+      (scratch-scavenge-ctx-starts function-state)
+      (scratch-scavenge-ctx-ends function-state)
+      (scratch-scavenge-ctx-assignments function-state)
+      (scratch-scavenge-ctx-plan-reg-mask function-state)
+      (scratch-scavenge-ctx-occupied-masks function-state)
+      (scratch-scavenge-ctx-vars function-state)
+      (state-emit-instr-post-base backend-state)
+      (state-emit-current-count backend-state))))
 
 (define (emitter-scratch-restore!
   [backend-state : backend.CompilerBackendState]
@@ -479,12 +471,8 @@
           plan-mask
           occupied-masks
           vars)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          post-base)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          current-count))]))
+        (set-state-emit-instr-post-base! backend-state post-base)
+        (set-state-emit-current-count! backend-state current-count))]))
 
 (define (compiler-backend-test-scavenge-install-ctx!
   [name : String]
@@ -495,9 +483,7 @@
   [assignments : regalloc.CompilerRegAssignmentTable]
   [backend-state : backend.CompilerBackendState]) : unit
   (begin
-    (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-      backend-state
-      0)
+    (set-state-emit-instr-post-base! backend-state 0)
     (if (< slot-vars 1)
       (compiler-backend-set-scavenge-ctx!
         (backend.compiler-backend-state-function-state backend-state)
@@ -4029,12 +4015,8 @@
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          1)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          1))]
+        (set-state-emit-instr-post-base! backend-state 1)
+        (set-state-emit-current-count! backend-state 1))]
     [result : backend.ResultCompilerBackend
       (backend.compiler-backend-emit-indirect-c-call
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -4158,12 +4140,8 @@
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          1)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          1))]
+        (set-state-emit-instr-post-base! backend-state 1)
+        (set-state-emit-current-count! backend-state 1))]
     [result : backend.ResultCompilerBackend
       (backend.compiler-backend-emit-indirect-c-abi-store-result-call
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -4240,12 +4218,8 @@
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          1)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          1))]
+        (set-state-emit-instr-post-base! backend-state 1)
+        (set-state-emit-current-count! backend-state 1))]
     [asm : String
       (backend.compiler-backend-emit-c-abi-return-stores
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -7675,9 +7649,7 @@
         index)]
     [asm : backend.ResultCompilerBackend
       (begin
-        (compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
-          index.backend-state
-          "%xmm11")
+        (set-state-current-c-memory-planned-xmm! index.backend-state "%xmm11")
         (backend.compiler-backend-emit-call-args
           bases
           backend.CompilerBackendTarget.Linux
@@ -7791,9 +7763,7 @@
         2
         index.backend-state)]
     [_reset-xmm : unit
-      (compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
-        index.backend-state
-        "")]
+      (set-state-current-c-memory-planned-xmm! index.backend-state "")]
     [param-text : String
       (match params-asm
         [(backend.ResultCompilerBackend.Ok text) text]
@@ -8804,22 +8774,22 @@
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [previous-offset : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-slot-offset
+      (scratch-emergency-slot-offset
         (backend.compiler-backend-state-function-state backend-state))]
     (begin
-      (compiler-backend-function-scratch-fixture-set-emergency-pending!
+      (set-scratch-emergency-pending!
         (backend.compiler-backend-state-function-state backend-state)
         false)
-      (compiler-backend-function-scratch-fixture-set-emergency-used!
+      (set-scratch-emergency-used!
         (backend.compiler-backend-state-function-state backend-state)
         false)
-      (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+      (set-scratch-emergency-pending-count!
         (backend.compiler-backend-state-function-state backend-state)
         0)
-      (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+      (set-scratch-emergency-used-count!
         (backend.compiler-backend-state-function-state backend-state)
         0)
-      (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+      (set-scratch-emergency-slot-offset!
         (backend.compiler-backend-state-function-state backend-state)
         -64)
       (backend.compiler-backend-emergency-add!
@@ -8872,19 +8842,19 @@
               rendered-call
               "    .loc 1 2 3\n    movq %r9, -64(%rbp)\n    call _tl_sink\n    movq -64(%rbp), %r9\n"))]
         (begin
-          (compiler-backend-function-scratch-fixture-set-emergency-pending!
+          (set-scratch-emergency-pending!
             (backend.compiler-backend-state-function-state backend-state)
             false)
-          (compiler-backend-function-scratch-fixture-set-emergency-used!
+          (set-scratch-emergency-used!
             (backend.compiler-backend-state-function-state backend-state)
             false)
-          (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+          (set-scratch-emergency-pending-count!
             (backend.compiler-backend-state-function-state backend-state)
             0)
-          (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+          (set-scratch-emergency-used-count!
             (backend.compiler-backend-state-function-state backend-state)
             0)
-          (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          (set-scratch-emergency-slot-offset!
             (backend.compiler-backend-state-function-state backend-state)
             previous-offset)
           ok)))))
@@ -8901,10 +8871,7 @@
         (ci.intern-compat-state-capture-active))]
     [function-state : backend.CompilerBackendFunctionState
       (backend.compiler-backend-state-function-state backend-state)]
-    [_slot : unit
-      (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
-        function-state
-        -64)]
+    [_slot : unit (set-scratch-emergency-slot-offset! function-state -64)]
     [_pending : unit
       (backend.compiler-backend-emergency-add! function-state "%r9")]
     (match (backend.compiler-backend-emit-branch-with-plan
@@ -8934,8 +8901,7 @@
             (>= test-pos 0)
             (> restore-pos test-pos)
             (> jump-pos restore-pos)
-            (compiler-backend-function-scratch-fixture-get-emergency-restore-suppressed
-              function-state)))]
+            (scratch-emergency-restore-suppressed function-state)))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
@@ -11149,15 +11115,11 @@
       (compiler-backend-runtime-helper-full-plan)]
     [_scratch-position : unit
       (begin
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+        (set-state-emit-instr-post-base!
           program-index.backend-state
           instr-count)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          program-index.backend-state
-          instr-count)
-        (compiler-backend-test-set-compiler-backend-emit-current-site!
-          program-index.backend-state
-          0))]
+        (set-state-emit-current-count! program-index.backend-state instr-count)
+        (set-state-emit-current-site! program-index.backend-state 0))]
     (compiler-backend-test-emit-instrs-text
       (backend.CompilerBackendEmissionContext
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -11440,7 +11402,7 @@
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [_slot : unit
-      (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+      (set-scratch-emergency-slot-offset!
         (backend.compiler-backend-state-function-state backend-state)
         -512)]
     [regs : (__tl_dyn-array i64) (backend.compiler-backend-scavenge-candidates)]
@@ -11476,7 +11438,7 @@
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [_slot : unit
-      (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+      (set-scratch-emergency-slot-offset!
         (backend.compiler-backend-state-function-state backend-state)
         -512)]
     [regs : (__tl_dyn-array i64) (backend.compiler-backend-scavenge-candidates)]
@@ -13448,10 +13410,10 @@ g:
       (backend.compiler-backend-set-current-mode!
         (backend.compiler-backend-state-function-state backend-state)
         mode)
-      (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+      (set-scratch-emergency-slot-offset!
         (backend.compiler-backend-state-function-state backend-state)
         -128)
-      (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+      (set-scratch-cycle-temp-base-offset!
         (backend.compiler-backend-state-function-state backend-state)
         -512)
       (backend.compiler-backend-emit-phi-edge-copies
@@ -13567,7 +13529,7 @@ g:
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
     (begin
-      (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+      (set-scratch-emergency-slot-offset!
         (backend.compiler-backend-state-function-state backend-state)
         -128)
       (asm-ok?
@@ -13683,7 +13645,7 @@ g:
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
     [_targets : unit
-      (compiler-backend-test-set-compiler-backend-current-phi-targets!
+      (set-state-current-phi-targets!
         backend-state
         (backend.compiler-backend-phi-target-labels-for-blocks
           (compiler-backend-branch-phi-blocks)))]
@@ -14007,25 +13969,21 @@ g:
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
     [prev-count : i64
-      (compiler-backend-function-scratch-fixture-get-cycle-temp-used-count
+      (scratch-cycle-temp-used-count
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-base : i64
-      (compiler-backend-function-scratch-fixture-get-cycle-temp-base-offset
+      (scratch-cycle-temp-base-offset
         (backend.compiler-backend-state-function-state backend-state))]
-    [prev-post-base : i64
-      (compiler-backend-test-get-compiler-backend-emit-instr-post-base
-        backend-state)]
+    [prev-post-base : i64 (state-emit-instr-post-base backend-state)]
     [_set : unit
       (begin
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
+        (set-scratch-cycle-temp-used-count!
           (backend.compiler-backend-state-function-state backend-state)
           0)
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+        (set-scratch-cycle-temp-base-offset!
           (backend.compiler-backend-state-function-state backend-state)
           -512)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          8))]
+        (set-state-emit-instr-post-base! backend-state 8))]
     [ok : bool
       (match (backend.compiler-backend-emit-phi-edge-copies
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -14071,15 +14029,13 @@ g:
         [(backend.ResultCompilerBackend.Err _) false])]
     [_restore : unit
       (begin
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
+        (set-scratch-cycle-temp-used-count!
           (backend.compiler-backend-state-function-state backend-state)
           prev-count)
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+        (set-scratch-cycle-temp-base-offset!
           (backend.compiler-backend-state-function-state backend-state)
           prev-base)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          prev-post-base))]
+        (set-state-emit-instr-post-base! backend-state prev-post-base))]
     ok))
 
 ;; P22-B: the same cycle fixture emitted across a FORWARD edge drops the
@@ -14098,25 +14054,21 @@ g:
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
     [prev-count : i64
-      (compiler-backend-function-scratch-fixture-get-cycle-temp-used-count
+      (scratch-cycle-temp-used-count
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-base : i64
-      (compiler-backend-function-scratch-fixture-get-cycle-temp-base-offset
+      (scratch-cycle-temp-base-offset
         (backend.compiler-backend-state-function-state backend-state))]
-    [prev-post-base : i64
-      (compiler-backend-test-get-compiler-backend-emit-instr-post-base
-        backend-state)]
+    [prev-post-base : i64 (state-emit-instr-post-base backend-state)]
     [_set : unit
       (begin
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
+        (set-scratch-cycle-temp-used-count!
           (backend.compiler-backend-state-function-state backend-state)
           0)
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+        (set-scratch-cycle-temp-base-offset!
           (backend.compiler-backend-state-function-state backend-state)
           -512)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          0))]
+        (set-state-emit-instr-post-base! backend-state 0))]
     [ok : bool
       (asm-ok?
         (backend.compiler-backend-emit-phi-edge-copies
@@ -14138,15 +14090,13 @@ g:
         (lacks "    pushq %r8\n" "    popq %r8\n"))]
     [_restore : unit
       (begin
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
+        (set-scratch-cycle-temp-used-count!
           (backend.compiler-backend-state-function-state backend-state)
           prev-count)
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+        (set-scratch-cycle-temp-base-offset!
           (backend.compiler-backend-state-function-state backend-state)
           prev-base)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          prev-post-base))]
+        (set-state-emit-instr-post-base! backend-state prev-post-base))]
     ok))
 
 (define (compiler-backend-phi-group-cycle-copy-ok?) : bool
@@ -14155,17 +14105,17 @@ g:
       (compiler-backend-register-group-test-index)]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
     [prev-count : i64
-      (compiler-backend-function-scratch-fixture-get-cycle-temp-used-count
+      (scratch-cycle-temp-used-count
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-base : i64
-      (compiler-backend-function-scratch-fixture-get-cycle-temp-base-offset
+      (scratch-cycle-temp-base-offset
         (backend.compiler-backend-state-function-state backend-state))]
     [_set : unit
       (begin
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
+        (set-scratch-cycle-temp-used-count!
           (backend.compiler-backend-state-function-state backend-state)
           0)
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+        (set-scratch-cycle-temp-base-offset!
           (backend.compiler-backend-state-function-state backend-state)
           -512))]
     [ok : bool
@@ -14191,10 +14141,10 @@ g:
         (lacks "pushq" "popq" "%rax" "%rdx"))]
     [_restore : unit
       (begin
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
+        (set-scratch-cycle-temp-used-count!
           (backend.compiler-backend-state-function-state backend-state)
           prev-count)
-        (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+        (set-scratch-cycle-temp-base-offset!
           (backend.compiler-backend-state-function-state backend-state)
           prev-base))]
     ok))
@@ -14246,27 +14196,15 @@ g:
         (ir.compiler-ir-extern-seq-empty))]
     [_backend-state : backend.CompilerBackendState index.backend-state]
     [_prev-register-count : i64
-      (cfg
-        test
-        (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
-          _backend-state)
-        0)]
+      (cfg test (state-phi-xmm-cycle-register-count _backend-state) 0)]
     [_prev-fallback-count : i64
-      (cfg
-        test
-        (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
-          _backend-state)
-        0)]
+      (cfg test (state-phi-xmm-cycle-fallback-count _backend-state) 0)]
     [_set : unit
       (cfg
         test
         (begin
-          (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
-            _backend-state
-            0)
-          (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
-            _backend-state
-            0))
+          (set-state-phi-xmm-cycle-register-count! _backend-state 0)
+          (set-state-phi-xmm-cycle-fallback-count! _backend-state 0))
         unit)]
     [ok : bool
       (and
@@ -14346,23 +14284,17 @@ g:
         (cfg
           test
           (and
-            (=
-              (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
-                _backend-state)
-              2)
-            (=
-              (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
-                _backend-state)
-              1))
+            (= (state-phi-xmm-cycle-register-count _backend-state) 2)
+            (= (state-phi-xmm-cycle-fallback-count _backend-state) 1))
           true))]
     [_restore : unit
       (cfg
         test
         (begin
-          (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
+          (set-state-phi-xmm-cycle-register-count!
             _backend-state
             _prev-register-count)
-          (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
+          (set-state-phi-xmm-cycle-fallback-count!
             _backend-state
             _prev-fallback-count))
         unit)]
@@ -20620,31 +20552,21 @@ g:
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
-    [prev-current-site : i64
-      (compiler-backend-test-get-compiler-backend-emit-current-site
-        backend-state)]
+    [prev-current-site : i64 (state-emit-current-site backend-state)]
     [prev-addr-forward-enabled : bool
-      (compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
-        backend-state)]
+      (state-addr-of-forwarding-enabled backend-state)]
     [prev-addr-forward-src : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-addr-of-forwarding-src
-        backend-state)]
-    [prev-fuse-ready : bool
-      (compiler-backend-test-get-compiler-backend-fuse-need-ready backend-state)]
+      (state-addr-of-forwarding-src backend-state)]
+    [prev-fuse-ready : bool (state-fuse-need-ready backend-state)]
     [prev-fuse-use-counts : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-fuse-use-counts backend-state)]
+      (state-fuse-use-counts backend-state)]
     [prev-fuse-free-counts : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-fuse-free-counts
-        backend-state)]
-    [prev-loop-active : bool
-      (compiler-backend-test-get-compiler-backend-emit-instrs-loop-active
-        backend-state)]
+      (state-fuse-free-counts backend-state)]
+    [prev-loop-active : bool (state-emit-instrs-loop-active backend-state)]
     [prev-continue-pending : bool
-      (compiler-backend-test-get-compiler-backend-emit-instrs-continue-pending
-        backend-state)]
+      (state-emit-instrs-continue-pending backend-state)]
     [prev-identity-tail : bool
-      (compiler-backend-test-get-compiler-backend-identity-tail-forwarder-active
-        backend-state)]
+      (state-identity-tail-forwarder-active backend-state)]
     [vars : i64 8]
     [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -20659,23 +20581,13 @@ g:
           ends
           (regalloc.compiler-reg-assignment-table-empty)
           vars)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          1)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          1)
+        (set-state-emit-instr-post-base! backend-state 1)
+        (set-state-emit-current-count! backend-state 1)
         (backend.compiler-backend-addr-of-forwarding-disable! backend-state)
         (backend.compiler-backend-fuse-need-disable! backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instrs-loop-active!
-          backend-state
-          false)
-        (compiler-backend-test-set-compiler-backend-emit-instrs-continue-pending!
-          backend-state
-          false)
-        (compiler-backend-test-set-compiler-backend-identity-tail-forwarder-active!
-          backend-state
-          false))]
+        (set-state-emit-instrs-loop-active! backend-state false)
+        (set-state-emit-instrs-continue-pending! backend-state false)
+        (set-state-identity-tail-forwarder-active! backend-state false))]
     (match (backend.compiler-backend-emit-instr
       (backend.CompilerBackendEmissionContext
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -20710,31 +20622,23 @@ g:
           [_restore : unit
             (begin
               (emitter-scratch-restore! backend-state saved)
-              (compiler-backend-test-set-compiler-backend-emit-current-site!
-                backend-state
-                prev-current-site)
-              (compiler-backend-test-set-compiler-backend-addr-of-forwarding-enabled!
+              (set-state-emit-current-site! backend-state prev-current-site)
+              (set-state-addr-of-forwarding-enabled!
                 backend-state
                 prev-addr-forward-enabled)
-              (compiler-backend-test-set-compiler-backend-addr-of-forwarding-src!
+              (set-state-addr-of-forwarding-src!
                 backend-state
                 prev-addr-forward-src)
-              (compiler-backend-test-set-compiler-backend-fuse-need-ready!
-                backend-state
-                prev-fuse-ready)
-              (compiler-backend-test-set-compiler-backend-fuse-use-counts!
-                backend-state
-                prev-fuse-use-counts)
-              (compiler-backend-test-set-compiler-backend-fuse-free-counts!
-                backend-state
-                prev-fuse-free-counts)
-              (compiler-backend-test-set-compiler-backend-emit-instrs-loop-active!
+              (set-state-fuse-need-ready! backend-state prev-fuse-ready)
+              (set-state-fuse-use-counts! backend-state prev-fuse-use-counts)
+              (set-state-fuse-free-counts! backend-state prev-fuse-free-counts)
+              (set-state-emit-instrs-loop-active!
                 backend-state
                 prev-loop-active)
-              (compiler-backend-test-set-compiler-backend-emit-instrs-continue-pending!
+              (set-state-emit-instrs-continue-pending!
                 backend-state
                 prev-continue-pending)
-              (compiler-backend-test-set-compiler-backend-identity-tail-forwarder-active!
+              (set-state-identity-tail-forwarder-active!
                 backend-state
                 prev-identity-tail))]
           hit)]
@@ -20743,31 +20647,23 @@ g:
           [_restore : unit
             (begin
               (emitter-scratch-restore! backend-state saved)
-              (compiler-backend-test-set-compiler-backend-emit-current-site!
-                backend-state
-                prev-current-site)
-              (compiler-backend-test-set-compiler-backend-addr-of-forwarding-enabled!
+              (set-state-emit-current-site! backend-state prev-current-site)
+              (set-state-addr-of-forwarding-enabled!
                 backend-state
                 prev-addr-forward-enabled)
-              (compiler-backend-test-set-compiler-backend-addr-of-forwarding-src!
+              (set-state-addr-of-forwarding-src!
                 backend-state
                 prev-addr-forward-src)
-              (compiler-backend-test-set-compiler-backend-fuse-need-ready!
-                backend-state
-                prev-fuse-ready)
-              (compiler-backend-test-set-compiler-backend-fuse-use-counts!
-                backend-state
-                prev-fuse-use-counts)
-              (compiler-backend-test-set-compiler-backend-fuse-free-counts!
-                backend-state
-                prev-fuse-free-counts)
-              (compiler-backend-test-set-compiler-backend-emit-instrs-loop-active!
+              (set-state-fuse-need-ready! backend-state prev-fuse-ready)
+              (set-state-fuse-use-counts! backend-state prev-fuse-use-counts)
+              (set-state-fuse-free-counts! backend-state prev-fuse-free-counts)
+              (set-state-emit-instrs-loop-active!
                 backend-state
                 prev-loop-active)
-              (compiler-backend-test-set-compiler-backend-emit-instrs-continue-pending!
+              (set-state-emit-instrs-continue-pending!
                 backend-state
                 prev-continue-pending)
-              (compiler-backend-test-set-compiler-backend-identity-tail-forwarder-active!
+              (set-state-identity-tail-forwarder-active!
                 backend-state
                 prev-identity-tail))]
           false)])))
@@ -20817,22 +20713,22 @@ g:
         backend-state
         (backend.compiler-backend-target-abi target))]
     [prev-starts : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
+      (scratch-scavenge-ctx-starts
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-ends : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-ends
+      (scratch-scavenge-ctx-ends
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-assignment-index : regalloc.CompilerRegAssignmentTable
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-assignments
+      (scratch-scavenge-ctx-assignments
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-plan-mask : i64
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
+      (scratch-scavenge-ctx-plan-reg-mask
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-occupied-masks : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-occupied-masks
+      (scratch-scavenge-ctx-occupied-masks
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-vars : i64
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-vars
+      (scratch-scavenge-ctx-vars
         (backend.compiler-backend-state-function-state backend-state))]
     [_scavenge-abi : unit
       (backend.compiler-backend-set-scavenge-ctx-ready!
@@ -20849,63 +20745,49 @@ g:
             (- backend.compiler-backend-scavenge-plan-win64-bit 1)))
         (owned_view.compiler-owned-shared-view prev-occupied-masks)
         prev-vars)]
-    [prev-post-base : i64
-      (compiler-backend-test-get-compiler-backend-emit-instr-post-base
-        backend-state)]
-    [prev-current-count : i64
-      (compiler-backend-test-get-compiler-backend-emit-current-count
-        backend-state)]
-    [prev-current-site : i64
-      (compiler-backend-test-get-compiler-backend-emit-current-site
-        backend-state)]
+    [prev-post-base : i64 (state-emit-instr-post-base backend-state)]
+    [prev-current-count : i64 (state-emit-current-count backend-state)]
+    [prev-current-site : i64 (state-emit-current-site backend-state)]
     [prev-addr-forward-enabled : bool
-      (compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
-        backend-state)]
+      (state-addr-of-forwarding-enabled backend-state)]
     [prev-addr-forward-src : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-addr-of-forwarding-src
-        backend-state)]
-    [prev-fuse-ready : bool
-      (compiler-backend-test-get-compiler-backend-fuse-need-ready backend-state)]
+      (state-addr-of-forwarding-src backend-state)]
+    [prev-fuse-ready : bool (state-fuse-need-ready backend-state)]
     [prev-fuse-use-counts : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-fuse-use-counts backend-state)]
+      (state-fuse-use-counts backend-state)]
     [prev-fuse-free-counts : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-fuse-free-counts
-        backend-state)]
-    [prev-loop-active : bool
-      (compiler-backend-test-get-compiler-backend-emit-instrs-loop-active
-        backend-state)]
+      (state-fuse-free-counts backend-state)]
+    [prev-loop-active : bool (state-emit-instrs-loop-active backend-state)]
     [prev-continue-pending : bool
-      (compiler-backend-test-get-compiler-backend-emit-instrs-continue-pending
-        backend-state)]
+      (state-emit-instrs-continue-pending backend-state)]
     [prev-identity-tail : bool
-      (compiler-backend-test-get-compiler-backend-identity-tail-forwarder-active
-        backend-state)]
+      (state-identity-tail-forwarder-active backend-state)]
     [prev-emergency-pending : bool
-      (compiler-backend-function-scratch-fixture-get-emergency-pending
+      (scratch-emergency-pending
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-reg : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-reg
+      (scratch-emergency-reg
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-used : bool
-      (compiler-backend-function-scratch-fixture-get-emergency-used
+      (scratch-emergency-used
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-pending-count : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-pending-count
+      (scratch-emergency-pending-count
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-used-count : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-used-count
+      (scratch-emergency-used-count
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-slot-offset : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-slot-offset
+      (scratch-emergency-slot-offset
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-cycle-temp-used-count : i64
-      (compiler-backend-function-scratch-fixture-get-cycle-temp-used-count
+      (scratch-cycle-temp-used-count
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-cycle-temp-base-offset : i64
-      (compiler-backend-function-scratch-fixture-get-cycle-temp-base-offset
+      (scratch-cycle-temp-base-offset
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-restore-suppressed : bool
-      (compiler-backend-function-scratch-fixture-get-emergency-restore-suppressed
+      (scratch-emergency-restore-suppressed
         (backend.compiler-backend-state-function-state backend-state))]
     [blocks : ir.CompilerIrBlockList
       (ir.compiler-ir-block-cons
@@ -20923,19 +20805,13 @@ g:
           (owned_view.compiler-owned-shared-view prev-starts)
           (owned_view.compiler-owned-shared-view prev-ends)
           prev-assignment-index
-          (compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
+          (scratch-scavenge-ctx-plan-reg-mask
             (backend.compiler-backend-state-function-state backend-state))
           (owned_view.compiler-owned-shared-view prev-occupied-masks)
           prev-vars)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          instr-count)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          instr-count)
-        (compiler-backend-test-set-compiler-backend-emit-current-site!
-          backend-state
-          0))]
+        (set-state-emit-instr-post-base! backend-state instr-count)
+        (set-state-emit-current-count! backend-state instr-count)
+        (set-state-emit-current-site! backend-state 0))]
     [use-counts : (__tl_dyn-array i64)
       (backend.compiler-backend-function-use-counts
         vars
@@ -20986,64 +20862,52 @@ g:
                 prev-plan-mask
                 prev-occupied-masks
                 prev-vars)
-              (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-                backend-state
-                prev-post-base)
-              (compiler-backend-test-set-compiler-backend-emit-current-count!
-                backend-state
-                prev-current-count)
-              (compiler-backend-test-set-compiler-backend-emit-current-site!
-                backend-state
-                prev-current-site)
-              (compiler-backend-test-set-compiler-backend-addr-of-forwarding-enabled!
+              (set-state-emit-instr-post-base! backend-state prev-post-base)
+              (set-state-emit-current-count! backend-state prev-current-count)
+              (set-state-emit-current-site! backend-state prev-current-site)
+              (set-state-addr-of-forwarding-enabled!
                 backend-state
                 prev-addr-forward-enabled)
-              (compiler-backend-test-set-compiler-backend-addr-of-forwarding-src!
+              (set-state-addr-of-forwarding-src!
                 backend-state
                 prev-addr-forward-src)
-              (compiler-backend-test-set-compiler-backend-fuse-need-ready!
-                backend-state
-                prev-fuse-ready)
-              (compiler-backend-test-set-compiler-backend-fuse-use-counts!
-                backend-state
-                prev-fuse-use-counts)
-              (compiler-backend-test-set-compiler-backend-fuse-free-counts!
-                backend-state
-                prev-fuse-free-counts)
-              (compiler-backend-test-set-compiler-backend-emit-instrs-loop-active!
+              (set-state-fuse-need-ready! backend-state prev-fuse-ready)
+              (set-state-fuse-use-counts! backend-state prev-fuse-use-counts)
+              (set-state-fuse-free-counts! backend-state prev-fuse-free-counts)
+              (set-state-emit-instrs-loop-active!
                 backend-state
                 prev-loop-active)
-              (compiler-backend-test-set-compiler-backend-emit-instrs-continue-pending!
+              (set-state-emit-instrs-continue-pending!
                 backend-state
                 prev-continue-pending)
-              (compiler-backend-test-set-compiler-backend-identity-tail-forwarder-active!
+              (set-state-identity-tail-forwarder-active!
                 backend-state
                 prev-identity-tail)
-              (compiler-backend-function-scratch-fixture-set-emergency-pending!
+              (set-scratch-emergency-pending!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-pending)
-              (compiler-backend-function-scratch-fixture-set-emergency-reg!
+              (set-scratch-emergency-reg!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-reg)
-              (compiler-backend-function-scratch-fixture-set-emergency-used!
+              (set-scratch-emergency-used!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-used)
-              (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+              (set-scratch-emergency-pending-count!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-pending-count)
-              (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+              (set-scratch-emergency-used-count!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-used-count)
-              (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+              (set-scratch-emergency-slot-offset!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-slot-offset)
-              (compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
+              (set-scratch-cycle-temp-used-count!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-cycle-temp-used-count)
-              (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+              (set-scratch-cycle-temp-base-offset!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-cycle-temp-base-offset)
-              (compiler-backend-function-scratch-fixture-set-emergency-restore-suppressed!
+              (set-scratch-emergency-restore-suppressed!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-restore-suppressed))]
           (backend.ResultCompilerBackend.Ok asm))]
@@ -21059,64 +20923,52 @@ g:
                 prev-plan-mask
                 prev-occupied-masks
                 prev-vars)
-              (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-                backend-state
-                prev-post-base)
-              (compiler-backend-test-set-compiler-backend-emit-current-count!
-                backend-state
-                prev-current-count)
-              (compiler-backend-test-set-compiler-backend-emit-current-site!
-                backend-state
-                prev-current-site)
-              (compiler-backend-test-set-compiler-backend-addr-of-forwarding-enabled!
+              (set-state-emit-instr-post-base! backend-state prev-post-base)
+              (set-state-emit-current-count! backend-state prev-current-count)
+              (set-state-emit-current-site! backend-state prev-current-site)
+              (set-state-addr-of-forwarding-enabled!
                 backend-state
                 prev-addr-forward-enabled)
-              (compiler-backend-test-set-compiler-backend-addr-of-forwarding-src!
+              (set-state-addr-of-forwarding-src!
                 backend-state
                 prev-addr-forward-src)
-              (compiler-backend-test-set-compiler-backend-fuse-need-ready!
-                backend-state
-                prev-fuse-ready)
-              (compiler-backend-test-set-compiler-backend-fuse-use-counts!
-                backend-state
-                prev-fuse-use-counts)
-              (compiler-backend-test-set-compiler-backend-fuse-free-counts!
-                backend-state
-                prev-fuse-free-counts)
-              (compiler-backend-test-set-compiler-backend-emit-instrs-loop-active!
+              (set-state-fuse-need-ready! backend-state prev-fuse-ready)
+              (set-state-fuse-use-counts! backend-state prev-fuse-use-counts)
+              (set-state-fuse-free-counts! backend-state prev-fuse-free-counts)
+              (set-state-emit-instrs-loop-active!
                 backend-state
                 prev-loop-active)
-              (compiler-backend-test-set-compiler-backend-emit-instrs-continue-pending!
+              (set-state-emit-instrs-continue-pending!
                 backend-state
                 prev-continue-pending)
-              (compiler-backend-test-set-compiler-backend-identity-tail-forwarder-active!
+              (set-state-identity-tail-forwarder-active!
                 backend-state
                 prev-identity-tail)
-              (compiler-backend-function-scratch-fixture-set-emergency-pending!
+              (set-scratch-emergency-pending!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-pending)
-              (compiler-backend-function-scratch-fixture-set-emergency-reg!
+              (set-scratch-emergency-reg!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-reg)
-              (compiler-backend-function-scratch-fixture-set-emergency-used!
+              (set-scratch-emergency-used!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-used)
-              (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+              (set-scratch-emergency-pending-count!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-pending-count)
-              (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+              (set-scratch-emergency-used-count!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-used-count)
-              (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+              (set-scratch-emergency-slot-offset!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-slot-offset)
-              (compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
+              (set-scratch-cycle-temp-used-count!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-cycle-temp-used-count)
-              (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+              (set-scratch-cycle-temp-base-offset!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-cycle-temp-base-offset)
-              (compiler-backend-function-scratch-fixture-set-emergency-restore-suppressed!
+              (set-scratch-emergency-restore-suppressed!
                 (backend.compiler-backend-state-function-state backend-state)
                 prev-emergency-restore-suppressed))]
           (backend.ResultCompilerBackend.Err message))])))
@@ -22765,12 +22617,8 @@ g:
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          6)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          6))]
+        (set-state-emit-instr-post-base! backend-state 6)
+        (set-state-emit-current-count! backend-state 6))]
     [result : backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
@@ -22825,7 +22673,7 @@ g:
         (ci.intern-compat-state-capture-active))]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
     [prev-emergency-slot-offset : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-slot-offset
+      (scratch-emergency-slot-offset
         (backend.compiler-backend-state-function-state backend-state))]
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-gep-load-multi-emergency-assignments)]
@@ -22847,13 +22695,9 @@ g:
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          14)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          14)
-        (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (set-state-emit-instr-post-base! backend-state 14)
+        (set-state-emit-current-count! backend-state 14)
+        (set-scratch-emergency-slot-offset!
           (backend.compiler-backend-state-function-state backend-state)
           -512))]
     [result : backend.ResultCompilerBackend
@@ -22866,7 +22710,7 @@ g:
     [_restore : unit
       (begin
         (emitter-scratch-restore! backend-state saved)
-        (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (set-scratch-emergency-slot-offset!
           (backend.compiler-backend-state-function-state backend-state)
           prev-emergency-slot-offset))]
     result))
@@ -22959,12 +22803,8 @@ g:
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          2)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          2))]
+        (set-state-emit-instr-post-base! backend-state 2)
+        (set-state-emit-current-count! backend-state 2))]
     [result : backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
@@ -23023,12 +22863,8 @@ g:
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          5)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          5))]
+        (set-state-emit-instr-post-base! backend-state 5)
+        (set-state-emit-current-count! backend-state 5))]
     [result : backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
@@ -23511,9 +23347,7 @@ g:
         8
         (compiler-backend-gep-fold-test-blocks-with false op k))]
     [result : bool
-      (if (not
-        (compiler-backend-test-get-compiler-backend-gep-fold-ready
-          backend-state))
+      (if (not (state-gep-fold-ready backend-state))
         false
         (match (compiler-backend-emit-test-instrs-target-with-backend-state
           (compiler-backend-gep-fold-test-entry-instrs folded)
@@ -23548,8 +23382,7 @@ g:
         8
         (compiler-backend-gep-fold-test-blocks true))]
     [result : bool
-      (if (compiler-backend-test-get-compiler-backend-gep-fold-ready
-        backend-state)
+      (if (state-gep-fold-ready backend-state)
         false
         (asm-ok?
           (compiler-backend-emit-test-instrs-target-with-backend-state
@@ -23596,9 +23429,7 @@ g:
         8
         (compiler-backend-gep-fold-test-blocks false))]
     [result : bool
-      (if (not
-        (compiler-backend-test-get-compiler-backend-gep-fold-ready
-          backend-state))
+      (if (not (state-gep-fold-ready backend-state))
         false
         (begin
           ;; wrong scale: recorded scale is 8 (i64), consume with u8.
@@ -27013,12 +26844,8 @@ g:
           ends
           assignments
           2)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          1)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          1))]
+        (set-state-emit-instr-post-base! backend-state 1)
+        (set-state-emit-current-count! backend-state 1))]
     [name-id : i64 (ci.intern "ret_int")]
     [result : backend.ResultCompilerBackend
       (backend.compiler-backend-emit-binop-return-with-plan
@@ -28249,33 +28076,19 @@ g:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
-    [prev-gep-ready : bool
-      (compiler-backend-test-get-compiler-backend-gep-fold-ready backend-state)]
+    [prev-gep-ready : bool (state-gep-fold-ready backend-state)]
     [prev-gep-disp : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-gep-fold-disp-table
-        backend-state)]
+      (state-gep-fold-disp-table backend-state)]
     [prev-gep-kind : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-gep-fold-kind-table
-        backend-state)]
+      (state-gep-fold-kind-table backend-state)]
     [prev-gep-scale : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-gep-fold-scale-table
-        backend-state)]
-    [prev-gep-cursor : i64
-      (compiler-backend-test-get-compiler-backend-gep-fold-cursor backend-state)]
-    [prev-gep-drift : bool
-      (compiler-backend-test-get-compiler-backend-gep-fold-drift backend-state)]
-    [prev0-var : i64
-      (compiler-backend-test-get-compiler-backend-emit-home-override0-var
-        backend-state)]
-    [prev0-reg : i64
-      (compiler-backend-test-get-compiler-backend-emit-home-override0-reg
-        backend-state)]
-    [prev1-var : i64
-      (compiler-backend-test-get-compiler-backend-emit-home-override1-var
-        backend-state)]
-    [prev1-reg : i64
-      (compiler-backend-test-get-compiler-backend-emit-home-override1-reg
-        backend-state)]
+      (state-gep-fold-scale-table backend-state)]
+    [prev-gep-cursor : i64 (state-gep-fold-cursor backend-state)]
+    [prev-gep-drift : bool (state-gep-fold-drift backend-state)]
+    [prev0-var : i64 (state-emit-home-override0-var backend-state)]
+    [prev0-reg : i64 (state-emit-home-override0-reg backend-state)]
+    [prev1-var : i64 (state-emit-home-override1-var backend-state)]
+    [prev1-reg : i64 (state-emit-home-override1-reg backend-state)]
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-divmod-polish-assignments rbp-lhs)]
     [instrs : ir.CompilerIrInstrSeq
@@ -28304,12 +28117,8 @@ g:
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          count)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          count))]
+        (set-state-emit-instr-post-base! backend-state count)
+        (set-state-emit-current-count! backend-state count))]
     [result : backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
@@ -28320,24 +28129,12 @@ g:
     [_restore : unit
       (begin
         (emitter-scratch-restore! backend-state saved)
-        (compiler-backend-test-set-compiler-backend-gep-fold-ready!
-          backend-state
-          prev-gep-ready)
-        (compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
-          backend-state
-          prev-gep-disp)
-        (compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
-          backend-state
-          prev-gep-kind)
-        (compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
-          backend-state
-          prev-gep-scale)
-        (compiler-backend-test-set-compiler-backend-gep-fold-cursor!
-          backend-state
-          prev-gep-cursor)
-        (compiler-backend-test-set-compiler-backend-gep-fold-drift!
-          backend-state
-          prev-gep-drift)
+        (set-state-gep-fold-ready! backend-state prev-gep-ready)
+        (set-state-gep-fold-disp-table! backend-state prev-gep-disp)
+        (set-state-gep-fold-kind-table! backend-state prev-gep-kind)
+        (set-state-gep-fold-scale-table! backend-state prev-gep-scale)
+        (set-state-gep-fold-cursor! backend-state prev-gep-cursor)
+        (set-state-gep-fold-drift! backend-state prev-gep-drift)
         (backend.compiler-backend-divmod-overrides-install!
           (backend.compiler-backend-state-function-state backend-state)
           prev0-var
@@ -28428,35 +28225,21 @@ g:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
-    [prev-gep-ready : bool
-      (compiler-backend-test-get-compiler-backend-gep-fold-ready backend-state)]
+    [prev-gep-ready : bool (state-gep-fold-ready backend-state)]
     [prev-gep-disp : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-gep-fold-disp-table
-        backend-state)]
+      (state-gep-fold-disp-table backend-state)]
     [prev-gep-kind : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-gep-fold-kind-table
-        backend-state)]
+      (state-gep-fold-kind-table backend-state)]
     [prev-gep-scale : (__tl_dyn-array i64)
-      (compiler-backend-test-get-compiler-backend-gep-fold-scale-table
-        backend-state)]
-    [prev-gep-cursor : i64
-      (compiler-backend-test-get-compiler-backend-gep-fold-cursor backend-state)]
-    [prev-gep-drift : bool
-      (compiler-backend-test-get-compiler-backend-gep-fold-drift backend-state)]
-    [prev0-var : i64
-      (compiler-backend-test-get-compiler-backend-emit-home-override0-var
-        backend-state)]
-    [prev0-reg : i64
-      (compiler-backend-test-get-compiler-backend-emit-home-override0-reg
-        backend-state)]
-    [prev1-var : i64
-      (compiler-backend-test-get-compiler-backend-emit-home-override1-var
-        backend-state)]
-    [prev1-reg : i64
-      (compiler-backend-test-get-compiler-backend-emit-home-override1-reg
-        backend-state)]
+      (state-gep-fold-scale-table backend-state)]
+    [prev-gep-cursor : i64 (state-gep-fold-cursor backend-state)]
+    [prev-gep-drift : bool (state-gep-fold-drift backend-state)]
+    [prev0-var : i64 (state-emit-home-override0-var backend-state)]
+    [prev0-reg : i64 (state-emit-home-override0-reg backend-state)]
+    [prev1-var : i64 (state-emit-home-override1-var backend-state)]
+    [prev1-reg : i64 (state-emit-home-override1-reg backend-state)]
     [prev-emergency-slot-offset : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-slot-offset
+      (scratch-emergency-slot-offset
         (backend.compiler-backend-state-function-state backend-state))]
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-c22-divmod-store-collision-assignments)]
@@ -28483,13 +28266,9 @@ g:
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          count)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          count)
-        (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (set-state-emit-instr-post-base! backend-state count)
+        (set-state-emit-current-count! backend-state count)
+        (set-scratch-emergency-slot-offset!
           (backend.compiler-backend-state-function-state backend-state)
           -512))]
     [result : backend.ResultCompilerBackend
@@ -28502,31 +28281,19 @@ g:
     [_restore : unit
       (begin
         (emitter-scratch-restore! backend-state saved)
-        (compiler-backend-test-set-compiler-backend-gep-fold-ready!
-          backend-state
-          prev-gep-ready)
-        (compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
-          backend-state
-          prev-gep-disp)
-        (compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
-          backend-state
-          prev-gep-kind)
-        (compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
-          backend-state
-          prev-gep-scale)
-        (compiler-backend-test-set-compiler-backend-gep-fold-cursor!
-          backend-state
-          prev-gep-cursor)
-        (compiler-backend-test-set-compiler-backend-gep-fold-drift!
-          backend-state
-          prev-gep-drift)
+        (set-state-gep-fold-ready! backend-state prev-gep-ready)
+        (set-state-gep-fold-disp-table! backend-state prev-gep-disp)
+        (set-state-gep-fold-kind-table! backend-state prev-gep-kind)
+        (set-state-gep-fold-scale-table! backend-state prev-gep-scale)
+        (set-state-gep-fold-cursor! backend-state prev-gep-cursor)
+        (set-state-gep-fold-drift! backend-state prev-gep-drift)
         (backend.compiler-backend-divmod-overrides-install!
           (backend.compiler-backend-state-function-state backend-state)
           prev0-var
           prev0-reg
           prev1-var
           prev1-reg)
-        (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (set-scratch-emergency-slot-offset!
           (backend.compiler-backend-state-function-state backend-state)
           prev-emergency-slot-offset))]
     result))
@@ -29612,18 +29379,12 @@ g:
       (backend.compiler-backend-state-function-state index.backend-state)]
     [_late-body-pressure : unit
       (begin
-        (compiler-backend-function-scratch-fixture-set-scavenge-ctx-occupied-masks!
+        (set-scratch-scavenge-ctx-occupied-masks!
           function-state
           (__tl_make-array 0 -1))
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          index.backend-state
-          1)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          index.backend-state
-          0))]
-    [pending-before : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-pending-count
-        function-state)]
+        (set-state-emit-instr-post-base! index.backend-state 1)
+        (set-state-emit-current-count! index.backend-state 0))]
+    [pending-before : i64 (scratch-emergency-pending-count function-state)]
     [result : backend.ResultCompilerBackend
       (backend.compiler-backend-emit-param-spills
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -29637,9 +29398,7 @@ g:
         index
         1
         index.backend-state)]
-    [pending-after : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-pending-count
-        function-state)]
+    [pending-after : i64 (scratch-emergency-pending-count function-state)]
     (and
       (= pending-before pending-after)
       (asm-ok?
@@ -30526,12 +30285,8 @@ g:
           (owned_view.compiler-owned-shared-view blocks)
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          1)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          1))]
+        (set-state-emit-instr-post-base! backend-state 1)
+        (set-state-emit-current-count! backend-state 1))]
     [result : backend.ResultCompilerBackend
       (backend.compiler-backend-emit-tail-indirect-call
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -31368,9 +31123,7 @@ g:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
-    [prev-current-site : i64
-      (compiler-backend-test-get-compiler-backend-emit-current-site
-        backend-state)]
+    [prev-current-site : i64 (state-emit-current-site backend-state)]
     [instrs : ir.CompilerIrInstrSeq
       (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -31390,15 +31143,9 @@ g:
           blocks
           (regalloc.compiler-reg-assignment-table-empty)
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          count)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          count)
-        (compiler-backend-test-set-compiler-backend-emit-current-site!
-          backend-state
-          0))]
+        (set-state-emit-instr-post-base! backend-state count)
+        (set-state-emit-current-count! backend-state count)
+        (set-state-emit-current-site! backend-state 0))]
     [result : backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
@@ -31409,9 +31156,7 @@ g:
     [_restore : unit
       (begin
         (emitter-scratch-restore! backend-state saved)
-        (compiler-backend-test-set-compiler-backend-emit-current-site!
-          backend-state
-          prev-current-site))]
+        (set-state-emit-current-site! backend-state prev-current-site))]
     (match result
       [(backend.ResultCompilerBackend.Ok asm)
         (backend.backend-and4
@@ -31624,25 +31369,25 @@ g:
         (ci.intern-compat-state-capture-active))]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
     [prev-emergency-pending : bool
-      (compiler-backend-function-scratch-fixture-get-emergency-pending
+      (scratch-emergency-pending
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-reg : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-reg
+      (scratch-emergency-reg
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-used : bool
-      (compiler-backend-function-scratch-fixture-get-emergency-used
+      (scratch-emergency-used
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-pending-count : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-pending-count
+      (scratch-emergency-pending-count
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-used-count : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-used-count
+      (scratch-emergency-used-count
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-slot-offset : i64
-      (compiler-backend-function-scratch-fixture-get-emergency-slot-offset
+      (scratch-emergency-slot-offset
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-emergency-restore-suppressed : bool
-      (compiler-backend-function-scratch-fixture-get-emergency-restore-suppressed
+      (scratch-emergency-restore-suppressed
         (backend.compiler-backend-state-function-state backend-state))]
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-inline-fast-alloc-emergency-assignments)]
@@ -31665,31 +31410,27 @@ g:
           blocks
           assignments
           backend-state)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          count)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          count)
-        (compiler-backend-function-scratch-fixture-set-emergency-pending!
+        (set-state-emit-instr-post-base! backend-state count)
+        (set-state-emit-current-count! backend-state count)
+        (set-scratch-emergency-pending!
           (backend.compiler-backend-state-function-state backend-state)
           false)
-        (compiler-backend-function-scratch-fixture-set-emergency-reg!
+        (set-scratch-emergency-reg!
           (backend.compiler-backend-state-function-state backend-state)
           cabi.compiler-reg-id-invalid)
-        (compiler-backend-function-scratch-fixture-set-emergency-used!
+        (set-scratch-emergency-used!
           (backend.compiler-backend-state-function-state backend-state)
           false)
-        (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+        (set-scratch-emergency-pending-count!
           (backend.compiler-backend-state-function-state backend-state)
           0)
-        (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+        (set-scratch-emergency-used-count!
           (backend.compiler-backend-state-function-state backend-state)
           0)
-        (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (set-scratch-emergency-slot-offset!
           (backend.compiler-backend-state-function-state backend-state)
           -512)
-        (compiler-backend-function-scratch-fixture-set-emergency-restore-suppressed!
+        (set-scratch-emergency-restore-suppressed!
           (backend.compiler-backend-state-function-state backend-state)
           false))]
     [result : backend.ResultCompilerBackend
@@ -31702,25 +31443,25 @@ g:
     [_restore : unit
       (begin
         (emitter-scratch-restore! backend-state saved)
-        (compiler-backend-function-scratch-fixture-set-emergency-pending!
+        (set-scratch-emergency-pending!
           (backend.compiler-backend-state-function-state backend-state)
           prev-emergency-pending)
-        (compiler-backend-function-scratch-fixture-set-emergency-reg!
+        (set-scratch-emergency-reg!
           (backend.compiler-backend-state-function-state backend-state)
           prev-emergency-reg)
-        (compiler-backend-function-scratch-fixture-set-emergency-used!
+        (set-scratch-emergency-used!
           (backend.compiler-backend-state-function-state backend-state)
           prev-emergency-used)
-        (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+        (set-scratch-emergency-pending-count!
           (backend.compiler-backend-state-function-state backend-state)
           prev-emergency-pending-count)
-        (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+        (set-scratch-emergency-used-count!
           (backend.compiler-backend-state-function-state backend-state)
           prev-emergency-used-count)
-        (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (set-scratch-emergency-slot-offset!
           (backend.compiler-backend-state-function-state backend-state)
           prev-emergency-slot-offset)
-        (compiler-backend-function-scratch-fixture-set-emergency-restore-suppressed!
+        (set-scratch-emergency-restore-suppressed!
           (backend.compiler-backend-state-function-state backend-state)
           prev-emergency-restore-suppressed))]
     result))
@@ -33157,7 +32898,7 @@ g:
         (backend.compiler-backend-set-current-mode!
           (backend.compiler-backend-state-function-state backend-state)
           (backend.CompilerBackendMode.Avx2))
-        (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (set-scratch-emergency-slot-offset!
           (backend.compiler-backend-state-function-state backend-state)
           -512)
         (backend.compiler-backend-emergency-add!
@@ -33223,16 +32964,16 @@ g:
       (set!
         assignments
         (compiler-backend-test-reg-assignment-table-from regs 0))
-      (compiler-backend-function-scratch-fixture-set-emergency-pending!
+      (set-scratch-emergency-pending!
         (backend.compiler-backend-state-function-state backend-state)
         false)
-      (compiler-backend-function-scratch-fixture-set-emergency-used!
+      (set-scratch-emergency-used!
         (backend.compiler-backend-state-function-state backend-state)
         false)
-      (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+      (set-scratch-emergency-pending-count!
         (backend.compiler-backend-state-function-state backend-state)
         0)
-      (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+      (set-scratch-emergency-used-count!
         (backend.compiler-backend-state-function-state backend-state)
         0)
       (set!
@@ -33254,17 +32995,17 @@ g:
         (and
           (string.eq picked "%rsi")
           (not
-            (compiler-backend-function-scratch-fixture-get-emergency-pending
+            (scratch-emergency-pending
               (backend.compiler-backend-state-function-state backend-state)))
           (not
-            (compiler-backend-function-scratch-fixture-get-emergency-used
+            (scratch-emergency-used
               (backend.compiler-backend-state-function-state backend-state)))
           (=
-            (compiler-backend-function-scratch-fixture-get-emergency-pending-count
+            (scratch-emergency-pending-count
               (backend.compiler-backend-state-function-state backend-state))
             0)
           (=
-            (compiler-backend-function-scratch-fixture-get-emergency-used-count
+            (scratch-emergency-used-count
               (backend.compiler-backend-state-function-state backend-state))
             0)))
       ok)))
@@ -33347,16 +33088,16 @@ g:
     (begin
       (set! (array-ref starts 0) 0)
       (set! (array-ref ends 0) 10)
-      (compiler-backend-function-scratch-fixture-set-emergency-pending!
+      (set-scratch-emergency-pending!
         (backend.compiler-backend-state-function-state backend-state)
         false)
-      (compiler-backend-function-scratch-fixture-set-emergency-used!
+      (set-scratch-emergency-used!
         (backend.compiler-backend-state-function-state backend-state)
         false)
-      (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+      (set-scratch-emergency-pending-count!
         (backend.compiler-backend-state-function-state backend-state)
         0)
-      (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+      (set-scratch-emergency-used-count!
         (backend.compiler-backend-state-function-state backend-state)
         0)
       (let
@@ -33376,14 +33117,14 @@ g:
         [ok : bool
           (and
             (string.eq reg "%r12")
-            (compiler-backend-function-scratch-fixture-get-emergency-pending
+            (scratch-emergency-pending
               (backend.compiler-backend-state-function-state backend-state))
             (=
-              (compiler-backend-function-scratch-fixture-get-emergency-reg
+              (scratch-emergency-reg
                 (backend.compiler-backend-state-function-state backend-state))
               cabi.compiler-reg-id-r12)
             (=
-              (compiler-backend-function-scratch-fixture-get-emergency-pending-count
+              (scratch-emergency-pending-count
                 (backend.compiler-backend-state-function-state backend-state))
               1)
             ;; T1-6 (b): the pick only ENQUEUES the borrowed register; where
@@ -33391,11 +33132,11 @@ g:
             ;; when the bracketed text is known, so nothing is charged to the
             ;; frame yet.
             (=
-              (compiler-backend-function-scratch-fixture-get-emergency-used-count
+              (scratch-emergency-used-count
                 (backend.compiler-backend-state-function-state backend-state))
               0)
             (not
-              (compiler-backend-function-scratch-fixture-get-emergency-used
+              (scratch-emergency-used
                 (backend.compiler-backend-state-function-state backend-state)))
             ;; Forcing the slot form (what every inline-restore path does)
             ;; charges exactly one emergency slot.
@@ -33403,24 +33144,24 @@ g:
               (backend.compiler-backend-emergency-commit-slot-form!
                 (backend.compiler-backend-state-function-state backend-state))
               (and
-                (compiler-backend-function-scratch-fixture-get-emergency-used
+                (scratch-emergency-used
                   (backend.compiler-backend-state-function-state backend-state))
                 (=
-                  (compiler-backend-function-scratch-fixture-get-emergency-used-count
+                  (scratch-emergency-used-count
                     (backend.compiler-backend-state-function-state
                       backend-state))
                   1))))]
         (begin
-          (compiler-backend-function-scratch-fixture-set-emergency-pending!
+          (set-scratch-emergency-pending!
             (backend.compiler-backend-state-function-state backend-state)
             false)
-          (compiler-backend-function-scratch-fixture-set-emergency-used!
+          (set-scratch-emergency-used!
             (backend.compiler-backend-state-function-state backend-state)
             false)
-          (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+          (set-scratch-emergency-pending-count!
             (backend.compiler-backend-state-function-state backend-state)
             0)
-          (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+          (set-scratch-emergency-used-count!
             (backend.compiler-backend-state-function-state backend-state)
             0)
           ok)))))
@@ -33675,19 +33416,19 @@ g:
         (ci.intern-compat-state-capture-active))]
     [stale-regs : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
-      (compiler-backend-function-scratch-fixture-set-const-hoist-site-count!
+      (set-scratch-const-hoist-site-count!
         (backend.compiler-backend-state-function-state backend-state)
         1)
-      (compiler-backend-function-scratch-fixture-set-const-hoist-site-regs!
+      (set-scratch-const-hoist-site-regs!
         (backend.compiler-backend-state-function-state backend-state)
         stale-regs)
-      (compiler-backend-function-scratch-fixture-set-const-hoist-inject-count!
+      (set-scratch-const-hoist-inject-count!
         (backend.compiler-backend-state-function-state backend-state)
         1)
-      (compiler-backend-function-scratch-fixture-set-const-hoist-frame-rbx!
+      (set-scratch-const-hoist-frame-rbx!
         (backend.compiler-backend-state-function-state backend-state)
         true)
-      (compiler-backend-function-scratch-fixture-set-const-hoist-frame-count!
+      (set-scratch-const-hoist-frame-count!
         (backend.compiler-backend-state-function-state backend-state)
         1)
       (let
@@ -34742,22 +34483,22 @@ g:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [prev-starts : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
+      (scratch-scavenge-ctx-starts
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-ends : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-ends
+      (scratch-scavenge-ctx-ends
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-assignment-index : regalloc.CompilerRegAssignmentTable
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-assignments
+      (scratch-scavenge-ctx-assignments
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-plan-mask : i64
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
+      (scratch-scavenge-ctx-plan-reg-mask
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-occupied-masks : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-occupied-masks
+      (scratch-scavenge-ctx-occupied-masks
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-vars : i64
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-vars
+      (scratch-scavenge-ctx-vars
         (backend.compiler-backend-state-function-state backend-state))]
     [blocks : ir.CompilerIrBlockList
       (compiler-backend-scavenge-loop-live-through-blocks)]
@@ -34881,16 +34622,14 @@ g:
               (__tl_make-array regalloc.CompilerRegIntervalSeq 0)
               3)
             3)])
-      (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-        backend-state
-        4)
+      (set-state-emit-instr-post-base! backend-state 4)
       (backend.compiler-backend-function-state-set-current-phi-target-point!
         backend-state
         target-point)
       (backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
         backend-state
         0)
-      (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+      (set-scratch-emergency-slot-offset!
         (backend.compiler-backend-state-function-state backend-state)
         -128)
       (match (backend.compiler-backend-emit-phi-source-load-store
@@ -34948,22 +34687,22 @@ g:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [prev-starts : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
+      (scratch-scavenge-ctx-starts
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-ends : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-ends
+      (scratch-scavenge-ctx-ends
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-assignment-index : regalloc.CompilerRegAssignmentTable
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-assignments
+      (scratch-scavenge-ctx-assignments
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-plan-mask : i64
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
+      (scratch-scavenge-ctx-plan-reg-mask
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-occupied-masks : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-occupied-masks
+      (scratch-scavenge-ctx-occupied-masks
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-vars : i64
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-vars
+      (scratch-scavenge-ctx-vars
         (backend.compiler-backend-state-function-state backend-state))]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%4=%r8")]
     ;; entry is 3 instructions (0,1,2), `lat` is 2 (3,4), `sunk` is 8 (5..12)
@@ -34982,9 +34721,7 @@ g:
         (compiler-backend-phi-rotated-back-edge-blocks)
         assignments
         backend-state)
-      (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-        backend-state
-        4)
+      (set-state-emit-instr-post-base! backend-state 4)
       (backend.compiler-backend-function-state-set-current-phi-target-point!
         backend-state
         target-point)
@@ -35106,38 +34843,30 @@ g:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [prev-starts : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
+      (scratch-scavenge-ctx-starts
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-ends : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-ends
+      (scratch-scavenge-ctx-ends
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-assignment-index : regalloc.CompilerRegAssignmentTable
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-assignments
+      (scratch-scavenge-ctx-assignments
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-plan-mask : i64
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
+      (scratch-scavenge-ctx-plan-reg-mask
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-occupied-masks : (__tl_dyn-array i64)
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-occupied-masks
+      (scratch-scavenge-ctx-occupied-masks
         (backend.compiler-backend-state-function-state backend-state))]
     [prev-vars : i64
-      (compiler-backend-function-scratch-fixture-get-scavenge-ctx-vars
+      (scratch-scavenge-ctx-vars
         (backend.compiler-backend-state-function-state backend-state))]
-    [prev-post-base : i64
-      (compiler-backend-test-get-compiler-backend-emit-instr-post-base
-        backend-state)]
-    [prev-count : i64
-      (compiler-backend-test-get-compiler-backend-emit-current-count
-        backend-state)]
+    [prev-post-base : i64 (state-emit-instr-post-base backend-state)]
+    [prev-count : i64 (state-emit-current-count backend-state)]
     ;; place the emission point at 10: 2 * (post-base - count)
     [_point : unit
       (begin
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          backend-state
-          5)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          backend-state
-          0))]
+        (set-state-emit-instr-post-base! backend-state 5)
+        (set-state-emit-current-count! backend-state 0))]
     [_carried-ctx : unit
       (compiler-backend-divmod-live-dividend-ctx! backend-state true)]
     [carried : bool
@@ -35206,12 +34935,8 @@ g:
         prev-plan-mask
         prev-occupied-masks
         prev-vars)
-      (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-        backend-state
-        prev-post-base)
-      (compiler-backend-test-set-compiler-backend-emit-current-count!
-        backend-state
-        prev-count)
+      (set-state-emit-instr-post-base! backend-state prev-post-base)
+      (set-state-emit-current-count! backend-state prev-count)
       (and
         carried
         value-dead
@@ -35278,9 +35003,7 @@ g:
       (backend.compiler-backend-assembly-stream-carry-home-current!
         stream
         home-before-copy)]
-    [carried-home : arena.Arena
-      (compiler-backend-test-get-compiler-backend-assembly-stream-home-arena
-        stream)]
+    [carried-home : arena.Arena (state-assembly-stream-home-arena stream)]
     [ok : bool
       (and
         (arena.eq? (arena.current) scratch)
@@ -36083,12 +35806,9 @@ b_keep:
       (backend.compiler-backend-state-emission-target-policy state-a)]
     [b-before : backend.CompilerBackendTargetPolicy
       (backend.compiler-backend-state-emission-target-policy state-b)]
-    [a-win64-before : bool
-      (compiler-backend-test-get-compiler-backend-current-fn-win64 state-a)]
-    [a-mode-before : backend.CompilerBackendMode
-      (compiler-backend-test-get-compiler-backend-current-mode state-a)]
-    [b-mode-before : backend.CompilerBackendMode
-      (compiler-backend-test-get-compiler-backend-current-mode state-b)]
+    [a-win64-before : bool (state-current-fn-win64 state-a)]
+    [a-mode-before : backend.CompilerBackendMode (state-current-mode state-a)]
+    [b-mode-before : backend.CompilerBackendMode (state-current-mode state-b)]
     [a-entry-before : String
       (backend.compiler-backend-emit-function-entry
         a-before
@@ -36169,16 +35889,13 @@ b_keep:
         [_ false])
       (asm-has? b-entry-before ".seh_proc _tl_policy_b" "callq __chkstk")
       a-after.windows
-      (compiler-backend-test-get-compiler-backend-current-fn-win64 state-a)
+      (state-current-fn-win64 state-a)
       b-after.windows
       (string.eq b-entry-before b-entry-after)
       (asm-has? a-entry-after ".seh_proc _tl_policy_a" "callq __chkstk")
-      (compiler-backend-test-get-compiler-backend-current-fn-win64 state-b)
-      (backend.compiler-backend-mode-avx2?
-        (compiler-backend-test-get-compiler-backend-current-mode state-b))
-      (not
-        (backend.compiler-backend-mode-avx2?
-          (compiler-backend-test-get-compiler-backend-current-mode state-a))))))
+      (state-current-fn-win64 state-b)
+      (backend.compiler-backend-mode-avx2? (state-current-mode state-b))
+      (not (backend.compiler-backend-mode-avx2? (state-current-mode state-a))))))
 
 (define (compiler-backend-test-register-mask [regs : (__tl_dyn-array i64)]) : i64
   (let
@@ -36266,76 +35983,32 @@ b_keep:
           state-b
           (compiler_liveness.compiler-live-set-empty)
           (compiler_liveness.compiler-live-set-empty))
-        (compiler-backend-test-set-compiler-backend-addr-of-forwarding-enabled!
-          state-a
-          true)
-        (compiler-backend-test-set-compiler-backend-addr-of-forwarding-enabled!
-          state-b
-          false)
-        (compiler-backend-test-set-compiler-backend-addr-of-forwarding-src!
-          state-a
-          forward-a)
-        (compiler-backend-test-set-compiler-backend-addr-of-forwarding-src!
-          state-b
-          forward-b)
-        (compiler-backend-test-set-compiler-backend-fuse-need-ready!
-          state-a
-          true)
-        (compiler-backend-test-set-compiler-backend-fuse-need-ready!
-          state-b
-          false)
-        (compiler-backend-test-set-compiler-backend-fuse-use-counts!
-          state-a
-          uses-a)
-        (compiler-backend-test-set-compiler-backend-fuse-use-counts!
-          state-b
-          uses-b)
-        (compiler-backend-test-set-compiler-backend-fuse-free-counts!
-          state-a
-          free-a)
-        (compiler-backend-test-set-compiler-backend-fuse-free-counts!
-          state-b
-          free-b)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          state-a
-          19)
-        (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
-          state-b
-          31)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          state-a
-          7)
-        (compiler-backend-test-set-compiler-backend-emit-current-count!
-          state-b
-          11)
-        (compiler-backend-test-set-compiler-backend-emit-current-site!
-          state-a
-          4)
-        (compiler-backend-test-set-compiler-backend-emit-current-site!
-          state-b
-          4)
-        (compiler-backend-test-set-compiler-backend-emit-instrs-loop-active!
-          state-a
-          true)
-        (compiler-backend-test-set-compiler-backend-emit-instrs-loop-active!
-          state-b
-          false)
-        (compiler-backend-test-set-compiler-backend-emit-instrs-continue-pending!
-          state-a
-          false)
-        (compiler-backend-test-set-compiler-backend-emit-instrs-continue-pending!
-          state-b
-          true)
-        (compiler-backend-test-set-compiler-backend-identity-tail-forwarder-active!
-          state-a
-          true)
-        (compiler-backend-test-set-compiler-backend-identity-tail-forwarder-active!
-          state-b
-          false)
-        (compiler-backend-test-set-compiler-backend-current-phi-targets!
+        (set-state-addr-of-forwarding-enabled! state-a true)
+        (set-state-addr-of-forwarding-enabled! state-b false)
+        (set-state-addr-of-forwarding-src! state-a forward-a)
+        (set-state-addr-of-forwarding-src! state-b forward-b)
+        (set-state-fuse-need-ready! state-a true)
+        (set-state-fuse-need-ready! state-b false)
+        (set-state-fuse-use-counts! state-a uses-a)
+        (set-state-fuse-use-counts! state-b uses-b)
+        (set-state-fuse-free-counts! state-a free-a)
+        (set-state-fuse-free-counts! state-b free-b)
+        (set-state-emit-instr-post-base! state-a 19)
+        (set-state-emit-instr-post-base! state-b 31)
+        (set-state-emit-current-count! state-a 7)
+        (set-state-emit-current-count! state-b 11)
+        (set-state-emit-current-site! state-a 4)
+        (set-state-emit-current-site! state-b 4)
+        (set-state-emit-instrs-loop-active! state-a true)
+        (set-state-emit-instrs-loop-active! state-b false)
+        (set-state-emit-instrs-continue-pending! state-a false)
+        (set-state-emit-instrs-continue-pending! state-b true)
+        (set-state-identity-tail-forwarder-active! state-a true)
+        (set-state-identity-tail-forwarder-active! state-b false)
+        (set-state-current-phi-targets!
           state-a
           (backend.BackendSymbolSeq labels-a 1))
-        (compiler-backend-test-set-compiler-backend-current-phi-targets!
+        (set-state-current-phi-targets!
           state-b
           (backend.BackendSymbolSeq labels-b 1))
         ;; Use the same metric ids in both owners with deliberately different
@@ -36344,18 +36017,10 @@ b_keep:
         (cfg
           test
           (begin
-            (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
-              state-a
-              11)
-            (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
-              state-b
-              29)
-            (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
-              state-a
-              41)
-            (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
-              state-b
-              43))
+            (set-state-phi-xmm-cycle-register-count! state-a 11)
+            (set-state-phi-xmm-cycle-register-count! state-b 29)
+            (set-state-phi-xmm-cycle-fallback-count! state-a 41)
+            (set-state-phi-xmm-cycle-fallback-count! state-b 43))
           unit))]
     [plan-gep-before-reset : bool
       (compiler-backend-test-register-plan-gep-isolation-stage!
@@ -36371,33 +36036,17 @@ b_keep:
       (cfg
         test
         (and
-          (=
-            (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
-              state-a)
-            11)
-          (=
-            (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
-              state-b)
-            29)
-          (=
-            (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
-              state-a)
-            41)
-          (=
-            (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
-              state-b)
-            43))
+          (= (state-phi-xmm-cycle-register-count state-a) 11)
+          (= (state-phi-xmm-cycle-register-count state-b) 29)
+          (= (state-phi-xmm-cycle-fallback-count state-a) 41)
+          (= (state-phi-xmm-cycle-fallback-count state-b) 43))
         true)]
     [_reset-metrics-a : unit
       (cfg
         test
         (begin
-          (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
-            state-a
-            0)
-          (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
-            state-a
-            0))
+          (set-state-phi-xmm-cycle-register-count! state-a 0)
+          (set-state-phi-xmm-cycle-fallback-count! state-a 0))
         unit)]
     [rsp-push-regs : (__tl_dyn-array String)
       (backend.compiler-backend-rsp-rebase-make-push-regs)]
@@ -36426,141 +36075,56 @@ b_keep:
         (cfg
           test
           (and
-            (=
-              (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
-                state-a)
-              0)
-            (=
-              (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
-                state-a)
-              0)
-            (=
-              (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
-                state-b)
-              29)
-            (=
-              (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
-                state-b)
-              43)
-            (not
-              (compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok
-                state-a))
-            (compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok
-              state-b))
+            (= (state-phi-xmm-cycle-register-count state-a) 0)
+            (= (state-phi-xmm-cycle-fallback-count state-a) 0)
+            (= (state-phi-xmm-cycle-register-count state-b) 29)
+            (= (state-phi-xmm-cycle-fallback-count state-b) 43)
+            (not (state-rsp-rebase-last-ok state-a))
+            (state-rsp-rebase-last-ok state-b))
           true))]
     [before-reset : bool
       (and
-        (backend.compiler-backend-mode-avx2?
-          (compiler-backend-test-get-compiler-backend-current-mode state-a))
-        (backend.compiler-backend-mode-scalar?
-          (compiler-backend-test-get-compiler-backend-current-mode state-b))
-        (compiler-backend-test-get-compiler-backend-current-fn-win64 state-a)
-        (not
-          (compiler-backend-test-get-compiler-backend-current-fn-win64 state-b))
-        (=
-          (compiler-backend-test-get-compiler-backend-current-slot-vars state-a)
-          17)
-        (=
-          (compiler-backend-test-get-compiler-backend-current-slot-vars state-b)
-          23)
+        (backend.compiler-backend-mode-avx2? (state-current-mode state-a))
+        (backend.compiler-backend-mode-scalar? (state-current-mode state-b))
+        (state-current-fn-win64 state-a)
+        (not (state-current-fn-win64 state-b))
+        (= (state-current-slot-vars state-a) 17)
+        (= (state-current-slot-vars state-b) 23)
         (let
-          [test-get-compiler-backend-group-vars
-            (compiler-backend-test-get-compiler-backend-group-vars state-a)]
+          [test-get-compiler-backend-group-vars (state-group-vars state-a)]
           (compiler_liveness.compiler-live-set-contains?
             test-get-compiler-backend-group-vars
             4))
         (not
           (let
-            [test-get-compiler-backend-group-vars
-              (compiler-backend-test-get-compiler-backend-group-vars state-b)]
+            [test-get-compiler-backend-group-vars (state-group-vars state-b)]
             (compiler_liveness.compiler-live-set-contains?
               test-get-compiler-backend-group-vars
               4)))
-        (compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
-          state-a)
-        (not
-          (compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
-            state-b))
+        (state-addr-of-forwarding-enabled state-a)
+        (not (state-addr-of-forwarding-enabled state-b))
+        (= (array-ref (state-addr-of-forwarding-src state-a) 4) 17)
+        (= (array-ref (state-addr-of-forwarding-src state-b) 4) 29)
+        (state-fuse-need-ready state-a)
+        (not (state-fuse-need-ready state-b))
+        (= (array-ref (state-fuse-use-counts state-a) 4) 31)
+        (= (array-ref (state-fuse-use-counts state-b) 4) 37)
+        (= (array-ref (state-fuse-free-counts state-a) 4) 41)
+        (= (array-ref (state-fuse-free-counts state-b) 4) 43)
+        (= (state-emit-instr-post-base state-a) 19)
+        (= (state-emit-instr-post-base state-b) 31)
+        (= (state-emit-current-count state-a) 7)
+        (= (state-emit-current-count state-b) 11)
+        (state-emit-instrs-loop-active state-a)
+        (not (state-emit-instrs-loop-active state-b))
+        (not (state-emit-instrs-continue-pending state-a))
+        (state-emit-instrs-continue-pending state-b)
+        (state-identity-tail-forwarder-active state-a)
+        (not (state-identity-tail-forwarder-active state-b))
+        (= (__tl-project-field (state-current-phi-targets state-a) len) 1)
         (=
           (array-ref
-            (compiler-backend-test-get-compiler-backend-addr-of-forwarding-src
-              state-a)
-            4)
-          17)
-        (=
-          (array-ref
-            (compiler-backend-test-get-compiler-backend-addr-of-forwarding-src
-              state-b)
-            4)
-          29)
-        (compiler-backend-test-get-compiler-backend-fuse-need-ready state-a)
-        (not
-          (compiler-backend-test-get-compiler-backend-fuse-need-ready state-b))
-        (=
-          (array-ref
-            (compiler-backend-test-get-compiler-backend-fuse-use-counts state-a)
-            4)
-          31)
-        (=
-          (array-ref
-            (compiler-backend-test-get-compiler-backend-fuse-use-counts state-b)
-            4)
-          37)
-        (=
-          (array-ref
-            (compiler-backend-test-get-compiler-backend-fuse-free-counts
-              state-a)
-            4)
-          41)
-        (=
-          (array-ref
-            (compiler-backend-test-get-compiler-backend-fuse-free-counts
-              state-b)
-            4)
-          43)
-        (=
-          (compiler-backend-test-get-compiler-backend-emit-instr-post-base
-            state-a)
-          19)
-        (=
-          (compiler-backend-test-get-compiler-backend-emit-instr-post-base
-            state-b)
-          31)
-        (=
-          (compiler-backend-test-get-compiler-backend-emit-current-count
-            state-a)
-          7)
-        (=
-          (compiler-backend-test-get-compiler-backend-emit-current-count
-            state-b)
-          11)
-        (compiler-backend-test-get-compiler-backend-emit-instrs-loop-active
-          state-a)
-        (not
-          (compiler-backend-test-get-compiler-backend-emit-instrs-loop-active
-            state-b))
-        (not
-          (compiler-backend-test-get-compiler-backend-emit-instrs-continue-pending
-            state-a))
-        (compiler-backend-test-get-compiler-backend-emit-instrs-continue-pending
-          state-b)
-        (compiler-backend-test-get-compiler-backend-identity-tail-forwarder-active
-          state-a)
-        (not
-          (compiler-backend-test-get-compiler-backend-identity-tail-forwarder-active
-            state-b))
-        (=
-          (__tl-project-field
-            (compiler-backend-test-get-compiler-backend-current-phi-targets
-              state-a)
-            len)
-          1)
-        (=
-          (array-ref
-            (__tl-project-field
-              (compiler-backend-test-get-compiler-backend-current-phi-targets
-                state-b)
-              slots)
+            (__tl-project-field (state-current-phi-targets state-b) slots)
             0)
           9))]
     [b-before : backend.ResultCompilerBackend
@@ -36768,31 +36332,13 @@ b_keep:
       scratch-before-reset
       scratch-after-failure
       b-bytes-stable
-      (backend.compiler-backend-mode-scalar?
-        (compiler-backend-test-get-compiler-backend-current-mode state-a))
-      (=
-        (compiler-backend-test-get-compiler-backend-emit-instr-post-base
-          state-a)
-        0)
-      (=
-        (__tl-project-field
-          (compiler-backend-test-get-compiler-backend-current-phi-targets
-            state-a)
-          len)
-        0)
-      (backend.compiler-backend-mode-scalar?
-        (compiler-backend-test-get-compiler-backend-current-mode state-b))
-      (=
-        (compiler-backend-test-get-compiler-backend-emit-instr-post-base
-          state-b)
-        31)
-      (=
-        (array-ref
-          (compiler-backend-test-get-compiler-backend-fuse-use-counts state-b)
-          4)
-        37)
-      (compiler-backend-test-get-compiler-backend-emit-instrs-continue-pending
-        state-b))))
+      (backend.compiler-backend-mode-scalar? (state-current-mode state-a))
+      (= (state-emit-instr-post-base state-a) 0)
+      (= (__tl-project-field (state-current-phi-targets state-a) len) 0)
+      (backend.compiler-backend-mode-scalar? (state-current-mode state-b))
+      (= (state-emit-instr-post-base state-b) 31)
+      (= (array-ref (state-fuse-use-counts state-b) 4) 37)
+      (state-emit-instrs-continue-pending state-b))))
 
 ;; ---------------------------------------------------------------------------
 ;; #block-placement fixtures.
@@ -39968,7 +39514,7 @@ b_keep:
           function-b
           backend.compiler-backend-function-bool-gep-fold-drift)))))
 
-(define (compiler-backend-test-set-compiler-backend-addr-of-forwarding-enabled!
+(define (set-state-addr-of-forwarding-enabled!
   [backend-state : backend.CompilerBackendState]
   [value : bool]) : unit
   (backend.compiler-backend-function-state-set-bool!
@@ -39976,7 +39522,7 @@ b_keep:
     backend.compiler-backend-function-bool-addr-of-forwarding-enabled
     value))
 
-(define (compiler-backend-test-set-compiler-backend-addr-of-forwarding-src!
+(define (set-state-addr-of-forwarding-src!
   [backend-state : backend.CompilerBackendState]
   [value : (__tl_dyn-array i64)]) : unit
   (backend.compiler-backend-function-state-set-i64-array!
@@ -39984,7 +39530,7 @@ b_keep:
     backend.compiler-backend-function-i64-array-addr-of-forwarding-src
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-const-hoist-frame-count!
+(define (set-scratch-const-hoist-frame-count!
   [function-state : backend.CompilerBackendFunctionState]
   [value : i64]) : unit
   (backend.compiler-backend-function-scratch-set-i64!
@@ -39992,7 +39538,7 @@ b_keep:
     backend.compiler-backend-scratch-i64-const-hoist-frame-count
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-const-hoist-frame-rbx!
+(define (set-scratch-const-hoist-frame-rbx!
   [function-state : backend.CompilerBackendFunctionState]
   [value : bool]) : unit
   (backend.compiler-backend-function-scratch-set-bool!
@@ -40000,7 +39546,7 @@ b_keep:
     backend.compiler-backend-scratch-bool-const-hoist-frame-rbx
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-const-hoist-inject-count!
+(define (set-scratch-const-hoist-inject-count!
   [function-state : backend.CompilerBackendFunctionState]
   [value : i64]) : unit
   (backend.compiler-backend-function-scratch-set-i64!
@@ -40008,7 +39554,7 @@ b_keep:
     backend.compiler-backend-scratch-i64-const-hoist-inject-count
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-const-hoist-site-count!
+(define (set-scratch-const-hoist-site-count!
   [function-state : backend.CompilerBackendFunctionState]
   [value : i64]) : unit
   (backend.compiler-backend-function-scratch-set-i64!
@@ -40016,7 +39562,7 @@ b_keep:
     backend.compiler-backend-scratch-i64-const-hoist-site-count
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-const-hoist-site-regs!
+(define (set-scratch-const-hoist-site-regs!
   [function-state : backend.CompilerBackendFunctionState]
   [value : (__tl_dyn-array i64)]) : unit
   (backend.compiler-backend-function-scratch-set-i64-array!
@@ -40024,7 +39570,7 @@ b_keep:
     backend.compiler-backend-scratch-i64-array-const-hoist-site-regs
     value))
 
-(define (compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
+(define (set-state-current-c-memory-planned-xmm!
   [backend-state : backend.CompilerBackendState]
   [value : String]) : unit
   (backend.compiler-backend-function-state-set-string!
@@ -40032,14 +39578,14 @@ b_keep:
     backend.compiler-backend-function-string-current-c-memory-planned-xmm
     value))
 
-(define (compiler-backend-test-set-compiler-backend-current-phi-targets!
+(define (set-state-current-phi-targets!
   [backend-state : backend.CompilerBackendState]
   [value : backend.BackendSymbolSeq]) : unit
   (backend.compiler-backend-function-state-install-phi-targets!
     (backend.compiler-backend-state-function-state backend-state)
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+(define (set-scratch-cycle-temp-base-offset!
   [function-state : backend.CompilerBackendFunctionState]
   [value : i64]) : unit
   (backend.compiler-backend-function-scratch-set-i64!
@@ -40047,7 +39593,7 @@ b_keep:
     backend.compiler-backend-scratch-i64-cycle-temp-base-offset
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
+(define (set-scratch-cycle-temp-used-count!
   [function-state : backend.CompilerBackendFunctionState]
   [value : i64]) : unit
   (backend.compiler-backend-function-scratch-set-i64!
@@ -40055,7 +39601,7 @@ b_keep:
     backend.compiler-backend-scratch-i64-cycle-temp-used-count
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-emergency-pending!
+(define (set-scratch-emergency-pending!
   [function-state : backend.CompilerBackendFunctionState]
   [value : bool]) : unit
   (backend.compiler-backend-function-scratch-set-bool!
@@ -40063,7 +39609,7 @@ b_keep:
     backend.compiler-backend-scratch-bool-emergency-pending
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-emergency-pending-count!
+(define (set-scratch-emergency-pending-count!
   [function-state : backend.CompilerBackendFunctionState]
   [value : i64]) : unit
   (backend.compiler-backend-function-scratch-set-i64!
@@ -40071,7 +39617,7 @@ b_keep:
     backend.compiler-backend-scratch-i64-emergency-pending-count
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-emergency-reg!
+(define (set-scratch-emergency-reg!
   [function-state : backend.CompilerBackendFunctionState]
   [value : i64]) : unit
   (backend.compiler-backend-function-scratch-set-i64!
@@ -40079,7 +39625,7 @@ b_keep:
     backend.compiler-backend-scratch-i64-emergency-reg
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-emergency-restore-suppressed!
+(define (set-scratch-emergency-restore-suppressed!
   [function-state : backend.CompilerBackendFunctionState]
   [value : bool]) : unit
   (backend.compiler-backend-function-scratch-set-bool!
@@ -40087,7 +39633,7 @@ b_keep:
     backend.compiler-backend-scratch-bool-emergency-restore-suppressed
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+(define (set-scratch-emergency-slot-offset!
   [function-state : backend.CompilerBackendFunctionState]
   [value : i64]) : unit
   (backend.compiler-backend-function-scratch-set-i64!
@@ -40095,7 +39641,7 @@ b_keep:
     backend.compiler-backend-scratch-i64-emergency-slot-offset
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-emergency-used!
+(define (set-scratch-emergency-used!
   [function-state : backend.CompilerBackendFunctionState]
   [value : bool]) : unit
   (backend.compiler-backend-function-scratch-set-bool!
@@ -40103,7 +39649,7 @@ b_keep:
     backend.compiler-backend-scratch-bool-emergency-used
     value))
 
-(define (compiler-backend-function-scratch-fixture-set-emergency-used-count!
+(define (set-scratch-emergency-used-count!
   [function-state : backend.CompilerBackendFunctionState]
   [value : i64]) : unit
   (backend.compiler-backend-function-scratch-set-i64!
@@ -40111,28 +39657,28 @@ b_keep:
     backend.compiler-backend-scratch-i64-emergency-used-count
     value))
 
-(define (compiler-backend-test-set-compiler-backend-emit-current-count!
+(define (set-state-emit-current-count!
   [backend-state : backend.CompilerBackendState]
   [value : i64]) : unit
   (backend.compiler-backend-function-state-set-emit-current-count!
     (backend.compiler-backend-state-function-state backend-state)
     value))
 
-(define (compiler-backend-test-set-compiler-backend-emit-current-site!
+(define (set-state-emit-current-site!
   [backend-state : backend.CompilerBackendState]
   [value : i64]) : unit
   (backend.compiler-backend-function-state-set-emit-current-site!
     (backend.compiler-backend-state-function-state backend-state)
     value))
 
-(define (compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+(define (set-state-emit-instr-post-base!
   [backend-state : backend.CompilerBackendState]
   [value : i64]) : unit
   (backend.compiler-backend-function-state-set-emit-instr-post-base!
     (backend.compiler-backend-state-function-state backend-state)
     value))
 
-(define (compiler-backend-test-set-compiler-backend-emit-instrs-continue-pending!
+(define (set-state-emit-instrs-continue-pending!
   [backend-state : backend.CompilerBackendState]
   [value : bool]) : unit
   (backend.compiler-backend-function-state-set-bool!
@@ -40140,7 +39686,7 @@ b_keep:
     backend.compiler-backend-function-bool-emit-instrs-continue-pending
     value))
 
-(define (compiler-backend-test-set-compiler-backend-emit-instrs-loop-active!
+(define (set-state-emit-instrs-loop-active!
   [backend-state : backend.CompilerBackendState]
   [value : bool]) : unit
   (backend.compiler-backend-function-state-set-bool!
@@ -40148,7 +39694,7 @@ b_keep:
     backend.compiler-backend-function-bool-emit-instrs-loop-active
     value))
 
-(define (compiler-backend-test-set-compiler-backend-fuse-free-counts!
+(define (set-state-fuse-free-counts!
   [backend-state : backend.CompilerBackendState]
   [value : (__tl_dyn-array i64)]) : unit
   (backend.compiler-backend-function-state-set-i64-array!
@@ -40156,7 +39702,7 @@ b_keep:
     backend.compiler-backend-function-i64-array-fuse-free-counts
     value))
 
-(define (compiler-backend-test-set-compiler-backend-fuse-need-ready!
+(define (set-state-fuse-need-ready!
   [backend-state : backend.CompilerBackendState]
   [value : bool]) : unit
   (backend.compiler-backend-function-state-set-bool!
@@ -40164,7 +39710,7 @@ b_keep:
     backend.compiler-backend-function-bool-fuse-need-ready
     value))
 
-(define (compiler-backend-test-set-compiler-backend-fuse-use-counts!
+(define (set-state-fuse-use-counts!
   [backend-state : backend.CompilerBackendState]
   [value : (__tl_dyn-array i64)]) : unit
   (backend.compiler-backend-function-state-set-i64-array!
@@ -40172,7 +39718,7 @@ b_keep:
     backend.compiler-backend-function-i64-array-fuse-use-counts
     value))
 
-(define (compiler-backend-test-set-compiler-backend-gep-fold-cursor!
+(define (set-state-gep-fold-cursor!
   [backend-state : backend.CompilerBackendState]
   [value : i64]) : unit
   (backend.compiler-backend-function-state-set-i64!
@@ -40180,7 +39726,7 @@ b_keep:
     backend.compiler-backend-function-i64-gep-fold-cursor
     value))
 
-(define (compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
+(define (set-state-gep-fold-disp-table!
   [backend-state : backend.CompilerBackendState]
   [value : (__tl_dyn-array i64)]) : unit
   (backend.compiler-backend-function-state-set-i64-array!
@@ -40188,7 +39734,7 @@ b_keep:
     backend.compiler-backend-function-i64-array-gep-fold-disp-table
     value))
 
-(define (compiler-backend-test-set-compiler-backend-gep-fold-drift!
+(define (set-state-gep-fold-drift!
   [backend-state : backend.CompilerBackendState]
   [value : bool]) : unit
   (backend.compiler-backend-function-state-set-bool!
@@ -40196,7 +39742,7 @@ b_keep:
     backend.compiler-backend-function-bool-gep-fold-drift
     value))
 
-(define (compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
+(define (set-state-gep-fold-kind-table!
   [backend-state : backend.CompilerBackendState]
   [value : (__tl_dyn-array i64)]) : unit
   (backend.compiler-backend-function-state-set-i64-array!
@@ -40204,7 +39750,7 @@ b_keep:
     backend.compiler-backend-function-i64-array-gep-fold-kind-table
     value))
 
-(define (compiler-backend-test-set-compiler-backend-gep-fold-ready!
+(define (set-state-gep-fold-ready!
   [backend-state : backend.CompilerBackendState]
   [value : bool]) : unit
   (backend.compiler-backend-function-state-set-bool!
@@ -40212,7 +39758,7 @@ b_keep:
     backend.compiler-backend-function-bool-gep-fold-ready
     value))
 
-(define (compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
+(define (set-state-gep-fold-scale-table!
   [backend-state : backend.CompilerBackendState]
   [value : (__tl_dyn-array i64)]) : unit
   (backend.compiler-backend-function-state-set-i64-array!
@@ -40220,7 +39766,7 @@ b_keep:
     backend.compiler-backend-function-i64-array-gep-fold-scale-table
     value))
 
-(define (compiler-backend-test-set-compiler-backend-identity-tail-forwarder-active!
+(define (set-state-identity-tail-forwarder-active!
   [backend-state : backend.CompilerBackendState]
   [value : bool]) : unit
   (backend.compiler-backend-function-state-set-bool!
@@ -40230,7 +39776,7 @@ b_keep:
 
 (cfg
   test
-  (define (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
+  (define (set-state-phi-xmm-cycle-fallback-count!
     [backend-state : backend.CompilerBackendState]
     [value : i64]) : unit
     (backend.compiler-backend-metric-set!
@@ -40240,7 +39786,7 @@ b_keep:
 
 (cfg
   test
-  (define (compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
+  (define (set-state-phi-xmm-cycle-register-count!
     [backend-state : backend.CompilerBackendState]
     [value : i64]) : unit
     (backend.compiler-backend-metric-set!
@@ -40248,7 +39794,7 @@ b_keep:
       backend.compiler-backend-phi-xmm-cycle-register-metric
       value)))
 
-(define (compiler-backend-function-scratch-fixture-set-scavenge-ctx-occupied-masks!
+(define (set-scratch-scavenge-ctx-occupied-masks!
   [function-state : backend.CompilerBackendFunctionState]
   [value : (__tl_dyn-array i64)]) : unit
   (backend.compiler-backend-function-scratch-set-i64-array!
@@ -40258,23 +39804,23 @@ b_keep:
 
 ;; Test-only dotted-import read boundary.
 ;; Split fixtures observe production state through typed getters.
-(define (compiler-backend-test-get-compiler-backend-identity-tail-forwarder-active
+(define (state-identity-tail-forwarder-active
   [backend-state : backend.CompilerBackendState]) : bool
   (backend.compiler-backend-function-state-bool?
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-bool-identity-tail-forwarder-active))
 
-(define (compiler-backend-function-scratch-fixture-get-scavenge-ctx-assignments
+(define (scratch-scavenge-ctx-assignments
   [function-state : backend.CompilerBackendFunctionState]) : regalloc.CompilerRegAssignmentTable
   (backend.compiler-backend-function-scratch-assignment-index function-state))
 
-(define (compiler-backend-test-get-compiler-backend-emit-instrs-continue-pending
+(define (state-emit-instrs-continue-pending
   [backend-state : backend.CompilerBackendState]) : bool
   (backend.compiler-backend-function-state-bool?
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-bool-emit-instrs-continue-pending))
 
-(define (compiler-backend-function-scratch-fixture-get-emergency-restore-suppressed
+(define (scratch-emergency-restore-suppressed
   [function-state : backend.CompilerBackendFunctionState]) : bool
   (backend.compiler-backend-function-scratch-bool?
     function-state
@@ -40282,7 +39828,7 @@ b_keep:
 
 (cfg
   test
-  (define (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
+  (define (state-phi-xmm-cycle-register-count
     [backend-state : backend.CompilerBackendState]) : i64
     (compiler-backend-metric-value
       backend-state
@@ -40290,146 +39836,146 @@ b_keep:
 
 (cfg
   test
-  (define (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
+  (define (state-phi-xmm-cycle-fallback-count
     [backend-state : backend.CompilerBackendState]) : i64
     (compiler-backend-metric-value
       backend-state
       compiler-backend-phi-xmm-cycle-fallback-metric)))
 
-(define (compiler-backend-function-scratch-fixture-get-scavenge-ctx-occupied-masks
+(define (scratch-scavenge-ctx-occupied-masks
   [function-state : backend.CompilerBackendFunctionState]) : (__tl_dyn-array
     i64)
   (backend.compiler-backend-function-scratch-i64-array
     function-state
     backend.compiler-backend-scratch-i64-array-scavenge-occupied-masks))
 
-(define (compiler-backend-test-get-compiler-backend-assembly-stream-home-arena
+(define (state-assembly-stream-home-arena
   [stream : backend.CompilerBackendStreamState]) : arena.Arena
   (__tl-project-field
     (backend.compiler-backend-stream-state-data stream)
     assembly-home-arena))
 
-(define (compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
+(define (state-addr-of-forwarding-enabled
   [backend-state : backend.CompilerBackendState]) : bool
   (backend.compiler-backend-function-state-bool?
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-bool-addr-of-forwarding-enabled))
 
-(define (compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
+(define (scratch-scavenge-ctx-plan-reg-mask
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
     function-state
     backend.compiler-backend-scratch-i64-scavenge-plan-reg-mask))
 
-(define (compiler-backend-test-get-compiler-backend-emit-instrs-loop-active
+(define (state-emit-instrs-loop-active
   [backend-state : backend.CompilerBackendState]) : bool
   (backend.compiler-backend-function-state-bool?
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-bool-emit-instrs-loop-active))
 
-(define (compiler-backend-test-get-compiler-backend-emit-home-override0-var
+(define (state-emit-home-override0-var
   [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-i64
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-home-override0-var))
 
-(define (compiler-backend-test-get-compiler-backend-emit-home-override0-reg
+(define (state-emit-home-override0-reg
   [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-i64
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-home-override0-reg))
 
-(define (compiler-backend-test-get-compiler-backend-emit-home-override1-var
+(define (state-emit-home-override1-var
   [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-i64
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-home-override1-var))
 
-(define (compiler-backend-test-get-compiler-backend-emit-home-override1-reg
+(define (state-emit-home-override1-reg
   [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-i64
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-home-override1-reg))
 
-(define (compiler-backend-function-scratch-fixture-get-emergency-pending-count
+(define (scratch-emergency-pending-count
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
     function-state
     backend.compiler-backend-scratch-i64-emergency-pending-count))
 
-(define (compiler-backend-test-get-compiler-backend-addr-of-forwarding-src
+(define (state-addr-of-forwarding-src
   [backend-state : backend.CompilerBackendState]) : (__tl_dyn-array i64)
   (backend.compiler-backend-function-state-i64-array
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-array-addr-of-forwarding-src))
 
-(define (compiler-backend-function-scratch-fixture-get-cycle-temp-base-offset
+(define (scratch-cycle-temp-base-offset
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
     function-state
     backend.compiler-backend-scratch-i64-cycle-temp-base-offset))
 
-(define (compiler-backend-function-scratch-fixture-get-emergency-slot-offset
+(define (scratch-emergency-slot-offset
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
     function-state
     backend.compiler-backend-scratch-i64-emergency-slot-offset))
 
-(define (compiler-backend-function-scratch-fixture-get-cycle-temp-used-count
+(define (scratch-cycle-temp-used-count
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
     function-state
     backend.compiler-backend-scratch-i64-cycle-temp-used-count))
 
-(define (compiler-backend-function-scratch-fixture-get-emergency-used-count
+(define (scratch-emergency-used-count
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
     function-state
     backend.compiler-backend-scratch-i64-emergency-used-count))
 
-(define (compiler-backend-test-get-compiler-backend-emit-instr-post-base
+(define (state-emit-instr-post-base
   [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-emit-instr-post-base
     (backend.compiler-backend-state-function-state backend-state)))
 
-(define (compiler-backend-test-get-compiler-backend-gep-fold-scale-table
+(define (state-gep-fold-scale-table
   [backend-state : backend.CompilerBackendState]) : (__tl_dyn-array i64)
   (backend.compiler-backend-function-state-i64-array
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-array-gep-fold-scale-table))
 
-(define (compiler-backend-test-get-compiler-backend-current-phi-targets
+(define (state-current-phi-targets
   [backend-state : backend.CompilerBackendState]) : backend.BackendSymbolSeq
   (backend.compiler-backend-function-state-phi-targets
     (backend.compiler-backend-state-function-state backend-state)))
 
-(define (compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
+(define (scratch-scavenge-ctx-starts
   [function-state : backend.CompilerBackendFunctionState]) : (__tl_dyn-array
     i64)
   (backend.compiler-backend-function-scratch-i64-array
     function-state
     backend.compiler-backend-scratch-i64-array-scavenge-starts))
 
-(define (compiler-backend-test-get-compiler-backend-gep-fold-disp-table
+(define (state-gep-fold-disp-table
   [backend-state : backend.CompilerBackendState]) : (__tl_dyn-array i64)
   (backend.compiler-backend-function-state-i64-array
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-array-gep-fold-disp-table))
 
-(define (compiler-backend-test-get-compiler-backend-gep-fold-kind-table
+(define (state-gep-fold-kind-table
   [backend-state : backend.CompilerBackendState]) : (__tl_dyn-array i64)
   (backend.compiler-backend-function-state-i64-array
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-array-gep-fold-kind-table))
 
-(define (compiler-backend-test-get-compiler-backend-emit-current-count
+(define (state-emit-current-count
   [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-emit-current-count
     (backend.compiler-backend-state-function-state backend-state)))
 
 (cfg
   test
-  (define (compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok
+  (define (state-rsp-rebase-last-ok
     [backend-state : backend.CompilerBackendState]) : bool
     (=
       (compiler-backend-metric-value
@@ -40437,24 +39983,22 @@ b_keep:
         backend.compiler-backend-rsp-rebase-last-ok-metric)
       1)))
 
-(define (compiler-backend-test-get-compiler-backend-current-slot-vars
-  [backend-state : backend.CompilerBackendState]) : i64
+(define (state-current-slot-vars [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-i64
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-current-slot-vars))
 
-(define (compiler-backend-function-scratch-fixture-get-emergency-pending
+(define (scratch-emergency-pending
   [function-state : backend.CompilerBackendFunctionState]) : bool
   (backend.compiler-backend-function-scratch-bool?
     function-state
     backend.compiler-backend-scratch-bool-emergency-pending))
 
-(define (compiler-backend-test-get-compiler-backend-emit-current-site
-  [backend-state : backend.CompilerBackendState]) : i64
+(define (state-emit-current-site [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-emit-current-site
     (backend.compiler-backend-state-function-state backend-state)))
 
-(define (compiler-backend-function-scratch-fixture-get-scavenge-ctx-ends
+(define (scratch-scavenge-ctx-ends
   [function-state : backend.CompilerBackendFunctionState]) : (__tl_dyn-array
     i64)
   (backend.compiler-backend-function-scratch-i64-array
@@ -40816,71 +40360,64 @@ b_keep:
         (ir.CompilerIrValue.Var 2))]
     (string.eq home "")))
 
-(define (compiler-backend-function-scratch-fixture-get-scavenge-ctx-vars
+(define (scratch-scavenge-ctx-vars
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
     function-state
     backend.compiler-backend-scratch-i64-scavenge-vars))
 
-(define (compiler-backend-test-get-compiler-backend-current-fn-win64
-  [backend-state : backend.CompilerBackendState]) : bool
+(define (state-current-fn-win64 [backend-state : backend.CompilerBackendState]) : bool
   (backend.compiler-backend-current-fn-win64? backend-state))
 
-(define (compiler-backend-test-get-compiler-backend-fuse-free-counts
-  [backend-state : backend.CompilerBackendState]) : (__tl_dyn-array i64)
+(define (state-fuse-free-counts [backend-state : backend.CompilerBackendState]) : (__tl_dyn-array
+    i64)
   (backend.compiler-backend-function-state-i64-array
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-array-fuse-free-counts))
 
-(define (compiler-backend-test-get-compiler-backend-fuse-need-ready
-  [backend-state : backend.CompilerBackendState]) : bool
+(define (state-fuse-need-ready [backend-state : backend.CompilerBackendState]) : bool
   (backend.compiler-backend-function-state-bool?
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-bool-fuse-need-ready))
 
-(define (compiler-backend-test-get-compiler-backend-fuse-use-counts
-  [backend-state : backend.CompilerBackendState]) : (__tl_dyn-array i64)
+(define (state-fuse-use-counts [backend-state : backend.CompilerBackendState]) : (__tl_dyn-array
+    i64)
   (backend.compiler-backend-function-state-i64-array
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-array-fuse-use-counts))
 
-(define (compiler-backend-test-get-compiler-backend-gep-fold-cursor
-  [backend-state : backend.CompilerBackendState]) : i64
+(define (state-gep-fold-cursor [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-i64
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-i64-gep-fold-cursor))
 
-(define (compiler-backend-function-scratch-fixture-get-emergency-used
+(define (scratch-emergency-used
   [function-state : backend.CompilerBackendFunctionState]) : bool
   (backend.compiler-backend-function-scratch-bool?
     function-state
     backend.compiler-backend-scratch-bool-emergency-used))
 
-(define (compiler-backend-test-get-compiler-backend-gep-fold-ready
-  [backend-state : backend.CompilerBackendState]) : bool
+(define (state-gep-fold-ready [backend-state : backend.CompilerBackendState]) : bool
   (backend.compiler-backend-function-state-bool?
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-bool-gep-fold-ready))
 
-(define (compiler-backend-test-get-compiler-backend-gep-fold-drift
-  [backend-state : backend.CompilerBackendState]) : bool
+(define (state-gep-fold-drift [backend-state : backend.CompilerBackendState]) : bool
   (backend.compiler-backend-function-state-bool?
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-bool-gep-fold-drift))
 
-(define (compiler-backend-function-scratch-fixture-get-emergency-reg
+(define (scratch-emergency-reg
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
     function-state
     backend.compiler-backend-scratch-i64-emergency-reg))
 
-(define (compiler-backend-test-get-compiler-backend-current-mode
-  [backend-state : backend.CompilerBackendState]) : backend.CompilerBackendMode
+(define (state-current-mode [backend-state : backend.CompilerBackendState]) : backend.CompilerBackendMode
   (backend.compiler-backend-function-state-current-mode
     (backend.compiler-backend-state-function-state backend-state)))
 
-(define (compiler-backend-test-get-compiler-backend-group-vars
-  [backend-state : backend.CompilerBackendState]) : compiler_liveness.CompilerLiveI64Set
+(define (state-group-vars [backend-state : backend.CompilerBackendState]) : compiler_liveness.CompilerLiveI64Set
   (backend.compiler-backend-function-state-live-set
     (backend.compiler-backend-state-function-state backend-state)
     backend.compiler-backend-function-live-set-group-vars))

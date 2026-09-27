@@ -134,32 +134,20 @@
           8
           1))
       (set! (array-ref scales 1) 1)
-      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-ready!
-        b
-        true)
-      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
-        b
-        disps)
-      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
-        b
-        kinds)
-      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
-        b
-        scales)
-      (fixtures.compiler-backend-test-set-compiler-backend-gep-fold-cursor! b 0)
+      (fixtures.set-state-gep-fold-ready! b true)
+      (fixtures.set-state-gep-fold-disp-table! b disps)
+      (fixtures.set-state-gep-fold-kind-table! b kinds)
+      (fixtures.set-state-gep-fold-scale-table! b scales)
+      (fixtures.set-state-gep-fold-cursor! b 0)
       (when
         (= mode 15)
         (begin
           (set! (array-ref fuse 3) 2)
-          (fixtures.compiler-backend-test-set-compiler-backend-fuse-need-ready!
-            b
-            true)
-          (fixtures.compiler-backend-test-set-compiler-backend-fuse-use-counts!
+          (fixtures.set-state-fuse-need-ready! b true)
+          (fixtures.set-state-fuse-use-counts!
             b
             (view.compiler-owned-shared-view fuse))
-          (fixtures.compiler-backend-test-set-compiler-backend-fuse-free-counts!
-            b
-            fuse)))
+          (fixtures.set-state-fuse-free-counts! b fuse)))
       (let
         [instrs (ir.CompilerIrInstrSeq slots 4)]
         [blocks
@@ -253,13 +241,11 @@
             (if accepted
               1
               0)
-            (fixtures.compiler-backend-test-get-compiler-backend-gep-fold-cursor
-              b)
+            (fixtures.state-gep-fold-cursor b)
             "probe cursor")
           (test.assert-bool-eq
             false
-            (fixtures.compiler-backend-test-get-compiler-backend-gep-fold-drift
-              b)
+            (fixtures.state-gep-fold-drift b)
             "probe drift")
           (when
             accepted
@@ -274,8 +260,7 @@
                 "following displacement")
               (test.assert-i64-eq
                 2
-                (fixtures.compiler-backend-test-get-compiler-backend-gep-fold-cursor
-                  b)
+                (fixtures.state-gep-fold-cursor b)
                 "following cursor"))))))))
 
 (test

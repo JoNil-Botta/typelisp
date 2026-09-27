@@ -12735,56 +12735,55 @@
   [toks : (__tl_dyn-array token.SpannedToken)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramRecovery
-  (begin
-    (let
-      [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [base-dispatch : sym_i64_env.SymI64Env
-        (parse-ast-program-dispatch-with-cfg cfgs)]
-      [base-control : i64
-        (compiler-parse-env-marker-value
-          base-dispatch
-          compiler-parse-state-marker-id)]
-      [invocation : CompilerParseInvocationFrame
-        (CompilerParseInvocationFrame 0 0 0 0 0 0)]
-      [invocation-address : i64
-        (cast
-          (unsafe
-            (ptr->int (ptr-cast (ptr-addr-of invocation) : (Ptr u8))))
-          : i64)]
-      [dispatch-with-invocation : sym_i64_env.SymI64Env
-        (sym_i64_env.sym-i64-bind-id
-          base-dispatch
-          compiler-parse-invocation-marker-id
-          invocation-address)]
-      [dispatch : sym_i64_env.SymI64Env
-        (sym_i64_env.sym-i64-bind-id
-          dispatch-with-invocation
-          compiler-parse-invocation-control-marker-id
-          base-control)]
-      [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
-      (begin
-        (set! (array-ref cur 0) 0)
-        (compiler-parse-raw-i64-set!
-          invocation-address
-          compiler-parse-invocation-control-slot
-          base-control)
-        (let
-          [diagnostics : cdiag.CompilerDiagnosticList
-            (cdiag.compiler-diagnostic-list-empty)]
-          (begin
-            (parse-ast-program-forms-recovery-into-vec
-              path
-              dispatch
-              pools
-              toks
-              cur
-              (unsafe
-                (ptr-addr-of out.semantic-origins))
-              (&mut out)
-              (&mut diagnostics))
-            (ResultAstProgramRecovery.Parsed
-              (ast.ast-program (parse-ast-decl-vec-to-list (& out)))
-              (box diagnostics))))))))
+  (let
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [base-dispatch : sym_i64_env.SymI64Env
+      (parse-ast-program-dispatch-with-cfg cfgs)]
+    [base-control : i64
+      (compiler-parse-env-marker-value
+        base-dispatch
+        compiler-parse-state-marker-id)]
+    [invocation : CompilerParseInvocationFrame
+      (CompilerParseInvocationFrame 0 0 0 0 0 0)]
+    [invocation-address : i64
+      (cast
+        (unsafe
+          (ptr->int (ptr-cast (ptr-addr-of invocation) : (Ptr u8))))
+        : i64)]
+    [dispatch-with-invocation : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        base-dispatch
+        compiler-parse-invocation-marker-id
+        invocation-address)]
+    [dispatch : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        dispatch-with-invocation
+        compiler-parse-invocation-control-marker-id
+        base-control)]
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    (begin
+      (set! (array-ref cur 0) 0)
+      (compiler-parse-raw-i64-set!
+        invocation-address
+        compiler-parse-invocation-control-slot
+        base-control)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (cdiag.compiler-diagnostic-list-empty)]
+        (begin
+          (parse-ast-program-forms-recovery-into-vec
+            path
+            dispatch
+            pools
+            toks
+            cur
+            (unsafe
+              (ptr-addr-of out.semantic-origins))
+            (&mut out)
+            (&mut diagnostics))
+          (ResultAstProgramRecovery.Parsed
+            (ast.ast-program (parse-ast-decl-vec-to-list (& out)))
+            (box diagnostics)))))))
 
 (define (parse-ast-source-recovery-diagnostic-with-cfg-and-pools
   [path : String]
@@ -12953,43 +12952,42 @@
   [toks : (__tl_dyn-array token.SpannedToken)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramDiagnostic
-  (begin
-    (let
-      [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [base-dispatch : sym_i64_env.SymI64Env
-        (parse-ast-program-dispatch-with-cfg cfgs)]
-      [base-control : i64
-        (compiler-parse-env-marker-value
-          base-dispatch
-          compiler-parse-state-marker-id)]
-      [invocation : CompilerParseInvocationFrame
-        (CompilerParseInvocationFrame 0 0 0 0 0 0)]
-      [invocation-address : i64
-        (cast
-          (unsafe
-            (ptr->int (ptr-cast (ptr-addr-of invocation) : (Ptr u8))))
-          : i64)]
-      [dispatch-with-invocation : sym_i64_env.SymI64Env
-        (sym_i64_env.sym-i64-bind-id
-          base-dispatch
-          compiler-parse-invocation-marker-id
-          invocation-address)]
-      [dispatch : sym_i64_env.SymI64Env
-        (sym_i64_env.sym-i64-bind-id
-          dispatch-with-invocation
-          compiler-parse-invocation-control-marker-id
-          base-control)]
-      (begin
-        (set! (array-ref cur 0) 0)
-        (compiler-parse-raw-i64-set!
-          invocation-address
-          compiler-parse-invocation-control-slot
-          base-control)
-        (match (parse-ast-program-forms-diagnostic path dispatch pools toks cur)
-          [(ResultAstDeclListDiagnostic.Ok decls)
-            (ResultAstProgramDiagnostic.Ok (ast.ast-program decls))]
-          [(ResultAstDeclListDiagnostic.Err diag)
-            (ResultAstProgramDiagnostic.Err diag)])))))
+  (let
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [base-dispatch : sym_i64_env.SymI64Env
+      (parse-ast-program-dispatch-with-cfg cfgs)]
+    [base-control : i64
+      (compiler-parse-env-marker-value
+        base-dispatch
+        compiler-parse-state-marker-id)]
+    [invocation : CompilerParseInvocationFrame
+      (CompilerParseInvocationFrame 0 0 0 0 0 0)]
+    [invocation-address : i64
+      (cast
+        (unsafe
+          (ptr->int (ptr-cast (ptr-addr-of invocation) : (Ptr u8))))
+        : i64)]
+    [dispatch-with-invocation : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        base-dispatch
+        compiler-parse-invocation-marker-id
+        invocation-address)]
+    [dispatch : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        dispatch-with-invocation
+        compiler-parse-invocation-control-marker-id
+        base-control)]
+    (begin
+      (set! (array-ref cur 0) 0)
+      (compiler-parse-raw-i64-set!
+        invocation-address
+        compiler-parse-invocation-control-slot
+        base-control)
+      (match (parse-ast-program-forms-diagnostic path dispatch pools toks cur)
+        [(ResultAstDeclListDiagnostic.Ok decls)
+          (ResultAstProgramDiagnostic.Ok (ast.ast-program decls))]
+        [(ResultAstDeclListDiagnostic.Err diag)
+          (ResultAstProgramDiagnostic.Err diag)]))))
 
 (define (parse-ast-source-diagnostic [path : String] [src : String]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg path src (compiler-cfg-empty)))

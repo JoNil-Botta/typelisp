@@ -32279,17 +32279,12 @@
     [element-summary : opt.OptLicmStoreSummary
       (opt.opt-licm-store-summary-element-only-store
         (opt.opt-licm-element-class-any))]
-    [direct-clean-built : opt_i64_i64_map.Map
-      (let
-        [functions (opt-licm-direct-call-clean-test-functions symbols)]
-        [index : opt.OptProgramIndex (opt.opt-program-index-build functions)]
-        (opt.opt-direct-call-clean-map index 8))]
-    ;; The call-memory union that feeds the clean-callee LICM refinement. Over
-    ;; the same three fixtures: `leaf` writes no memory at all, so its packed
-    ;; summary is exactly 0 and the union admits it; `writer` carries a StorePtr
-    ;; and does not; `probe` is self-recursive with an otherwise empty body, and
-    ;; the optimistic phase of the fixpoint resolves that cycle at the lattice
-    ;; bottom, so it is admitted too.
+    ;; The clean map that feeds the clean-callee LICM refinement, read off the
+    ;; call-memory rows of three fixtures: `leaf` writes no memory at all, so
+    ;; its packed summary is exactly 0 and the map admits it; `writer` carries a
+    ;; StorePtr and does not; `probe` is self-recursive with an otherwise empty
+    ;; body, and the fixpoint resolves that cycle at the lattice bottom, so it
+    ;; is admitted too.
     [direct-clean-union : opt_i64_i64_map.Map
       (let
         [functions (opt-licm-direct-call-clean-test-functions symbols)]
@@ -32298,10 +32293,7 @@
             (ast.ast-node-pool-reader-type-segment-bases)
             (opt-licm-direct-call-clean-test-functions symbols)
             8)]
-        (opt.opt-direct-call-clean-add-memory-clean
-          functions
-          call-memory
-          (opt_i64_i64_map.with-capacity 8)))]
+        (opt.opt-direct-call-clean-map functions call-memory 8))]
     (cond
       ;; The cheap gate admits real invariant arithmetic and Word seeds, but
       ;; rejects both a loop whose only arithmetic can trap and a loop without
@@ -32701,19 +32693,6 @@
             (opt-count-load-label-blocks raw-slot (ir.compiler-ir-label "loop"))
             2))
         61]
-      [(not
-          (opt_i64_i64_map.contains?
-            (& direct-clean-built)
-            (ir.compiler-ir-symbol-id symbols.probe)))
-        62]
-      [(opt_i64_i64_map.contains?
-          (& direct-clean-built)
-          (ir.compiler-ir-symbol-id symbols.writer))
-        63]
-      [(opt_i64_i64_map.contains?
-          (& direct-clean-built)
-          (ir.compiler-ir-symbol-id symbols.leaf))
-        64]
       ;; A descriptor load crosses the two-Gep data-buffer store chain.
       [(not
           (opt.opt-verify-ok?
@@ -32808,9 +32787,8 @@
           (& direct-clean-union)
           (ir.compiler-ir-symbol-id symbols.writer))
         83]
-      ;; `probe` is self-recursive with an empty body, so the optimistic phase
-      ;; resolves it at the lattice bottom and the union admits it as
-      ;; memory-clean. (The pessimistic phase alone left it absent.)
+      ;; `probe` is self-recursive with an empty body, so the fixpoint resolves
+      ;; it at the lattice bottom and the map admits it as memory-clean.
       [(not
           (opt.opt-direct-call-clean-has-bit?
             direct-clean-union
@@ -52725,7 +52703,7 @@
 
 ;; A CYCLE of two mutually recursive writers. Each stores through the element
 ;; buffer its own descriptor parameter names and hands that same descriptor to
-;; the other, so neither member can be resolved by the pessimistic phase -- each
+;; the other, so neither member can be resolved before the other -- each
 ;; waits on the other -- and the cycle's least fixed point is the ELEMENT bit
 ;; ALONE: no member writes a parameter's own storage, a global cell, or anything
 ;; unknown.
@@ -52777,30 +52755,30 @@
         (opt-call-memory-cycle-body first cell global?))
       (ir.compiler-ir-function-seq-empty))))
 
-;; The optimistic phase driven directly, so its BUDGET can be pinned: with no
-;; rounds left it must hand back the pessimistic map it was given rather than
-;; the optimistic one it was building.
-(define (opt-call-memory-cycle-optimistic
+;; The cycle under a chain of `depth` callers, each handing its descriptor to
+;; the one below and the last to the cycle's first member. Every row on the
+;; chain is the cycle's element summary however deep it is: the fixpoint solves
+;; one call-graph component at a time and has no round budget to run out of.
+(define (opt-call-memory-chain-symbol [depth : i64]) : i64
+  (opt-test-symbol
+    (str_cat.str-cat "call_memory_chain" (string.int->string depth))))
+
+(define (opt-call-memory-chain-functions
   [first : i64]
   [second : i64]
   [cell : i64]
-  [rounds : i64]) : opt_i64_i64_map.Map
-  (opt.opt-call-memory-optimistic-fixed
-    (ast.ast-node-pool-reader-type-segment-bases)
+  [depth : i64]) : ir.CompilerIrFunctionSeq
+  (if (= depth 0)
     (opt-call-memory-cycle-functions first second cell false)
-    (opt_i64_i64_map.with-capacity 8)
-    (let
-      [functions (opt-call-memory-cycle-functions first second cell false)]
-      [index : opt.OptProgramIndex (opt.opt-program-index-build functions)]
-      (opt.opt-program-function-set index))
-    (let
-      [functions (opt-call-memory-cycle-functions first second cell false)]
-      (opt.opt-call-memory-seed-optimistic
-        functions
-        (opt_i64_i64_map.with-capacity 8)
-        (opt_i64_i64_map.with-capacity 8)))
-    8
-    rounds))
+    (ir.compiler-ir-function-seq-prepend
+      (opt-call-memory-test-function
+        (opt-call-memory-chain-symbol depth)
+        (opt-load-cse-descriptor-params)
+        (opt-call-memory-cycle-tail
+          (if (= depth 1)
+            first
+            (opt-call-memory-chain-symbol (- depth 1)))))
+      (opt-call-memory-chain-functions first second cell (- depth 1)))))
 
 (define (opt-call-memory-cycle-clean-bits
   [first : i64]
@@ -52813,10 +52791,7 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-call-memory-cycle-functions first second cell false)
         8)]
-    (opt.opt-direct-call-clean-add-memory-clean
-      functions
-      call-memory
-      (opt_i64_i64_map.with-capacity 8))))
+    (opt.opt-direct-call-clean-map functions call-memory 8)))
 
 (define (opt-call-memory-summary-is?
   [summaries : (& summaries opt_i64_i64_map.Map)]
@@ -53173,10 +53148,11 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-call-memory-cycle-functions cycle-a cycle-b cycle-cell true)
         8)]
-    [cycle-bail : opt_i64_i64_map.Map
-      (opt-call-memory-cycle-optimistic cycle-a cycle-b cycle-cell 0)]
-    [cycle-rounds : opt_i64_i64_map.Map
-      (opt-call-memory-cycle-optimistic cycle-a cycle-b cycle-cell 4)]
+    [cycle-chain : opt_i64_i64_map.Map
+      (opt.opt-call-memory-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-call-memory-chain-functions cycle-a cycle-b cycle-cell 6)
+        16)]
     [cycle-clean : opt_i64_i64_map.Map
       (opt-call-memory-cycle-clean-bits cycle-a cycle-b cycle-cell)]
     ;; SUM-3: an element store through a descriptor-typed GLOBAL's data slot
@@ -53205,7 +53181,6 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt.compiler-opt-global-shared-view global-element-descriptors)
           index
-          global-element-functions
           8))]
     [global-element-blind : opt_i64_i64_map.Map
       (opt.opt-call-memory-build
@@ -53543,9 +53518,9 @@
             summary-indirect
             (opt.opt-call-memory-unknown-bit)))
         70]
-      ;; The optimistic phase resolves the self-recursive member the
-      ;; pessimistic one leaves absent. This one's body is a single self-call,
-      ;; so its least fixed point is the lattice bottom: it writes nothing.
+      ;; The fixpoint resolves the self-recursive member. Its body is a single
+      ;; self-call, so its least fixed point is the lattice bottom: it writes
+      ;; nothing.
       [(not (opt-call-memory-summary-is? call-summaries summary-recursive 0))
         71]
       ;; A two-member CYCLE of element-only writers resolves at the element bit
@@ -53576,19 +53551,24 @@
             cycle-b
             (opt.opt-call-memory-summary-add-global cycle-element-summary)))
         213]
-      ;; Out of rounds: the pessimistic map is committed unchanged, so the cycle
-      ;; stays absent and therefore opaque.
-      [(opt_i64_i64_map.contains?
-          (& cycle-bail)
-          (ir.compiler-ir-symbol-id cycle-a))
+      ;; Six callers above the cycle resolve too, the outermost and the one
+      ;; right above the cycle alike (a Jacobi iteration over the whole residue
+      ;; needs a round per caller level).
+      [(not
+          (opt-call-memory-summary-is?
+            cycle-chain
+            (opt-call-memory-chain-symbol 6)
+            cycle-element-summary))
         214]
-      [(opt_i64_i64_map.contains?
-          (& cycle-bail)
-          (ir.compiler-ir-symbol-id cycle-b))
+      [(not
+          (opt-call-memory-summary-is?
+            cycle-chain
+            (opt-call-memory-chain-symbol 1)
+            cycle-element-summary))
         215]
       [(not
           (opt-call-memory-summary-is?
-            cycle-rounds
+            cycle-chain
             cycle-a
             cycle-element-summary))
         216]
@@ -61689,8 +61669,8 @@
               (opt-cm-elem-caller-instrs symbols.slot))
             (ir.compiler-ir-function-seq-empty)))))))
 
-;; The pipeline's own composition: call-memory summaries unioned into the
-;; syntactic clean walk, which is what a LICM call site reads.
+;; The pipeline's own composition: the clean bits read off the call-memory
+;; summaries, which is what a LICM call site reads.
 (define (opt-cm-elem-clean-map
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : opt_i64_i64_map.Map
   (let
@@ -61701,11 +61681,7 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-global-shared-view functions)
         16)]
-    [index : opt.OptProgramIndex (opt.opt-program-index-build functions)]
-    (opt.opt-direct-call-clean-add-memory-clean
-      functions
-      call-memory
-      (opt.opt-direct-call-clean-map index 16))))
+    (opt.opt-direct-call-clean-map functions call-memory 16)))
 
 (define (compiler-optimize-call-memory-element-write-self-test) : i64
   (let

@@ -7,6 +7,7 @@
 (import stdlib.json)
 (import stdlib.vector)
 (import lsp_frame_core)
+(import lsp_frame_core_tests as lsp_tests)
 (import format_rules)
 (import compiler_owned_view as owned_view)
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
@@ -81,27 +82,27 @@
 ;; --------------------------------------------------------------------------
 (define (lsp-is-whitespace-ok?) : bool
   (and
-    (lsp_frame_core.lsp-is-whitespace (string.string-ref " " 0))
-    (lsp_frame_core.lsp-is-whitespace (string.string-ref "\t" 0))
-    (lsp_frame_core.lsp-is-whitespace (string.string-ref "\n" 0))
-    (lsp_frame_core.lsp-is-whitespace (string.string-ref "\r" 0))
-    (not (lsp_frame_core.lsp-is-whitespace (string.string-ref "a" 0)))))
+    (lsp_tests.lsp-is-whitespace (string.string-ref " " 0))
+    (lsp_tests.lsp-is-whitespace (string.string-ref "\t" 0))
+    (lsp_tests.lsp-is-whitespace (string.string-ref "\n" 0))
+    (lsp_tests.lsp-is-whitespace (string.string-ref "\r" 0))
+    (not (lsp_tests.lsp-is-whitespace (string.string-ref "a" 0)))))
 
 ;; --------------------------------------------------------------------------
 ;; lsp-extract-define-name
 ;; --------------------------------------------------------------------------
 (define (lsp-extract-define-name-fun-ok?) : bool
   (string.eq
-    (lsp_frame_core.lsp-extract-define-name "(define (foo (x i64)) : i64 1)")
+    (lsp_tests.lsp-extract-define-name "(define (foo (x i64)) : i64 1)")
     "foo"))
 
 (define (lsp-extract-define-name-var-ok?) : bool
   (string.eq
-    (lsp_frame_core.lsp-extract-define-name "(define answer : i64 42)")
+    (lsp_tests.lsp-extract-define-name "(define answer : i64 42)")
     "answer"))
 
 (define (lsp-extract-define-name-nondefine-ok?) : bool
-  (string.eq (lsp_frame_core.lsp-extract-define-name "(let [x : i64 1] x)") ""))
+  (string.eq (lsp_tests.lsp-extract-define-name "(let [x : i64 1] x)") ""))
 
 ;; --------------------------------------------------------------------------
 ;; lsp-find-and-extract-name
@@ -111,9 +112,9 @@
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
     (and
       (string.eq
-        (lsp_frame_core.lsp-find-and-extract-name (string.copy (& text)) 0 5)
+        (lsp_tests.lsp-find-and-extract-name (string.copy (& text)) 0 5)
         "foo")
-      (string.eq (lsp_frame_core.lsp-find-and-extract-name text 1 5) "bar"))))
+      (string.eq (lsp_tests.lsp-find-and-extract-name text 1 5) "bar"))))
 
 ;; Test structuralMove destination helper: move foo after baz
 (define (lsp-structural-move-destination-ok?) : bool

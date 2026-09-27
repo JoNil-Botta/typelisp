@@ -7,7 +7,7 @@
 (import stdlib.str_cat)
 (import compiler_symbols)
 (import compiler_check_tests)
-(import compiler_semantic_index)
+(import compiler_semantic_index_tests as sem_tests)
 (import compiler_typecheck_tests as tc_tests)
 (import compiler_ctfe)
 (import compiler_ast_types as ast)
@@ -569,14 +569,13 @@
 
 (define (compiler-smoke-suite-require-child [name : String] [message : String]) : unit
   (let
-    [started-ms : i64
-      (compiler_semantic_index.compiler-semantic-index-smoke-timing-start)]
+    [started-ms : i64 (sem_tests.compiler-semantic-index-smoke-timing-start)]
     [result : process.ResultProcessOutput
       (process.output
         (process.command (io.arg 0) (process.args-single (string.copy name))))]
     [status : i64 (process.result-status-or (clone result) -1)]
     [timing-ok : bool
-      (compiler_semantic_index.compiler-semantic-index-smoke-timing-record
+      (sem_tests.compiler-semantic-index-smoke-timing-record
         (str_cat.str-cat "child-" name)
         started-ms
         status)]

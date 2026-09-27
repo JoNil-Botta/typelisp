@@ -5,8 +5,10 @@
 (cfg test (import stdlib.vector))
 (cfg test (import (vector.vector String) as lsp_svec))
 (cfg test (import compiler_semantic_index))
+(cfg test (import compiler_semantic_index_tests as sem_tests))
 (cfg test (import compiler_owned_view as owned_view))
 (cfg test (import lsp_frame_core as lsp))
+(cfg test (import lsp_frame_core_tests as lsp_tests))
 (cfg test (import lsp_vector_families))
 (cfg
   test
@@ -246,8 +248,8 @@
       [open-uri : String
         (lsp.lsp-path-to-file-uri (lsp.lsp-global-shared-view open-path))]
       [docs : lsp_document_vec.Vec
-        (lsp.lsp-semantic-smoke-install
-          (lsp.lsp-semantic-smoke-install
+        (lsp_tests.lsp-semantic-smoke-install
+          (lsp_tests.lsp-semantic-smoke-install
             (lsp_document_vec.new)
             (lsp.lsp-global-shared-view shared-uri)
             (lsp.lsp-global-shared-view shared-path)
@@ -292,7 +294,7 @@
           shared-doc-index
           (lsp.lsp-document-fallback))]
       [definition-index : i64
-        (compiler_semantic_index.compiler-semantic-source-index-find-definition
+        (sem_tests.compiler-semantic-source-index-find-definition
           (& shared-doc.semantic.index)
           (lsp.lsp-global-shared-view shared-path)
           "target-value")]
@@ -372,7 +374,7 @@
           ok
           (=
             owners-before
-            (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)))))))
+            (sem_tests.compiler-semantic-source-index-live-owner-count)))))))
 
 (cfg
   test
@@ -387,7 +389,7 @@
       [closed-text : String (lsp.lsp-read-file-text-or (& closed-path) "")]
       [noise-text : String (lsp.lsp-read-file-text-or (& noise-path) "")]
       [owners-before : i64
-        (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)]
+        (sem_tests.compiler-semantic-source-index-live-owner-count)]
       (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
         (lsp.lsp-global-shared-view shared-path)
         (lsp.lsp-global-shared-view shared-text)
@@ -449,7 +451,7 @@
       [text : String (lsp.lsp-read-file-text-or (& path) "")]
       [roots : lsp_svec.Vec (lsp_svec.new)]
       [owners-before : i64
-        (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)]
+        (sem_tests.compiler-semantic-source-index-live-owner-count)]
       [state : lsp_vector_families.LspServerState
         (lsp-workspace-semantic-smoke-add-source-state
           (lsp.lsp-server-state-new)
@@ -493,7 +495,7 @@
           ok
           (=
             owners-before
-            (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)))))))
+            (sem_tests.compiler-semantic-source-index-live-owner-count)))))))
 
 (cfg
   test
@@ -508,7 +510,7 @@
       [shared-uri : String
         (lsp.lsp-path-to-file-uri (lsp.lsp-global-shared-view shared-path))]
       [docs : lsp_document_vec.Vec
-        (lsp.lsp-semantic-smoke-install
+        (lsp_tests.lsp-semantic-smoke-install
           (lsp_document_vec.new)
           shared-uri
           (lsp.lsp-global-shared-view shared-path)
@@ -547,7 +549,7 @@
           0
           (lsp.lsp-document-fallback))]
       [definition-index : i64
-        (compiler_semantic_index.compiler-semantic-source-index-find-definition
+        (sem_tests.compiler-semantic-source-index-find-definition
           (& doc.semantic.index)
           (lsp.lsp-global-shared-view shared-path)
           "target-value")]
@@ -601,7 +603,7 @@
           ok
           (=
             owners-before
-            (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)))))))
+            (sem_tests.compiler-semantic-source-index-live-owner-count)))))))
 
 (cfg
   test
@@ -613,7 +615,7 @@
         "(module semantic.lsp_cache.shared)\n;; Unsaved authoritative overlay.\n(define target-value : i64 41)\n"]
       [closed-text : String (lsp.lsp-read-file-text-or (& closed-path) "")]
       [owners-before : i64
-        (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)]
+        (sem_tests.compiler-semantic-source-index-live-owner-count)]
       (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
         (lsp.lsp-global-shared-view shared-path)
         (lsp.lsp-global-shared-view shared-text)

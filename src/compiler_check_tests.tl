@@ -7,6 +7,7 @@
 (import compiler_check_core as check_core)
 (import compiler_diagnostic as cdiag)
 (import compiler_semantic_index as semantic_index)
+(import compiler_semantic_index_tests as sem_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_typecheck_api as tc_api)
 (import compiler_typecheck_core as tc_core)
@@ -499,21 +500,21 @@
     (begin
       (set! shadowed (+ shadowed 1))
       shadowed)))"]
-    (match (semantic_index.compiler-check-source-index-with-roots
+    (match (sem_tests.compiler-check-source-index-with-roots
       (tc_core.tc-global-shared-view path)
       (tc_core.tc-global-shared-view source)
       (svec.new))
       [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok _ index)
         (let
           [slot-definition : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "slot"
               semantic_index.CompilerSemanticRecordRole.Definition
               0)]
           [slot-write : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "slot"
@@ -524,96 +525,96 @@
               (& index)
               slot-write)]
           [slot-rhs-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               1)]
           [slot-result-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               2)]
           [shadow-param-definition : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Definition
               0)]
           [shadow-local-definition : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Definition
               1)]
           [shadow-param-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               0)]
           [shadow-local-write : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               1)]
           [shadow-local-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               2)]
           [shadow-local-result-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               (tc_core.tc-global-shared-view path)
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               3)]
           [bump-read : i64
-            (semantic_index.compiler-semantic-source-index-find-record
+            (sem_tests.compiler-semantic-source-index-find-record
               (& index)
               (tc_core.tc-global-shared-view path)
               "bump"
               semantic_index.CompilerSemanticRecordRole.Use
               -1)]
           [import-read : i64
-            (semantic_index.compiler-semantic-source-index-find-record
+            (sem_tests.compiler-semantic-source-index-find-record
               (& index)
               path
               "imported-value"
               semantic_index.CompilerSemanticRecordRole.Use
               -1)]
           [macro-read : i64
-            (semantic_index.compiler-semantic-source-index-find-macro-use
+            (sem_tests.compiler-semantic-source-index-find-macro-use
               (& index)
               "wrap"
               true
               0)]
           [generated-macro : i64
-            (semantic_index.compiler-semantic-source-index-find-macro-use
+            (sem_tests.compiler-semantic-source-index-find-macro-use
               (& index)
               "wrap"
               false
               0)]
           [generated-definition : i64
-            (semantic_index.compiler-semantic-source-index-find-record
+            (sem_tests.compiler-semantic-source-index-find-record
               (& index)
               ""
               "generated-from-macro"
               semantic_index.CompilerSemanticRecordRole.Definition
               -1)]
           [unknown-ok : bool
-            (match (semantic_index.compiler-check-source-index-with-roots
+            (match (sem_tests.compiler-check-source-index-with-roots
               "src/tests/semantic_access_unknown.tl"
               "(module semantic.access.unknown)
 (define (broken) : i64 unresolved-name)"
@@ -624,7 +625,7 @@
                 (let
                   [ok : bool
                     (<
-                      (semantic_index.compiler-semantic-source-index-find-name-occurrence
+                      (sem_tests.compiler-semantic-source-index-find-name-occurrence
                         (& partial)
                         "src/tests/semantic_access_unknown.tl"
                         "unresolved-name"
@@ -796,7 +797,7 @@
       (compiler-check-independent-diagnostics-ok?)
       (compiler-check-parser-recovery-diagnostics-ok?)
       (compiler-check-poison-suppresses-derived-diagnostics-ok?)
-      (semantic_index.compiler-check-semantic-index-ok?)
+      (sem_tests.compiler-check-semantic-index-ok?)
       (compiler-check-semantic-access-ok?)
       (compiler-check-advisory-result-ok?)
       (compiler-check-subform-diagnostic-spans-ok?)

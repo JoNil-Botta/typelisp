@@ -25579,26 +25579,13 @@
 ;; stage:
 ;;   RS_Assign (1) -- got a register (hint reg, free reg, or by evicting strictly
 ;;                    lower-weight interferers).
-;;   RS_Split  (2) -- no register, but the spilled root has a split-eligible
-;;                    (multi-segment / loop-carried) live range, so the function-
-;;                    level region-splitter (compiler-reg-loop-split-*, run as the
-;;                    backend post-pass on THIS plan) will rescue it: rewrite the
-;;                    hot region to a fresh register-resident var + cold-edge
-;;                    boundary copies, cost-gated by mentions x loop-depth. The
-;;                    greedy returns a CompilerRegPlan (not a rewritten function),
-;;                    so the IR-rewriting split necessarily lives in that post-pass;
-;;                    this stage records the selectOrSplit decision.
-;;   RS_Spill  (3) -- no register and not split-eligible: stack-home it.
-;; The plan output is identical to the single-pass M1 (every non-assigned root is
-;; spilled either way); the stage is the explicit decision the post-pass consumes.
+;;   RS_Spill  (3) -- no register: stack-home it. The trace still records
+;;                    whether the root had a multi-segment live range.
 (define (compiler-reg-greedy-stage-rs-new) : i64
   0)
 
 (define (compiler-reg-greedy-stage-rs-assign) : i64
   1)
-
-(define (compiler-reg-greedy-stage-rs-split) : i64
-  2)
 
 (define (compiler-reg-greedy-stage-rs-spill) : i64
   3)
@@ -25920,7 +25907,7 @@
                         (compiler-reg-trace-note!
                           var
                           (compiler-reg-trace-reason-spill-split-eligible))
-                        (compiler-reg-greedy-stage-rs-split))
+                        (compiler-reg-greedy-stage-rs-spill))
                       (begin
                         (compiler-reg-trace-note!
                           var

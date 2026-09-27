@@ -49054,92 +49054,121 @@
           (lower-id-set-insert lane-locals name)
           (+ binding-index 1))])))
 
-(define (lower-vector-body-has-array-read?
+;; What the SPMD fallback diagnostics look for in a vector body: an array
+;; element read, or an SPMD shuffle.
+(defenum LowerVectorBodyProbe
+  (ArrayRead)
+  (Shuffle))
+
+;; Whether `expr` holds what `probe` looks for. Both probes descend the same
+;; scalar, let, begin, call and store forms; an array read is found at an
+;; ArrayRef and is also looked for inside matches, while a shuffle is found at a
+;; SpmdShuffle and is looked for inside ArrayRef and SpmdBroadcast operands.
+(define (lower-vector-body-has?
   [ctx : tc_core.TcContext]
+  [probe : LowerVectorBodyProbe]
   [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-array-read? ctx inner))]
+      (lower-vector-body-has? ctx probe (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-array-read? ctx inner))]
+      (lower-vector-body-has? ctx probe (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-array-read? ctx inner))]
-    [(ast.AstExpr.ArrayRef _ _) true]
+      (lower-vector-body-has? ctx probe (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-array-read? ctx inner))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (or
-          (lower-vector-body-has-array-read? ctx left)
-          (lower-vector-body-has-array-read? ctx right)))]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
-        [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-        (or
-          (lower-vector-body-has-array-read? ctx cond)
-          (lower-vector-body-has-array-read? ctx then-branch)
-          (lower-vector-body-has-array-read? ctx else-branch)))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
+      (lower-vector-body-has? ctx probe (lower-context-expr-get ctx inner-box))]
+    [(ast.AstExpr.ArrayRef arr-box idx-box)
+      (match probe
+        [(LowerVectorBodyProbe.ArrayRead) true]
+        [(LowerVectorBodyProbe.Shuffle)
           (or
-            (lower-vector-body-has-array-read?
+            (lower-vector-body-has?
               ctx
-              (lower-context-expr-get ctx scrutinee-box))
-            (lower-match-arms-have-array-read? ctx arms))])]
+              probe
+              (lower-context-expr-get ctx arr-box))
+            (lower-vector-body-has?
+              ctx
+              probe
+              (lower-context-expr-get ctx idx-box)))])]
+    [(ast.AstExpr.SpmdShuffle _ _)
+      (match probe
+        [(LowerVectorBodyProbe.Shuffle) true]
+        [(LowerVectorBodyProbe.ArrayRead) false])]
+    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
+      (match probe
+        [(LowerVectorBodyProbe.Shuffle)
+          (or
+            (lower-vector-body-has?
+              ctx
+              probe
+              (lower-context-expr-get ctx value-box))
+            (lower-vector-body-has?
+              ctx
+              probe
+              (lower-context-expr-get ctx lane-box)))]
+        [(LowerVectorBodyProbe.ArrayRead) false])]
+    [(ast.AstExpr.Binary _ left-box right-box)
+      (or
+        (lower-vector-body-has? ctx probe (lower-context-expr-get ctx left-box))
+        (lower-vector-body-has?
+          ctx
+          probe
+          (lower-context-expr-get ctx right-box)))]
+    [(ast.AstExpr.If cond-box then-box else-box)
+      (or
+        (lower-vector-body-has? ctx probe (lower-context-expr-get ctx cond-box))
+        (lower-vector-body-has? ctx probe (lower-context-expr-get ctx then-box))
+        (lower-vector-body-has? ctx probe (lower-context-expr-get ctx else-box)))]
+    [(ast.AstExpr.Match match-box)
+      (match probe
+        [(LowerVectorBodyProbe.ArrayRead)
+          (match (__tl-box-place match-box)
+            [(ast.AstMatch.Match scrutinee-box arms)
+              (or
+                (lower-vector-body-has?
+                  ctx
+                  probe
+                  (lower-context-expr-get ctx scrutinee-box))
+                (lower-vector-match-arms-have-at? ctx probe (& arms) 0))])]
+        [(LowerVectorBodyProbe.Shuffle) false])]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (or
-              (lower-vector-let-bindings-have-array-read? ctx bindings)
-              (lower-vector-body-has-array-read? ctx body)))])]
+          (or
+            (lower-vector-let-bindings-have-at? ctx probe (& bindings) 0)
+            (lower-vector-body-has?
+              ctx
+              probe
+              (lower-context-expr-get ctx body-box)))])]
     [(ast.AstExpr.Begin exprs)
-      (lower-vector-expr-list-has-array-read? ctx exprs)]
+      (lower-vector-expr-list-has-at? ctx probe (& exprs) 0)]
     [(ast.AstExpr.Call func-box args)
-      (let
-        [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
-        (or
-          (lower-vector-body-has-array-read? ctx func)
-          (lower-vector-expr-list-has-array-read? ctx args)))]
+      (or
+        (lower-vector-body-has? ctx probe (lower-context-expr-get ctx func-box))
+        (lower-vector-expr-list-has-at? ctx probe (& args) 0))]
     [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (or
-          (lower-vector-body-has-array-read? ctx arr)
-          (lower-vector-body-has-array-read? ctx idx)
-          (lower-vector-body-has-array-read? ctx value)))]
+      (or
+        (lower-vector-body-has? ctx probe (lower-context-expr-get ctx arr-box))
+        (lower-vector-body-has? ctx probe (lower-context-expr-get ctx idx-box))
+        (lower-vector-body-has?
+          ctx
+          probe
+          (lower-context-expr-get ctx value-box)))]
     [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (or
-          (lower-vector-body-has-array-read? ctx receiver)
-          (lower-vector-body-has-array-read? ctx value)))]
+      (or
+        (lower-vector-body-has?
+          ctx
+          probe
+          (lower-context-expr-get ctx receiver-box))
+        (lower-vector-body-has?
+          ctx
+          probe
+          (lower-context-expr-get ctx value-box)))]
     [_ false]))
 
-(define (lower-match-arms-have-array-read?
+(define (lower-vector-match-arms-have-at?
   [ctx : tc_core.TcContext]
-  [arms : ast.AstMatchArmList]) : bool
-  (lower-match-arms-have-array-read-at? ctx (& arms) 0))
-
-(define (lower-match-arms-have-array-read-at?
-  [ctx : tc_core.TcContext]
+  [probe : LowerVectorBodyProbe]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : bool
   (if (>= index arms.len)
@@ -49147,35 +49176,29 @@
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
         (or
-          (lower-vector-body-has-array-read?
+          (lower-vector-body-has?
             ctx
+            probe
             (lower-context-expr-get ctx body-box))
-          (lower-match-arms-have-array-read-at? ctx arms (+ index 1)))])))
+          (lower-vector-match-arms-have-at? ctx probe arms (+ index 1)))])))
 
-(define (lower-vector-expr-list-has-array-read?
+(define (lower-vector-expr-list-has-at?
   [ctx : tc_core.TcContext]
-  [exprs : ast.AstExprList]) : bool
-  (lower-vector-expr-list-has-array-read-at? ctx (& exprs) 0))
-
-(define (lower-vector-expr-list-has-array-read-at?
-  [ctx : tc_core.TcContext]
+  [probe : LowerVectorBodyProbe]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
   (if (>= index exprs.len)
     false
     (or
-      (lower-vector-body-has-array-read?
+      (lower-vector-body-has?
         ctx
+        probe
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-vector-expr-list-has-array-read-at? ctx exprs (+ index 1)))))
+      (lower-vector-expr-list-has-at? ctx probe exprs (+ index 1)))))
 
-(define (lower-vector-let-bindings-have-array-read?
+(define (lower-vector-let-bindings-have-at?
   [ctx : tc_core.TcContext]
-  [bindings : ast.AstLetBindingList]) : bool
-  (lower-vector-let-bindings-have-array-read-at? ctx (& bindings) 0))
-
-(define (lower-vector-let-bindings-have-array-read-at?
-  [ctx : tc_core.TcContext]
+  [probe : LowerVectorBodyProbe]
   [bindings : (& bindings ast.AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast.ast-let-binding-list-len bindings))
@@ -49185,141 +49208,16 @@
       binding-index
       (ast.ast-let-binding-fallback))
       [(ast.AstLetBinding.Binding _ _ init-box)
-        (let
-          [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-          (or
-            (lower-vector-body-has-array-read? ctx init)
-            (lower-vector-let-bindings-have-array-read-at?
-              ctx
-              bindings
-              (+ binding-index 1))))])))
-
-(define (lower-vector-body-has-spmd-shuffle?
-  [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-spmd-shuffle? ctx inner))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-spmd-shuffle? ctx inner))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-spmd-shuffle? ctx inner))]
-    [(ast.AstExpr.SpmdShuffle _ _) true]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
         (or
-          (lower-vector-body-has-spmd-shuffle? ctx value)
-          (lower-vector-body-has-spmd-shuffle? ctx lane)))]
-    [(ast.AstExpr.ArrayRef arr-box idx-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        (or
-          (lower-vector-body-has-spmd-shuffle? ctx arr)
-          (lower-vector-body-has-spmd-shuffle? ctx idx)))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-spmd-shuffle? ctx inner))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (or
-          (lower-vector-body-has-spmd-shuffle? ctx left)
-          (lower-vector-body-has-spmd-shuffle? ctx right)))]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
-        [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-        (or
-          (lower-vector-body-has-spmd-shuffle? ctx cond)
-          (lower-vector-body-has-spmd-shuffle? ctx then-branch)
-          (lower-vector-body-has-spmd-shuffle? ctx else-branch)))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (or
-              (lower-vector-let-bindings-have-spmd-shuffle? ctx bindings)
-              (lower-vector-body-has-spmd-shuffle? ctx body)))])]
-    [(ast.AstExpr.Begin exprs)
-      (lower-vector-expr-list-has-spmd-shuffle? ctx exprs)]
-    [(ast.AstExpr.Call func-box args)
-      (let
-        [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
-        (or
-          (lower-vector-body-has-spmd-shuffle? ctx func)
-          (lower-vector-expr-list-has-spmd-shuffle? ctx args)))]
-    [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (or
-          (lower-vector-body-has-spmd-shuffle? ctx arr)
-          (lower-vector-body-has-spmd-shuffle? ctx idx)
-          (lower-vector-body-has-spmd-shuffle? ctx value)))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (or
-          (lower-vector-body-has-spmd-shuffle? ctx receiver)
-          (lower-vector-body-has-spmd-shuffle? ctx value)))]
-    [_ false]))
-
-(define (lower-vector-expr-list-has-spmd-shuffle?
-  [ctx : tc_core.TcContext]
-  [exprs : ast.AstExprList]) : bool
-  (lower-vector-expr-list-has-spmd-shuffle-at? ctx (& exprs) 0))
-
-(define (lower-vector-expr-list-has-spmd-shuffle-at?
-  [ctx : tc_core.TcContext]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (lower-vector-body-has-spmd-shuffle?
-        ctx
-        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-vector-expr-list-has-spmd-shuffle-at? ctx exprs (+ index 1)))))
-
-(define (lower-vector-let-bindings-have-spmd-shuffle?
-  [ctx : tc_core.TcContext]
-  [bindings : ast.AstLetBindingList]) : bool
-  (lower-vector-let-bindings-have-spmd-shuffle-at? ctx (& bindings) 0))
-
-(define (lower-vector-let-bindings-have-spmd-shuffle-at?
-  [ctx : tc_core.TcContext]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (match (ast.ast-let-binding-list-get
-      bindings
-      binding-index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ _ init-box)
-        (let
-          [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-          (or
-            (lower-vector-body-has-spmd-shuffle? ctx init)
-            (lower-vector-let-bindings-have-spmd-shuffle-at?
-              ctx
-              bindings
-              (+ binding-index 1))))])))
+          (lower-vector-body-has?
+            ctx
+            probe
+            (lower-context-expr-get ctx init-box))
+          (lower-vector-let-bindings-have-at?
+            ctx
+            probe
+            bindings
+            (+ binding-index 1)))])))
 
 (define (lower-vector-body-has-atomic-call?
   [ctx : tc_core.TcContext]
@@ -63262,8 +63160,9 @@
                               (if (lower-mode-avx2? (lower-state-mode state))
                                 "lower: SPMD varying match AVX2 lowering is not available for this match shape"
                                 "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
-                      [(lower-vector-body-has-spmd-shuffle?
+                      [(lower-vector-body-has?
                           ctx
+                          (LowerVectorBodyProbe.Shuffle)
                           (lower-global-shared-view body))
                         (ResultLowerExpr.Err
                           (box
@@ -63271,8 +63170,9 @@
                               ctx
                               body
                               (lower-spmd-shuffle-diagnostic))))]
-                      [(lower-vector-body-has-array-read?
+                      [(lower-vector-body-has?
                           ctx
+                          (LowerVectorBodyProbe.ArrayRead)
                           (lower-global-shared-view body))
                         (match (lower-simple-vector-map-unsupported-shift-lane
                           ctx

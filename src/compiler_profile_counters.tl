@@ -6,9 +6,11 @@
 ;;   (cfg
 ;;     compile-profile
 ;;     (counters.defcounters
-;;       compiler-tc-env-profile
-;;       (tc-env-binds "typecheck.env.binds")
-;;       (tc-walk-marshal-ns "typecheck.macro.walk_direct_marshal_us" us)))
+;;       compiler-tc-walk-profile
+;;       (tc-profile-fire-ns "typecheck.macro.walk_decl_fire_us" us)
+;;       (tc-profile-fire-count "typecheck.macro.walk_decl_fire_count")))
+;;   ...
+;;   (cfg compile-profile (counters.bump! tc-profile-fire-count))
 ;;
 ;; An entry `(name "row")` declares the i64 global `name`. The table gets
 ;; `<table>-emit!`, which writes one row per entry in table order, and
@@ -16,18 +18,20 @@
 ;; reported value: `us` holds nanoseconds and reports microseconds, `kb` holds
 ;; bytes and reports kibibytes, `live` reports the value in the live-delta field
 ;; of the six-field row instead of the value field, and `bare` writes the
-;; three-field row `compile-profile|row|value`.
-;;
-;; `bump!`, `add!` and `max!` update a counter in compile-profile builds and
-;; expand to `unit` in every other build, so counting sites need no cfg.
+;; three-field row `compile-profile|row|value`. `bump!`, `add!` and `max!`
+;; update a counter.
 ;;
 ;; Counters that live in a job's metric array instead of globals are a
 ;; `defslots` table: `(counters.defslots table first entry ...)` numbers the
-;; entries' slots from `first` in table order and defines
-;; `<table>-end`, the slot after the last. An entry is `(name "row" [kind])`,
-;; or `(name)` for a slot no row reports; in compile-profile builds
-;; `<table>-emit!` writes the rows from the metric array at a job's metrics
-;; address.
+;; entries' slots from `first` in table order and defines `<table>-end`, the
+;; slot after the last. An entry is `(name "row" [kind])`, or `(name)` for a
+;; slot no row reports; in compile-profile builds `<table>-emit!` writes the
+;; rows from the metric array at a job's metrics address.
+;;
+;; Ordinary builds never load this module: importers, tables and counting sites
+;; all sit inside `(cfg compile-profile ...)`, or `(any compile-profile test)`
+;; for slots a test reads, because loading it and expanding its macros would
+;; cost the default self-compile work for code it then discards.
 (import stdlib.comptime)
 (cfg compile-profile (import stdlib.io))
 (cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
@@ -72,21 +76,18 @@
     (unsafe
       (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) slot)))))
 
-(defmacro (bump! [_counter : Expr]) : Expr
-  (cfg compile-profile `(set! ,_counter (+ ,_counter 1)) `unit))
+(defmacro (bump! [counter : Expr]) : Expr
+  `(set! ,counter (+ ,counter 1)))
 
-(defmacro (add! [_counter : Expr] [_value : Expr]) : Expr
-  (cfg compile-profile `(set! ,_counter (+ ,_counter ,_value)) `unit))
+(defmacro (add! [counter : Expr] [value : Expr]) : Expr
+  `(set! ,counter (+ ,counter ,value)))
 
-(defmacro (max! [_counter : Expr] [_value : Expr]) : Expr
-  (cfg
-    compile-profile
-    `(let
-      [next : i64 ,_value]
-      (if (> next ,_counter)
-        (set! ,_counter next)
-        unit))
-    `unit))
+(defmacro (max! [counter : Expr] [value : Expr]) : Expr
+  `(let
+    [next : i64 ,value]
+    (if (> next ,counter)
+      (set! ,counter next)
+      unit)))
 
 (defmacro (defcounters [table : Expr] [entries : Expr ...]) : Decls
   (let

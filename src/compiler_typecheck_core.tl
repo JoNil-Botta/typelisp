@@ -19,7 +19,7 @@
 (import compiler_specialize as spec)
 (import compiler_clone as clone_support)
 (import compiler_allocation_profile as allocation_profile)
-(import compiler_profile_counters as counters)
+(cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_surface_facts as surface_facts)
 (import (hashmap.hashmap i64 i64) as tc_i64_i64_map)
 (import compiler_parse_core as parser)
@@ -7902,7 +7902,7 @@
       (tc-type-env-topenv-membership-state env)]
     [topenv-mode : i64 (tc-topenv-membership-mode topenv-state)]
     (begin
-      (counters.bump! tc-profile-env-binds)
+      (cfg compile-profile (counters.bump! tc-profile-env-binds))
       (if (not (= (bit-and topenv-mode 2) 0))
         (tc-topenv-membership-mark-bound! topenv-state name-id)
         (if (not (= (bit-and topenv-mode 1) 0))
@@ -8286,7 +8286,7 @@
           (&mut (__tl-box-place stack.lookup-cache))
           name-id
           index))
-      (counters.bump! tc-profile-env-scoped-binds)
+      (cfg compile-profile (counters.bump! tc-profile-env-scoped-binds))
       (set! stack.slot-count (+ index 1)))))
 
 (define (tc-type-env-scoped-stack-bind-id!
@@ -8375,7 +8375,7 @@
     (begin
       (set! (array-ref dense-indices name-id) index)
       (set! (array-ref dense-epochs name-id) stack.lookup-epoch)
-      (counters.bump! tc-profile-env-scoped-cache-misses)
+      (cfg compile-profile (counters.bump! tc-profile-env-scoped-cache-misses))
       index)))
 
 (define (tc-type-env-scoped-stack-map-cached-index
@@ -8396,17 +8396,23 @@
         name-id)]
     (if (= index -2)
       (begin
-        (counters.bump! tc-profile-env-scoped-cache-misses)
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-env-scoped-cache-misses))
         -1)
       (if (and
         (>= index 0)
         (< index stack.slot-count)
         (= (__tl-project-field (array-ref stack.slots index) name-id) name-id))
         (begin
-          (counters.bump! tc-profile-env-scoped-cache-hits)
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-env-scoped-cache-hits))
           index)
         (begin
-          (counters.bump! tc-profile-env-scoped-cache-misses)
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-env-scoped-cache-misses))
           (let
             [repaired-index : i64
               (tc-type-env-scoped-stack-find-id-index-from
@@ -8434,11 +8440,15 @@
           [index : i64 (array-ref dense-indices name-id)]
           (if (< index 0)
             (begin
-              (counters.bump! tc-profile-env-scoped-cache-hits)
+              (cfg
+                compile-profile
+                (counters.bump! tc-profile-env-scoped-cache-hits))
               -1)
             (if (< index stack.slot-count)
               (begin
-                (counters.bump! tc-profile-env-scoped-cache-hits)
+                (cfg
+                  compile-profile
+                  (counters.bump! tc-profile-env-scoped-cache-hits))
                 index)
               (tc-type-env-scoped-stack-dense-lookup-id-refresh
                 (& stack)
@@ -8729,19 +8739,21 @@
         stack
         (+ index 1)
         (begin
-          (counters.bump! tc-profile-env-binds)
+          (cfg compile-profile (counters.bump! tc-profile-env-binds))
           (tc-type-env-bind-node env slot.name-id slot.ty))))))
 
 (define (tc-type-env-scoped-sidecar-materialize
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnv
   (begin
-    (begin
-      (counters.bump! tc-profile-env-scoped-materializations)
-      (counters.add!
-        tc-profile-env-scoped-materialized-slots
-        (-
-          (tc-type-env-scoped-stack-len sidecar.stack)
-          sidecar.materialize-start)))
+    (cfg
+      compile-profile
+      (begin
+        (counters.bump! tc-profile-env-scoped-materializations)
+        (counters.add!
+          tc-profile-env-scoped-materialized-slots
+          (-
+            (tc-type-env-scoped-stack-len sidecar.stack)
+            sidecar.materialize-start))))
     (tc-type-env-scoped-stack-materialize-at
       sidecar.stack
       sidecar.materialize-start
@@ -9563,7 +9575,7 @@
   [position : i64]) : bool
   (if (tc_i64_i64_map.insert-if-absent-ref! ids name-id next)
     (begin
-      (counters.bump! tc-profile-env-cache-entries)
+      (cfg compile-profile (counters.bump! tc-profile-env-cache-entries))
       (set! (array-ref values next) ty)
       (set!
         (array-ref unsafe-flags next)
@@ -10266,7 +10278,7 @@
 
 (define (tc-env-with-cache-mode [env : TcTypeEnv] [scan-through : bool]) : TcTypeEnv
   (begin
-    (counters.bump! tc-profile-env-cache-builds)
+    (cfg compile-profile (counters.bump! tc-profile-env-cache-builds))
     (let
       [count : i64 (tc-env-cache-count env)]
       [capacity : i64 (tc-env-cache-capacity count)]
@@ -10332,7 +10344,7 @@
   [scan-through : bool]
   [below : TcTypeEnv]) : TcTypeEnv
   (begin
-    (counters.bump! tc-profile-env-cache-builds)
+    (cfg compile-profile (counters.bump! tc-profile-env-cache-builds))
     (let
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
@@ -11304,7 +11316,7 @@
     (tc-type-env-scoped-carrier-in-unsafe?
       (tc-type-env-scoped-runtime-current env))
     (begin
-      (counters.bump! tc-profile-env-marker-scans)
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (match (tc-env-marker-type env (tc-unsafe-marker-id))
         [(ast.AstMaybeType.Some (ast.AstType.Unit)) true]
         [(ast.AstMaybeType.Some _) false]
@@ -11589,7 +11601,7 @@
     (tc-type-env-scoped-carrier-current-return-type
       (tc-type-env-scoped-runtime-current env))
     (begin
-      (counters.bump! tc-profile-env-marker-scans)
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (match (tc-env-marker-type env (tc-return-type-id))
         [(ast.AstMaybeType.Some ty) (ResultTcType.Ok ty)]
         [(ast.AstMaybeType.No)
@@ -12154,7 +12166,9 @@
       (__tl_make-array TcStdlibFieldSpec (+ n 1))]
     [i : i64 0]
     (begin
-      (counters.bump! tc-profile-layout-stdlib-field-spec-builds)
+      (cfg
+        compile-profile
+        (counters.bump! tc-profile-layout-stdlib-field-spec-builds))
       (set! (array-ref slots 0) (TcStdlibFieldSpec.Spec name ty))
       (while (< i n)
         (begin
@@ -12176,7 +12190,9 @@
       (__tl_make-array TcStdlibVariantSpec (+ n 1))]
     [i : i64 0]
     (begin
-      (counters.bump! tc-profile-layout-stdlib-variant-spec-builds)
+      (cfg
+        compile-profile
+        (counters.bump! tc-profile-layout-stdlib-variant-spec-builds))
       (set! (array-ref slots 0) (TcStdlibVariantSpec.Spec name payloads))
       (while (< i n)
         (begin
@@ -12454,7 +12470,9 @@
         (let
           [expected-name-text : String (ci.intern-str expected-name)]
           (begin
-            (counters.bump! tc-profile-layout-stdlib-field-spec-visits)
+            (cfg
+              compile-profile
+              (counters.bump! tc-profile-layout-stdlib-field-spec-visits))
             (if (>= index fields.len)
               (tc-stdlib-well-known-mismatch
                 type-name
@@ -12545,7 +12563,9 @@
         (let
           [expected-name-text : String (ci.intern-str expected-name)]
           (begin
-            (counters.bump! tc-profile-layout-stdlib-variant-spec-visits)
+            (cfg
+              compile-profile
+              (counters.bump! tc-profile-layout-stdlib-variant-spec-visits))
             (if (>= index variants.len)
               (tc-stdlib-well-known-mismatch
                 type-name
@@ -14154,7 +14174,7 @@
   [lookup-id : i64]
   [display-id : i64]) : ResultTcType
   (begin
-    (counters.bump! tc-profile-env-lookups)
+    (cfg compile-profile (counters.bump! tc-profile-env-lookups))
     (let
       [store-handle : i64 env.store]
       [head : i64 env.head]
@@ -14254,14 +14274,16 @@
           (let
             [sidecar : TcTypeEnvScopedSidecar carrier.sidecar]
             (begin
-              (counters.bump! tc-profile-env-lookups)
+              (cfg compile-profile (counters.bump! tc-profile-env-lookups))
               (match (tc-type-env-scoped-stack-lookup-id-at sidecar.stack index)
                 [(TcTypeEnvScopedLookup.Found ty _ _ _ _) (ResultTcType.Ok ty)]
                 [(TcTypeEnvScopedLookup.Missing)
                   (ResultTcType.Err
                     "typecheck: scoped lookup index unexpectedly missing")])))
           (begin
-            (counters.bump! tc-profile-env-scoped-tail-fallbacks)
+            (cfg
+              compile-profile
+              (counters.bump! tc-profile-env-scoped-tail-fallbacks))
             (tc-lookup-persistent-key-id
               (__tl-project-field
                 (__tl-project-field carrier sidecar)
@@ -14342,7 +14364,9 @@
           0)
           true
           (begin
-            (counters.bump! tc-profile-env-scoped-tail-fallbacks)
+            (cfg
+              compile-profile
+              (counters.bump! tc-profile-env-scoped-tail-fallbacks))
             (tc-name-bound-persistent-key-id?
               (__tl-project-field
                 (__tl-project-field carrier sidecar)
@@ -14362,7 +14386,7 @@
   [lookup-id : i64]
   [display-id : i64]) : ResultTcTypeUnsafe
   (begin
-    (counters.bump! tc-profile-env-lookups)
+    (cfg compile-profile (counters.bump! tc-profile-env-lookups))
     (let
       [store-handle : i64 env.store]
       [head : i64 env.head]
@@ -14484,14 +14508,16 @@
                   slots)
                 index)]
             (begin
-              (counters.bump! tc-profile-env-lookups)
+              (cfg compile-profile (counters.bump! tc-profile-env-lookups))
               (ResultTcTypeUnsafe.Ok
                 slot.ty
                 (tc-type-env-scoped-flag?
                   slot.flags
                   tc-type-env-scoped-flag-unsafe))))
           (begin
-            (counters.bump! tc-profile-env-scoped-tail-fallbacks)
+            (cfg
+              compile-profile
+              (counters.bump! tc-profile-env-scoped-tail-fallbacks))
             (tc-lookup-unsafe-persistent-key-id
               (__tl-project-field
                 (__tl-project-field carrier sidecar)
@@ -15152,7 +15178,7 @@
     (tc-type-env-scoped-carrier-active-region
       (tc-type-env-scoped-runtime-current env))
     (begin
-      (counters.bump! tc-profile-env-marker-scans)
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (match (tc-env-marker-type env (tc-region-marker-id))
         [(ast.AstMaybeType.Some (ast.AstType.Var region))
           (TcMaybeNameId.Some region)]
@@ -15689,7 +15715,7 @@
 
 (define (tc-arena-phase-token-region-active [env : TcTypeEnv] [token-id : i64]) : TcMaybeNameId
   (begin
-    (counters.bump! tc-profile-env-marker-scans)
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (let
       [region-marker-id : i64
         (tc-arena-phase-token-region-marker-id env token-id)]
@@ -15731,7 +15757,7 @@
 
 (define (tc-arena-phase-token-owner-active [env : TcTypeEnv] [token-id : i64]) : TcMaybeNameId
   (begin
-    (counters.bump! tc-profile-env-marker-scans)
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (let
       [owner-marker-id : i64
         (tc-arena-phase-token-owner-marker-id env token-id)]
@@ -15753,7 +15779,7 @@
 
 (define (tc-current-arena-owner-region [env : TcTypeEnv] [owner : i64]) : i64
   (begin
-    (counters.bump! tc-profile-env-marker-scans)
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (match (tc-env-marker-type
       env
       (tc-arena-phase-current-region-marker-id env owner))
@@ -15850,7 +15876,7 @@
       (tc-type-env-scoped-runtime-current env)
       name-id)
     (begin
-      (counters.bump! tc-profile-env-marker-scans)
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (tc-cleanup-owner-active-persistent-id? env name-id))))
 
 (define (tc-arena-owner-active-persistent-id?
@@ -15875,7 +15901,7 @@
       name-id
       marker-id)
     (begin
-      (counters.bump! tc-profile-env-marker-scans)
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (tc-arena-owner-active-persistent-id? env name-id marker-id))))
 
 (define (tc-ordinary-arena-owner-active-id? [env : TcTypeEnv] [name-id : i64]) : bool
@@ -15931,7 +15957,7 @@
 
 (define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
   (begin
-    (counters.bump! tc-profile-env-marker-scans)
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (if (not (tc-cleanup-owner-markers-possible?))
       TcStringList.Nil
       (let
@@ -16455,7 +16481,7 @@
         (tc-type-env-scoped-runtime-current env)
         lifetime-id)
       (begin
-        (counters.bump! tc-profile-env-marker-scans)
+        (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
         (tc-lifetime-visible-persistent-id? env lifetime-id)))))
 
 (define (tc-reference-lifetimes-visible?
@@ -16593,7 +16619,7 @@
       lifetime-id
       target-id)
     (begin
-      (counters.bump! tc-profile-env-marker-scans)
+      (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (tc-lifetime-outlives-binding-persistent-id? env lifetime-id target-id))))
 
 (define (tc-reference-lifetimes-outlive-binding-id?
@@ -16773,7 +16799,7 @@
         value-lifetime-id
         target-lifetime-id)
       (begin
-        (counters.bump! tc-profile-env-marker-scans)
+        (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
         (tc-lifetime-outlives-lifetime-persistent-id?
           env
           value-lifetime-id
@@ -18085,7 +18111,7 @@
   [value-region : i64]
   [target-region : i64]) : bool
   (begin
-    (counters.bump! tc-profile-env-marker-scans)
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (match (tc-type-env-view env)
       [(TcTypeEnvView.Cache _ _ _ rest _)
         (tc-region-outlives-or-matches-scan rest value-region target-region)]
@@ -18711,7 +18737,9 @@
           [(>= name-index 0) false]
           [else
             (begin
-              (counters.bump! tc-profile-env-scoped-tail-fallbacks)
+              (cfg
+                compile-profile
+                (counters.bump! tc-profile-env-scoped-tail-fallbacks))
               (tc-source-leading-segment-wins-over-exact-persistent-id?
                 (__tl-project-field
                   (__tl-project-field carrier sidecar)
@@ -22117,9 +22145,11 @@
       (set! data.symbols-owner stamp.owner)
       (set! data.symbols-generation stamp.generation)
       (tc-type-handle-cache-state-data-set! state data)
-      (begin
-        (counters.bump! tc-profile-type-handle-cache-misses)
-        (counters.bump! tc-profile-type-handle-symbol-probes))
+      (cfg
+        compile-profile
+        (begin
+          (counters.bump! tc-profile-type-handle-cache-misses)
+          (counters.bump! tc-profile-type-handle-symbol-probes)))
       (tc-type-handle-cache-probe-and-store! state symbols lookup-id key))))
 
 (define (tc-type-handle-cache-probe-and-store!
@@ -22189,13 +22219,17 @@
             (ptr-read (ptr-offset keys slot)))
           key)
           (begin
-            (counters.bump! tc-profile-type-handle-cache-hits)
+            (cfg
+              compile-profile
+              (counters.bump! tc-profile-type-handle-cache-hits))
             (unsafe
               (ptr-read (ptr-offset handles slot))))
           (begin
-            (begin
-              (counters.bump! tc-profile-type-handle-cache-misses)
-              (counters.bump! tc-profile-type-handle-symbol-probes))
+            (cfg
+              compile-profile
+              (begin
+                (counters.bump! tc-profile-type-handle-cache-misses)
+                (counters.bump! tc-profile-type-handle-symbol-probes)))
             (tc-type-handle-cache-probe-and-store! state symbols lookup-id key))))
       (tc-type-handle-cache-rebind-and-probe! state symbols lookup-id key))))
 
@@ -22215,15 +22249,19 @@
   (match (tc-resolve-type-name-cache-lookup state lookup-id)
     [(TcTypeNameLookupCache.Found handle)
       (begin
-        (begin
-          (counters.bump! tc-profile-resolve-name-lookup-calls)
-          (counters.bump! tc-profile-resolve-name-cache-hits))
+        (cfg
+          compile-profile
+          (begin
+            (counters.bump! tc-profile-resolve-name-lookup-calls)
+            (counters.bump! tc-profile-resolve-name-cache-hits)))
         handle)]
     [(TcTypeNameLookupCache.Missing)
       (begin
-        (begin
-          (counters.bump! tc-profile-resolve-name-lookup-calls)
-          (counters.bump! tc-profile-resolve-name-cache-hits))
+        (cfg
+          compile-profile
+          (begin
+            (counters.bump! tc-profile-resolve-name-lookup-calls)
+            (counters.bump! tc-profile-resolve-name-cache-hits)))
         (csym.compiler-symbols-missing-handle))]
     [(TcTypeNameLookupCache.Miss)
       (let
@@ -22234,10 +22272,12 @@
             lookup-id
             tc-type-handle-lookup-caller-resolver)]
         (begin
-          (begin
-            (counters.bump! tc-profile-resolve-name-lookup-calls)
-            (counters.bump! tc-profile-resolve-name-cache-misses)
-            (counters.bump! tc-profile-resolve-type-symbol-probes))
+          (cfg
+            compile-profile
+            (begin
+              (counters.bump! tc-profile-resolve-name-lookup-calls)
+              (counters.bump! tc-profile-resolve-name-cache-misses)
+              (counters.bump! tc-profile-resolve-type-symbol-probes)))
           (tc-resolve-type-name-cache-store!
             state
             lookup-id
@@ -30738,11 +30778,15 @@
       module-id)
       [(TcMaybeTypeEnv.Some env)
         (begin
-          (counters.bump! tc-profile-env-module-local-hits)
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-env-module-local-hits))
           (ResultTcModuleLocalEnv.Ok env cache))]
       [(TcMaybeTypeEnv.No)
         (begin
-          (counters.bump! tc-profile-env-module-local-misses)
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-env-module-local-misses))
           (match (tc-module-local-env-id ctx top-env module module-id)
             [(ResultTcEnv.Ok env)
               (ResultTcModuleLocalEnv.Ok
@@ -32649,7 +32693,9 @@
             [(>= boundary-index 0) true]
             [else
               (begin
-                (counters.bump! tc-profile-env-scoped-tail-fallbacks)
+                (cfg
+                  compile-profile
+                  (counters.bump! tc-profile-env-scoped-tail-fallbacks))
                 (tc-default-builtin-unshadowed-scan-id?
                   (__tl-project-field
                     (__tl-project-field carrier sidecar)
@@ -33043,7 +33089,9 @@
       (tc-unbound-visible-names-ensure-capacity! names)
       (set! (array-ref names.ids names.len) candidate-id)
       (set! names.len (+ names.len 1))
-      (counters.bump! tc-profile-unbound-visible-candidates)
+      (cfg
+        compile-profile
+        (counters.bump! tc-profile-unbound-visible-candidates))
       unit)
     unit))
 
@@ -33113,7 +33161,7 @@
         [else (tc-env-key-source-id-or-neg session key-id)])]
     (begin
       (set! names.slots (+ names.slots 1))
-      (counters.bump! tc-profile-unbound-candidate-slots)
+      (cfg compile-profile (counters.bump! tc-profile-unbound-candidate-slots))
       (if (and
         (>= source-id 0)
         (or wanted-qualified (< key-module-id 0) module-qualified))
@@ -33337,7 +33385,7 @@
     [best-distance : i64 (+ max-distance 1)]
     [best : String ""]
     (begin
-      (counters.bump! tc-profile-unbound-scans)
+      (cfg compile-profile (counters.bump! tc-profile-unbound-scans))
       (while (< candidate-index visible.len)
         (let
           [candidate-id : i64 (array-ref visible.ids candidate-index)]
@@ -33357,10 +33405,14 @@
                   (- wanted-len candidate-len))
                 max-distance))
               (begin
-                (counters.bump! tc-profile-unbound-length-survivors)
+                (cfg
+                  compile-profile
+                  (counters.bump! tc-profile-unbound-length-survivors))
                 (let
                   [_note-edit : unit
-                    (counters.bump! tc-profile-unbound-edit-evaluations)]
+                    (cfg
+                      compile-profile
+                      (counters.bump! tc-profile-unbound-edit-evaluations))]
                   [distance : i64
                     (tc-unbound-edit-distance
                       (tc-global-shared-view wanted-text)
@@ -33425,7 +33477,7 @@
 
 (define (tc-unbound-finalize-located-error [message : String]) : String
   (begin
-    (counters.bump! tc-profile-unbound-finalizers)
+    (cfg compile-profile (counters.bump! tc-profile-unbound-finalizers))
     (if (and (tc-located-error? message) (not (tc-rich-error? message)))
       (let
         [prefix-len : i64 (string.string-length (tc-located-error-prefix))]
@@ -40221,7 +40273,7 @@
   [params : ast.AstParamList]
   [body : ast.AstExpr]) : bool
   (begin
-    (counters.bump! tc-profile-env-marker-scans)
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (tc-type-env-scoped-lambda-captures-reference-scan
       expr-bases
       (tc-type-env-scoped-carrier-marker-cursor carrier)
@@ -47116,7 +47168,7 @@
   [body : ast.AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (begin
-    (counters.bump! tc-profile-env-marker-scans)
+    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
     (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
       expr-bases
       (tc-global-shared-view carrier)
@@ -47418,7 +47470,9 @@
       [field : TcInlineFieldLayout
         (tc-inline-field-layout-list-ref fields index)]
       (begin
-        (counters.bump! tc-profile-layout-inline-field-visits)
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-layout-inline-field-visits))
         (if (=
           (tc-inline-field-layout-name-id (tc-global-shared-view field))
           name-id)
@@ -47650,7 +47704,9 @@
       [payload : TcInlinePayloadLayout
         (tc-inline-payload-layout-list-ref payloads index)]
       (begin
-        (counters.bump! tc-profile-layout-inline-payload-visits)
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-layout-inline-payload-visits))
         (if (=
           (tc-inline-payload-layout-index (tc-global-shared-view payload))
           payload-index)
@@ -47711,7 +47767,9 @@
       [variant : TcInlineVariantLayout
         (tc-inline-variant-layout-list-ref variants index)]
       (begin
-        (counters.bump! tc-profile-layout-inline-variant-visits)
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-layout-inline-variant-visits))
         (if (=
           (tc-inline-variant-layout-name-id (tc-global-shared-view variant))
           name-id)
@@ -47745,7 +47803,9 @@
       [variant : TcInlineVariantLayout
         (tc-inline-variant-layout-list-ref variants index)]
       (begin
-        (counters.bump! tc-profile-layout-inline-variant-visits)
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-layout-inline-variant-visits))
         (if (tc-inline-variant-layout-name-matches-id?
           (tc-inline-variant-layout-name-id (tc-global-shared-view variant))
           name-id)
@@ -48218,7 +48278,9 @@
                 [next-cursor : i64 (+ offset field-size)]
                 [next-align : i64 (tc-max-i64 max-align field-align)]
                 (begin
-                  (counters.bump! tc-profile-layout-inline-field-builds)
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-layout-inline-field-builds))
                   (tc-inline-field-layout-list-set!
                     (tc-global-shared-view layout)
                     index
@@ -48287,7 +48349,9 @@
             [next-cursor : i64 (+ offset field-size)]
             [next-align : i64 (tc-max-i64 max-align field-align)]
             (begin
-              (counters.bump! tc-profile-layout-inline-payload-builds)
+              (cfg
+                compile-profile
+                (counters.bump! tc-profile-layout-inline-payload-builds))
               (tc-inline-payload-layout-list-set!
                 layout
                 index
@@ -48443,7 +48507,9 @@
                   [next-size : i64 (tc-max-i64 max-size variant-size)]
                   [next-align : i64 (tc-max-i64 max-align variant-align)]
                   (begin
-                    (counters.bump! tc-profile-layout-inline-variant-builds)
+                    (cfg
+                      compile-profile
+                      (counters.bump! tc-profile-layout-inline-variant-builds))
                     (tc-inline-variant-layout-list-set!
                       layout
                       index
@@ -48694,7 +48760,9 @@
           [slot : i64 (tc-agg-layout-cache-probe-slot-for-state state name-id)]
           (if (< slot 0)
             (begin
-              (counters.bump! tc-profile-layout-cache-bypasses)
+              (cfg
+                compile-profile
+                (counters.bump! tc-profile-layout-cache-bypasses))
               (tc-inline-aggregate-layout-kind-dispatch
                 ctx
                 name
@@ -48704,11 +48772,15 @@
             (match (tc-global-array-element-shared-view slots slot)
               [(TcAggLayoutCacheSlot.Full _ layout)
                 (begin
-                  (counters.bump! tc-profile-layout-cache-hits)
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-layout-cache-hits))
                   (ResultTcInlineAggregateLayout.Ok layout))]
               [(TcAggLayoutCacheSlot.Empty)
                 (begin
-                  (counters.bump! tc-profile-layout-cache-misses)
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-layout-cache-misses))
                   (tc-inline-aggregate-layout-fill-cache
                     ctx
                     name
@@ -49439,7 +49511,9 @@
                 [next-cursor : i64 (+ offset field-size)]
                 [next-align : i64 (tc-max-i64 max-align field-align)]
                 (begin
-                  (counters.bump! tc-profile-layout-repr-c-field-builds)
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-layout-repr-c-field-builds))
                   (tc-repr-c-field-layout-list-set!
                     layout
                     index
@@ -81039,7 +81113,7 @@
   [state : TcMacroState]
   [_reason : i64]) : unit
   (begin
-    (counters.bump! tc-profile-splice-ctfe-cleared)
+    (cfg compile-profile (counters.bump! tc-profile-splice-ctfe-cleared))
     (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
     (tc-macro-walk-set! state macro-expand-ctfe-env-has-metadata false)
     (tc-macro-walk-set! state macro-expand-ctfe-env-rebuild-pending true)
@@ -81340,16 +81414,24 @@
                         (ctfe_support.ctfe-env-source-names ctfe-env-value)
                         (tc-macro-ctfe-state state)))
                     (if grew?
-                      (counters.bump! tc-profile-splice-ctfe-capacity-grows)
+                      (cfg
+                        compile-profile
+                        (counters.bump! tc-profile-splice-ctfe-capacity-grows))
                       unit)
-                    (counters.bump! tc-profile-splice-ctfe-extensions)
+                    (cfg
+                      compile-profile
+                      (counters.bump! tc-profile-splice-ctfe-extensions))
                     CompilerCtfeSpliceExtensionResult.Extended))))
             (begin
-              (counters.bump! tc-profile-splice-ctfe-semantic-rejections)
+              (cfg
+                compile-profile
+                (counters.bump! tc-profile-splice-ctfe-semantic-rejections))
               CompilerCtfeSpliceExtensionResult.SemanticRejected)))]
       [else
         (begin
-          (counters.bump! tc-profile-splice-ctfe-cache-unavailable)
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-splice-ctfe-cache-unavailable))
           CompilerCtfeSpliceExtensionResult.CacheUnavailable)])))
 
 ;; Build the CTFE base env (reflection + layout metadata) once per expansion run
@@ -81412,7 +81494,7 @@
               state
               macro-expand-ctfe-env-rebuild-pending
               false)
-            (counters.bump! tc-profile-splice-ctfe-builds)
+            (cfg compile-profile (counters.bump! tc-profile-splice-ctfe-builds))
             (cfg
               compile-profile
               (if _rebuild?
@@ -81574,11 +81656,11 @@
     (tc-macro-walk-field state macro-live-registries-ready)
     (not (tc-macro-walk-field state macro-live-registries-fallback)))
     (begin
-      (counters.bump! tc-profile-live-registry-reuses)
+      (cfg compile-profile (counters.bump! tc-profile-live-registry-reuses))
       (csym.ResultCompilerRegistries.Ok
         (macro-live-registries-shared-view state)))
     (begin
-      (counters.bump! tc-profile-live-registry-rebuilds)
+      (cfg compile-profile (counters.bump! tc-profile-live-registry-rebuilds))
       (let
         [registries : csym.CompilerRegistries
           (try (csym.build-compiler-registries-with-symbols program symbols))]
@@ -81609,7 +81691,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]) : csym.ResultCompilerSymbols
   (begin
-    (counters.bump! tc-profile-live-rebuilds)
+    (cfg compile-profile (counters.bump! tc-profile-live-rebuilds))
     (match (csym.build-compiler-symbols-diagnostic-with-paths-and-capacity
       (tc-global-shared-view program)
       paths
@@ -81703,7 +81785,7 @@
     (tc-macro-walk-field state macro-live-symbols-ready)
     (not (tc-macro-walk-field state macro-live-symbols-fallback)))
     (begin
-      (counters.bump! tc-profile-live-reuses)
+      (cfg compile-profile (counters.bump! tc-profile-live-reuses))
       (match (macro-live-registries-build-current
         state
         program
@@ -82191,7 +82273,9 @@
       [scratch : i64 (arena.tl_arena_make)]
       (begin
         (tc-macro-walk-set! state macro-expand-scratch-arena scratch)
-        (counters.bump! tc-profile-expansion-scratch-creations)
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-expansion-scratch-creations))
         scratch))
     (tc-macro-walk-field state macro-expand-scratch-arena)))
 
@@ -83789,9 +83873,11 @@
       (if clone-set-changed
         (tc-clone-able-cache-reset-for-job! state)
         unit)
-      (begin
-        (counters.bump! tc-profile-segment-splits)
-        (counters.add! tc-profile-segment-delta-decls middle-count))
+      (cfg
+        compile-profile
+        (begin
+          (counters.bump! tc-profile-segment-splits)
+          (counters.add! tc-profile-segment-delta-decls middle-count)))
       (set! data.head next-head)
       (set! data.cursor 0)
       (set! data.queue-len (+ (- data.queue-len 1) middle-count))
@@ -97413,18 +97499,32 @@
             (match (macro-expand-stdlib-tlci-catalog-lookup-cached
               (macro-tlci-catalog-identity definition-module macro-name))
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved _)
-                (counters.bump! tc-profile-stdlib-catalog-hits)]
+                (cfg
+                  compile-profile
+                  (counters.bump! tc-profile-stdlib-catalog-hits))]
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
-                (counters.bump! tc-profile-stdlib-catalog-hits)]
+                (cfg
+                  compile-profile
+                  (counters.bump! tc-profile-stdlib-catalog-hits))]
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
-                (counters.bump! tc-profile-stdlib-catalog-misses)]
+                (cfg
+                  compile-profile
+                  (counters.bump! tc-profile-stdlib-catalog-misses))]
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
-                (counters.bump! tc-profile-stdlib-load-failures)]))
+                (cfg
+                  compile-profile
+                  (counters.bump! tc-profile-stdlib-load-failures))]))
           (cfg
             (not embedded-stdlib-tlci)
-            (counters.bump! tc-profile-stdlib-load-failures))
-          (counters.bump! tc-profile-stdlib-interpreted-fallbacks))
-        (counters.bump! tc-profile-stdlib-source-interpreted)))
+            (cfg
+              compile-profile
+              (counters.bump! tc-profile-stdlib-load-failures)))
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-stdlib-interpreted-fallbacks)))
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-stdlib-source-interpreted))))
     unit))
 
 (defenum MacroNativeStdlibTlciResult
@@ -98233,8 +98333,10 @@
                             (tc-context-macro-state ctx)
                             catalog
                             tc-dependency-tlci-direct-shell-env-folds)
-                          (counters.bump!
-                            tc-profile-stdlib-direct-shell-env-folds)
+                          (cfg
+                            compile-profile
+                            (counters.bump!
+                              tc-profile-stdlib-direct-shell-env-folds))
                           (MacroDirectStdlibTlciResult.PreparedEnv
                             (macro-fold-captured-operands-env
                               params
@@ -98402,7 +98504,7 @@
             macro-name-id)
           call-expr)]
       (begin
-        (counters.bump! compiler-tc-walk-operand-captures)
+        (cfg compile-profile (counters.bump! compiler-tc-walk-operand-captures))
         bind-result))))
 
 ;; Run a macro transformer via CTFE. Module/declaration macro expansion also
@@ -99389,7 +99491,9 @@
       (ctfe_support.ctfe-result-may-contain-macro-for-state?
         (tc-macro-ctfe-state state)))
       (begin
-        (counters.bump! tc-profile-rewalk-provenance-skips)
+        (cfg
+          compile-profile
+          (counters.bump! tc-profile-rewalk-provenance-skips))
         ;; Produced roots can belong to a transformer scratch pool. Match the
         ;; old value-entry no-fire path by copying the root into the active AST
         ;; pool before that scratch storage is released.
@@ -101512,9 +101616,13 @@
                 catalog
                 generator
                 import-path)
-              (counters.bump! tc-profile-generated-module-catalog-builds))
+              (cfg
+                compile-profile
+                (counters.bump! tc-profile-generated-module-catalog-builds)))
             unit)
-          (counters.bump! tc-profile-generated-module-materializations))]
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-generated-module-materializations)))]
       [(ResultMacroDeclExpansion.Err _) unit])
     result))
 
@@ -102166,10 +102274,14 @@
                                         _
                                         _)
                                       (begin
-                                        (counters.bump!
-                                          tc-profile-generated-module-memo-hits)
-                                        (counters.bump!
-                                          tc-profile-generated-module-catalog-hits)
+                                        (cfg
+                                          compile-profile
+                                          (counters.bump!
+                                            tc-profile-generated-module-memo-hits))
+                                        (cfg
+                                          compile-profile
+                                          (counters.bump!
+                                            tc-profile-generated-module-catalog-hits))
                                         (let
                                           [target-module : String
                                             (tc-env-key-name-text target-id)]
@@ -102850,7 +102962,7 @@
             unit)
           unit)]
       (begin
-        (counters.bump! tc-profile-decl-generations)
+        (cfg compile-profile (counters.bump! tc-profile-decl-generations))
         (unsafe
           (arena.tl_arena_set enclosing))
         (ast.ast-node-pool-context-install! pools)
@@ -104378,16 +104490,20 @@
                         binding-ctx
                         (tc-global-shared-view before))]
                     (begin
-                      (counters.bump!
-                        tc-profile-splice-env-reresolve-candidates)
+                      (cfg
+                        compile-profile
+                        (counters.bump!
+                          tc-profile-splice-env-reresolve-candidates))
                       (if (ast.ast-type-eq?
                         before
                         (tc-global-shared-view after))
                         unit
                         (begin
                           (set! (array-ref values value-slot) after)
-                          (counters.bump!
-                            tc-profile-splice-env-reresolve-updates)))
+                          (cfg
+                            compile-profile
+                            (counters.bump!
+                              tc-profile-splice-env-reresolve-updates))))
                       (if (tc-type-needs-resolution-for-context? ctx after)
                         (begin
                           (set!
@@ -104412,7 +104528,9 @@
     [head : i64 env.head]
     [done : bool false]
     (begin
-      (counters.bump! tc-profile-splice-env-reresolve-calls)
+      (cfg
+        compile-profile
+        (counters.bump! tc-profile-splice-env-reresolve-calls))
       ;; A batch of consecutive module markers can leave a small raw prefix.
       ;; Skip it to the first explicit layer, then follow only partial `below`
       ;; links, exactly like the lookup chain being invalidated.
@@ -104657,7 +104775,9 @@
                   (macro-decl-path-list-reverse
                     (tc-global-shared-view out-paths-rev))]
                 (begin
-                  (counters.bump! tc-profile-segment-final-flattens)
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-segment-final-flattens))
                   (set!
                     result
                     (ResultMacroDeclsWithPaths.Ok final-decls final-paths))
